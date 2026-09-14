@@ -14,6 +14,7 @@ import { ChatWidget } from "@/components/ChatWidget";
 import { Navbar } from "@/components/layout/Navbar";
 import { MobileBottomNav } from "@/components/layout/MobileBottomNav";
 import { Footer } from "@/components/layout/Footer";
+import { bizPortalUrl } from "@/config/external-links";
 import { supabase } from "@/lib/supabase";
 import {
   fetchPortalAuthBootstrap,
@@ -144,7 +145,7 @@ const queryClient = new QueryClient({
 
 // Redirect bizportal subdomain to main domain /bizportal/
 if (typeof window !== "undefined" && window.location.hostname === "bizportal.cstlogistic.co.id") {
-  window.location.replace("https://cstlogistic.co.id/bizportal/");
+  window.location.replace(bizPortalUrl());
 }
 
 // Routes that show NO navbar/footer shell

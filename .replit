@@ -1,3 +1,4 @@
+modules = ["nodejs-24", "python-base-3.13"]
 [userenv]
 
 [userenv.shared]
@@ -8,3 +9,34 @@ APP_ENV = "development"
 [userenv.production]
 APP_ENV = "production"
 MKT_DUAL_WRITE_RETRY_ENABLED = "false"
+[[ports]]
+localPort = 5000
+externalPort = 80
+
+[nix]
+channel = "stable-25_05"
+
+[workflows]
+runButton = "Project"
+
+[[workflows.workflow]]
+name = "Project"
+mode = "parallel"
+author = "agent"
+
+[[workflows.workflow.tasks]]
+task = "workflow.run"
+args = "Start application"
+
+[[workflows.workflow]]
+name = "Start application"
+author = "agent"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "pnpm dev"
+waitForPort = 5000
+
+[workflows.workflow.metadata]
+outputType = "webview"
+
