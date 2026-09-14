@@ -1,0 +1,2 @@
+- [Standalone portal boundary](standalone-portal-boundary.md) — keep local browser-safe shared modules; do not import the monorepo workspace or backend into this frontend.
+- [API proxy configuration](api-proxy-configuration.md) — the API target must be a reachable absolute URL, and launcher logs must never print its value.
