@@ -1,0 +1,42 @@
+{
+  "name": "B2B Marketplace and Logistic",
+  "short_name": "CST Logistic",
+  "description": "Platform B2B ekspor impor, freight forwarding udara & laut, customs clearance PPJK, dan logistik terpadu untuk bisnis di Indonesia.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "theme_color": "#0ea5e9",
+  "lang": "id",
+  "scope": "/",
+  "orientation": "portrait-primary",
+  "categories": ["business", "productivity", "shopping"],
+  "icons": [
+    {
+      "src": "/api/storage/public-objects/portal-assets/static/customer-portal/images/logo.png?v=20260813",
+      "sizes": "500x500",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/api/storage/public-objects/portal-assets/static/customer-portal/images/logo-baru.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/api/storage/public-objects/portal-assets/static/customer-portal/images/logo-baru.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ],
+  "screenshots": [
+    {
+      "src": "/api/storage/public-objects/portal-assets/static/customer-portal/images/og-cover.webp",
+      "sizes": "1200x630",
+      "type": "image/png",
+      "form_factor": "wide",
+      "label": "B2B Marketplace dan Logistik Indonesia"
+    }
+  ]
+}
