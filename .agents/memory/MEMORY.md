@@ -1,0 +1,1 @@
+- [Development API for Dev Login](customer-portal-dev-api.md) — Dev Login requires the non-production CST-SUPER-APP API; production deliberately returns 404.
