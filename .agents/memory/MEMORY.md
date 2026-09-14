@@ -1,3 +1,4 @@
 - [Standalone portal boundary](standalone-portal-boundary.md) — keep local browser-safe shared modules; do not import the monorepo workspace or backend into this frontend.
 - [API proxy configuration](api-proxy-configuration.md) — the API target must be a reachable absolute URL, and launcher logs must never print its value.
 - [Development API for Dev Login](customer-portal-dev-api.md) — Dev Login requires the non-production CST-SUPER-APP API; production deliberately returns 404.
+- [Git lock and provider auth](github-git-auth.md) — verify Git processes before removing stale locks; GitHub App attachment may not refresh the shell's existing askpass helper.
