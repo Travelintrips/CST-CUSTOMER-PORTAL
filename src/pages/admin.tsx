@@ -19,6 +19,7 @@ import {
   LayoutDashboard, PackageCheck, Mail, Image as ImageIcon, X, Menu,
 } from "lucide-react";
 import { useLanguage } from "@/i18n/LanguageContext";
+import { bizPortalUrl } from "@/config/external-links";
 
 // ── Module imports ────────────────────────────────────────────────────────────
 import { ContentTab }                                    from "@/pages/admin/ContentTab";
@@ -44,6 +45,10 @@ type ErpStats = {
   activeFreightShipments: number;
   inTransitShipments: number;
 };
+
+function externalBizPortalUrl(path: string): string {
+  return bizPortalUrl(path.replace(/^\/bizportal(?:\/|$)/, ""));
+}
 
 // ── AdminPage ─────────────────────────────────────────────────────────────────
 
@@ -470,7 +475,7 @@ export default function AdminPage() {
                           <h2 className="text-xl font-semibold">{t("adminPage.erp.title", "BizPortal ERP")}</h2>
                           <p className="text-sm text-muted-foreground mt-1">{t("adminPage.erp.subtitle", "Akses cepat ke semua modul ERP internal. Klik modul untuk membuka BizPortal.")}</p>
                         </div>
-                        <a href="/bizportal/" target="_blank" rel="noopener noreferrer"
+                        <a href={bizPortalUrl()} target="_blank" rel="noopener noreferrer"
                           className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-medium transition-colors">
                           <Building2 className="h-4 w-4" />{t("adminPage.erp.openBizPortal", "Buka BizPortal")}<ArrowUpRight className="h-4 w-4" />
                         </a>
@@ -505,7 +510,7 @@ export default function AdminPage() {
                           { label: t("adminPage.erp.stat.monthlyRevenue", "Revenue Bulan Ini"),        value: erpStats?.salesRevenueThisMonth,    icon: BarChart2,     color: "text-green-600",  bg: "bg-green-50",  href: "/bizportal/reports/sales", isRupiah: true },
                           { label: t("adminPage.erp.stat.portalCustomers", "Pelanggan Portal"),        value: erpStats?.activeCustomers,          icon: Users,         color: "text-purple-600", bg: "bg-purple-50", href: "/bizportal/portal/customers" },
                         ].map(({ label, value, isRupiah, icon: Icon, color, bg, href }) => (
-                          <a key={label} href={href} target="_blank" rel="noopener noreferrer"
+                          <a key={label} href={externalBizPortalUrl(href)} target="_blank" rel="noopener noreferrer"
                             className="flex flex-col gap-2 p-4 rounded-xl border bg-white hover:shadow-md transition-all group">
                             <div className={`w-8 h-8 rounded-lg ${bg} flex items-center justify-center`}>
                               <Icon className={`h-4 w-4 ${color}`} />
@@ -539,7 +544,7 @@ export default function AdminPage() {
                           <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide mb-3">{section.label}</h3>
                           <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-2">
                             {section.items.map(({ icon: Icon, label, path }) => (
-                              <a key={path} href={path} target="_blank" rel="noopener noreferrer"
+                              <a key={path} href={externalBizPortalUrl(path)} target="_blank" rel="noopener noreferrer"
                                 className="flex flex-col items-center gap-2 p-3 rounded-lg bg-white border border-white/80 hover:border-indigo-200 hover:shadow-sm transition-all group cursor-pointer">
                                 <Icon className={`h-5 w-5 ${section.iconColor} group-hover:scale-110 transition-transform`} />
                                 <span className="text-xs text-center font-medium text-gray-700 leading-tight">{label}</span>

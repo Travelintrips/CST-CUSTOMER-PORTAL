@@ -65,6 +65,16 @@ export interface ResolveImageUrlOptions {
   }
   if (trimmed.startsWith("/objects/")) return `/api/storage${trimmed}`;
 
+  // Reject malformed variants of the canonical portal-assets prefix before
+  // they can be treated as arbitrary public object keys.
+  const canonicalPortalAssetPrefix = CANONICAL_PORTAL_ASSET_ROOT.slice(0, -1);
+  if (
+    trimmed.startsWith(canonicalPortalAssetPrefix) &&
+    !trimmed.startsWith(CANONICAL_PORTAL_ASSET_ROOT)
+  ) {
+    return null;
+  }
+
   // A previous CMS upload path was persisted as
   // /api/storage/public-objects/portal-assets/<uuid>. That UUID is a database
   // object identifier, not a public storage object key, and the API correctly
@@ -72,6 +82,14 @@ export interface ResolveImageUrlOptions {
   // the broken URL.
   if (trimmed.startsWith(CANONICAL_PORTAL_ASSET_ROOT)) {
     const objectKey = trimmed.slice(CANONICAL_PORTAL_ASSET_ROOT.length);
+    if (
+      !objectKey ||
+      /\s/.test(objectKey) ||
+      objectKey.includes("\\") ||
+      objectKey.split("/").some((part) => part === "." || part === "..")
+    ) {
+      return null;
+    }
     if (LEGACY_OBJECT_ID.test(objectKey)) {
       return options.allowLegacyObjectId ? trimmed : null;
     }
