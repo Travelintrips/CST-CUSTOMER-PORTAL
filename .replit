@@ -6,6 +6,19 @@ channel = "stable-25_05"
 [agent]
 expertMode = true
 
+[userenv]
+
+[userenv.shared]
+VITE_API_SERVER_URL = "https://cstlogistic.co.id"
+
+[userenv.development]
+APP_ENV = "development"
+VITE_API_SERVER_URL_DEV = "https://1c591a26-1875-444f-9a51-2733d23fd756-00-3bxi1sstpdetn.pike.replit.dev"
+
+[userenv.production]
+APP_ENV = "production"
+MKT_DUAL_WRITE_RETRY_ENABLED = "false"
+
 [[ports]]
 localPort = 5000
 externalPort = 80
