@@ -403,18 +403,9 @@ export default function AdminPage() {
                     </Card>
                   </TabsContent>
 
-                  <TabsContent value="bizportal-erp">
-                    <div className="space-y-6">
-                      <div className="flex items-center justify-between">
-                        <div>
-                          <h2 className="text-xl font-semibold">{t("adminPage.erp.title", "BizPortal ERP")}</h2>
-                          <p className="text-sm text-muted-foreground mt-1">{t("adminPage.erp.subtitle", "Akses cepat ke semua modul ERP internal. Klik modul untuk membuka BizPortal.")}</p>
-                        </div>
-                        <a href={bizPortalUrl()} target="_blank" rel="noopener noreferrer"
-                          className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-medium transition-colors">
-                          <Building2 className="h-4 w-4" />{t("adminPage.erp.openBizPortal", "Buka BizPortal")}<ArrowUpRight className="h-4 w-4" />
-                        </a>
-                      </div>
+                  {/*
+                    BizPortal is a separate application. It is intentionally not
+                    linked or embedded from the standalone Customer Portal.
 
                       <div className="flex items-center justify-between gap-3 flex-wrap">
                         <div className="flex items-center gap-2">
@@ -489,7 +480,7 @@ export default function AdminPage() {
                         </div>
                       ))}
                     </div>
-                  </TabsContent>
+                  */}
 
                   <TabsContent value="approvals">
                     <Card>
