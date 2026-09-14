@@ -25,6 +25,7 @@ export const TRUSTED_DEVICE_KEY = "cst_trusted_device";
 export const REMEMBER_DAYS   = 30;
 let portalAuthBootstrapCache: PortalAuthBootstrap | null = null;
 let portalAuthBootstrapInFlight: Promise<PortalAuthBootstrap | null> | null = null;
+let portalAuthBootstrapRequestVersion = 0;
 
 interface PortalProfile {
   customerId: number;
@@ -205,6 +206,7 @@ export function removeAuthToken(): void {
 export function clearPortalAuthBootstrap(): void {
   portalAuthBootstrapCache = null;
   portalAuthBootstrapInFlight = null;
+  portalAuthBootstrapRequestVersion += 1;
 }
 
 export function getCachedPortalAuthBootstrap(): PortalAuthBootstrap | null {
@@ -236,13 +238,13 @@ export async function fetchPortalAuthBootstrap(
     // A bootstrap request started while /login was rendering can still be
     // in-flight when the user finishes logging in. Do not let that old 401
     // win over the newly-created session cookie.
-    portalAuthBootstrapCache = null;
-    portalAuthBootstrapInFlight = null;
+    clearPortalAuthBootstrap();
   } else {
     if (portalAuthBootstrapCache && !requestedReturnTo) return portalAuthBootstrapCache;
     if (portalAuthBootstrapInFlight) return portalAuthBootstrapInFlight;
   }
 
+  const requestVersion = portalAuthBootstrapRequestVersion;
   const token = hasCookieSession() ? null : await getSupabaseToken();
   const headers: Record<string, string> = { "Content-Type": "application/json" };
   if (token) headers.Authorization = `Bearer ${token}`;
@@ -255,6 +257,9 @@ export async function fetchPortalAuthBootstrap(
     credentials: "include",
   })
     .then(async (res) => {
+      // A newer login/logout/bootstrap request owns the auth state now.
+      // Ignore this response so a stale 401 cannot clear a fresh session.
+      if (requestVersion !== portalAuthBootstrapRequestVersion) return null;
       if (res.status === 401 || res.status === 403) {
         removeAuthToken();
         return null;
@@ -264,7 +269,9 @@ export async function fetchPortalAuthBootstrap(
     })
     .catch(() => null)
     .finally(() => {
-      portalAuthBootstrapInFlight = null;
+      if (requestVersion === portalAuthBootstrapRequestVersion) {
+        portalAuthBootstrapInFlight = null;
+      }
     });
 
   return portalAuthBootstrapInFlight;
