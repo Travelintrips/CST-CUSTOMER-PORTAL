@@ -3,7 +3,10 @@ set -euo pipefail
 cd "$(dirname "$0")"
 export NODE_ENV="${NODE_ENV:-development}"
 export PORT="${PORT:-5000}"
-export VITE_API_SERVER_URL="${VITE_API_SERVER_URL:-${API_SERVER_URL:-http://127.0.0.1:18444}}"
+# The standalone portal uses the development API when one is configured.
+# Keep VITE_API_SERVER_URL as the production/shared fallback so published
+# builds are not accidentally pointed at a dev API.
+export VITE_API_SERVER_URL="${VITE_API_SERVER_URL_DEV:-${VITE_API_SERVER_URL:-${API_SERVER_URL:-http://127.0.0.1:18444}}}"
 echo "[portal] Starting standalone portal on :${PORT}"
 if [[ -n "${VITE_API_SERVER_URL:-}" ]]; then
   echo "[portal] API proxy target configured"
