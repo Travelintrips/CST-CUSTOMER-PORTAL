@@ -171,6 +171,8 @@ export default defineConfig({
       "/api": {
         target: apiServerUrl,
         changeOrigin: true,
+        timeout: 60_000,
+        proxyTimeout: 60_000,
       },
       // Legacy public image URLs must never reach Vite's SPA fallback. The
       // API applies the same canonicalization and 404 semantics in dev.

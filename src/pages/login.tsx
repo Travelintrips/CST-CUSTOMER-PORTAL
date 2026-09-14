@@ -190,24 +190,54 @@ export default function Login() {
     setDevLoading(role);
     setErrorMsg("");
     try {
-      const res = await fetch("/api/portal/auth/dev-login", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        credentials: "include",
-        body: JSON.stringify({ role }),
-      });
-      const data = await res.json().catch(() => ({})) as {
+      let res: Response | null = null;
+      let data: {
         token?: string;
         profile?: { id: number; name: string; email: string; role: string };
         message?: string;
-      };
-      if (!res.ok || !data.token || !data.profile) {
+      } = {};
+      let lastError: unknown = null;
+
+      // The development API can be slow while its database connection wakes
+      // up. Retry a transient network/5xx failure instead of showing a false
+      // login error after the first proxy interruption.
+      for (let attempt = 0; attempt < 2; attempt += 1) {
+        const controller = new AbortController();
+        const timeoutId = window.setTimeout(() => controller.abort(), 30_000);
+        try {
+          res = await fetch("/api/portal/auth/dev-login", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            credentials: "include",
+            signal: controller.signal,
+            body: JSON.stringify({ role }),
+          });
+          data = await res.json().catch(() => ({})) as typeof data;
+          if (res.ok || res.status < 500 || attempt === 1) break;
+        } catch (error) {
+          lastError = error;
+          if (attempt === 1) throw error;
+        } finally {
+          window.clearTimeout(timeoutId);
+        }
+      }
+
+      if (lastError && !res) throw lastError;
+      if (!res || !res.ok || !data.token || !data.profile) {
         setErrorMsg(data.message ?? t("login.devLoginFailed"));
         return;
       }
       // C1: server sets HttpOnly cookie; do not write token to localStorage for new sessions
       setPortalProfile({ customerId: data.profile.id, role: data.profile.role, name: data.profile.name, email: data.profile.email });
-      redirectAfterLogin();
+      // Do not make the slow bootstrap request a prerequisite for a
+      // successful Dev Login. The protected destination validates the cookie
+      // once after navigation and can apply the server's canonical redirect.
+      const destination = data.profile.role === "admin"
+        ? "/admin"
+        : data.profile.role === "vendor"
+          ? "/vendor-dashboard"
+          : "/dashboard";
+      setLocation(destination);
     } catch { setErrorMsg(t("login.devLoginFailed")); }
     finally { setDevLoading(null); }
   }
