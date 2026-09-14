@@ -1,7 +1,13 @@
 import http from "node:http";
 import { timingSafeEqual } from "node:crypto";
 import bcrypt from "bcryptjs";
-import { checkDatabase, closeDatabase, query } from "./db.mjs";
+import {
+  checkDatabase,
+  closeDatabase,
+  databaseConnectionSource,
+  databaseEnvironment,
+  query,
+} from "./db.mjs";
 import {
   clearSessionCookies,
   createSession,
@@ -153,6 +159,8 @@ async function handleHealth(response) {
       service: "customer-portal-api",
       appEnv: APP_ENV,
       database: "connected",
+      databaseEnvironment,
+      databaseConnectionSource,
     });
   } catch {
     sendJson(response, 503, {
@@ -160,6 +168,8 @@ async function handleHealth(response) {
       service: "customer-portal-api",
       appEnv: APP_ENV,
       database: "unavailable",
+      databaseEnvironment,
+      databaseConnectionSource,
     });
   }
 }
