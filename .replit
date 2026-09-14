@@ -1,0 +1,10 @@
+[userenv]
+
+[userenv.shared]
+
+[userenv.development]
+APP_ENV = "development"
+
+[userenv.production]
+APP_ENV = "production"
+MKT_DUAL_WRITE_RETRY_ENABLED = "false"
