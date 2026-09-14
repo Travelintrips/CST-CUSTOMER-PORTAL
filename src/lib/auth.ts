@@ -234,6 +234,7 @@ export async function fetchPortalAuthBootstrap(
   options?: { force?: boolean },
 ): Promise<PortalAuthBootstrap | null> {
   const force = options?.force === true;
+  const requestVersion = portalAuthBootstrapRequestVersion;
   if (force) {
     // A bootstrap request started while /login was rendering can still be
     // in-flight when the user finishes logging in. Do not let that old 401
@@ -244,7 +245,6 @@ export async function fetchPortalAuthBootstrap(
     if (portalAuthBootstrapInFlight) return portalAuthBootstrapInFlight;
   }
 
-  const requestVersion = portalAuthBootstrapRequestVersion;
   const token = hasCookieSession() ? null : await getSupabaseToken();
   const headers: Record<string, string> = { "Content-Type": "application/json" };
   if (token) headers.Authorization = `Bearer ${token}`;
