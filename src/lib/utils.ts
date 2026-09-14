@@ -20,6 +20,8 @@ export function assetUrl(path: string): string {
 
 const CANONICAL_PORTAL_ASSET_ROOT =
   "/api/storage/public-objects/portal-assets/";
+const PORTAL_ASSET_PATH_PREFIX =
+  "/api/storage/public-objects/portal-assets";
 const CANONICAL_CUSTOMER_IMAGE_ROOT =
   `${CANONICAL_PORTAL_ASSET_ROOT}static/customer-portal/images/`;
 const SUPABASE_ORIGIN = (import.meta.env.VITE_SUPABASE_URL ?? "").replace(/\/+$/, "");
@@ -64,6 +66,16 @@ export interface ResolveImageUrlOptions {
     return null;
   }
   if (trimmed.startsWith("/objects/")) return `/api/storage${trimmed}`;
+
+  // Reject malformed legacy object paths before they can be rewritten into
+  // an invalid public-object URL. Valid portal asset paths must include the
+  // slash that separates the collection from the object key.
+  if (
+    trimmed.startsWith(PORTAL_ASSET_PATH_PREFIX) &&
+    !trimmed.startsWith(CANONICAL_PORTAL_ASSET_ROOT)
+  ) {
+    return null;
+  }
 
   // A previous CMS upload path was persisted as
   // /api/storage/public-objects/portal-assets/<uuid>. That UUID is a database
