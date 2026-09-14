@@ -92,12 +92,36 @@ export default function Login() {
   const [forgotLoading, setForgotLoading] = useState(false);
   const [forgotMsg, setForgotMsg] = useState<{ type: "ok" | "err"; text: string } | null>(null);
   const [devLoading, setDevLoading] = useState<string | null>(null);
+  const [authResolved, setAuthResolved] = useState(false);
 
   useEffect(() => {
     if (oauthError === "google_callback_failed") {
       setErrorMsg(t("login.googleCallbackFailed", "Login Google gagal saat memproses callback. Silakan coba lagi."));
     }
   }, [oauthError, t]);
+
+  // `/login` is a session boundary: do not render a login form over an
+  // already-authenticated navbar. Resolve the cookie session before showing
+  // either the guest form or the development-login buttons.
+  useEffect(() => {
+    let disposed = false;
+    const requestedReturnTo = returnTo ? safeCustomerReturnTo(returnTo) : null;
+
+    fetchPortalAuthBootstrap(requestedReturnTo)
+      .then((bootstrap) => {
+        if (disposed) return;
+        if (bootstrap) {
+          setLocation(bootstrap.allowedDestination);
+          return;
+        }
+        setAuthResolved(true);
+      })
+      .catch(() => {
+        if (!disposed) setAuthResolved(true);
+      });
+
+    return () => { disposed = true; };
+  }, [returnTo, setLocation]);
 
   useEffect(() => {
     fetch(`${BASE}/api/portal/auth/capabilities`, { credentials: "include" })
@@ -172,8 +196,15 @@ export default function Login() {
         credentials: "include",
         body: JSON.stringify({ role }),
       });
-      if (!res.ok) { setErrorMsg(t("login.devLoginFailed")); return; }
-      const data = await res.json() as { token: string; profile: { id: number; name: string; email: string; role: string } };
+      const data = await res.json().catch(() => ({})) as {
+        token?: string;
+        profile?: { id: number; name: string; email: string; role: string };
+        message?: string;
+      };
+      if (!res.ok || !data.token || !data.profile) {
+        setErrorMsg(data.message ?? t("login.devLoginFailed"));
+        return;
+      }
       // C1: server sets HttpOnly cookie; do not write token to localStorage for new sessions
       setPortalProfile({ customerId: data.profile.id, role: data.profile.role, name: data.profile.name, email: data.profile.email });
       redirectAfterLogin();
@@ -366,6 +397,14 @@ export default function Login() {
     // Use the API's Google OAuth flow for the public portal. Supabase's
     // external-provider exchange is unreliable for this production project.
     window.location.assign(`${BASE}/api/login/google?${query.toString()}`);
+  }
+
+  if (!authResolved) {
+    return (
+      <div className="min-h-[calc(100vh-80px)] flex items-center justify-center bg-background">
+        <div className="h-8 w-8 animate-spin rounded-full border-4 border-sky-500 border-t-transparent" aria-label="Memeriksa sesi" />
+      </div>
+    );
   }
 
   return (

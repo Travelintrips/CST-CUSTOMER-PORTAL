@@ -230,6 +230,12 @@ function OAuthRedirectHandler() {
     if (isNoAuthRoute(path)) return;
     let disposed = false;
 
+    // The login page owns its own session gate. Keeping a second bootstrap
+    // request here allows an anonymous request to race with a fresh login.
+    if (path === "/login") {
+      return () => { disposed = true; };
+    }
+
     // The backend Google flow sets the portal_session_hint cookie rather than
     // a Supabase session. Resolve that cookie session after returning to /login.
     const resolvePostAuth = () => {
