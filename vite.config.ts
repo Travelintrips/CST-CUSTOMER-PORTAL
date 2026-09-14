@@ -189,7 +189,6 @@ export default defineConfig({
         target: apiServerUrl,
         changeOrigin: true,
       },
-      // BizPortal dev server — proxied so /bizportal/* works via main entry port
       // Logistic Order is owned by this Customer Portal. Its compatibility
       // aliases are handled by the SPA routes above; do not proxy them to the
       // deprecated standalone redirect shim.

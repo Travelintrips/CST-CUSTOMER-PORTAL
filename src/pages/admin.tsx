@@ -4,7 +4,7 @@
  * (sidebar navigation + Tabs content area).
  */
 
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect } from "react";
 import { useLocation } from "wouter";
 import { isAuthenticated, isPortalAdmin, getAuthHeaders } from "@/lib/auth";
 import { useToast } from "@/hooks/use-toast";
@@ -13,13 +13,12 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Sheet, SheetContent, SheetClose } from "@/components/ui/sheet";
 import {
   Shield, FileText, Box, Settings, Tag, Truck, Loader2, Wrench,
-  Building2, Store, Package, Users, BarChart2, ClipboardList, Ship,
+  Store, Package, Users,
   UserCheck, MessageCircle, UserPlus, Layers, Link2, ShoppingCart,
-  CreditCard, DollarSign, BookOpen, Receipt, Wallet, ArrowUpRight, Inbox,
-  LayoutDashboard, PackageCheck, Mail, Image as ImageIcon, X, Menu,
+  CreditCard, DollarSign, Inbox,
+  PackageCheck, Image as ImageIcon, X, Menu,
 } from "lucide-react";
 import { useLanguage } from "@/i18n/LanguageContext";
-import { bizPortalUrl } from "@/config/external-links";
 
 // ── Module imports ────────────────────────────────────────────────────────────
 import { ContentTab }                                    from "@/pages/admin/ContentTab";
@@ -37,31 +36,12 @@ import { ServiceOperationsTab }                           from "@/pages/admin/Se
 import { MarketplaceOperationsTab }                       from "@/pages/admin/MarketplaceOperations";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
-type ErpStats = {
-  portalOrdersThisMonth: number;
-  activeCustomers: number;
-  pendingRfqs: number;
-  salesRevenueThisMonth: number;
-  activeFreightShipments: number;
-  inTransitShipments: number;
-};
-
-function externalBizPortalUrl(path: string): string {
-  return bizPortalUrl(path.replace(/^\/bizportal(?:\/|$)/, ""));
-}
-
 // ── AdminPage ─────────────────────────────────────────────────────────────────
 
 export default function AdminPage() {
   const [location, setLocation] = useLocation();
   const { toast } = useToast();
   const { t } = useLanguage();
-  const [erpStats, setErpStats] = useState<ErpStats | null>(null);
-  const [erpStatsLoading, setErpStatsLoading] = useState(false);
-  const [erpStatsLastUpdated, setErpStatsLastUpdated] = useState<Date | null>(null);
-  const erpDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const erpPendingEventRef = useRef<string | null>(null);
-
   const [pendingVendorApprovals, setPendingVendorApprovals] = useState(0);
   const [pendingPortalWorkload, setPendingPortalWorkload] = useState(0);
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
@@ -97,53 +77,10 @@ export default function AdminPage() {
     return () => { cancelled = true; clearInterval(interval); };
   }, []);
 
-  function fetchErpStats(fromEvent?: string) {
-    if (!isPortalAdmin()) return;
-    setErpStatsLoading(true);
-    fetch("/api/portal/admin/erp-stats", { headers: getAuthHeaders(), credentials: "include" })
-      .then((r) => r.ok ? r.json() as Promise<ErpStats> : null)
-      .then((d) => {
-        if (d) {
-          setErpStats(d);
-          setErpStatsLastUpdated(new Date());
-          if (fromEvent) {
-            const messages: Record<string, { title: string; description: string }> = {
-              new_logistic_order:            { title: t("adminPage.erpEvent.newOrder", "Order baru masuk"),        description: t("adminPage.erpEvent.statsUpdated", "Statistik portal diperbarui otomatis.") },
-              logistic_order_status_changed: { title: t("adminPage.erpEvent.statusChanged", "Status order berubah"),    description: t("adminPage.erpEvent.freightUpdated", "Statistik freight diperbarui otomatis.") },
-              vendor_quote_received:         { title: t("adminPage.erpEvent.quoteReceived", "Quote vendor diterima"),   description: t("adminPage.erpEvent.rfqUpdated", "Data RFQ diperbarui otomatis.") },
-            };
-            const msg = messages[fromEvent] ?? { title: t("adminPage.erpEvent.statsRefreshed", "Statistik diperbarui"), description: t("adminPage.erpEvent.latestLoaded", "Data ERP terbaru telah dimuat.") };
-            toast({ title: msg.title, description: msg.description });
-          }
-        }
-      })
-      .catch(() => {})
-      .finally(() => setErpStatsLoading(false));
-  }
-
-  function scheduleFetchErpStats(eventName: string) {
-    erpPendingEventRef.current = eventName;
-    if (erpDebounceRef.current) clearTimeout(erpDebounceRef.current);
-    erpDebounceRef.current = setTimeout(() => {
-      fetchErpStats(erpPendingEventRef.current ?? undefined);
-      erpPendingEventRef.current = null;
-    }, 2000);
-  }
-
   useEffect(() => {
     if (!isAuthenticated()) { setLocation("/login"); return; }
     if (!isPortalAdmin()) { setLocation("/dashboard"); }
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
-
-  useEffect(() => {
-    fetchErpStats();
-    if (!isPortalAdmin()) return;
-    const es = new EventSource("/api/ecommerce/events");
-    const STAT_EVENTS = ["new_logistic_order", "logistic_order_status_changed", "vendor_quote_received"];
-    STAT_EVENTS.forEach((ev) => { es.addEventListener(ev, () => scheduleFetchErpStats(ev)); });
-    return () => { es.close(); if (erpDebounceRef.current) clearTimeout(erpDebounceRef.current); };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
 
   if (!isAuthenticated()) return null;
 
@@ -286,7 +223,6 @@ export default function AdminPage() {
 
                 <p className="px-3 pt-4 pb-1.5 text-[10px] font-semibold tracking-widest text-slate-600 uppercase select-none">{t("adminPage.nav.sectionSystem", "Sistem")}</p>
                 {[
-                  { value: "bizportal-erp",   icon: Building2,  label: t("adminPage.nav.bizportalErp", "BizPortal ERP") },
                   { value: "paylabs-setting", icon: CreditCard, label: t("adminPage.nav.paylabsSetting", "Paylabs Setting") },
                   { value: "utilities",       icon: Wrench,     label: t("adminPage.nav.utilities", "Utilitas") },
                 ].map(({ value, icon: Icon, label }) => (
@@ -360,7 +296,6 @@ export default function AdminPage() {
                   <TabsTrigger value="wa-logs"   className={TABS_TRIGGER_CLS}><MessageCircle className="h-4 w-4 shrink-0" strokeWidth={2} />{t("adminPage.nav.whatsapp", "WhatsApp")}</TabsTrigger>
 
                   <p className="px-3 pt-4 pb-1.5 text-[10px] font-semibold tracking-widest text-slate-600 uppercase select-none">{t("adminPage.nav.sectionSystem", "Sistem")}</p>
-                  <TabsTrigger value="bizportal-erp"   className={TABS_TRIGGER_CLS}><Building2  className="h-4 w-4 shrink-0" strokeWidth={2} />{t("adminPage.nav.bizportalErp", "BizPortal ERP")}</TabsTrigger>
                   <TabsTrigger value="paylabs-setting" className={TABS_TRIGGER_CLS}><CreditCard className="h-4 w-4 shrink-0" strokeWidth={2} />{t("adminPage.nav.paylabsSetting", "Paylabs Setting")}</TabsTrigger>
                   <TabsTrigger value="utilities"       className={TABS_TRIGGER_CLS}><Wrench     className="h-4 w-4 shrink-0" strokeWidth={2} />{t("adminPage.nav.utilities", "Utilitas")}</TabsTrigger>
                 </>
@@ -468,18 +403,9 @@ export default function AdminPage() {
                     </Card>
                   </TabsContent>
 
-                  <TabsContent value="bizportal-erp">
-                    <div className="space-y-6">
-                      <div className="flex items-center justify-between">
-                        <div>
-                          <h2 className="text-xl font-semibold">{t("adminPage.erp.title", "BizPortal ERP")}</h2>
-                          <p className="text-sm text-muted-foreground mt-1">{t("adminPage.erp.subtitle", "Akses cepat ke semua modul ERP internal. Klik modul untuk membuka BizPortal.")}</p>
-                        </div>
-                        <a href={bizPortalUrl()} target="_blank" rel="noopener noreferrer"
-                          className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-medium transition-colors">
-                          <Building2 className="h-4 w-4" />{t("adminPage.erp.openBizPortal", "Buka BizPortal")}<ArrowUpRight className="h-4 w-4" />
-                        </a>
-                      </div>
+                  {/*
+                    BizPortal is a separate application. It is intentionally not
+                    linked or embedded from the standalone Customer Portal.
 
                       <div className="flex items-center justify-between gap-3 flex-wrap">
                         <div className="flex items-center gap-2">
@@ -554,7 +480,7 @@ export default function AdminPage() {
                         </div>
                       ))}
                     </div>
-                  </TabsContent>
+                  */}
 
                   <TabsContent value="approvals">
                     <Card>

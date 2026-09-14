@@ -5,8 +5,11 @@ Standalone frontend repository for the CST platform.
 ## Run locally
 
 1. Install dependencies with \pnpm install\.
-2. Set \VITE_API_SERVER_URL\ to the shared API Server URL in \.env\.
-3. Set \VITE_BIZPORTAL_BASE_URL\ to the external BizPortal base URL when it differs from the default.
-4. Run \pnpm dev\.
+2. Set \VITE_API_SERVER_URL\ to the shared API Server URL in \.env\; use
+   \http://127.0.0.1:18444\ when running the standalone API locally.
+3. Run \pnpm dev\.
 
-The frontend sends API calls to \/api/*\; Vite proxies them to \VITE_API_SERVER_URL\. The repository contains its own local copies of the browser API client, auth helpers, storage uploader, and domain templates, so it does not depend on the CST monorepo or workspace packages.
+The frontend sends API calls to \/api/*\; Vite proxies them to \VITE_API_SERVER_URL\.
+The Customer Portal API in \server/\ owns its auth/session boundary and reads the
+existing Supabase database directly. This repository does not import the BizPortal
+monorepo or expose BizPortal routes.

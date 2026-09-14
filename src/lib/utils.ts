@@ -72,6 +72,11 @@ export interface ResolveImageUrlOptions {
   // slash that separates the collection from the object key.
   if (
     trimmed.startsWith(PORTAL_ASSET_PATH_PREFIX) &&
+  // Reject malformed variants of the canonical portal-assets prefix before
+  // they can be treated as arbitrary public object keys.
+  const canonicalPortalAssetPrefix = CANONICAL_PORTAL_ASSET_ROOT.slice(0, -1);
+  if (
+    trimmed.startsWith(canonicalPortalAssetPrefix) &&
     !trimmed.startsWith(CANONICAL_PORTAL_ASSET_ROOT)
   ) {
     return null;
