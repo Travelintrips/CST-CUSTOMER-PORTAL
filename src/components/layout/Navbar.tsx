@@ -698,7 +698,7 @@ export function Navbar() {
     location === "/trucking" ||
     (location.startsWith("/marketplace") && location.includes("type=service"));
 
-  const desktopDropdownOpen = servicesOpen || moreOpen || mktOpen;
+  const desktopDropdownOpen = servicesOpen || moreOpen || mktOpen || calculatorOpen;
 
   const brandName = company?.name
     ? company.name.length > COMPANY_CONFIG.brandNameMaxLength ? COMPANY_CONFIG.brandName : company.name
