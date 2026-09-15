@@ -145,10 +145,12 @@ export default defineConfig({
               changeOrigin: true,
               secure: true,
               rewrite: (path) =>
-                path.replace(
-                  /^\/api\/storage\/public-objects/,
-                  "/storage/v1/object/public/public-assets",
-                ),
+                PUBLIC_ASSET_CDN_ORIGIN
+                  ? path.replace(
+                      /^\/api\/storage\/public-objects/,
+                      "/storage/v1/object/public/public-assets",
+                    )
+                  : path,
             },
           }
         : {}),
