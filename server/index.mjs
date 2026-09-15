@@ -197,7 +197,9 @@ function authResponse(user, token) {
       name: user.name,
       email: user.email,
       phone: user.phone ?? null,
+      company: user.company ?? null,
       role: user.role,
+      customerType: user.customer_type ?? null,
     },
   };
 }
@@ -279,15 +281,25 @@ async function handleDevLogin(request, response) {
     return;
   }
 
-  const result = await query(
+  const devRole = role;
+  const devEmail = `dev-${devRole}@dev.local`;
+  const devName = `Dev ${devRole.charAt(0).toUpperCase()}${devRole.slice(1)}`;
+  let result = await query(
     `select id, name, email, phone, company, role, customer_type, account_status
        from public.portal_customers
-      where role = $1
+      where email = $1
         and account_status not in ('suspended', 'blocked', 'deleted')
-      order by id
       limit 1`,
-    [role],
+    [devEmail],
   );
+  if (!result.rows[0]) {
+    result = await query(
+      `insert into public.portal_customers (name, email, password_hash, role)
+       values ($1, $2, $3, $4)
+       returning id, name, email, phone, company, role, customer_type, account_status`,
+      [devName, devEmail, "", devRole],
+    );
+  }
   const user = result.rows[0];
   if (!user) {
     sendError(response, 404, `No development ${role} account is available.`);
