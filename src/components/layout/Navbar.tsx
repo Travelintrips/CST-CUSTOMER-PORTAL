@@ -480,6 +480,7 @@ export function Navbar() {
 
   const [moreOpen, setMoreOpen]                     = useState(false);
   const [mktOpen, setMktOpen]                       = useState(false);
+  const [calculatorOpen, setCalculatorOpen]         = useState(false);
   const [mobileServicesOpen, setMobileServicesOpen] = useState(false);
   const [mobileMoreOpen, setMobileMoreOpen]         = useState(false);
   const [searchOpen, setSearchOpen]                 = useState(false);
@@ -497,6 +498,7 @@ export function Navbar() {
   const servicesRef  = useRef<HTMLDivElement>(null);
   const moreRef      = useRef<HTMLDivElement>(null);
   const mktRef       = useRef<HTMLDivElement>(null);
+  const calculatorRef = useRef<HTMLDivElement>(null);
   const searchRef    = useRef<HTMLDivElement>(null);
   const searchInput  = useRef<HTMLInputElement>(null);
 
@@ -566,6 +568,7 @@ export function Navbar() {
 
       if (moreRef.current && !moreRef.current.contains(e.target as Node)) setMoreOpen(false);
       if (mktRef.current && !mktRef.current.contains(e.target as Node)) setMktOpen(false);
+      if (calculatorRef.current && !calculatorRef.current.contains(e.target as Node)) setCalculatorOpen(false);
       if (searchRef.current && !searchRef.current.contains(e.target as Node)) {
         setSearchOpen(false);
         setSearchFocused(false);
@@ -576,6 +579,7 @@ export function Navbar() {
         setServicesOpen(false);
         setMoreOpen(false);
         setMktOpen(false);
+        setCalculatorOpen(false);
         setIsOpen(false);
         setSearchOpen(false);
         setSearchFocused(false);
@@ -825,7 +829,7 @@ export function Navbar() {
                     )}
                   </div>
                   {/* Calculators remain available after login */}
-                  <div className="relative group shrink-0">
+                  <div ref={calculatorRef} className="relative shrink-0">
                     <button
                       className={`flex items-center gap-1.5 px-3 py-2 rounded-xl text-[13px] font-semibold transition-all duration-150 whitespace-nowrap ${
                         location === "/kalkulator-impor" || location === "/kalkulator-biaya-logistik"
@@ -834,18 +838,19 @@ export function Navbar() {
                       }`}
                       style={{ border: "1px solid rgba(14,165,233,0.3)" }}
                       aria-haspopup="menu"
-                      onClick={() => setLocation("/kalkulator-impor")}
+                      onClick={() => setCalculatorOpen((open) => !open)}
+                      aria-expanded={calculatorOpen}
                     >
                       <Calculator className="h-3.5 w-3.5 shrink-0" />
                       {t("nav.hsCode")}
-                      <ChevronDown className="h-3.5 w-3.5 transition-transform duration-200 group-hover:rotate-180" />
+                      <ChevronDown className={`h-3.5 w-3.5 transition-transform duration-200 ${calculatorOpen ? "rotate-180" : ""}`} />
                     </button>
-                    <div className="absolute top-full left-0 mt-1 z-50 w-56 hidden group-hover:block pt-1">
+                    <div className={`absolute top-full left-0 mt-1 z-50 w-56 pt-1 ${calculatorOpen ? "block" : "hidden"}`}>
                       <div className="rounded-2xl overflow-hidden py-1.5 bg-white border border-slate-200 shadow-xl">
                         <div className="px-4 py-1.5">
                           <span className="text-[10px] font-bold uppercase tracking-widest text-amber-500">{t("nav.hsCode")}</span>
                         </div>
-                        <Link href="/kalkulator-impor">
+                        <Link href="/kalkulator-impor" onClick={() => setCalculatorOpen(false)}>
                           <div className={`flex items-center gap-3 px-4 py-2.5 text-[13.5px] font-medium transition-colors cursor-pointer ${
                             location === "/kalkulator-impor" ? "bg-sky-50 text-sky-700" : "text-slate-700 hover:bg-slate-50 hover:text-sky-700"
                           }`}>
@@ -853,7 +858,7 @@ export function Navbar() {
                             {t("nav.importTariffCalc")}
                           </div>
                         </Link>
-                        <Link href="/kalkulator-biaya-logistik">
+                        <Link href="/kalkulator-biaya-logistik" onClick={() => setCalculatorOpen(false)}>
                           <div className={`flex items-center gap-3 px-4 py-2.5 text-[13.5px] font-medium transition-colors cursor-pointer ${
                             location === "/kalkulator-biaya-logistik" ? "bg-sky-50 text-sky-700" : "text-slate-700 hover:bg-slate-50 hover:text-sky-700"
                           }`}>
@@ -1026,7 +1031,7 @@ export function Navbar() {
                 </div>
 
                 {/* Kalkulator — CSS-hover dropdown, no click state */}
-                  <div className="relative group shrink-0">
+                  <div ref={calculatorRef} className="relative shrink-0">
                   <button
                     className={`flex items-center gap-1.5 px-3 py-2 rounded-xl text-[13px] font-semibold transition-all duration-150 whitespace-nowrap ${
                       location === "/kalkulator-impor" || location === "/kalkulator-biaya-logistik"
@@ -1034,14 +1039,15 @@ export function Navbar() {
                         : "bg-sky-50 text-sky-700 hover:bg-sky-100 hover:text-sky-800"
                     }`}
                     style={{ border: "1px solid rgba(14,165,233,0.3)" }}
-                    onClick={() => setLocation("/kalkulator-impor")}
+                    onClick={() => setCalculatorOpen((open) => !open)}
+                    aria-expanded={calculatorOpen}
                   >
                     <Calculator className="h-3.5 w-3.5 shrink-0" />
                     {t("nav.hsCode")}
-                    <ChevronDown className="h-3.5 w-3.5 transition-transform duration-200 group-hover:rotate-180" />
+                    <ChevronDown className={`h-3.5 w-3.5 transition-transform duration-200 ${calculatorOpen ? "rotate-180" : ""}`} />
                   </button>
 
-                  <div className="absolute top-full left-0 mt-1 z-50 w-56 hidden group-hover:block pt-1">
+                  <div className={`absolute top-full left-0 mt-1 z-50 w-56 pt-1 ${calculatorOpen ? "block" : "hidden"}`}>
                     <div
                       className="rounded-2xl overflow-hidden py-1.5"
                       style={{
@@ -1053,7 +1059,7 @@ export function Navbar() {
                       <div className="px-4 py-1.5">
                         <span className="text-[10px] font-bold uppercase tracking-widest text-amber-500">{t("nav.hsCode")}</span>
                       </div>
-                      <Link href="/kalkulator-impor">
+                      <Link href="/kalkulator-impor" onClick={() => setCalculatorOpen(false)}>
                         <div className={`flex items-center gap-3 px-4 py-2.5 text-[13.5px] font-medium transition-colors cursor-pointer ${
                           location === "/kalkulator-impor" ? "bg-sky-50 text-sky-700" : "text-slate-700 hover:bg-slate-50 hover:text-sky-700"
                         }`}>
@@ -1061,7 +1067,7 @@ export function Navbar() {
                           {t("nav.importTariffCalc")}
                         </div>
                       </Link>
-                      <Link href="/kalkulator-biaya-logistik">
+                      <Link href="/kalkulator-biaya-logistik" onClick={() => setCalculatorOpen(false)}>
                         <div className={`flex items-center gap-3 px-4 py-2.5 text-[13.5px] font-medium transition-colors cursor-pointer ${
                           location === "/kalkulator-biaya-logistik" ? "bg-sky-50 text-sky-700" : "text-slate-700 hover:bg-slate-50 hover:text-sky-700"
                         }`}>
