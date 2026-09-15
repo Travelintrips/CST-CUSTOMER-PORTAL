@@ -22,7 +22,8 @@ import {
   handleAdminCustomers,
   handleAdminNotifications,
   handleOnboardingComplete,
-  handleOnboardingUploadUnavailable,
+  handleDocumentUpload,
+  handleKtpOcr,
   handleOnboardingStatus,
   handleOrganizationMutation,
   handleServiceOperations,
@@ -33,6 +34,7 @@ const PORT = Number(process.env.CUSTOMER_PORTAL_API_PORT ?? 18444);
 const APP_ENV = process.env.APP_ENV ?? process.env.NODE_ENV ?? "development";
 const IS_PRODUCTION = APP_ENV === "production" || process.env.NODE_ENV === "production";
 const MAX_BODY_BYTES = 2 * 1024 * 1024;
+const MAX_MULTIPART_BODY_BYTES = 6 * 1024 * 1024;
 const UPSTREAM_API_URL = (
   process.env.CUSTOMER_PORTAL_API_UPSTREAM_URL ??
   process.env.VITE_API_SERVER_URL ??
@@ -85,12 +87,12 @@ function corsHeaders(request) {
     : {};
 }
 
-async function readRawBody(request) {
+async function readRawBody(request, limit = MAX_BODY_BYTES) {
   const chunks = [];
   let length = 0;
   for await (const chunk of request) {
     length += chunk.length;
-    if (length > MAX_BODY_BYTES) {
+    if (length > limit) {
       const error = new Error("Request body is too large.");
       error.statusCode = 413;
       throw error;
@@ -153,6 +155,31 @@ async function readJson(request) {
     return JSON.parse(Buffer.concat(chunks).toString("utf8"));
   } catch {
     const error = new Error("Request body must be valid JSON.");
+    error.statusCode = 400;
+    throw error;
+  }
+}
+
+async function readMultipartForm(request) {
+  const contentType = request.headers["content-type"];
+  if (!contentType?.startsWith("multipart/form-data")) {
+    const error = new Error("Request harus menggunakan multipart/form-data.");
+    error.statusCode = 400;
+    throw error;
+  }
+  const rawBody = await readRawBody(request, MAX_MULTIPART_BODY_BYTES);
+  try {
+    const form = await new Request("http://portal.local/upload", {
+      method: "POST",
+      headers: { "content-type": contentType },
+      body: rawBody,
+    }).formData();
+    return {
+      file: form.get("file"),
+      docType: form.get("docType") ?? form.get("documentType"),
+    };
+  } catch {
+    const error = new Error("Multipart document request tidak valid.");
     error.statusCode = 400;
     throw error;
   }
@@ -1090,12 +1117,26 @@ async function route(request, response) {
   }
   if (pathname === "/api/portal/onboarding/upload-doc" || pathname === "/api/portal/onboarding/ktp-ocr") {
     const user = await requireUser(request, response);
-    if (user) await handleOnboardingUploadUnavailable({ request, response, url, user, sendJson, sendError });
+    if (user) {
+      const form = request.method === "POST" ? await readMultipartForm(request) : {};
+      const context = { request, response, url, user, form, sendJson, sendError };
+      if (pathname === "/api/portal/onboarding/ktp-ocr") {
+        await handleKtpOcr(context);
+      } else {
+        await handleDocumentUpload(context);
+      }
+    }
     return;
   }
   if (pathname === "/api/customer-verification" || pathname.startsWith("/api/customer-verification/")) {
     const user = await requireUser(request, response);
-    if (user) await handleVerification({ request, response, url, user, sendJson, sendError });
+    if (user) {
+      const isDocumentMutation =
+        /^\/api\/customer-verification\/documents(?:\/\d+)?$/.test(pathname)
+        && ["POST", "PUT"].includes(request.method ?? "");
+      const form = isDocumentMutation ? await readMultipartForm(request) : undefined;
+      await handleVerification({ request, response, url, user, form, sendJson, sendError, sendEmpty });
+    }
     return;
   }
   if (pathname === "/api/portal/admin/customers/stats") {

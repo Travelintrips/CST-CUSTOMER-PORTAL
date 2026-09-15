@@ -1,4 +1,11 @@
 import { query } from "./db.mjs";
+import {
+  deleteDocumentObject,
+  documentType,
+  ocrKtp,
+  signedDocumentUrl,
+  uploadDocument,
+} from "./storage.mjs";
 
 const TERMINAL_STATUSES = new Set(["completed", "cancelled", "rejected", "expired", "done"]);
 const SERVICE_LABELS = {
@@ -442,7 +449,10 @@ async function getVerificationState(user) {
   const profileResult = await query(
     `select id, company_name, verification_status, verification_submitted_at,
             verification_expired_at, verification_notes
-       from public.portal_customer_profiles where customer_id = $1 limit 1`,
+       from public.portal_customer_profiles
+      where customer_id = $1
+      order by updated_at desc nulls last, id desc
+      limit 1`,
     [user.id],
   );
   const profile = profileResult.rows[0];
@@ -501,18 +511,235 @@ async function handleVerification(ctx) {
       [Number(docMatch[1]), ctx.user.id],
     );
     if (!result.rows[0]) return adminError(ctx, 404, "Dokumen tidak ditemukan.");
-    ctx.sendJson(response, 200, { url: result.rows[0].file_url });
+    const urlValue = await signedDocumentUrl(result.rows[0].file_url);
+    ctx.sendJson(response, 200, { url: urlValue });
+    return;
+  }
+  const documentMatch = url.pathname.match(/^\/api\/customer-verification\/documents(?:\/(\d+))?$/);
+  if (documentMatch && ["POST", "PUT", "DELETE"].includes(request.method ?? "")) {
+    const documentId = documentMatch[1] ? Number(documentMatch[1]) : null;
+    if (request.method === "DELETE") {
+      if (!documentId) return adminError(ctx, 400, "ID dokumen tidak valid.");
+      const result = await query(
+        `select d.id, d.file_url
+           from public.customer_verification_documents d
+           join public.portal_customer_profiles p on p.id = d.profile_id
+          where d.id = $1 and p.customer_id = $2`,
+        [documentId, ctx.user.id],
+      );
+      if (!result.rows[0]) return adminError(ctx, 404, "Dokumen tidak ditemukan.");
+      await deleteDocumentObject(result.rows[0].file_url);
+      await query("delete from public.customer_verification_documents where id = $1", [documentId]);
+      ctx.sendEmpty(response, 204);
+      return;
+    }
+    if (!ctx.form?.file) return adminError(ctx, 400, "File dokumen wajib diunggah.");
+    const type = documentType(ctx.form.documentType ?? ctx.form.docType);
+    if (request.method === "PUT" && !documentId) return adminError(ctx, 400, "ID dokumen tidak valid.");
+    const profileResult = await query(
+      `select id from public.portal_customer_profiles
+        where customer_id = $1
+        order by updated_at desc nulls last, id desc
+        limit 1`,
+      [ctx.user.id],
+    );
+    let profileId = profileResult.rows[0]?.id;
+    if (!profileId) {
+      const created = await query(
+        `insert into public.portal_customer_profiles (customer_id, profile_status, updated_at)
+         values ($1, 'incomplete', now())
+         returning id`,
+        [ctx.user.id],
+      );
+      profileId = created.rows[0]?.id;
+    }
+    if (!profileId) return adminError(ctx, 409, "Profil customer belum tersedia.");
+
+    let existing = null;
+    if (documentId) {
+      const result = await query(
+        `select d.id, d.file_url, d.document_type, d.uploaded_version
+           from public.customer_verification_documents d
+           join public.portal_customer_profiles p on p.id = d.profile_id
+          where d.id = $1 and p.customer_id = $2`,
+        [documentId, ctx.user.id],
+      );
+      existing = result.rows[0] ?? null;
+      if (!existing) return adminError(ctx, 404, "Dokumen tidak ditemukan.");
+    } else {
+      const result = await query(
+        `select id, file_url, document_type
+           from public.customer_verification_documents
+          where profile_id = $1 and document_type = $2
+          order by uploaded_version desc nulls last, id desc
+          limit 1`,
+        [profileId, type],
+      );
+      existing = result.rows[0] ?? null;
+    }
+
+    const companyResult = await query(
+      `select company_id
+         from public.portal_company_members
+        where portal_customer_id = $1 and is_active = true
+        order by created_at desc, id desc
+        limit 1`,
+      [ctx.user.id],
+    );
+    const companyId = companyResult.rows[0]?.company_id ?? null;
+    const uploaded = await uploadDocument({
+      customerId: ctx.user.id,
+      companyId,
+      documentType: type,
+      file: ctx.form.file,
+    });
+
+    try {
+      let savedId;
+      let savedVersion;
+      if (existing) {
+        const updated = await query(
+          `update public.customer_verification_documents
+              set document_type = $1, file_url = $2, file_name = $3,
+                  verification_status = 'PENDING', rejection_reason = null,
+                  uploaded_version = coalesce(uploaded_version, 0) + 1
+            where id = $4
+            returning id, uploaded_version`,
+          [type, uploaded.path, uploaded.fileName, existing.id],
+        );
+        savedId = updated.rows[0]?.id;
+        savedVersion = updated.rows[0]?.uploaded_version;
+      } else {
+        const inserted = await query(
+          `insert into public.customer_verification_documents
+             (profile_id, document_type, file_url, file_name,
+              verification_status, uploaded_version, created_at)
+           values ($1, $2, $3, $4, 'PENDING', 1, now())
+           returning id, uploaded_version`,
+          [profileId, type, uploaded.path, uploaded.fileName],
+        );
+        savedId = inserted.rows[0]?.id;
+        savedVersion = inserted.rows[0]?.uploaded_version;
+      }
+      if (!savedId) throw new Error("Dokumen tidak tersimpan.");
+    } catch (error) {
+      await deleteDocumentObject(uploaded.path).catch(() => {});
+      throw error;
+    }
+
+    if (existing?.file_url && existing.file_url !== uploaded.path) {
+      await deleteDocumentObject(existing.file_url).catch((error) => {
+        console.warn("[customer-portal-api] old document cleanup failed", error?.message ?? error);
+      });
+    }
+    const signedUrl = await signedDocumentUrl(uploaded.path);
+    ctx.sendJson(response, 200, {
+      ok: true,
+      id: Number(savedId),
+      url: signedUrl,
+      storagePath: uploaded.path,
+      documentType: type,
+      uploadedVersion: Number(savedVersion ?? 1),
+    });
     return;
   }
   return adminError(ctx, 404, "Route verification tidak tersedia.");
 }
 
-function handleOnboardingUploadUnavailable(ctx) {
-  return adminError(
-    ctx,
-    503,
-    "Upload dokumen belum tersedia di boundary development karena object storage backend belum dikonfigurasi.",
+async function handleDocumentUpload(ctx) {
+  if (ctx.request.method !== "POST") return adminError(ctx, 405, "Method tidak didukung.");
+  if (!ctx.form?.file) return adminError(ctx, 400, "File dokumen wajib diunggah.");
+  const type = documentType(ctx.form.docType);
+  const profileResult = await query(
+    `select id from public.portal_customer_profiles
+      where customer_id = $1
+      order by updated_at desc nulls last, id desc
+      limit 1`,
+    [ctx.user.id],
   );
+  let profileId = profileResult.rows[0]?.id;
+  if (!profileId) {
+    const created = await query(
+      `insert into public.portal_customer_profiles (customer_id, profile_status, updated_at)
+       values ($1, 'incomplete', now())
+       returning id`,
+      [ctx.user.id],
+    );
+    profileId = created.rows[0]?.id;
+  }
+  if (!profileId) return adminError(ctx, 409, "Profil customer belum tersedia.");
+  const companyResult = await query(
+    `select company_id
+       from public.portal_company_members
+      where portal_customer_id = $1 and is_active = true
+      order by created_at desc, id desc
+      limit 1`,
+    [ctx.user.id],
+  );
+  const uploaded = await uploadDocument({
+    customerId: ctx.user.id,
+    companyId: companyResult.rows[0]?.company_id ?? null,
+    documentType: type,
+    file: ctx.form.file,
+  });
+  const existing = await query(
+    `select id, file_url, uploaded_version
+       from public.customer_verification_documents
+      where profile_id = $1 and document_type = $2
+      order by uploaded_version desc nulls last, id desc
+      limit 1`,
+    [profileId, type],
+  );
+  let documentId;
+  let version;
+  try {
+    if (existing.rows[0]) {
+      const updated = await query(
+        `update public.customer_verification_documents
+            set file_url = $1, file_name = $2, verification_status = 'PENDING',
+                rejection_reason = null, uploaded_version = coalesce(uploaded_version, 0) + 1
+          where id = $3
+          returning id, uploaded_version`,
+        [uploaded.path, uploaded.fileName, existing.rows[0].id],
+      );
+      documentId = updated.rows[0]?.id;
+      version = updated.rows[0]?.uploaded_version;
+    } else {
+      const inserted = await query(
+        `insert into public.customer_verification_documents
+           (profile_id, document_type, file_url, file_name,
+            verification_status, uploaded_version, created_at)
+         values ($1, $2, $3, $4, 'PENDING', 1, now())
+         returning id, uploaded_version`,
+        [profileId, type, uploaded.path, uploaded.fileName],
+      );
+      documentId = inserted.rows[0]?.id;
+      version = inserted.rows[0]?.uploaded_version;
+    }
+    if (!documentId) throw new Error("Dokumen tidak tersimpan.");
+  } catch (error) {
+    await deleteDocumentObject(uploaded.path).catch(() => {});
+    throw error;
+  }
+  if (existing.rows[0]?.file_url && existing.rows[0].file_url !== uploaded.path) {
+    await deleteDocumentObject(existing.rows[0].file_url).catch((error) => {
+      console.warn("[customer-portal-api] old onboarding document cleanup failed", error?.message ?? error);
+    });
+  }
+  ctx.sendJson(ctx.response, 200, {
+    ok: true,
+    id: Number(documentId),
+    url: await signedDocumentUrl(uploaded.path),
+    storagePath: uploaded.path,
+    documentType: type,
+    uploadedVersion: Number(version ?? 1),
+  });
+}
+
+async function handleKtpOcr(ctx) {
+  if (ctx.request.method !== "POST") return adminError(ctx, 405, "Method tidak didukung.");
+  const data = await ocrKtp(ctx.form?.file);
+  ctx.sendJson(ctx.response, 200, { ok: true, data });
 }
 
 async function getOrganizationContext(user) {
@@ -1052,7 +1279,8 @@ export {
   handleAdminCustomers,
   handleAdminNotifications,
   handleOnboardingComplete,
-  handleOnboardingUploadUnavailable,
+  handleDocumentUpload,
+  handleKtpOcr,
   handleOrganizationMutation,
   handleOnboardingStatus,
   handleServiceOperations,

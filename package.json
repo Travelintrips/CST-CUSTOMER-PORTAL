@@ -5,14 +5,15 @@
   "type": "module",
   "scripts": {
     "dev": "bash start-dev.sh",
-    "api:dev": "node server/index.mjs",
+    "api:dev": "node server/load-secrets.mjs node server/index.mjs",
     "build": "node scripts/validate-translations.mjs && node scripts/build-vite.mjs && node scripts/prerender.mjs",
     "serve": "vite preview --config vite.config.ts --host 0.0.0.0",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "validate:i18n": "node scripts/validate-translations.mjs",
     "verify:assets": "node scripts/verify-assets.mjs",
     "test": "vitest run",
-    "test:portal:e2e": "node scripts/portal-auth-e2e.mjs"
+    "test:portal:e2e": "node scripts/portal-auth-e2e.mjs",
+    "test:portal:storage-e2e": "node scripts/portal-storage-e2e.mjs"
   },
   "devDependencies": {
     "@hookform/resolvers": "^5.2.2",
@@ -89,6 +90,7 @@
     "@dnd-kit/core": "^6.3.1",
     "@dnd-kit/sortable": "^10.0.0",
     "@dnd-kit/utilities": "^3.2.2",
+    "@google-cloud/secret-manager": "^7.1.0",
     "@supabase/supabase-js": "^2.105.4",
     "bcryptjs": "^3.0.3",
     "pg": "^8.23.0",

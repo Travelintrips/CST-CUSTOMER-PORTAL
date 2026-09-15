@@ -325,9 +325,12 @@ export default function OnboardingPage() {
         credentials: "include",
         body: fd,
       });
-      const json = await res.json() as { url?: string; error?: string };
-      if (!res.ok || !json.url) throw new Error(json.error ?? "Upload dokumen gagal.");
-      return json.url;
+      const json = await res.json() as { url?: string; storagePath?: string; message?: string; error?: string };
+      if (!res.ok || (!json.url && !json.storagePath)) {
+        throw new Error(json.error ?? json.message ?? "Upload dokumen gagal.");
+      }
+      // Persist the private storage path in the profile, not an expiring signed URL.
+      return json.storagePath ?? json.url ?? null;
     } catch (error) {
       throw error instanceof Error ? error : new Error("Upload dokumen gagal.");
     }
