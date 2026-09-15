@@ -22,6 +22,7 @@ import {
   handleAdminCustomers,
   handleAdminNotifications,
   handleOnboardingComplete,
+  handleOnboardingUploadUnavailable,
   handleOnboardingStatus,
   handleOrganizationMutation,
   handleServiceOperations,
@@ -1085,6 +1086,11 @@ async function route(request, response) {
       const body = ["POST", "PUT", "PATCH"].includes(request.method ?? "") ? await readJson(request) : {};
       await handleOnboardingComplete({ request, response, url, user, body, sendJson, sendError });
     }
+    return;
+  }
+  if (pathname === "/api/portal/onboarding/upload-doc" || pathname === "/api/portal/onboarding/ktp-ocr") {
+    const user = await requireUser(request, response);
+    if (user) await handleOnboardingUploadUnavailable({ request, response, url, user, sendJson, sendError });
     return;
   }
   if (pathname === "/api/customer-verification" || pathname.startsWith("/api/customer-verification/")) {

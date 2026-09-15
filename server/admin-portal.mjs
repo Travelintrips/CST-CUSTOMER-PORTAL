@@ -507,6 +507,14 @@ async function handleVerification(ctx) {
   return adminError(ctx, 404, "Route verification tidak tersedia.");
 }
 
+function handleOnboardingUploadUnavailable(ctx) {
+  return adminError(
+    ctx,
+    503,
+    "Upload dokumen belum tersedia di boundary development karena object storage backend belum dikonfigurasi.",
+  );
+}
+
 async function getOrganizationContext(user) {
   const [memberships, requests] = await Promise.all([
     query(
@@ -673,16 +681,26 @@ async function applyOrganizationSelection(user, body) {
     }
   }
 
-  await query(
-    `insert into public.portal_customer_profiles
-      (customer_id, company_name, profile_status, updated_at)
-     values ($1, $2, $3, now())
-     on conflict (customer_id) do update
-       set company_name = excluded.company_name,
-           profile_status = excluded.profile_status,
-           updated_at = now()`,
-    [user.id, company?.name ?? (requestedCompanyName || null), profileStatus],
+  const existingProfile = await query(
+    `select id from public.portal_customer_profiles
+      where customer_id = $1 order by updated_at desc nulls last, id desc limit 1`,
+    [user.id],
   );
+  if (existingProfile.rows[0]) {
+    await query(
+      `update public.portal_customer_profiles
+          set company_name = $1, profile_status = $2, updated_at = now()
+        where id = $3`,
+      [company?.name ?? (requestedCompanyName || null), profileStatus, existingProfile.rows[0].id],
+    );
+  } else {
+    await query(
+      `insert into public.portal_customer_profiles
+        (customer_id, company_name, profile_status, updated_at)
+       values ($1, $2, $3, now())`,
+      [user.id, company?.name ?? (requestedCompanyName || null), profileStatus],
+    );
+  }
   return getOrganizationContext({ ...user, customer_type: customerType, company: company?.name ?? requestedCompanyName ?? null });
 }
 
@@ -727,33 +745,44 @@ async function handleOnboardingComplete(ctx) {
       where id = $5`,
     [fullName, phone, customerType, profileCompanyName, ctx.user.id],
   );
-  await query(
-    `insert into public.portal_customer_profiles
-      (customer_id, company_name, company_address, pic_name, pic_whatsapp,
-       legal_doc_url, ktp_pic_url, additional_notes, profile_status, updated_at)
-     values ($1, $2, $3, $4, $5, $6, $7, $8, $9, now())
-     on conflict (customer_id) do update
-       set company_name = coalesce(excluded.company_name, portal_customer_profiles.company_name),
-           company_address = coalesce(excluded.company_address, portal_customer_profiles.company_address),
-           pic_name = coalesce(excluded.pic_name, portal_customer_profiles.pic_name),
-           pic_whatsapp = coalesce(excluded.pic_whatsapp, portal_customer_profiles.pic_whatsapp),
-           legal_doc_url = coalesce(excluded.legal_doc_url, portal_customer_profiles.legal_doc_url),
-           ktp_pic_url = coalesce(excluded.ktp_pic_url, portal_customer_profiles.ktp_pic_url),
-           additional_notes = coalesce(excluded.additional_notes, portal_customer_profiles.additional_notes),
-           profile_status = excluded.profile_status,
-           updated_at = now()`,
-    [
-      ctx.user.id,
-      profileCompanyName,
-      address,
-      fullName,
-      phone,
-      text(vendor.legalityDocUrl) || null,
-      text(body.ktpUrl) || null,
-      JSON.stringify({ accountType, driver, employee, ocrData: body.ocrData ?? null }),
-      profileStatus,
-    ],
+  const profileValues = [
+    profileCompanyName,
+    address,
+    fullName,
+    phone,
+    text(vendor.legalityDocUrl) || null,
+    text(body.ktpUrl) || null,
+    JSON.stringify({ accountType, driver, employee, ocrData: body.ocrData ?? null }),
+    profileStatus,
+  ];
+  const existingProfile = await query(
+    `select id from public.portal_customer_profiles
+      where customer_id = $1 order by updated_at desc nulls last, id desc limit 1`,
+    [ctx.user.id],
   );
+  if (existingProfile.rows[0]) {
+    await query(
+      `update public.portal_customer_profiles
+          set company_name = coalesce($1, company_name),
+              company_address = coalesce($2, company_address),
+              pic_name = coalesce($3, pic_name),
+              pic_whatsapp = coalesce($4, pic_whatsapp),
+              legal_doc_url = coalesce($5, legal_doc_url),
+              ktp_pic_url = coalesce($6, ktp_pic_url),
+              additional_notes = coalesce($7, additional_notes),
+              profile_status = $8, updated_at = now()
+        where id = $9`,
+      [...profileValues, existingProfile.rows[0].id],
+    );
+  } else {
+    await query(
+      `insert into public.portal_customer_profiles
+        (customer_id, company_name, company_address, pic_name, pic_whatsapp,
+         legal_doc_url, ktp_pic_url, additional_notes, profile_status, updated_at)
+       values ($1, $2, $3, $4, $5, $6, $7, $8, $9, now())`,
+      [ctx.user.id, ...profileValues],
+    );
+  }
 
   let organization = null;
   if (accountType === "customer") {
@@ -1023,6 +1052,7 @@ export {
   handleAdminCustomers,
   handleAdminNotifications,
   handleOnboardingComplete,
+  handleOnboardingUploadUnavailable,
   handleOrganizationMutation,
   handleOnboardingStatus,
   handleServiceOperations,

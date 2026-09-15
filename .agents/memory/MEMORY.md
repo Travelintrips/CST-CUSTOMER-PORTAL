@@ -8,3 +8,5 @@
 - [Preview API port routing](preview-api-port-routing.md) — in multi-port Replit previews, browser API calls must use the public API port rather than the main preview `/api` path.
 - [Secret workflow restart](secret-workflow-restart.md) — restart the API workflow after database secrets are added or changed so it receives the current environment.
 - [Local portal route boundary](local-portal-route-boundary.md) — authenticated business routes must stay local or use a reachable non-production upstream, never self-loop or fall back to production.
+- [Portal profile schema](portal-profile-schema.md) — customer profiles are not unique by customer_id; use deterministic lookup then update/insert.
+- [Portal upload boundary](portal-upload-boundary.md) — without local object storage, document uploads must fail closed instead of proxying to upstream production.

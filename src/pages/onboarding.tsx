@@ -326,8 +326,11 @@ export default function OnboardingPage() {
         body: fd,
       });
       const json = await res.json() as { url?: string; error?: string };
-      return json.url ?? null;
-    } catch { return null; }
+      if (!res.ok || !json.url) throw new Error(json.error ?? "Upload dokumen gagal.");
+      return json.url;
+    } catch (error) {
+      throw error instanceof Error ? error : new Error("Upload dokumen gagal.");
+    }
   }
 
   // ── Step navigation ──────────────────────────────────────────────────────────
