@@ -14,3 +14,9 @@ Development bundles must leave `VITE_API_PUBLIC_URL` empty so browser requests r
 **Why:** A stale public Pike origin bypassed the local API, causing CORS failures and making the catalog appear to be loading even though the local API was healthy.
 
 **How to apply:** Gate the browser-side API-origin injection on production and verify a development Marketplace request through port 5000 after restarting Vite.
+
+The local Vite proxy target and the standalone API's legacy-upstream target must be kept in separate environment variables. The launcher may point Vite at the local portal API while the API process forwards unmigrated routes to the shared CST API.
+
+**Why:** Reusing the development Vite target made the standalone API proxy requests back to `127.0.0.1:18444`, causing timeouts and recursive fetch failures instead of reaching the legacy API.
+
+**How to apply:** Preserve the original shared API URL before overriding `VITE_API_SERVER_URL` for the frontend, and have the API server read the preserved upstream variable first. Verify both anonymous and authenticated proxy requests.
