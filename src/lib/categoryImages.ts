@@ -1,8 +1,12 @@
 const BASE = "https://images.unsplash.com/photo-";
 const W = "?w=800&q=80&auto=format&fit=crop";
+import { supabasePublicAssetUrl } from "@/lib/supabaseStorage";
 
-// Local HD images bundled with the app (always available, no external dependency)
-const LOCAL = (path: string) => `/api/storage/public-objects/portal-assets/static/customer-portal/images/${path.replace(/\.(png|jpe?g)$/i, ".webp")}`;
+// Curated category images are served from Supabase Storage.
+const LOCAL = (path: string) =>
+  supabasePublicAssetUrl(
+    `portal-assets/static/customer-portal/images/${path.replace(/\.(png|jpe?g)$/i, ".webp")}`,
+  );
 
 // ── Product-specific images (exact product name match, case-insensitive) ─────
 const PRODUCT_SPECIFIC: Array<{ names: string[]; url: string }> = [

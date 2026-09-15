@@ -1,7 +1,8 @@
 import { COMPANY_CONFIG } from "@/config/company";
+import { staticAsset } from "@/lib/staticAssets";
 
 const BASE_URL = COMPANY_CONFIG.domain;
-const OG_IMAGE = `${BASE_URL}/api/storage/public-objects/portal-assets/static/customer-portal/images/og-cover.webp`;
+const OG_IMAGE = staticAsset("images/og-cover.webp");
 const OG_IMAGE_ALT =
   `${COMPANY_CONFIG.brandName} — Layanan ekspor impor, freight forwarding, dan logistik terpadu Indonesia`;
 const SITE_NAME = COMPANY_CONFIG.brandName;

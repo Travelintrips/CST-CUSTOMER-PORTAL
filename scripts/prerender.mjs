@@ -49,7 +49,10 @@ function replaceMarker(html, markerName, replacement) {
 // ── SEO Config (mirrors src/config/seo.ts exactly) ──────────────────────────
 
 const BASE_URL    = 'https://cstlogistic.co.id';
-const OG_IMAGE    = `${BASE_URL}/api/storage/public-objects/portal-assets/static/customer-portal/images/og-cover.webp`;
+const SUPABASE_ORIGIN = String(process.env.VITE_SUPABASE_URL ?? '').replace(/\/+$/, '');
+const OG_IMAGE    = SUPABASE_ORIGIN
+  ? `${SUPABASE_ORIGIN}/storage/v1/object/public/public-assets/portal-assets/static/customer-portal/images/og-cover.webp`
+  : '';
 const OG_IMG_ALT  = 'B2B Marketplace and Logistic — Layanan ekspor impor, freight forwarding, dan logistik terpadu Indonesia';
 const SITE_NAME   = 'B2B Marketplace and Logistic';
 

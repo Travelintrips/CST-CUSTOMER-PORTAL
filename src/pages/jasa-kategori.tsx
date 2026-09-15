@@ -10,6 +10,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { resolveImageUrl } from "@/lib/utils";
+import { staticAsset } from "@/lib/staticAssets";
 import { getServiceFallbackImage } from "@/lib/categoryImages";
 import { useListPortalServices } from "@shared/api-client-react";
 import { useLanguage } from "@/i18n/LanguageContext";
@@ -328,7 +329,7 @@ export default function JasaKategori() {
     return 0;
   });
 
-  const heroBg = CAT_PHOTOS[categoryId ?? ""] ?? "/api/storage/public-objects/portal-assets/static/customer-portal/images/port-operations.webp";
+  const heroBg = CAT_PHOTOS[categoryId ?? ""] ?? staticAsset("images/port-operations.webp");
 
   if (!cat) {
     return (

@@ -509,7 +509,7 @@ function ProductModal({ product, onClose }: { product: Product; onClose: () => v
 }
 
 // ── Product hero background — swap this path to change the image ───────────
-const PRODUCT_HERO_BG = "/api/storage/public-objects/portal-assets/static/customer-portal/images/product-hero-brand.webp";
+const PRODUCT_HERO_BG = staticAsset("images/product-hero-brand.webp");
 
 // ── Main page ──────────────────────────────────────────────────────────────
 export default function Products() {

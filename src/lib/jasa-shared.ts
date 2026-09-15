@@ -1,3 +1,5 @@
+import { supabasePublicAssetUrl } from "@/lib/supabaseStorage";
+
 export interface ServiceHubItem {
   source: "vendor_catalog_item" | "product";
   id: number;
@@ -28,8 +30,10 @@ export const CATEGORY_PLACEHOLDER: Record<string, { emoji: string; from: string;
   exim_service:{ emoji: "🌍", from: "#1a4a4a", to: "#2a7070" },
 };
 
-const SB = "/api/storage/public-objects/portal-assets/static/customer-portal/images";
-const image = (path: string) => `${SB}/${path.replace(/\.(png|jpe?g)$/i, ".webp")}`;
+const image = (path: string) =>
+  supabasePublicAssetUrl(
+    `portal-assets/static/customer-portal/images/${path.replace(/\.(png|jpe?g)$/i, ".webp")}`,
+  );
 
 export const SERVICE_PHOTOS: Record<string, string> = {
   "Sea Freight":             image("sea-freight.png"),

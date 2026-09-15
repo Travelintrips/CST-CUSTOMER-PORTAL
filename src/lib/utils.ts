@@ -1,5 +1,6 @@
 import { clsx, type ClassValue } from "clsx"
 import { twMerge } from "tailwind-merge"
+import { supabasePublicAssetUrl } from "@/lib/supabaseStorage";
 
 export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs))
@@ -18,16 +19,11 @@ export function assetUrl(path: string): string {
   return `${BASE}${path}`;
 }
 
-const CANONICAL_PORTAL_ASSET_ROOT =
-  "/api/storage/public-objects/portal-assets/";
+const CANONICAL_PORTAL_ASSET_ROOT = "/api/storage/public-objects/portal-assets/";
 const PORTAL_ASSET_PATH_PREFIX =
   "/api/storage/public-objects/portal-assets";
 const CANONICAL_CUSTOMER_IMAGE_ROOT =
   `${CANONICAL_PORTAL_ASSET_ROOT}static/customer-portal/images/`;
-const SUPABASE_ORIGIN = (import.meta.env.VITE_SUPABASE_URL ?? "").replace(/\/+$/, "");
-const SUPABASE_PUBLIC_ASSET_ROOT = SUPABASE_ORIGIN
-  ? `${SUPABASE_ORIGIN}/storage/v1/object/public/public-assets/`
-  : null;
 const LEGACY_OBJECT_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 export interface ResolveImageUrlOptions {
@@ -65,7 +61,7 @@ export interface ResolveImageUrlOptions {
   ) {
     return null;
   }
-  if (trimmed.startsWith("/objects/")) return `/api/storage${trimmed}`;
+   if (trimmed.startsWith("/objects/")) return null;
 
   // Reject malformed legacy object paths before they can be rewritten into
   // an invalid public-object URL. Valid portal asset paths must include the
@@ -105,9 +101,7 @@ export interface ResolveImageUrlOptions {
     if (LEGACY_OBJECT_ID.test(objectKey)) {
       return options.allowLegacyObjectId ? trimmed : null;
     }
-    return SUPABASE_PUBLIC_ASSET_ROOT
-      ? `${SUPABASE_PUBLIC_ASSET_ROOT}portal-assets/${objectKey}`
-      : trimmed;
+    return supabasePublicAssetUrl(`portal-assets/${objectKey}`) || null;
   }
 
   // Legacy CMS values and old hard-coded paths all resolve to the same
@@ -124,9 +118,7 @@ export interface ResolveImageUrlOptions {
       const relative = trimmed.slice(prefix.length);
       if (!relative || relative.split("/").some((part) => part === "." || part === ".." || part.includes("\\"))) return null;
       const canonicalKey = `portal-assets/static/customer-portal/images/${relative}`;
-      return SUPABASE_PUBLIC_ASSET_ROOT
-        ? `${SUPABASE_PUBLIC_ASSET_ROOT}${canonicalKey}`
-        : `${CANONICAL_CUSTOMER_IMAGE_ROOT}${relative}`;
+      return supabasePublicAssetUrl(canonicalKey) || null;
     }
   }
   return trimmed;
