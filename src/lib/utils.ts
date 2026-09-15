@@ -22,14 +22,12 @@ export function assetUrl(path: string): string {
 const CANONICAL_PORTAL_ASSET_ROOT = "/api/storage/public-objects/portal-assets/";
 const PORTAL_ASSET_PATH_PREFIX =
   "/api/storage/public-objects/portal-assets";
-const CANONICAL_CUSTOMER_IMAGE_ROOT =
-  `${CANONICAL_PORTAL_ASSET_ROOT}static/customer-portal/images/`;
 const LEGACY_OBJECT_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 export interface ResolveImageUrlOptions {
   /**
-   * Narrow compatibility escape hatch for a CMS record whose extensionless
-   * UUID has been verified to point at a real public image object.
+   * Retained for source compatibility with older callers. UUID-only legacy
+   * object paths cannot be resolved without a Supabase Storage object key.
    */
   allowLegacyObjectId?: boolean;
 }
@@ -98,9 +96,7 @@ export interface ResolveImageUrlOptions {
     ) {
       return null;
     }
-    if (LEGACY_OBJECT_ID.test(objectKey)) {
-      return options.allowLegacyObjectId ? trimmed : null;
-    }
+    if (LEGACY_OBJECT_ID.test(objectKey)) return null;
     return supabasePublicAssetUrl(`portal-assets/${objectKey}`) || null;
   }
 

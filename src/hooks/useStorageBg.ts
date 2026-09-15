@@ -4,7 +4,7 @@
  * of silently falling back to a repository-local image.
  *
  * Usage:
- *   const bg = useStorageBg("/api/storage/public-objects/portal/images/warehouse.png");
+ *   const bg = useStorageBg("/portal/images/warehouse.png");
  *   <div style={{ backgroundImage: bg }} />
  */
 import { useEffect, useState } from "react";

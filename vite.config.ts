@@ -8,7 +8,13 @@ const port = Number(process.env.PORT ?? "3000");
 
 const basePath = process.env.BASE_PATH ?? "/";
 const apiServerUrl = process.env.VITE_API_SERVER_URL ?? process.env.API_SERVER_URL ?? "http://127.0.0.1:18444";
-const browserApiUrl = process.env.VITE_API_PUBLIC_URL ?? "";
+// Development must keep browser requests relative so Vite proxies them to the
+// local Customer Portal API. A public API origin is only meaningful for a
+// production bundle served without the local proxy.
+const browserApiUrl =
+  process.env.NODE_ENV === "production"
+    ? (process.env.VITE_API_PUBLIC_URL ?? "")
+    : "";
 
 export default defineConfig({
   base: basePath,

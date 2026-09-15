@@ -3,7 +3,7 @@
  * jika Supabase Storage belum terkoneksi (404 / network error).
  *
  * Pattern:
- *   /api/storage/public-objects/portal-assets/static/customer-portal/X
+ *   https://<project>.supabase.co/storage/v1/object/public/public-assets/portal-assets/static/customer-portal/X
  *
  * Storage tetap di Supabase; fallback hanya tampil saat storage tidak tersedia.
  */
