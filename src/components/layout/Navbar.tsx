@@ -834,6 +834,7 @@ export function Navbar() {
                       }`}
                       style={{ border: "1px solid rgba(14,165,233,0.3)" }}
                       aria-haspopup="menu"
+                      onClick={() => setLocation("/kalkulator-impor")}
                     >
                       <Calculator className="h-3.5 w-3.5 shrink-0" />
                       {t("nav.hsCode")}
@@ -1033,6 +1034,7 @@ export function Navbar() {
                         : "bg-sky-50 text-sky-700 hover:bg-sky-100 hover:text-sky-800"
                     }`}
                     style={{ border: "1px solid rgba(14,165,233,0.3)" }}
+                    onClick={() => setLocation("/kalkulator-impor")}
                   >
                     <Calculator className="h-3.5 w-3.5 shrink-0" />
                     {t("nav.hsCode")}
