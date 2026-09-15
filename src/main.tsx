@@ -4,6 +4,30 @@ import { HelmetProvider } from "@/lib/helmet-stub";
 import App from "./App";
 import "./index.css";
 
+// The Replit preview page is served on external port 80 while the API is
+// exposed on external port 3000. Rewrite browser-side relative API requests
+// to that same-host API origin; local Vite requests continue to use /api.
+if (typeof window !== "undefined" && import.meta.env.VITE_API_PUBLIC_URL) {
+  const apiOrigin = import.meta.env.VITE_API_PUBLIC_URL.replace(/\/+$/, "");
+  const nativeFetch = window.fetch.bind(window);
+  window.fetch = (input, init) => {
+    const rawUrl = typeof input === "string"
+      ? input
+      : input instanceof Request
+        ? input.url
+        : String(input);
+    const parsedUrl = new URL(rawUrl, window.location.href);
+    const isLocalApiRequest =
+      parsedUrl.pathname.startsWith("/api/") &&
+      (rawUrl.startsWith("/") || parsedUrl.origin === window.location.origin);
+    if (!isLocalApiRequest) return nativeFetch(input, init);
+
+    const target = `${apiOrigin}${parsedUrl.pathname}${parsedUrl.search}`;
+    if (input instanceof Request) return nativeFetch(new Request(target, input), init);
+    return nativeFetch(target, init);
+  };
+}
+
 // ── Global error capture (catches module-level throws and unhandled rejections)
 if (typeof window !== "undefined") {
   window.onerror = (msg, src, line, col, err) => {

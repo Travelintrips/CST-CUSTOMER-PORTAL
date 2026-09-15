@@ -13,6 +13,7 @@ const HERO_ASSET_DEV_FALLBACK_ORIGIN = process.env.CUSTOMER_PORTAL_HERO_ASSET_OR
 const BRAND_LOGO_ASSET_DEV_FALLBACK_ORIGIN = process.env.CUSTOMER_PORTAL_BRAND_ASSET_ORIGIN ?? "https://cstlogistic.co.id";
 const PORTAL_ASSET_DEV_FALLBACK_ORIGIN = process.env.CUSTOMER_PORTAL_ASSET_ORIGIN ?? "https://cstlogistic.co.id";
 const apiServerUrl = process.env.VITE_API_SERVER_URL ?? process.env.API_SERVER_URL ?? "http://127.0.0.1:18444";
+const browserApiUrl = process.env.VITE_API_PUBLIC_URL ?? "";
 const PUBLIC_ASSET_CDN_ORIGIN = (
   process.env.VITE_SUPABASE_URL ??
   process.env.SUPABASE_URL ??
@@ -35,6 +36,7 @@ export default defineConfig({
     "import.meta.env.VITE_SUPABASE_URL_DEV": JSON.stringify(process.env.VITE_SUPABASE_URL_DEV ?? process.env.SUPABASE_URL_DEV ?? ""),
     "import.meta.env.VITE_SUPABASE_ANON_KEY_DEV": JSON.stringify(process.env.VITE_SUPABASE_ANON_KEY_DEV ?? process.env.SUPABASE_ANON_KEY_DEV ?? ""),
     "import.meta.env.VITE_REPLIT_DEV_DOMAIN": JSON.stringify(process.env.REPLIT_DEV_DOMAIN ?? ""),
+    "import.meta.env.VITE_API_PUBLIC_URL": JSON.stringify(browserApiUrl),
     "import.meta.env.VITE_GOOGLE_MAPS_API_KEY": JSON.stringify(process.env.GOOGLE_MAPS_API_KEY ?? ""),
     // External map/routing service URLs — override via env var in production
     "import.meta.env.VITE_OSRM_URL": JSON.stringify(

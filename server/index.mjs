@@ -20,6 +20,22 @@ const PORT = Number(process.env.CUSTOMER_PORTAL_API_PORT ?? 18444);
 const APP_ENV = process.env.APP_ENV ?? process.env.NODE_ENV ?? "development";
 const IS_PRODUCTION = APP_ENV === "production" || process.env.NODE_ENV === "production";
 const MAX_BODY_BYTES = 2 * 1024 * 1024;
+const UPSTREAM_API_URL = (
+  process.env.VITE_API_SERVER_URL_DEV ??
+  process.env.VITE_API_SERVER_URL ??
+  ""
+).replace(/\/+$/, "");
+
+const HOP_BY_HOP_HEADERS = new Set([
+  "connection",
+  "keep-alive",
+  "proxy-authenticate",
+  "proxy-authorization",
+  "te",
+  "trailer",
+  "transfer-encoding",
+  "upgrade",
+]);
 
 function sendJson(response, status, value, headers = {}) {
   const body = JSON.stringify(value);
@@ -43,6 +59,66 @@ function sendEmpty(response, status, headers = {}) {
 
 function sendError(response, status, message) {
   sendJson(response, status, { message });
+}
+
+function corsHeaders(request) {
+  const origin = request.headers.origin;
+  return origin
+    ? {
+        "Access-Control-Allow-Origin": origin,
+        "Access-Control-Allow-Credentials": "true",
+        Vary: "Origin",
+      }
+    : {};
+}
+
+async function readRawBody(request) {
+  const chunks = [];
+  let length = 0;
+  for await (const chunk of request) {
+    length += chunk.length;
+    if (length > MAX_BODY_BYTES) {
+      const error = new Error("Request body is too large.");
+      error.statusCode = 413;
+      throw error;
+    }
+    chunks.push(chunk);
+  }
+  return chunks.length ? Buffer.concat(chunks) : undefined;
+}
+
+async function proxyToUpstream(request, response) {
+  const incomingUrl = new URL(request.url ?? "/", `http://${request.headers.host ?? "localhost"}`);
+  const upstreamUrl = new URL(`${incomingUrl.pathname}${incomingUrl.search}`, `${UPSTREAM_API_URL}/`);
+  const headers = new Headers();
+
+  for (const [name, value] of Object.entries(request.headers)) {
+    if (HOP_BY_HOP_HEADERS.has(name) || name === "host" || name === "content-length") continue;
+    headers.set(name, Array.isArray(value) ? value.join(", ") : value ?? "");
+  }
+
+  const body = ["GET", "HEAD"].includes(request.method ?? "GET")
+    ? undefined
+    : await readRawBody(request);
+  const upstreamResponse = await fetch(upstreamUrl, {
+    method: request.method,
+    headers,
+    body,
+    redirect: "manual",
+  });
+
+  const responseHeaders = { ...corsHeaders(request) };
+  for (const [name, value] of upstreamResponse.headers) {
+    if (HOP_BY_HOP_HEADERS.has(name) || name === "set-cookie") continue;
+    responseHeaders[name] = value;
+  }
+  const setCookies = typeof upstreamResponse.headers.getSetCookie === "function"
+    ? upstreamResponse.headers.getSetCookie()
+    : [];
+  if (setCookies.length) responseHeaders["Set-Cookie"] = setCookies;
+
+  response.writeHead(upstreamResponse.status, responseHeaders);
+  response.end(Buffer.from(await upstreamResponse.arrayBuffer()));
 }
 
 async function readJson(request) {
@@ -129,7 +205,14 @@ function authResponse(user, token) {
 function bootstrapResponse(user, requestedReturnTo) {
   const onboardingStatus = user.account_status ?? "active";
   const onboardingComplete = onboardingStatus === "active";
-  const allowedDestination = onboardingComplete ? safeReturnTo(requestedReturnTo) ?? "/" : "/onboarding";
+  const defaultDestination = user.role === "admin"
+    ? "/admin"
+    : user.role === "vendor"
+      ? "/vendor-dashboard"
+      : "/dashboard";
+  const allowedDestination = onboardingComplete
+    ? safeReturnTo(requestedReturn) ?? defaultDestination
+    : "/onboarding";
 
   return {
     authenticated: true,
@@ -590,6 +673,9 @@ async function handleMarketplaceCategories(response) {
 async function route(request, response) {
   const url = new URL(request.url ?? "/", `http://${request.headers.host ?? "localhost"}`);
   const { pathname } = url;
+  for (const [name, value] of Object.entries(corsHeaders(request))) {
+    response.setHeader(name, value);
+  }
 
   if (request.method === "GET" && pathname === "/api/healthz") {
     await handleHealth(response);
@@ -601,6 +687,7 @@ async function route(request, response) {
       "Access-Control-Allow-Credentials": "true",
       "Access-Control-Allow-Headers": "Content-Type, Authorization",
       "Access-Control-Allow-Methods": "GET,POST,OPTIONS",
+      ...corsHeaders(request),
     });
     return;
   }
@@ -681,6 +768,14 @@ async function route(request, response) {
   }
   if (request.method === "GET" && pathname === "/api/marketplace/categories") {
     await handleMarketplaceCategories(response);
+    return;
+  }
+
+  // Public Replit preview traffic reaches this service on external port 3000.
+  // Keep the standalone auth/session routes above authoritative, then proxy
+  // the rest of the API surface to the development CST API when available.
+  if (UPSTREAM_API_URL && pathname.startsWith("/api/")) {
+    await proxyToUpstream(request, response);
     return;
   }
 

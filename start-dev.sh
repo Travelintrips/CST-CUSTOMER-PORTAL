@@ -7,6 +7,12 @@ export PORT="${PORT:-5000}"
 # Keep VITE_API_SERVER_URL as the production/shared fallback so published
 # builds are not accidentally pointed at a dev API.
 export VITE_API_SERVER_URL="${VITE_API_SERVER_URL_DEV:-${VITE_API_SERVER_URL:-${API_SERVER_URL:-http://127.0.0.1:18444}}}"
+# Replit exposes the customer portal API on external port 3000. The preview
+# page itself is served on external port 80, where /api is not routed through
+# Vite by the Replit edge proxy.
+if [[ -n "${REPLIT_DEV_DOMAIN:-}" ]]; then
+  export VITE_API_PUBLIC_URL="https://${REPLIT_DEV_DOMAIN}:3000"
+fi
 echo "[portal] Starting standalone portal on :${PORT}"
 if [[ -n "${VITE_API_SERVER_URL:-}" ]]; then
   echo "[portal] API proxy target configured"
