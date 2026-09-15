@@ -11,7 +11,8 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "validate:i18n": "node scripts/validate-translations.mjs",
     "verify:assets": "node scripts/verify-assets.mjs",
-    "test": "vitest run"
+    "test": "vitest run",
+    "test:portal:e2e": "node scripts/portal-auth-e2e.mjs"
   },
   "devDependencies": {
     "@hookform/resolvers": "^5.2.2",
