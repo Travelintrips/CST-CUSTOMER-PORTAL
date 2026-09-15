@@ -374,6 +374,203 @@ async function handleServices(response) {
   });
 }
 
+function parseJson(value, fallback) {
+  if (value == null) return fallback;
+  if (typeof value !== "string") return value;
+  try {
+    return JSON.parse(value);
+  } catch {
+    return fallback;
+  }
+}
+
+function catalogCategory(row) {
+  if (row.category_key) return String(row.category_key).toLowerCase();
+  const value = `${row.kategori ?? ""} ${row.subcategory ?? ""} ${row.name ?? ""}`.toLowerCase();
+  const aliases = [
+    ["coffee", ["coffee", "kopi", "arabica", "gayo"]],
+    ["furniture", ["furniture", "kursi", "meja"]],
+    ["sea_freight", ["sea freight", "ocean freight", "freight laut", "fcl", "lcl"]],
+    ["air_freight", ["air freight", "freight udara", "cargo udara"]],
+    ["fresh_vegetable", ["sayuran", "bawang", "cabai"]],
+    ["rice", ["beras", "rice"]],
+    ["frozen_food", ["frozen"]],
+  ];
+  return aliases.find(([, terms]) => terms.some((term) => value.includes(term)))?.[0] ?? null;
+}
+
+function mediaFromRow(row) {
+  const raw = parseJson(row.media_assets, []);
+  const assets = Array.isArray(raw) ? raw : [];
+  const media = assets
+    .filter((asset) => asset && typeof asset.url === "string" && asset.url.trim())
+    .map((asset, index) => ({
+      id: index + 1,
+      vendorCatalogItemId: row.id,
+      vendorId: row.vendor_id ?? null,
+      mediaType: asset.type === "video" ? "video" : "image",
+      fileUrl: asset.url,
+      thumbnailUrl: asset.thumbnailUrl ?? null,
+      externalUrl: asset.externalUrl ?? null,
+      title: asset.title ?? null,
+      description: asset.description ?? null,
+      sortOrder: Number(asset.sortOrder ?? index),
+      isPrimary: Boolean(asset.isPrimary) || index === 0,
+      isActive: true,
+      visibility: asset.visibility ?? "public",
+      originalFilename: asset.originalFilename ?? null,
+    }));
+  const primary = media.find((asset) => asset.mediaType === "image" && asset.isPrimary)
+    ?? media.find((asset) => asset.mediaType === "image")
+    ?? null;
+  return {
+    media,
+    primaryImageUrl: primary?.fileUrl ?? null,
+    hasVideo: media.some((asset) => asset.mediaType === "video"),
+  };
+}
+
+function mapCatalogItem(row) {
+  const media = mediaFromRow(row);
+  return {
+    id: row.id,
+    vendorId: Number(row.vendor_id ?? 0),
+    vendorName: row.vendor_name ?? null,
+    templateKind: row.template_kind ?? row.type ?? null,
+    categoryKey: catalogCategory(row),
+    serviceType: row.service_type ?? null,
+    templateId: row.template_id ?? null,
+    templateSnapshot: parseJson(row.template_snapshot, null),
+    name: row.name,
+    description: row.description || null,
+    kategori: row.kategori ?? null,
+    subcategory: row.subcategory ?? null,
+    specValues: parseJson(row.spec_values, null),
+    priceSell: row.price_sell == null ? null : Number(row.price_sell),
+    currency: row.currency ?? "IDR",
+    unit: row.unit ?? null,
+    moq: row.moq == null ? null : Number(row.moq),
+    stockStatus: row.stock_status ?? null,
+    stockQty: row.stock_qty == null ? null : Number(row.stock_qty),
+    leadTime: row.lead_time ?? null,
+    location: row.location ?? null,
+    origin: row.origin ?? null,
+    validityDate: row.validity_date ?? null,
+    isFeatured: Boolean(row.is_featured),
+    documents: parseJson(row.documents, []),
+    publishedAt: row.published_at ?? null,
+    sortOrder: Number(row.sort_order ?? 0),
+    media: media.media,
+    primaryImageUrl: media.primaryImageUrl,
+    hasVideo: media.hasVideo,
+  };
+}
+
+async function getPublishedCatalogItems() {
+  const result = await query(
+    `select id, vendor_id, vendor_name, type, name, description, unit, kategori, subcategory,
+            template_kind, category_key, service_type, template_id, template_snapshot,
+            spec_values, price_sell, currency, stock_status, stock_qty, moq, lead_time,
+            validity_date, location, origin, documents, published_at, sort_order,
+            media_assets, is_featured, featured_until
+       from public.vendor_catalog_items
+      where type = 'product'
+        and is_active = true
+        and is_published = true
+        and status = 'published'
+      order by sort_order asc, published_at desc nulls last, id desc`,
+  );
+  return result.rows;
+}
+
+async function handlePublicProducts(response) {
+  const result = await query(
+    `select id, name, description, price, unit, unit_options, subcategory,
+            image_url, media_items, item_type, weight_kg, length_cm, width_cm,
+            height_cm, goods_type, currency_code
+       from public.products
+      where is_active = true and item_type <> 'jasa'
+      order by id`,
+  );
+  sendJson(response, 200, result.rows.map((row) => {
+    const mediaItems = parseJson(row.media_items, []);
+    return {
+      id: row.id,
+      name: row.name,
+      description: row.description ?? null,
+      price: Number(row.price ?? 0),
+      unit: row.unit ?? "pcs",
+      unitOptions: Array.isArray(parseJson(row.unit_options, [])) ? parseJson(row.unit_options, []) : [],
+      subcategory: row.subcategory ?? null,
+      imageUrl: row.image_url ?? null,
+      mediaItems: Array.isArray(mediaItems) ? mediaItems : [],
+      categories: [row.subcategory, row.item_type].filter(Boolean),
+      weightKg: row.weight_kg == null ? null : Number(row.weight_kg),
+      lengthCm: row.length_cm == null ? null : Number(row.length_cm),
+      widthCm: row.width_cm == null ? null : Number(row.width_cm),
+      heightCm: row.height_cm == null ? null : Number(row.height_cm),
+      goodsType: row.goods_type ?? null,
+      currencyCode: row.currency_code ?? "IDR",
+    };
+  }));
+}
+
+async function handleMarketplace(response, url) {
+  const search = (url.searchParams.get("q") ?? "").trim().toLowerCase();
+  const category = (url.searchParams.get("category") ?? "").trim().toLowerCase();
+  const rows = await getPublishedCatalogItems();
+  const items = rows
+    .map(mapCatalogItem)
+    .filter((item) => {
+      if (category && category !== "all" && item.categoryKey !== category) return false;
+      if (!search) return true;
+      return `${item.name} ${item.description ?? ""} ${item.kategori ?? ""} ${item.subcategory ?? ""}`
+        .toLowerCase()
+        .includes(search);
+    });
+  sendJson(response, 200, items);
+}
+
+async function handleMarketplaceFeatured(response, url) {
+  const limit = Math.min(Math.max(Number(url.searchParams.get("limit") ?? 6), 1), 24);
+  const rows = await getPublishedCatalogItems();
+  const items = rows
+    .filter((row) => row.is_featured)
+    .slice(0, limit)
+    .map((row) => ({
+      id: row.id,
+      vendorId: Number(row.vendor_id ?? 0),
+      vendorName: row.vendor_name ?? null,
+      name: row.name,
+      isFeatured: true,
+    }));
+  sendJson(response, 200, items);
+}
+
+async function handleMarketplaceStats(response) {
+  const result = await query(
+    `select count(*)::int as item_count,
+            count(distinct vendor_id)::int as vendor_count,
+            count(distinct coalesce(category_key, kategori))::int as category_count
+       from public.vendor_catalog_items
+      where type = 'product'
+        and is_active = true
+        and is_published = true
+        and status = 'published'`,
+  );
+  const row = result.rows[0] ?? {};
+  sendJson(response, 200, {
+    itemCount: Number(row.item_count ?? 0),
+    vendorCount: Number(row.vendor_count ?? 0),
+    categoryCount: Number(row.category_count ?? 0),
+  });
+}
+
+async function handleMarketplaceCategories(response) {
+  const rows = await getPublishedCatalogItems();
+  sendJson(response, 200, [...new Set(rows.map(catalogCategory).filter(Boolean))]);
+}
+
 async function route(request, response) {
   const url = new URL(request.url ?? "/", `http://${request.headers.host ?? "localhost"}`);
   const { pathname } = url;
@@ -440,6 +637,26 @@ async function route(request, response) {
   }
   if (request.method === "GET" && pathname === "/api/portal/services") {
     await handleServices(response);
+    return;
+  }
+  if (request.method === "GET" && pathname === "/api/portal/products") {
+    await handlePublicProducts(response);
+    return;
+  }
+  if (request.method === "GET" && pathname === "/api/portal/marketplace") {
+    await handleMarketplace(response, url);
+    return;
+  }
+  if (request.method === "GET" && pathname === "/api/portal/marketplace/featured") {
+    await handleMarketplaceFeatured(response, url);
+    return;
+  }
+  if (request.method === "GET" && pathname === "/api/portal/marketplace/stats") {
+    await handleMarketplaceStats(response);
+    return;
+  }
+  if (request.method === "GET" && pathname === "/api/marketplace/categories") {
+    await handleMarketplaceCategories(response);
     return;
   }
 
