@@ -1,5 +1,6 @@
 import crypto from "node:crypto";
 import { createClient } from "@supabase/supabase-js";
+import WebSocket from "ws";
 
 const MAX_FILE_BYTES = 5 * 1024 * 1024;
 const SIGNED_URL_TTL_SECONDS = 5 * 60;
@@ -44,6 +45,7 @@ function client() {
     ...config,
     supabase: createClient(config.url, config.serviceRoleKey, {
       auth: { autoRefreshToken: false, persistSession: false, detectSessionInUrl: false },
+      realtime: { transport: WebSocket },
     }),
   };
 }
