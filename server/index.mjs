@@ -351,6 +351,22 @@ async function handleNotificationEvents(request, response) {
   request.on("close", () => clearInterval(heartbeat));
 }
 
+function handlePublicEvents(request, response) {
+  response.writeHead(200, {
+    "Content-Type": "text/event-stream",
+    "Cache-Control": "no-cache, no-transform",
+    Connection: "keep-alive",
+    "X-Accel-Buffering": "no",
+  });
+  response.write(`event: connected\ndata: ${JSON.stringify({ service: "customer-portal-api" })}\n\n`);
+  const heartbeat = setInterval(() => response.write(": heartbeat\n\n"), 20_000);
+  request.on("close", () => clearInterval(heartbeat));
+}
+
+function handleUsdIdrRate(response) {
+  sendJson(response, 200, { rate: 16_300, source: "customer-portal-default" });
+}
+
 async function handleServices(response) {
   const result = await query(
     `select id, service_code, service_name, category, description, base_price,
@@ -622,6 +638,14 @@ async function route(request, response) {
   }
   if (request.method === "GET" && pathname === "/api/portal/notifications/events") {
     await handleNotificationEvents(request, response);
+    return;
+  }
+  if (request.method === "GET" && pathname === "/api/ecommerce/events") {
+    handlePublicEvents(request, response);
+    return;
+  }
+  if (request.method === "GET" && pathname === "/api/ecommerce/usd-idr-rate") {
+    handleUsdIdrRate(response);
     return;
   }
   if (request.method === "POST" && pathname === "/api/portal/notifications/read-all") {
