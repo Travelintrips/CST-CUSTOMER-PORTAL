@@ -1,11 +1,6 @@
-const STORAGE_PATH = "/portal-assets/static/customer-portal";
-const SUPABASE_ORIGIN = (import.meta.env.VITE_SUPABASE_URL ?? "").replace(/\/+$/, "");
-// Public branding/content assets live in the public-assets bucket. Use the
-// configured Supabase CDN directly so preview does not depend on an old
-// cstlogistic.co.id deployment or a development API bucket that may be empty.
-const STORAGE_ROOT = SUPABASE_ORIGIN
-  ? `${SUPABASE_ORIGIN}/storage/v1/object/public/public-assets${STORAGE_PATH}`
-  : `/api/storage/public-objects${STORAGE_PATH}`;
+import { supabasePublicAssetUrl } from "@/lib/supabaseStorage";
+
+const STORAGE_PATH = "portal-assets/static/customer-portal";
 const PNG_ONLY_ASSETS = new Set(["images/logo.png", "images/logo-baru.png"]);
 
 export function staticAsset(path: string): string {
@@ -14,9 +9,11 @@ export function staticAsset(path: string): string {
   // assets on their published format; other raster assets use their derived
   // WebP object from the release pipeline.
   if (PNG_ONLY_ASSETS.has(normalized)) {
-    return `${STORAGE_ROOT}/${normalized}`;
+    return supabasePublicAssetUrl(`${STORAGE_PATH}/${normalized}`);
   }
-  return `${STORAGE_ROOT}/${normalized.replace(/\.(png|jpe?g)$/i, ".webp")}`;
+  return supabasePublicAssetUrl(
+    `${STORAGE_PATH}/${normalized.replace(/\.(png|jpe?g)$/i, ".webp")}`,
+  );
 }
 
 export const CUSTOMER_ASSETS = {

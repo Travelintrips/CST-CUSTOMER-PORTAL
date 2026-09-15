@@ -7,18 +7,8 @@ import runtimeErrorOverlay from "@replit/vite-plugin-runtime-error-modal";
 const port = Number(process.env.PORT ?? "3000");
 
 const basePath = process.env.BASE_PATH ?? "/";
-const HERO_ASSET_PATH = "/api/storage/public-objects/portal-assets/static/customer-portal/images/hero-bg.webp";
-const BRAND_LOGO_ASSET_PATH = "/api/storage/public-objects/portal-assets/static/customer-portal/images/logo.png";
-const HERO_ASSET_DEV_FALLBACK_ORIGIN = process.env.CUSTOMER_PORTAL_HERO_ASSET_ORIGIN ?? "https://cstlogistic.co.id";
-const BRAND_LOGO_ASSET_DEV_FALLBACK_ORIGIN = process.env.CUSTOMER_PORTAL_BRAND_ASSET_ORIGIN ?? "https://cstlogistic.co.id";
-const PORTAL_ASSET_DEV_FALLBACK_ORIGIN = process.env.CUSTOMER_PORTAL_ASSET_ORIGIN ?? "https://cstlogistic.co.id";
 const apiServerUrl = process.env.VITE_API_SERVER_URL ?? process.env.API_SERVER_URL ?? "http://127.0.0.1:18444";
 const browserApiUrl = process.env.VITE_API_PUBLIC_URL ?? "";
-const PUBLIC_ASSET_CDN_ORIGIN = (
-  process.env.VITE_SUPABASE_URL ??
-  process.env.SUPABASE_URL ??
-  ""
-).replace(/\/+$/, "");
 
 export default defineConfig({
   base: basePath,
@@ -137,59 +127,11 @@ export default defineConfig({
     },
     hmr: false,
     proxy: {
-      // Keep relative storage URLs working in preview while reading the
-      // canonical public-assets bucket. This also covers DB-backed images
-      // resolved to /api/storage/public-objects/... URLs.
-      ...(process.env.NODE_ENV !== "production" && (PUBLIC_ASSET_CDN_ORIGIN || PORTAL_ASSET_DEV_FALLBACK_ORIGIN)
-        ? {
-            "/api/storage/public-objects": {
-              target: PUBLIC_ASSET_CDN_ORIGIN || PORTAL_ASSET_DEV_FALLBACK_ORIGIN,
-              changeOrigin: true,
-              secure: true,
-              rewrite: (path) =>
-                PUBLIC_ASSET_CDN_ORIGIN
-                  ? path.replace(
-                      /^\/api\/storage\/public-objects/,
-                      "/storage/v1/object/public/public-assets",
-                    )
-                  : path,
-            },
-          }
-        : {}),
-      // Development storage can lag the promoted production static-asset
-      // bucket. Keep the canonical application URL while allowing the
-      // above-the-fold hero to render in preview until that bucket is synced.
-      ...(process.env.NODE_ENV !== "production"
-        ? {
-            [HERO_ASSET_PATH]: {
-              target: HERO_ASSET_DEV_FALLBACK_ORIGIN,
-              changeOrigin: true,
-              secure: true,
-            },
-            [BRAND_LOGO_ASSET_PATH]: {
-              target: BRAND_LOGO_ASSET_DEV_FALLBACK_ORIGIN,
-              changeOrigin: true,
-              secure: true,
-            },
-          }
-        : {}),
       "/api": {
         target: apiServerUrl,
         changeOrigin: true,
         timeout: 60_000,
         proxyTimeout: 60_000,
-      },
-      // Legacy public image URLs must never reach Vite's SPA fallback. The
-      // API applies the same canonicalization and 404 semantics in dev.
-      "/images": {
-        target: apiServerUrl,
-        changeOrigin: true,
-        rewrite: (path) => `/api/storage/public-objects${path}`,
-      },
-      "/portal/images": {
-        target: apiServerUrl,
-        changeOrigin: true,
-        rewrite: (path) => `/api/storage/public-objects${path}`,
       },
       // /sitemap.xml intentionally NOT proxied — served as a static file from public/
       "/q": {
