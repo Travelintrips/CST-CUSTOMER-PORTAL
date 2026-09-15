@@ -7,3 +7,4 @@
 - [Replit configuration persistence](replit-config-persistence.md) — preserve `.replit` userenv blocks during recovery or dashboard Configurations can disappear while Secrets remain.
 - [Preview API port routing](preview-api-port-routing.md) — in multi-port Replit previews, browser API calls must use the public API port rather than the main preview `/api` path.
 - [Secret workflow restart](secret-workflow-restart.md) — restart the API workflow after database secrets are added or changed so it receives the current environment.
+- [Local portal route boundary](local-portal-route-boundary.md) — authenticated business routes must stay local or use a reachable non-production upstream, never self-loop or fall back to production.

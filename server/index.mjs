@@ -380,6 +380,324 @@ async function handleBootstrap(request, response, url) {
   sendJson(response, 200, bootstrapResponse(user, url.searchParams.get("returnTo")));
 }
 
+async function getAccessibleCompanyIds(user) {
+  const result = await query(
+    `select company_id
+       from public.portal_company_members
+      where portal_customer_id = $1
+        and is_active = true`,
+    [user.id],
+  );
+  return result.rows
+    .map((row) => Number(row.company_id))
+    .filter((companyId) => Number.isInteger(companyId));
+}
+
+function portalOwnerPredicate(alias, emailColumn) {
+  return `(
+    ${alias}.portal_customer_id = $1
+    or lower(${alias}.${emailColumn}) = lower($2)
+    or ${alias}.company_id = any($3::int[])
+  )`;
+}
+
+async function getPortalOrganizationContext(user) {
+  const [membershipResult, requestResult] = await Promise.all([
+    query(
+      `select m.company_id, m.buyer_role, m.department, m.cost_center,
+              m.approval_level, m.spending_limit,
+              c.name, c.legal_name, c.company_name, c.code, c.company_code
+         from public.portal_company_members m
+         join public.companies c on c.id = m.company_id
+        where m.portal_customer_id = $1
+          and m.is_active = true
+        order by m.created_at desc`,
+      [user.id],
+    ),
+    query(
+      `select requested_company_name, requested_registration_number, status,
+              matched_company_id, created_at
+         from public.portal_company_requests
+        where portal_customer_id = $1
+          and status in ('pending', 'submitted', 'in_review')
+        order by created_at desc
+        limit 1`,
+      [user.id],
+    ),
+  ]);
+
+  const membership = membershipResult.rows[0] ?? null;
+  const pendingRequest = requestResult.rows[0] ?? null;
+  const customerType = user.customer_type === "company" ? "company" : "individual";
+  const company = membership
+    ? {
+        id: Number(membership.company_id),
+        name: membership.company_name ?? membership.legal_name ?? membership.name,
+        code: membership.company_code ?? membership.code ?? null,
+      }
+    : null;
+  const status = membership
+    ? "company_mapped"
+    : pendingRequest
+      ? "company_pending"
+      : customerType === "individual"
+        ? "individual"
+        : "company_unresolved";
+
+  return {
+    status,
+    customerType,
+    companyId: company?.id ?? null,
+    company,
+    activeMemberships: membershipResult.rows.map((row) => ({
+      companyId: Number(row.company_id),
+      buyerRole: row.buyer_role,
+      department: row.department ?? null,
+      costCenter: row.cost_center ?? null,
+      approvalLevel: row.approval_level ?? null,
+      spendingLimit: row.spending_limit ?? null,
+    })),
+    pendingRequest: pendingRequest
+      ? {
+          requestedCompanyName: pendingRequest.requested_company_name,
+          requestedRegistrationNumber: pendingRequest.requested_registration_number ?? null,
+          status: pendingRequest.status,
+          matchedCompanyId: pendingRequest.matched_company_id ?? null,
+          createdAt: pendingRequest.created_at,
+        }
+      : null,
+  };
+}
+
+async function handleOrganization(request, response) {
+  const user = await requireUser(request, response);
+  if (!user) return;
+  sendJson(response, 200, await getPortalOrganizationContext(user));
+}
+
+async function handleOrganizationCompanies(request, response, url) {
+  const user = await requireUser(request, response);
+  if (!user) return;
+  const search = (url.searchParams.get("search") ?? "").trim();
+  const result = await query(
+    `select id, coalesce(company_name, legal_name, name) as name,
+            coalesce(company_code, code) as code
+       from public.companies
+      where coalesce(is_active, true) = true
+        and ($1 = '' or coalesce(company_name, legal_name, name) ilike '%' || $1 || '%'
+             or coalesce(company_code, code) ilike '%' || $1 || '%')
+      order by coalesce(company_name, legal_name, name)
+      limit 50`,
+    [search],
+  );
+  sendJson(response, 200, result.rows.map((row) => ({
+    id: Number(row.id),
+    name: row.name,
+    code: row.code ?? null,
+  })));
+}
+
+async function handlePortalOrderFeed(request, response) {
+  const user = await requireUser(request, response);
+  if (!user) return;
+  const companyIds = await getAccessibleCompanyIds(user);
+  const params = [user.id, user.email, companyIds];
+  const [crmResult, logisticResult, productResult, rfqResult] = await Promise.all([
+    query(
+      `select o.id, coalesce(o.id::text, '') as doc_number, o.status,
+              coalesce(o.grand_total, o.total_amount, o.total, 0) as grand_total,
+              o.created_at
+         from public.orders o
+        where (
+          lower(o.customer_email) = lower($1)
+          or lower(o.email) = lower($1)
+          or o.company_id = any($2::int[])
+        )
+        order by o.created_at desc
+        limit 100`,
+      [user.email, companyIds],
+    ),
+    query(
+      `select l.id, l.order_number, l.status, l.grand_total, l.created_at,
+              l.shipment_type, l.origin, l.destination
+         from public.logistic_orders l
+        where ${portalOwnerPredicate("l", "email")}
+        order by l.created_at desc
+        limit 100`,
+      params,
+    ),
+    query(
+      `select p.id, p.order_number, p.status, p.grand_total, p.created_at,
+              p.tracking_token
+         from public.portal_product_orders p
+        where ${portalOwnerPredicate("p", "email")}
+        order by p.created_at desc
+        limit 100`,
+      params,
+    ),
+    query(
+      `select r.id as rfq_id, r.rfq_number, r.status as rfq_status,
+              r.approval_status, r.created_at
+         from public.mkt_rfqs r
+        where ${portalOwnerPredicate("r", "buyer_email")}
+        order by r.created_at desc
+        limit 100`,
+      params,
+    ),
+  ]);
+
+  sendJson(response, 200, {
+    crmOrders: crmResult.rows.map((row) => ({
+      id: Number(row.id),
+      docNumber: row.doc_number,
+      status: row.status,
+      grandTotal: Number(row.grand_total ?? 0),
+      createdAt: row.created_at,
+    })),
+    logisticOrders: logisticResult.rows.map((row) => ({
+      id: Number(row.id),
+      orderNumber: row.order_number,
+      status: row.status,
+      grandTotal: Number(row.grand_total ?? 0),
+      createdAt: row.created_at,
+      shipmentType: row.shipment_type ?? null,
+      origin: row.origin ?? null,
+      destination: row.destination ?? null,
+    })),
+    productOrders: productResult.rows.map((row) => ({
+      id: Number(row.id),
+      orderNumber: row.order_number,
+      status: row.status,
+      grandTotal: Number(row.grand_total ?? 0),
+      createdAt: row.created_at,
+      trackingToken: row.tracking_token ?? null,
+    })),
+    marketplaceRfqs: rfqResult.rows.map((row) => ({
+      rfqId: Number(row.rfq_id),
+      rfqNumber: row.rfq_number,
+      rfqStatus: row.rfq_status,
+      approvalStatus: row.approval_status,
+      createdAt: row.created_at,
+    })),
+  });
+}
+
+async function handleMarketplaceRfqs(request, response, url) {
+  const user = await requireUser(request, response);
+  if (!user) return;
+  const companyIds = await getAccessibleCompanyIds(user);
+  const limit = Math.min(Math.max(Number(url.searchParams.get("limit") ?? 200), 1), 200);
+  const result = await query(
+    `select r.id as rfq_id, r.rfq_number, r.status as rfq_status,
+            r.approval_status, r.approval_requested_at, r.approval_resolved_at,
+            r.buyer_name, r.buyer_email, r.buyer_company,
+            r.buyer_approval_level, r.notes, r.required_delivery_date,
+            r.created_at, a.id as pending_approval_id, a.approver_level,
+            a.status as pending_approval_status, a.requested_at,
+            a.response_notes
+       from public.mkt_rfqs r
+       left join lateral (
+         select id, approver_level, status, requested_at, response_notes
+           from public.mkt_rfq_approvals
+          where rfq_id = r.id
+          order by requested_at desc
+          limit 1
+       ) a on true
+      where ${portalOwnerPredicate("r", "buyer_email")}
+      order by r.created_at desc
+      limit $4`,
+    [user.id, user.email, companyIds, limit],
+  );
+  sendJson(response, 200, {
+    ok: true,
+    data: result.rows.map((row) => ({
+      rfqId: Number(row.rfq_id),
+      rfqNumber: row.rfq_number,
+      rfqStatus: row.rfq_status,
+      approvalStatus: row.approval_status,
+      approvalRequestedAt: row.approval_requested_at,
+      approvalResolvedAt: row.approval_resolved_at,
+      buyerName: row.buyer_name,
+      buyerEmail: row.buyer_email,
+      buyerCompany: row.buyer_company,
+      buyerApprovalLevel: row.buyer_approval_level,
+      notes: row.notes,
+      requiredDeliveryDate: row.required_delivery_date,
+      createdAt: row.created_at,
+      pendingApproval: row.pending_approval_id
+        ? {
+            id: Number(row.pending_approval_id),
+            approverLevel: row.approver_level,
+            status: row.pending_approval_status,
+            requestedAt: row.requested_at,
+            responseNotes: row.response_notes,
+          }
+        : null,
+    })),
+    count: result.rowCount,
+  });
+}
+
+async function handleMarketplaceRfqDetail(request, response, rfqId) {
+  const user = await requireUser(request, response);
+  if (!user) return;
+  const companyIds = await getAccessibleCompanyIds(user);
+  const result = await query(
+    `select r.id, r.rfq_number, r.status, r.approval_status, r.buyer_name,
+            r.buyer_email, r.buyer_company, r.notes, r.required_delivery_date,
+            r.delivery_address, r.destination_place_id, r.destination_lat,
+            r.destination_lng, r.created_at, r.winner_selected_at,
+            r.proposed_quote_id, a.id as pending_approval_id, a.status as pending_approval_status,
+            a.requested_at, a.response_notes
+       from public.mkt_rfqs r
+       left join lateral (
+         select id, status, requested_at, response_notes
+           from public.mkt_rfq_approvals
+          where rfq_id = r.id
+          order by requested_at desc
+          limit 1
+       ) a on true
+      where r.id = $4
+        and ${portalOwnerPredicate("r", "buyer_email")}
+      limit 1`,
+    [user.id, user.email, companyIds, rfqId],
+  );
+  const row = result.rows[0];
+  if (!row) {
+    sendError(response, 404, "RFQ not found.");
+    return;
+  }
+  sendJson(response, 200, {
+    ok: true,
+    data: {
+      id: Number(row.id),
+      rfq_number: row.rfq_number,
+      status: row.status,
+      approval_status: row.approval_status,
+      buyer_name: row.buyer_name,
+      buyer_email: row.buyer_email,
+      buyer_company: row.buyer_company,
+      notes: row.notes,
+      required_delivery_date: row.required_delivery_date,
+      delivery_address: row.delivery_address,
+      destination_place_id: row.destination_place_id,
+      destination_lat: row.destination_lat,
+      destination_lng: row.destination_lng,
+      created_at: row.created_at,
+      winner_selected_at: row.winner_selected_at,
+      proposed_quote_id: row.proposed_quote_id,
+      pendingApproval: row.pending_approval_id
+        ? {
+            id: Number(row.pending_approval_id),
+            status: row.pending_approval_status,
+            requestedAt: row.requested_at,
+            responseNotes: row.response_notes,
+          }
+        : null,
+    },
+  });
+}
+
 async function handleNotifications(request, response) {
   const user = await requireUser(request, response);
   if (!user) return;
@@ -729,6 +1047,27 @@ async function route(request, response) {
   }
   if (request.method === "GET" && pathname === "/api/portal/auth/bootstrap") {
     await handleBootstrap(request, response, url);
+    return;
+  }
+  if (request.method === "GET" && pathname === "/api/portal/organization") {
+    await handleOrganization(request, response);
+    return;
+  }
+  if (request.method === "GET" && pathname === "/api/portal/organization/companies") {
+    await handleOrganizationCompanies(request, response, url);
+    return;
+  }
+  if (request.method === "GET" && pathname === "/api/portal/order-feed") {
+    await handlePortalOrderFeed(request, response);
+    return;
+  }
+  const marketplaceRfqsMatch = pathname.match(/^\/api\/mkt\/portal\/rfqs\/(\d+)$/);
+  if (request.method === "GET" && marketplaceRfqsMatch) {
+    await handleMarketplaceRfqDetail(request, response, Number(marketplaceRfqsMatch[1]));
+    return;
+  }
+  if (request.method === "GET" && pathname === "/api/mkt/portal/rfqs") {
+    await handleMarketplaceRfqs(request, response, url);
     return;
   }
   if (request.method === "GET" && pathname === "/api/portal/notifications") {
