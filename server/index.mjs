@@ -21,7 +21,7 @@ const APP_ENV = process.env.APP_ENV ?? process.env.NODE_ENV ?? "development";
 const IS_PRODUCTION = APP_ENV === "production" || process.env.NODE_ENV === "production";
 const MAX_BODY_BYTES = 2 * 1024 * 1024;
 const UPSTREAM_API_URL = (
-  process.env.VITE_API_SERVER_URL_DEV ??
+  process.env.CUSTOMER_PORTAL_API_UPSTREAM_URL ??
   process.env.VITE_API_SERVER_URL ??
   ""
 ).replace(/\/+$/, "");

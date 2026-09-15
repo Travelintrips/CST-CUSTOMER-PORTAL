@@ -3,6 +3,10 @@ set -euo pipefail
 cd "$(dirname "$0")"
 export NODE_ENV="${NODE_ENV:-development}"
 export PORT="${PORT:-5000}"
+# Keep the shared CST API as the upstream for routes that are not implemented
+# by the standalone portal API. The frontend proxy itself will still target the
+# local portal API below.
+export CUSTOMER_PORTAL_API_UPSTREAM_URL="${CUSTOMER_PORTAL_API_UPSTREAM_URL:-${VITE_API_SERVER_URL:-${API_SERVER_URL:-}}}"
 # The standalone portal uses the development API when one is configured.
 # Keep VITE_API_SERVER_URL as the production/shared fallback so published
 # builds are not accidentally pointed at a dev API.
