@@ -15,6 +15,18 @@ import {
   sessionCookies,
   verifySession,
 } from "./session.mjs";
+import {
+  handleAdminApprovals,
+  handleAdminCompanyRequests,
+  handleAdminCustomerStats,
+  handleAdminCustomers,
+  handleAdminNotifications,
+  handleOnboardingComplete,
+  handleOnboardingStatus,
+  handleOrganizationMutation,
+  handleServiceOperations,
+  handleVerification,
+} from "./admin-portal.mjs";
 
 const PORT = Number(process.env.CUSTOMER_PORTAL_API_PORT ?? 18444);
 const APP_ENV = process.env.APP_ENV ?? process.env.NODE_ENV ?? "development";
@@ -182,8 +194,18 @@ async function requireUser(request, response) {
   }
 
   const user = await findPortalUser(session.id);
-  if (!user || ["suspended", "blocked", "deleted"].includes(user.account_status)) {
+  if (!user || !["active", null, undefined].includes(user.account_status)) {
     sendError(response, 401, "Session is no longer valid.");
+    return null;
+  }
+  return user;
+}
+
+async function requireAdmin(request, response) {
+  const user = await requireUser(request, response);
+  if (!user) return null;
+  if (user.role !== "admin") {
+    sendError(response, 403, "Admin authorization required.");
     return null;
   }
   return user;
@@ -204,15 +226,17 @@ function authResponse(user, token) {
   };
 }
 
-function bootstrapResponse(user, requestedReturnTo) {
+function bootstrapResponse(user, requestedReturnTo, customerContext) {
   const onboardingStatus = user.account_status ?? "active";
   const onboardingComplete = onboardingStatus === "active";
+  const organizationBlocked = ["company_pending", "company_unresolved", "legacy_unresolved"]
+    .includes(customerContext?.status);
   const defaultDestination = user.role === "admin"
     ? "/admin"
     : user.role === "vendor"
       ? "/vendor-dashboard"
       : "/dashboard";
-  const allowedDestination = onboardingComplete
+  const allowedDestination = onboardingComplete && !organizationBlocked
     ? safeReturnTo(requestedReturnTo) ?? defaultDestination
     : "/onboarding";
 
@@ -223,7 +247,7 @@ function bootstrapResponse(user, requestedReturnTo) {
     onboardingComplete,
     onboardingStatus,
     customerType: user.customer_type ?? null,
-    customerContext: {
+    customerContext: customerContext ?? {
       status: onboardingStatus,
       companyId: null,
       company: user.company ? { name: user.company } : null,
@@ -337,7 +361,7 @@ async function handleLogin(request, response) {
   const user = result.rows[0];
   if (
     !user ||
-    ["suspended", "blocked", "deleted"].includes(user.account_status) ||
+     !["active", null, undefined].includes(user.account_status) ||
     !user.password_hash ||
     !(await bcrypt.compare(password, user.password_hash))
   ) {
@@ -377,7 +401,8 @@ async function handleAuthMe(request, response) {
 async function handleBootstrap(request, response, url) {
   const user = await requireUser(request, response);
   if (!user) return;
-  sendJson(response, 200, bootstrapResponse(user, url.searchParams.get("returnTo")));
+  const customerContext = await getPortalOrganizationContext(user);
+  sendJson(response, 200, bootstrapResponse(user, url.searchParams.get("returnTo"), customerContext));
 }
 
 async function getAccessibleCompanyIds(user) {
@@ -1049,8 +1074,80 @@ async function route(request, response) {
     await handleBootstrap(request, response, url);
     return;
   }
-  if (request.method === "GET" && pathname === "/api/portal/organization") {
-    await handleOrganization(request, response);
+  if (request.method === "GET" && pathname === "/api/portal/onboarding/status") {
+    const user = await requireUser(request, response);
+    if (user) await handleOnboardingStatus({ request, response, url, user, sendJson, sendError });
+    return;
+  }
+  if (pathname === "/api/portal/onboarding/complete") {
+    const user = await requireUser(request, response);
+    if (user) {
+      const body = ["POST", "PUT", "PATCH"].includes(request.method ?? "") ? await readJson(request) : {};
+      await handleOnboardingComplete({ request, response, url, user, body, sendJson, sendError });
+    }
+    return;
+  }
+  if (pathname === "/api/customer-verification" || pathname.startsWith("/api/customer-verification/")) {
+    const user = await requireUser(request, response);
+    if (user) await handleVerification({ request, response, url, user, sendJson, sendError });
+    return;
+  }
+  if (pathname === "/api/portal/admin/customers/stats") {
+    const user = await requireAdmin(request, response);
+    if (user) await handleAdminCustomerStats({ request, response, url, user, sendJson, sendError });
+    return;
+  }
+  if (pathname === "/api/portal/admin/customers" || /^\/api\/portal\/admin\/customers\/\d+$/.test(pathname)) {
+    const user = await requireAdmin(request, response);
+    if (user) {
+      const body = ["POST", "PUT", "PATCH"].includes(request.method ?? "") ? await readJson(request) : {};
+      await handleAdminCustomers({ request, response, url, user, body, sendJson, sendError });
+    }
+    return;
+  }
+  if (pathname === "/api/portal/admin/approvals" || pathname === "/api/portal/admin/approvals/stats" || /^\/api\/portal\/admin\/approvals\/\d+(?:\/audit)?$/.test(pathname)) {
+    const user = await requireAdmin(request, response);
+    if (user) {
+      const body = ["POST", "PUT", "PATCH"].includes(request.method ?? "") ? await readJson(request) : {};
+      await handleAdminApprovals({ request, response, url, user, body, sendJson, sendError });
+    }
+    return;
+  }
+  if (pathname === "/api/portal/admin/company-requests" || /^\/api\/portal\/admin\/company-requests\/\d+$/.test(pathname)) {
+    const user = await requireAdmin(request, response);
+    if (user) {
+      const body = ["POST", "PUT", "PATCH"].includes(request.method ?? "") ? await readJson(request) : {};
+      await handleAdminCompanyRequests({ request, response, url, user, body, sendJson, sendError });
+    }
+    return;
+  }
+  if (pathname === "/api/portal/admin/service-operations" || /^\/api\/portal\/admin\/service-operations\/[^/]+\/\d+(?:\/actions)?$/.test(pathname)) {
+    const user = await requireAdmin(request, response);
+    if (user) {
+      const body = ["POST", "PUT", "PATCH"].includes(request.method ?? "") ? await readJson(request) : {};
+      await handleServiceOperations({ request, response, url, user, body, sendJson, sendError });
+    }
+    return;
+  }
+  if (pathname === "/api/portal/admin/service-operations/notifications"
+      || pathname === "/api/portal/admin/service-operations/notifications/mark-all-read"
+      || /^\/api\/portal\/admin\/service-operations\/notifications\/\d+\/read$/.test(pathname)) {
+    const user = await requireAdmin(request, response);
+    if (user) {
+      const body = ["POST", "PUT", "PATCH"].includes(request.method ?? "") ? await readJson(request) : {};
+      await handleAdminNotifications({ request, response, url, user, body, sendJson, sendError, sendEmpty });
+    }
+    return;
+  }
+  if (pathname === "/api/portal/organization") {
+    const user = await requireUser(request, response);
+    if (!user) return;
+    if (request.method === "GET") {
+      await handleOrganization(request, response);
+    } else {
+      const body = ["POST", "PUT", "PATCH"].includes(request.method ?? "") ? await readJson(request) : {};
+      await handleOrganizationMutation({ request, response, url, user, body, sendJson, sendError });
+    }
     return;
   }
   if (request.method === "GET" && pathname === "/api/portal/organization/companies") {

@@ -1,0 +1,1030 @@
+import { query } from "./db.mjs";
+
+const TERMINAL_STATUSES = new Set(["completed", "cancelled", "rejected", "expired", "done"]);
+const SERVICE_LABELS = {
+  marketplace: "Marketplace / RFQ",
+  "logistic-order": "Logistics / Customer Order",
+  "product-order": "Marketplace / Product Order",
+  "service-request": "Pabean / Custom Clearance / Layanan",
+  "quote-request": "Request a Quote",
+};
+
+function numberOrNull(value) {
+  const number = Number(value);
+  return Number.isInteger(number) ? number : null;
+}
+
+function text(value, fallback = "") {
+  return typeof value === "string" ? value.trim() : fallback;
+}
+
+function jsonValue(value, fallback = null) {
+  if (value == null) return fallback;
+  if (typeof value !== "string") return value;
+  try {
+    return JSON.parse(value);
+  } catch {
+    return fallback;
+  }
+}
+
+function customerStatus(row) {
+  if (row.account_status === "sanctioned") return "sanctioned";
+  if (["inactive", "suspended", "blocked", "deleted"].includes(row.account_status)) return "inactive";
+  return "active";
+}
+
+function customerSource(row) {
+  if (row.oauth_provider || row.oauth_id) return "oauth";
+  if (String(row.email ?? "").endsWith("@wa.local")) return "wa";
+  return "email";
+}
+
+function mapCustomer(row) {
+  return {
+    id: Number(row.id),
+    name: row.name,
+    email: row.email,
+    phone: row.phone ?? null,
+    company: row.company ?? null,
+    role: row.role,
+    source: customerSource(row),
+    createdAt: row.created_at,
+    accountStatus: customerStatus(row),
+    sanctionReason: row.sanction_reason ?? null,
+    sanctionUntil: row.sanction_until ?? null,
+    avatarUrl: row.avatar_url ?? null,
+    profileStatus: row.profile_status ?? "not_started",
+    profileAccountType: row.customer_type ?? null,
+    profileFullName: row.profile_full_name ?? null,
+  };
+}
+
+function adminError(ctx, status, message) {
+  ctx.sendError(ctx.response, status, message);
+}
+
+async function findAdminCustomer(id) {
+  const result = await query(
+    `select c.id, c.name, c.email, c.phone, c.company, c.role, c.created_at,
+            c.oauth_provider, c.oauth_id, c.avatar_url, c.account_status,
+            c.sanction_reason, c.sanction_until, c.status_changed_at,
+            c.status_changed_by, c.customer_type,
+            p.id as profile_id, p.profile_status, p.is_verified,
+            p.company_name as profile_company_name, p.pic_name as profile_full_name,
+            p.verification_status, p.verification_submitted_at,
+            p.verification_notes, p.updated_at as profile_updated_at
+       from public.portal_customers c
+       left join public.portal_customer_profiles p on p.customer_id = c.id
+      where c.id = $1
+      limit 1`,
+    [id],
+  );
+  return result.rows[0] ?? null;
+}
+
+async function handleAdminCustomers(ctx) {
+  const { request, response, url } = ctx;
+  const idMatch = url.pathname.match(/^\/api\/portal\/admin\/customers\/(\d+)$/);
+  if (idMatch && request.method === "GET") {
+    const row = await findAdminCustomer(Number(idMatch[1]));
+    if (!row) return adminError(ctx, 404, "Customer tidak ditemukan.");
+    const [memberships, requests, documents] = await Promise.all([
+      query(
+        `select m.id, m.company_id, m.buyer_role, m.department, m.cost_center,
+                m.approval_level, m.spending_limit, m.is_active,
+                coalesce(c.company_name, c.legal_name, c.name) as company_name,
+                coalesce(c.company_code, c.code) as company_code
+           from public.portal_company_members m
+           left join public.companies c on c.id = m.company_id
+          where m.portal_customer_id = $1
+          order by m.created_at desc`,
+        [row.id],
+      ),
+      query(
+        `select r.id, r.requested_company_name, r.requested_registration_number,
+                r.status, r.matched_company_id, r.review_note, r.reviewed_at,
+                r.created_at, r.updated_at
+           from public.portal_company_requests r
+          where r.portal_customer_id = $1
+          order by r.created_at desc`,
+        [row.id],
+      ),
+      row.profile_id
+        ? query(
+            `select id, document_type, document_number, file_url, file_name,
+                    verification_status, verified_by, verified_at,
+                    rejection_reason, expiry_date, uploaded_version, created_at
+               from public.customer_verification_documents
+              where profile_id = $1
+              order by created_at desc`,
+            [row.profile_id],
+          )
+        : Promise.resolve({ rows: [] }),
+    ]);
+    const item = mapCustomer(row);
+    ctx.sendJson(response, 200, {
+      ...item,
+      oauthProvider: row.oauth_provider ?? null,
+      statusChangedAt: row.status_changed_at ?? null,
+      statusChangedBy: row.status_changed_by ?? null,
+      profile: row.profile_id
+        ? {
+            id: row.profile_id,
+            companyName: row.profile_company_name,
+            fullName: row.profile_full_name,
+            profileStatus: row.profile_status,
+            isVerified: row.is_verified,
+            verificationStatus: row.verification_status ?? "DRAFT",
+            verificationSubmittedAt: row.verification_submitted_at,
+            verificationNotes: row.verification_notes,
+            updatedAt: row.profile_updated_at,
+          }
+        : null,
+      companyMemberships: memberships.rows,
+      companyRequests: requests.rows,
+      verificationDocuments: documents.rows,
+    });
+    return;
+  }
+
+  if (idMatch && request.method === "PATCH") {
+    const id = Number(idMatch[1]);
+    const body = ctx.body ?? {};
+    const name = text(body.name);
+    const email = text(body.email).toLowerCase();
+    const role = text(body.role, "customer");
+    const accountStatus = text(body.accountStatus, "active");
+    if (!name || !email.includes("@")) return adminError(ctx, 400, "Nama dan email wajib valid.");
+    if (!["customer", "vendor", "driver", "employee", "admin"].includes(role)) return adminError(ctx, 400, "Role tidak valid.");
+    if (!["active", "inactive", "sanctioned"].includes(accountStatus)) return adminError(ctx, 400, "Status akun tidak valid.");
+    if (accountStatus === "sanctioned" && !text(body.sanctionReason)) return adminError(ctx, 400, "Alasan sanksi wajib diisi.");
+    const existing = await findAdminCustomer(id);
+    if (!existing) return adminError(ctx, 404, "Customer tidak ditemukan.");
+    const nextDbStatus = accountStatus;
+    const result = await query(
+      `update public.portal_customers
+          set name = $1, email = $2, phone = $3, company = $4, role = $5,
+              account_status = $6, sanction_reason = $7, sanction_until = $8,
+              status_changed_at = case when account_status is distinct from $6 then now() else status_changed_at end,
+              status_changed_by = case when account_status is distinct from $6 then $9 else status_changed_by end
+        where id = $10
+        returning id, name, email, phone, company, role, created_at,
+                  oauth_provider, oauth_id, avatar_url, account_status,
+                  sanction_reason, sanction_until, customer_type`,
+      [
+        name,
+        email,
+        text(body.phone) || null,
+        text(body.company) || null,
+        role,
+        nextDbStatus,
+        text(body.sanctionReason) || null,
+        body.sanctionUntil || null,
+        ctx.user.email,
+        id,
+      ],
+    );
+    if (!result.rows[0]) return adminError(ctx, 404, "Customer tidak ditemukan.");
+    ctx.sendJson(response, 200, mapCustomer({ ...result.rows[0], profile_status: existing.profile_status, profile_full_name: existing.profile_full_name }));
+    return;
+  }
+
+  if (request.method !== "GET") return adminError(ctx, 405, "Method tidak didukung.");
+  const search = text(url.searchParams.get("q"));
+  const role = text(url.searchParams.get("role"));
+  const accountStatus = text(url.searchParams.get("accountStatus"));
+  const result = await query(
+    `select c.id, c.name, c.email, c.phone, c.company, c.role, c.created_at,
+            c.oauth_provider, c.oauth_id, c.avatar_url, c.account_status,
+            c.sanction_reason, c.sanction_until, c.customer_type,
+            p.profile_status, p.company_name as profile_company_name,
+            p.pic_name as profile_full_name
+       from public.portal_customers c
+       left join public.portal_customer_profiles p on p.customer_id = c.id
+      where ($1 = '' or c.name ilike '%' || $1 || '%' or c.email ilike '%' || $1 || '%'
+             or coalesce(c.phone, '') ilike '%' || $1 || '%'
+             or coalesce(c.company, '') ilike '%' || $1 || '%')
+        and ($2 = '' or c.role = $2)
+        and ($3 = '' or coalesce(c.account_status, 'active') = $3)
+      order by c.created_at desc
+      limit 250`,
+    [search, role, accountStatus],
+  );
+  ctx.sendJson(response, 200, { items: result.rows.map(mapCustomer), total: result.rowCount });
+}
+
+async function handleAdminCustomerStats(ctx) {
+  const result = await query(
+    `select
+       count(*)::int as total,
+       count(*) filter (where c.role = 'customer')::int as customer,
+       count(*) filter (where c.role = 'vendor')::int as vendor,
+       count(*) filter (where c.email like '%@wa.local')::int as wa,
+       count(*) filter (where coalesce(p.profile_status, 'not_started') in ('incomplete', 'not_started'))::int as profile_incomplete,
+       count(*) filter (where p.profile_status = 'pending')::int as profile_pending,
+       count(*) filter (where p.profile_status = 'active')::int as profile_active,
+       count(*) filter (where coalesce(c.account_status, 'active') = 'active')::int as account_active,
+       count(*) filter (where c.account_status = 'inactive')::int as account_inactive,
+       count(*) filter (where c.account_status = 'sanctioned')::int as account_sanctioned
+       from public.portal_customers c
+       left join public.portal_customer_profiles p on p.customer_id = c.id`,
+  );
+  const row = result.rows[0] ?? {};
+  ctx.sendJson(ctx.response, 200, {
+    total: Number(row.total ?? 0),
+    customer: Number(row.customer ?? 0),
+    vendor: Number(row.vendor ?? 0),
+    wa: Number(row.wa ?? 0),
+    profileIncomplete: Number(row.profile_incomplete ?? 0),
+    profilePending: Number(row.profile_pending ?? 0),
+    profileActive: Number(row.profile_active ?? 0),
+    accountActive: Number(row.account_active ?? 0),
+    accountInactive: Number(row.account_inactive ?? 0),
+    accountSanctioned: Number(row.account_sanctioned ?? 0),
+  });
+}
+
+async function handleAdminApprovals(ctx) {
+  const { request, response, url } = ctx;
+  const idMatch = url.pathname.match(/^\/api\/portal\/admin\/approvals\/(\d+)(?:\/(audit))?$/);
+  if (idMatch && request.method === "GET" && idMatch[2] === "audit") {
+    const result = await query(
+      `select id, customer_id, status, admin_note, reviewed_by, reviewed_at, created_at, updated_at
+         from public.onboarding_approvals where id = $1`,
+      [Number(idMatch[1])],
+    );
+    if (!result.rows[0]) return adminError(ctx, 404, "Approval tidak ditemukan.");
+    const row = result.rows[0];
+    ctx.sendJson(response, 200, {
+      data: [{
+        action: `onboarding_${row.status}`,
+        userEmail: row.reviewed_by,
+        createdAt: row.reviewed_at ?? row.updated_at ?? row.created_at,
+        newData: { adminNote: row.admin_note, status: row.status },
+      }],
+    });
+    return;
+  }
+  if (idMatch && request.method === "PATCH") {
+    const id = Number(idMatch[1]);
+    const body = ctx.body ?? {};
+    const status = text(body.status);
+    const note = text(body.adminNote) || null;
+    if (!["approved", "rejected"].includes(status)) return adminError(ctx, 400, "Status approval tidak valid.");
+    if (status === "rejected" && !note) return adminError(ctx, 400, "Alasan penolakan wajib diisi.");
+    const approval = await query("select id, customer_id from public.onboarding_approvals where id = $1", [id]);
+    if (!approval.rows[0]) return adminError(ctx, 404, "Approval tidak ditemukan.");
+    await query(
+      `update public.onboarding_approvals
+          set status = $1, admin_note = $2, reviewed_by = $3, reviewed_at = now(), updated_at = now()
+        where id = $4`,
+      [status, note, ctx.user.email, id],
+    );
+    await query(
+      `update public.portal_customer_profiles
+          set profile_status = $1, is_verified = $2,
+              verification_status = $3, verification_notes = $4,
+              verified_by = case when $2 then $5 else verified_by end,
+              verified_at = case when $2 then now() else verified_at end,
+              updated_at = now()
+        where customer_id = $6`,
+      [
+        status === "approved" ? "active" : "rejected",
+        status === "approved",
+        status === "approved" ? "VERIFIED" : "REJECTED",
+        note,
+        ctx.user.email,
+        approval.rows[0].customer_id,
+      ],
+    );
+    ctx.sendJson(response, 200, { id, status, adminNote: note });
+    return;
+  }
+  if (request.method === "GET" && url.pathname === "/api/portal/admin/approvals/stats") {
+    const result = await query(
+      `select count(*)::int as total,
+              count(*) filter (where status = 'pending')::int as pending,
+              count(*) filter (where status = 'approved')::int as approved,
+              count(*) filter (where status = 'rejected')::int as rejected
+         from public.onboarding_approvals`,
+    );
+    const row = result.rows[0] ?? {};
+    ctx.sendJson(response, 200, {
+      total: Number(row.total ?? 0), pending: Number(row.pending ?? 0),
+      approved: Number(row.approved ?? 0), rejected: Number(row.rejected ?? 0),
+    });
+    return;
+  }
+  if (request.method !== "GET") return adminError(ctx, 405, "Method tidak didukung.");
+  const status = text(url.searchParams.get("status"));
+  const accountType = text(url.searchParams.get("accountType"));
+  const result = await query(
+    `select a.id, a.customer_id, a.account_type, a.status, a.admin_note,
+            a.reviewed_by, a.reviewed_at, a.created_at,
+            c.name as customer_name, c.email as customer_email, c.phone as customer_phone,
+            p.profile_status, p.pic_name as profile_full_name, p.company_name,
+            p.verification_status, p.verification_notes
+       from public.onboarding_approvals a
+       join public.portal_customers c on c.id = a.customer_id
+       left join public.portal_customer_profiles p on p.customer_id = c.id
+      where ($1 = '' or a.status = $1)
+        and ($2 = '' or a.account_type = $2)
+      order by a.created_at desc
+      limit 250`,
+    [status, accountType],
+  );
+  ctx.sendJson(response, 200, result.rows.map((row) => ({
+    id: Number(row.id),
+    customerId: Number(row.customer_id),
+    accountType: row.account_type,
+    status: row.status,
+    adminNote: row.admin_note ?? null,
+    reviewedBy: row.reviewed_by ?? null,
+    reviewedAt: row.reviewed_at ?? null,
+    createdAt: row.created_at,
+    customerName: row.customer_name,
+    customerEmail: row.customer_email,
+    customerPhone: row.customer_phone,
+    userProfile: {
+      status: row.profile_status ?? "not_started",
+      fullName: row.profile_full_name ?? row.customer_name,
+      companyName: row.company_name ?? null,
+      verificationStatus: row.verification_status ?? "DRAFT",
+    },
+    typeProfile: { verificationStatus: row.verification_status ?? "DRAFT", verificationNotes: row.verification_notes ?? null },
+  })));
+}
+
+async function handleAdminCompanyRequests(ctx) {
+  const { request, response, url } = ctx;
+  const idMatch = url.pathname.match(/^\/api\/portal\/admin\/company-requests\/(\d+)$/);
+  if (request.method === "GET") {
+    const where = idMatch ? "and r.id = $1" : "";
+    const params = idMatch ? [Number(idMatch[1])] : [];
+    const result = await query(
+      `select r.id, r.portal_customer_id, r.requested_company_name,
+              r.requested_registration_number, r.status, r.matched_company_id,
+              r.review_note, r.reviewed_by, r.reviewed_at, r.created_at, r.updated_at,
+              c.name as customer_name, c.email as customer_email,
+              coalesce(co.company_name, co.legal_name, co.name) as matched_company_name
+         from public.portal_company_requests r
+         join public.portal_customers c on c.id = r.portal_customer_id
+         left join public.companies co on co.id = r.matched_company_id
+        where true ${where}
+        order by r.created_at desc
+        limit 250`,
+      params,
+    );
+    const data = result.rows.map((row) => ({
+      id: Number(row.id), customerId: Number(row.portal_customer_id),
+      customerName: row.customer_name, customerEmail: row.customer_email,
+      requestedCompanyName: row.requested_company_name,
+      requestedRegistrationNumber: row.requested_registration_number,
+      status: row.status, matchedCompanyId: row.matched_company_id,
+      matchedCompanyName: row.matched_company_name, reviewNote: row.review_note,
+      reviewedBy: row.reviewed_by, reviewedAt: row.reviewed_at, createdAt: row.created_at,
+    }));
+    if (idMatch) {
+      if (!data[0]) return adminError(ctx, 404, "Company request tidak ditemukan.");
+      ctx.sendJson(response, 200, data[0]);
+    } else {
+      ctx.sendJson(response, 200, { items: data, total: data.length });
+    }
+    return;
+  }
+  if (request.method !== "PATCH" || !idMatch) return adminError(ctx, 405, "Method tidak didukung.");
+  const id = Number(idMatch[1]);
+  const body = ctx.body ?? {};
+  const status = text(body.status);
+  const matchedCompanyId = body.matchedCompanyId == null ? null : numberOrNull(body.matchedCompanyId);
+  if (!["pending", "in_review", "approved", "rejected"].includes(status)) return adminError(ctx, 400, "Status company request tidak valid.");
+  if (body.matchedCompanyId != null && matchedCompanyId == null) return adminError(ctx, 400, "Company tidak valid.");
+  const requestResult = await query("select * from public.portal_company_requests where id = $1", [id]);
+  const current = requestResult.rows[0];
+  if (!current) return adminError(ctx, 404, "Company request tidak ditemukan.");
+  if (matchedCompanyId != null) {
+    const company = await query("select id from public.companies where id = $1 and coalesce(is_active, true) = true", [matchedCompanyId]);
+    if (!company.rows[0]) return adminError(ctx, 404, "Company tidak ditemukan.");
+  }
+  await query(
+    `update public.portal_company_requests
+        set status = $1, matched_company_id = $2, review_note = $3,
+            reviewed_by = $4, reviewed_at = now(), updated_at = now()
+      where id = $5`,
+    [status, matchedCompanyId, text(body.reviewNote) || null, ctx.user.id, id],
+  );
+  if (status === "approved" && matchedCompanyId != null) {
+    const member = await query(
+      "select id from public.portal_company_members where portal_customer_id = $1 and company_id = $2 limit 1",
+      [current.portal_customer_id, matchedCompanyId],
+    );
+    if (member.rows[0]) {
+      await query(
+        `update public.portal_company_members
+            set is_active = true, buyer_role = coalesce($1, buyer_role), updated_at = now()
+          where id = $2`,
+        [text(body.buyerRole) || null, member.rows[0].id],
+      );
+    } else {
+      await query(
+        `insert into public.portal_company_members
+          (portal_customer_id, company_id, buyer_role, is_active, invited_by, invited_at, joined_at, created_at, updated_at)
+         values ($1, $2, $3, true, $4, now(), now(), now(), now())`,
+        [current.portal_customer_id, matchedCompanyId, text(body.buyerRole, "member"), ctx.user.id],
+      );
+    }
+  }
+  ctx.sendJson(response, 200, { id, status, matchedCompanyId });
+}
+
+async function getVerificationState(user) {
+  const profileResult = await query(
+    `select id, company_name, verification_status, verification_submitted_at,
+            verification_expired_at, verification_notes
+       from public.portal_customer_profiles where customer_id = $1 limit 1`,
+    [user.id],
+  );
+  const profile = profileResult.rows[0];
+  const documents = profile
+    ? await query(
+        `select id, document_type, document_number, file_url, file_name,
+                verification_status, rejection_reason, expiry_date, uploaded_version, created_at
+           from public.customer_verification_documents
+          where profile_id = $1 order by created_at desc`,
+        [profile.id],
+      )
+    : { rows: [] };
+  return {
+    profileId: profile?.id ?? null,
+    verificationStatus: profile?.verification_status ?? "DRAFT",
+    verificationSubmittedAt: profile?.verification_submitted_at ?? null,
+    verificationExpiredAt: profile?.verification_expired_at ?? null,
+    verificationNotes: profile?.verification_notes ?? null,
+    companyName: profile?.company_name ?? user.company ?? null,
+    documents: documents.rows.map((row) => ({
+      id: Number(row.id), documentType: row.document_type, documentNumber: row.document_number,
+      fileUrl: row.file_url, fileName: row.file_name, verificationStatus: row.verification_status,
+      rejectionReason: row.rejection_reason, expiryDate: row.expiry_date,
+      uploadedVersion: row.uploaded_version ?? 1, createdAt: row.created_at,
+    })),
+  };
+}
+
+async function handleVerification(ctx) {
+  const { request, response, url } = ctx;
+  if (request.method === "GET" && url.pathname === "/api/customer-verification") {
+    ctx.sendJson(response, 200, await getVerificationState(ctx.user));
+    return;
+  }
+  if (request.method === "POST" && url.pathname === "/api/customer-verification/submit") {
+    const state = await getVerificationState(ctx.user);
+    if (!state.profileId) return adminError(ctx, 409, "Profil customer belum tersedia.");
+    if (!state.documents.length) return adminError(ctx, 400, "Minimal satu dokumen wajib diunggah.");
+    await query(
+      `update public.portal_customer_profiles
+          set verification_status = 'PENDING_VERIFICATION',
+              verification_submitted_at = now(), profile_status = 'pending',
+              verification_notes = null, updated_at = now()
+        where id = $1 and customer_id = $2`,
+      [state.profileId, ctx.user.id],
+    );
+    ctx.sendJson(response, 200, await getVerificationState(ctx.user));
+    return;
+  }
+  const docMatch = url.pathname.match(/^\/api\/customer-verification\/signed-url\/(\d+)$/);
+  if (request.method === "GET" && docMatch) {
+    const result = await query(
+      `select d.file_url from public.customer_verification_documents d
+         join public.portal_customer_profiles p on p.id = d.profile_id
+        where d.id = $1 and p.customer_id = $2`,
+      [Number(docMatch[1]), ctx.user.id],
+    );
+    if (!result.rows[0]) return adminError(ctx, 404, "Dokumen tidak ditemukan.");
+    ctx.sendJson(response, 200, { url: result.rows[0].file_url });
+    return;
+  }
+  return adminError(ctx, 404, "Route verification tidak tersedia.");
+}
+
+async function getOrganizationContext(user) {
+  const [memberships, requests] = await Promise.all([
+    query(
+      `select m.company_id, m.buyer_role, m.department, m.cost_center,
+              m.approval_level, m.spending_limit,
+              coalesce(c.company_name, c.legal_name, c.name) as company_name,
+              coalesce(c.company_code, c.code) as company_code
+         from public.portal_company_members m
+         join public.companies c on c.id = m.company_id
+        where m.portal_customer_id = $1 and m.is_active = true
+        order by m.created_at desc`,
+      [user.id],
+    ),
+    query(
+      `select requested_company_name, requested_registration_number, status,
+              matched_company_id, created_at
+         from public.portal_company_requests
+        where portal_customer_id = $1 and status in ('pending', 'submitted', 'in_review')
+        order by created_at desc limit 1`,
+      [user.id],
+    ),
+  ]);
+  const member = memberships.rows[0];
+  const pending = requests.rows[0];
+  const customerType = user.customer_type === "company" ? "company" : "individual";
+  const company = member ? {
+    id: Number(member.company_id),
+    name: member.company_name,
+    code: member.company_code ?? null,
+  } : null;
+  return {
+    status: member ? "company_mapped" : pending ? "company_pending" : customerType === "individual" ? "individual" : "company_unresolved",
+    customerType, companyId: company?.id ?? null, company,
+    activeMemberships: memberships.rows.map((row) => ({
+      companyId: Number(row.company_id), buyerRole: row.buyer_role,
+      department: row.department ?? null, costCenter: row.cost_center ?? null,
+      approvalLevel: row.approval_level ?? null, spendingLimit: row.spending_limit ?? null,
+    })),
+    pendingRequest: pending ? {
+      requestedCompanyName: pending.requested_company_name,
+      requestedRegistrationNumber: pending.requested_registration_number ?? null,
+      status: pending.status, matchedCompanyId: pending.matched_company_id ?? null,
+      createdAt: pending.created_at,
+    } : null,
+  };
+}
+
+async function applyOrganizationSelection(user, body) {
+  const customerType = text(body.customerType);
+  const companyId = body.companyId == null ? null : numberOrNull(body.companyId);
+  const requestedCompanyName = text(body.requestedCompanyName);
+  const requestedRegistrationNumber = text(body.requestedRegistrationNumber) || null;
+
+  if (!["individual", "company"].includes(customerType)) {
+    const error = new Error("Tipe customer tidak valid.");
+    error.statusCode = 400;
+    throw error;
+  }
+  if (customerType === "individual" && (companyId != null || requestedCompanyName)) {
+    const error = new Error("Customer perorangan tidak boleh memiliki konteks perusahaan.");
+    error.statusCode = 400;
+    throw error;
+  }
+  if (customerType === "company" && companyId == null && !requestedCompanyName) {
+    const error = new Error("Pilih perusahaan canonical atau isi nama perusahaan baru.");
+    error.statusCode = 400;
+    throw error;
+  }
+  if (body.companyId != null && companyId == null) {
+    const error = new Error("Company tidak valid.");
+    error.statusCode = 400;
+    throw error;
+  }
+  if (companyId != null && requestedCompanyName) {
+    const error = new Error("Pilih perusahaan canonical atau ajukan perusahaan baru, bukan keduanya.");
+    error.statusCode = 400;
+    throw error;
+  }
+
+  let company = null;
+  if (companyId != null) {
+    const result = await query(
+      `select id, coalesce(company_name, legal_name, name) as name,
+              coalesce(company_code, code) as code
+         from public.companies
+        where id = $1 and coalesce(is_active, true) = true
+        limit 1`,
+      [companyId],
+    );
+    company = result.rows[0] ?? null;
+    if (!company) {
+      const error = new Error("Company tidak ditemukan.");
+      error.statusCode = 404;
+      throw error;
+    }
+  }
+
+  const profileStatus = customerType === "company" && requestedCompanyName ? "pending" : "active";
+  await query(
+    `update public.portal_customers
+        set customer_type = $1,
+            company = $2
+      where id = $3`,
+    [
+      customerType,
+      company?.name ?? (requestedCompanyName || null),
+      user.id,
+    ],
+  );
+
+  if (companyId != null) {
+    const membership = await query(
+      `select id from public.portal_company_members
+        where portal_customer_id = $1 and company_id = $2
+        limit 1`,
+      [user.id, companyId],
+    );
+    if (membership.rows[0]) {
+      await query(
+        `update public.portal_company_members
+            set is_active = true, joined_at = coalesce(joined_at, now()), updated_at = now()
+          where id = $1`,
+        [membership.rows[0].id],
+      );
+    } else {
+      await query(
+        `insert into public.portal_company_members
+          (portal_customer_id, company_id, buyer_role, is_active, invited_by, invited_at, joined_at, created_at, updated_at)
+         values ($1, $2, 'requester', true, $1, now(), now(), now(), now())`,
+        [user.id, companyId],
+      );
+    }
+  } else {
+    await query(
+      `update public.portal_company_members
+          set is_active = false, updated_at = now()
+        where portal_customer_id = $1 and is_active = true`,
+      [user.id],
+    );
+  }
+
+  if (requestedCompanyName) {
+    const pending = await query(
+      `select id from public.portal_company_requests
+        where portal_customer_id = $1 and status in ('pending', 'submitted', 'in_review')
+        order by created_at desc limit 1`,
+      [user.id],
+    );
+    if (pending.rows[0]) {
+      await query(
+        `update public.portal_company_requests
+            set requested_company_name = $1, requested_registration_number = $2,
+                status = 'pending', reviewed_by = null, reviewed_at = null, updated_at = now()
+          where id = $3`,
+        [requestedCompanyName, requestedRegistrationNumber, pending.rows[0].id],
+      );
+    } else {
+      await query(
+        `insert into public.portal_company_requests
+          (portal_customer_id, requested_company_name, requested_registration_number, status, created_at, updated_at)
+         values ($1, $2, $3, 'pending', now(), now())`,
+        [user.id, requestedCompanyName, requestedRegistrationNumber],
+      );
+    }
+  }
+
+  await query(
+    `insert into public.portal_customer_profiles
+      (customer_id, company_name, profile_status, updated_at)
+     values ($1, $2, $3, now())
+     on conflict (customer_id) do update
+       set company_name = excluded.company_name,
+           profile_status = excluded.profile_status,
+           updated_at = now()`,
+    [user.id, company?.name ?? (requestedCompanyName || null), profileStatus],
+  );
+  return getOrganizationContext({ ...user, customer_type: customerType, company: company?.name ?? requestedCompanyName ?? null });
+}
+
+async function handleOrganizationMutation(ctx) {
+  if (!["PUT", "PATCH"].includes(ctx.request.method)) return adminError(ctx, 405, "Method tidak didukung.");
+  try {
+    const context = await applyOrganizationSelection(ctx.user, ctx.body ?? {});
+    ctx.sendJson(ctx.response, 200, { context });
+  } catch (error) {
+    return adminError(ctx, error.statusCode ?? 500, error.message ?? "Gagal menyimpan konteks organisasi.");
+  }
+}
+
+async function handleOnboardingComplete(ctx) {
+  if (ctx.request.method !== "POST") return adminError(ctx, 405, "Method tidak didukung.");
+  const body = ctx.body ?? {};
+  const accountType = text(body.accountType);
+  const fullName = text(body.fullName);
+  const phone = text(body.phone) || null;
+  const address = text(body.address) || null;
+  if (!["customer", "vendor", "driver", "employee"].includes(accountType)) {
+    return adminError(ctx, 400, "Tipe akun tidak valid.");
+  }
+  if (!fullName || !phone) return adminError(ctx, 400, "Nama dan nomor telepon wajib diisi.");
+
+  const customerType = accountType === "customer" ? text(body.customerType) : null;
+  if (accountType === "customer" && !["individual", "company"].includes(customerType)) {
+    return adminError(ctx, 400, "Tipe customer wajib dipilih.");
+  }
+  const vendor = body.vendor && typeof body.vendor === "object" ? body.vendor : {};
+  const employee = body.employee && typeof body.employee === "object" ? body.employee : {};
+  const driver = body.driver && typeof body.driver === "object" ? body.driver : {};
+  const profileCompanyName = accountType === "customer"
+    ? text(body.requestedCompanyName) || null
+    : text(vendor.companyName || employee.companyName) || null;
+  const profileStatus = accountType === "customer" && body.requestedCompanyName ? "pending" : accountType === "customer" ? "active" : "pending";
+
+  await query(
+    `update public.portal_customers
+        set name = $1, phone = $2, customer_type = coalesce($3, customer_type),
+            company = coalesce($4, company)
+      where id = $5`,
+    [fullName, phone, customerType, profileCompanyName, ctx.user.id],
+  );
+  await query(
+    `insert into public.portal_customer_profiles
+      (customer_id, company_name, company_address, pic_name, pic_whatsapp,
+       legal_doc_url, ktp_pic_url, additional_notes, profile_status, updated_at)
+     values ($1, $2, $3, $4, $5, $6, $7, $8, $9, now())
+     on conflict (customer_id) do update
+       set company_name = coalesce(excluded.company_name, portal_customer_profiles.company_name),
+           company_address = coalesce(excluded.company_address, portal_customer_profiles.company_address),
+           pic_name = coalesce(excluded.pic_name, portal_customer_profiles.pic_name),
+           pic_whatsapp = coalesce(excluded.pic_whatsapp, portal_customer_profiles.pic_whatsapp),
+           legal_doc_url = coalesce(excluded.legal_doc_url, portal_customer_profiles.legal_doc_url),
+           ktp_pic_url = coalesce(excluded.ktp_pic_url, portal_customer_profiles.ktp_pic_url),
+           additional_notes = coalesce(excluded.additional_notes, portal_customer_profiles.additional_notes),
+           profile_status = excluded.profile_status,
+           updated_at = now()`,
+    [
+      ctx.user.id,
+      profileCompanyName,
+      address,
+      fullName,
+      phone,
+      text(vendor.legalityDocUrl) || null,
+      text(body.ktpUrl) || null,
+      JSON.stringify({ accountType, driver, employee, ocrData: body.ocrData ?? null }),
+      profileStatus,
+    ],
+  );
+
+  let organization = null;
+  if (accountType === "customer") {
+    organization = await applyOrganizationSelection(ctx.user, {
+      customerType,
+      companyId: body.companyId,
+      requestedCompanyName: body.requestedCompanyName,
+      requestedRegistrationNumber: body.requestedRegistrationNumber,
+    });
+  } else {
+    const current = await query(
+      `select id from public.onboarding_approvals
+        where customer_id = $1 and status = 'pending'
+        order by created_at desc limit 1`,
+      [ctx.user.id],
+    );
+    if (current.rows[0]) {
+      await query(
+        `update public.onboarding_approvals
+            set account_type = $1, updated_at = now()
+          where id = $2`,
+        [accountType, current.rows[0].id],
+      );
+    } else {
+      await query(
+        `insert into public.onboarding_approvals
+          (customer_id, account_type, status, created_at, updated_at)
+         values ($1, $2, 'pending', now(), now())`,
+        [ctx.user.id, accountType],
+      );
+    }
+  }
+  const status = accountType === "customer" && organization?.status === "company_pending"
+    ? "company_pending"
+    : accountType === "customer" ? "active" : "pending";
+  ctx.sendJson(ctx.response, 200, { ok: true, status, context: organization });
+}
+
+async function handleOnboardingStatus(ctx) {
+  const approval = await query(
+    `select status, admin_note from public.onboarding_approvals
+      where customer_id = $1 order by created_at desc limit 1`,
+    [ctx.user.id],
+  );
+  const profile = await query(
+    "select profile_status, verification_status, verification_notes from public.portal_customer_profiles where customer_id = $1 limit 1",
+    [ctx.user.id],
+  );
+  const organization = await getOrganizationContext(ctx.user);
+  const approvalRow = approval.rows[0];
+  const profileRow = profile.rows[0];
+  let status = ctx.user.account_status === "inactive" ? "incomplete" : "active";
+  if (approvalRow?.status === "pending") status = "pending";
+  if (approvalRow?.status === "rejected" || profileRow?.profile_status === "rejected") status = "rejected";
+  if (organization.status === "company_pending") status = "company_pending";
+  ctx.sendJson(ctx.response, 200, {
+    status, accountType: ctx.user.role, customerType: ctx.user.customer_type ?? null,
+    rejectionReason: approvalRow?.status === "rejected" ? approvalRow.admin_note : profileRow?.verification_notes ?? null,
+    customerContext: organization,
+  });
+}
+
+function customerFields(row) {
+  return {
+    name: row.customer_name ?? row.buyer_name ?? row.name ?? "Guest",
+    email: row.customer_email ?? row.buyer_email ?? row.email ?? null,
+    phone: row.customer_phone ?? row.buyer_phone ?? row.phone ?? null,
+    company: row.customer_company ?? row.buyer_company ?? row.company ?? null,
+  };
+}
+
+function actionList(row) {
+  const status = String(row.status ?? "").toLowerCase();
+  const actions = [];
+  if (!TERMINAL_STATUSES.has(status)) {
+    if (["submitted", "pending", "pending_review", "in_review", "requested", "waiting_rate"].includes(status)) {
+      actions.push("approve", "request_revision", "reject");
+    }
+  }
+  if (row.customer_phone || row.buyer_phone || row.phone) actions.push("contact");
+  return [...new Set(actions)];
+}
+
+async function loadServiceRows() {
+  const [rfqs, logistic, products, serviceRequests, quickQuotes] = await Promise.all([
+    query(
+      `select id, rfq_number, status, approval_status, buyer_name, buyer_email, buyer_phone,
+              buyer_company, company_id, portal_customer_id, created_at, updated_at, notes
+         from public.mkt_rfqs order by created_at desc limit 500`,
+    ),
+    query(
+      `select id, order_number, status, operational_status, admin_approval_status,
+              customer_name, email, phone, company_name, company_id, portal_customer_id,
+              origin, destination, created_at, updated_at, notes
+         from public.logistic_orders order by created_at desc limit 500`,
+    ),
+    query(
+      `select id, order_number, status, customer_name, email, phone, company_id,
+              portal_customer_id, created_at, updated_at, notes, shipping_address,
+              vendor_name_selected, vendor_quoted_price
+         from public.portal_product_orders order by created_at desc limit 500`,
+    ),
+    query(
+      `select id, request_number, status, customer_name, customer_email, customer_phone,
+              customer_company, company_id, portal_customer_id, request_type, trade_type,
+              notes, admin_notes, created_at, updated_at
+         from public.customer_service_requests order by created_at desc limit 500`,
+    ),
+    query(
+      `select id, quote_number, status, name, email, phone, company, service_category,
+              origin, destination, description, created_at, updated_at, admin_notes
+         from public.portal_quick_quotes order by created_at desc limit 500`,
+    ),
+  ]);
+  const mapped = [
+    ...rfqs.rows.map((row) => ({ service_key: "marketplace", service_label: SERVICE_LABELS.marketplace, id: Number(row.id), reference: row.rfq_number ?? `RFQ-${row.id}`, status: row.approval_status ?? row.status ?? "submitted", status_known: Boolean(row.approval_status ?? row.status), company_id: row.company_id, portal_customer_id: row.portal_customer_id, created_at: row.created_at, updated_at: row.updated_at ?? row.created_at, summary: row.notes ?? "", management_path: `/admin?tab=service-operations`, available_actions: actionList(row), record: row, ...customerFields(row) })),
+    ...logistic.rows.map((row) => ({ service_key: "logistic-order", service_label: SERVICE_LABELS["logistic-order"], id: Number(row.id), reference: row.order_number ?? `ORDER-${row.id}`, status: row.operational_status ?? row.admin_approval_status ?? row.status ?? "submitted", status_known: true, company_id: row.company_id, portal_customer_id: row.portal_customer_id, created_at: row.created_at, updated_at: row.updated_at ?? row.created_at, summary: `${row.origin ?? ""} → ${row.destination ?? ""}`.trim(), management_path: `/admin?tab=service-operations`, available_actions: actionList({ ...row, status: row.operational_status ?? row.admin_approval_status ?? row.status }), record: row, ...customerFields(row) })),
+    ...products.rows.map((row) => ({ service_key: "product-order", service_label: SERVICE_LABELS["product-order"], id: Number(row.id), reference: row.order_number ?? `PRODUCT-${row.id}`, status: row.status ?? "submitted", status_known: true, company_id: row.company_id, portal_customer_id: row.portal_customer_id, created_at: row.created_at, updated_at: row.updated_at ?? row.created_at, summary: row.shipping_address ?? "", management_path: `/admin?tab=service-operations`, available_actions: actionList(row), record: row, ...customerFields(row) })),
+    ...serviceRequests.rows.map((row) => ({ service_key: "service-request", service_label: SERVICE_LABELS["service-request"], id: Number(row.id), reference: row.request_number ?? `CSR-${row.id}`, status: row.status ?? "submitted", status_known: true, company_id: row.company_id, portal_customer_id: row.portal_customer_id, created_at: row.created_at, updated_at: row.updated_at ?? row.created_at, summary: row.notes ?? row.request_type ?? "", management_path: `/admin?tab=service-operations`, available_actions: actionList(row), record: row, ...customerFields(row) })),
+    ...quickQuotes.rows.map((row) => ({ service_key: "quote-request", service_label: SERVICE_LABELS["quote-request"], id: Number(row.id), reference: row.quote_number ?? `QUOTE-${row.id}`, status: row.status ?? "submitted", status_known: true, company_id: null, portal_customer_id: null, created_at: row.created_at, updated_at: row.updated_at ?? row.created_at, summary: `${row.service_category ?? ""} ${row.origin ?? ""} → ${row.destination ?? ""}`.trim(), management_path: `/admin?tab=service-operations`, available_actions: actionList(row), record: row, ...customerFields(row) })),
+  ];
+  return mapped;
+}
+
+function filteredRows(rows, url) {
+  const search = text(url.searchParams.get("search")).toLowerCase();
+  const service = text(url.searchParams.get("service"), "all");
+  const status = text(url.searchParams.get("status"), "all").toLowerCase();
+  return rows.filter((row) => {
+    if (service !== "all" && row.service_key !== service) return false;
+    if (status !== "all" && String(row.status).toLowerCase() !== status) return false;
+    if (!search) return true;
+    return `${row.reference} ${row.customer_name} ${row.customer_email} ${row.customer_company} ${row.summary}`.toLowerCase().includes(search);
+  });
+}
+
+function publicServiceRow(row) {
+  const { record, ...publicRow } = row;
+  return publicRow;
+}
+
+async function handleServiceOperations(ctx) {
+  const { request, response, url } = ctx;
+  const detailMatch = url.pathname.match(/^\/api\/portal\/admin\/service-operations\/([^/]+)\/(\d+)$/);
+  const actionMatch = url.pathname.match(/^\/api\/portal\/admin\/service-operations\/([^/]+)\/(\d+)\/actions$/);
+  if (request.method === "GET" && detailMatch) {
+    const rows = await loadServiceRows();
+    const row = rows.find((item) => item.service_key === detailMatch[1] && item.id === Number(detailMatch[2]));
+    if (!row) return adminError(ctx, 404, "Transaksi canonical tidak ditemukan.");
+    let projection = { timeline: { source: `public.${detailMatch[1]}`, currentStatus: row.status, events: [] }, operations: { fulfillment: { status: "not_applicable", links: 0, submissions: 0, latestSubmissionAt: null }, tracking: { status: "not_applicable", source: null, currentStatus: null, events: [] }, pod: { status: "not_applicable", available: false, items: [] }, receipts: { status: "not_applicable", count: 0 }, completion: { status: TERMINAL_STATUSES.has(String(row.status).toLowerCase()) ? "completed" : "in_progress", currentStatus: row.status, source: `public.${detailMatch[1]}` } } };
+    if (row.service_key === "service-request") {
+      const items = await query(
+        `select id, item_type, service_category, title, description, status, estimated_price, quoted_price, required_documents
+           from public.customer_service_request_items where request_id = $1 order by sequence_no, id`,
+        [row.id],
+      );
+      projection = { ...projection, items: items.rows };
+    }
+    if (row.service_key === "marketplace") {
+      const approvals = await query(
+        `select id, approver_level, status, requested_at, responded_at, response_notes
+           from public.mkt_rfq_approvals where rfq_id = $1 order by requested_at desc`,
+        [row.id],
+      );
+      projection = { ...projection, approvals: approvals.rows };
+    }
+    ctx.sendJson(response, 200, { service: row.service_key, id: row.id, record: row.record, history: [], projection });
+    return;
+  }
+  if (request.method === "POST" && actionMatch) {
+    const rows = await loadServiceRows();
+    const row = rows.find((item) => item.service_key === actionMatch[1] && item.id === Number(actionMatch[2]));
+    if (!row) return adminError(ctx, 404, "Transaksi canonical tidak ditemukan.");
+    const action = text((ctx.body ?? {}).action);
+    const reason = text((ctx.body ?? {}).reason) || null;
+    if (!["approve", "request_revision", "reject", "contact"].includes(action)) return adminError(ctx, 400, "Action tidak valid.");
+    if (action === "contact") {
+      const phone = String(row.customer_phone ?? "").replace(/\D/g, "");
+      if (!phone) return adminError(ctx, 400, "Nomor customer tidak tersedia.");
+      ctx.sendJson(response, 200, { contactUrl: `https://wa.me/${phone}` });
+      return;
+    }
+    if (!row.available_actions.includes(action)) return adminError(ctx, 409, "Action tidak tersedia untuk status canonical saat ini.");
+    const targetStatus = action === "approve" ? "approved" : action === "request_revision" ? "revision_requested" : "rejected";
+    if (row.service_key === "marketplace") {
+      await query(
+        `update public.mkt_rfqs
+            set approval_status = $1, approval_resolved_at = now(), updated_at = now()
+          where id = $2 and coalesce(approval_status, status::text) not in ('approved', 'rejected', 'cancelled')`,
+        [targetStatus, row.id],
+      );
+    } else if (row.service_key === "logistic-order") {
+      await query(
+        `update public.logistic_orders
+            set admin_approval_status = $1, approved_at = case when $1 = 'approved' then now() else approved_at end,
+                updated_at = now()
+          where id = $2 and coalesce(admin_approval_status, status) not in ('approved', 'rejected', 'cancelled')`,
+        [targetStatus, row.id],
+      );
+    } else if (row.service_key === "product-order") {
+      await query("update public.portal_product_orders set status = $1, updated_at = now() where id = $2 and status not in ('completed', 'cancelled', 'rejected')", [targetStatus, row.id]);
+    } else if (row.service_key === "service-request") {
+      await query("update public.customer_service_requests set status = $1, admin_notes = $2, handled_by = $3, updated_at = now() where id = $4 and status not in ('completed', 'cancelled', 'rejected')", [targetStatus, reason, ctx.user.email, row.id]);
+    } else if (row.service_key === "quote-request") {
+      await query("update public.portal_quick_quotes set status = $1, admin_notes = $2, assigned_to = $3, updated_at = now() where id = $4 and status not in ('completed', 'cancelled', 'rejected')", [targetStatus, reason, ctx.user.email, row.id]);
+    }
+    ctx.sendJson(response, 200, { ok: true, action, status: targetStatus, service: row.service_key, id: row.id });
+    return;
+  }
+  if (request.method !== "GET") return adminError(ctx, 405, "Method tidak didukung.");
+  const rows = filteredRows(await loadServiceRows(), url);
+  const offset = Math.max(Number(url.searchParams.get("offset") ?? 0), 0);
+  const limit = Math.min(Math.max(Number(url.searchParams.get("limit") ?? 50), 1), 200);
+  const summary = Object.values(rows.reduce((acc, row) => {
+    const item = acc[row.service_key] ?? (acc[row.service_key] = { service_key: row.service_key, service_label: row.service_label, total: 0, pending: 0, ambiguous: 0 });
+    item.total += 1;
+    if (!TERMINAL_STATUSES.has(String(row.status).toLowerCase())) item.pending += 1;
+    if (!row.status_known) item.ambiguous += 1;
+    return acc;
+  }, {}));
+  ctx.sendJson(response, 200, {
+    data: rows.slice(offset, offset + limit).map(publicServiceRow),
+    summary, total: rows.length,
+    unreadNotifications: 0,
+  });
+}
+
+async function handleAdminNotifications(ctx) {
+  const { request, response, url } = ctx;
+  if (request.method === "GET" && url.pathname === "/api/portal/admin/service-operations/notifications") {
+    const limit = Math.min(Math.max(Number(url.searchParams.get("limit") ?? 8), 1), 50);
+    const result = await query(
+      `select id, type, title, message, payload, is_read, created_at, read_at
+         from public.portal_customer_notifications order by created_at desc limit $1`,
+      [limit],
+    );
+    const data = result.rows.map((row) => {
+      const payload = jsonValue(row.payload, {}) ?? {};
+      return {
+        id: Number(row.id), type: row.type, order_number: payload.order_number ?? payload.reference ?? "",
+        customer_name: payload.customer_name ?? "", company_name: payload.company_name ?? null,
+        title: row.title, body: row.message, read_at: row.read_at ?? (row.is_read ? row.created_at : null),
+        created_at: row.created_at,
+      };
+    });
+    ctx.sendJson(response, 200, { data, unread: data.filter((item) => !item.read_at).length });
+    return;
+  }
+  const readMatch = url.pathname.match(/^\/api\/portal\/admin\/service-operations\/notifications\/(\d+)\/read$/);
+  if (request.method === "POST" && readMatch) {
+    await query("update public.portal_customer_notifications set is_read = true, read_at = now() where id = $1", [Number(readMatch[1])]);
+    ctx.sendEmpty(response, 204);
+    return;
+  }
+  if (request.method === "POST" && url.pathname === "/api/portal/admin/service-operations/notifications/mark-all-read") {
+    await query("update public.portal_customer_notifications set is_read = true, read_at = now() where is_read = false");
+    ctx.sendEmpty(response, 204);
+    return;
+  }
+  return adminError(ctx, 404, "Notification route tidak ditemukan.");
+}
+
+export {
+  handleAdminApprovals,
+  handleAdminCompanyRequests,
+  handleAdminCustomerStats,
+  handleAdminCustomers,
+  handleAdminNotifications,
+  handleOnboardingComplete,
+  handleOrganizationMutation,
+  handleOnboardingStatus,
+  handleServiceOperations,
+  handleVerification,
+};
