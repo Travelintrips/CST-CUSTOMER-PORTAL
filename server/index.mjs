@@ -211,7 +211,7 @@ function bootstrapResponse(user, requestedReturnTo) {
       ? "/vendor-dashboard"
       : "/dashboard";
   const allowedDestination = onboardingComplete
-    ? safeReturnTo(requestedReturn) ?? defaultDestination
+    ? safeReturnTo(requestedReturnTo) ?? defaultDestination
     : "/onboarding";
 
   return {

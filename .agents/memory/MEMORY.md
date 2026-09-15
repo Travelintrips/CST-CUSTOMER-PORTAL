@@ -5,3 +5,4 @@
 - [Login session boundary](login-session-boundary.md) — let `/login` own session resolution; stale bootstrap requests must never clear a newly-created session.
 - [Git lock and provider auth](github-git-auth.md) — verify Git processes before removing stale locks; GitHub App attachment may not refresh the shell's existing askpass helper.
 - [Replit configuration persistence](replit-config-persistence.md) — preserve `.replit` userenv blocks during recovery or dashboard Configurations can disappear while Secrets remain.
+- [Preview API port routing](preview-api-port-routing.md) — in multi-port Replit previews, browser API calls must use the public API port rather than the main preview `/api` path.
