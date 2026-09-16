@@ -166,7 +166,7 @@ export async function uploadDocument({ customerId, companyId, documentType: type
   const path = `${customerObjectPrefix(customerId, companyId)}/${normalizedType}/${crypto.randomUUID()}-${safeFileName(file.name || `document.${extensionForMime(mimeType)}`)}`;
   const { error } = await storage.supabase.storage.from(storage.bucket).upload(path, buffer, {
     contentType: mimeType,
-    cacheControl: "3600",
+    cacheControl: "0",
     upsert: false,
   });
   if (error) {

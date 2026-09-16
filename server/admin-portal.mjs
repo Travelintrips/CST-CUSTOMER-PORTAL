@@ -594,9 +594,9 @@ async function handleVerification(ctx) {
       file: ctx.form.file,
     });
 
+    let savedId;
+    let savedVersion;
     try {
-      let savedId;
-      let savedVersion;
       if (existing) {
         const updated = await query(
           `update public.customer_verification_documents
