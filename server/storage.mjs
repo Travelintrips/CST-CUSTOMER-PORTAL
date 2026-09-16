@@ -8,6 +8,16 @@ const ALLOWED_DOCUMENT_TYPES = new Set(["ktp", "legalitas", "sim", "stnk"]);
 const ALLOWED_MIME_TYPES = new Set(["image/jpeg", "image/png", "application/pdf"]);
 const bucketChecks = new Map();
 
+function isValidBucketName(value) {
+  return typeof value === "string"
+    && value.length > 0
+    && value.length <= 100
+    && value.trim() === value
+    && !value.includes("/")
+    && !value.includes("\\")
+    && /^[\w!.*'() &$@=;:+,?-]+$/.test(value);
+}
+
 function isProduction() {
   return process.env.APP_ENV === "production" || process.env.NODE_ENV === "production";
 }
@@ -32,7 +42,7 @@ function storageConfig() {
     error.statusCode = 503;
     throw error;
   }
-  if (!/^[a-z0-9][a-z0-9._-]{0,62}$/.test(bucket)) {
+  if (!isValidBucketName(bucket)) {
     const error = new Error("Development document storage bucket configuration is invalid.");
     error.statusCode = 503;
     throw error;
