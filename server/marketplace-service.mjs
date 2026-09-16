@@ -1,5 +1,6 @@
 import { randomBytes } from "node:crypto";
 import { pool, query } from "./db.mjs";
+import { handleAdminOperations, handlePortalOperations } from "./marketplace-operations.mjs";
 
 const RFQ_TERMINAL = new Set(["awarded", "cancelled", "expired"]);
 const QUOTE_TERMINAL = new Set(["selected", "rejected", "expired", "withdrawn"]);
@@ -980,12 +981,16 @@ async function handlePublicVendorPo(request, response, pathname, body) {
 
 async function handleMarketplaceRoute({ request, response, url, body, user, isAdmin = false, sendJson }) {
   response._sendJson = (status, value) => sendJson(response, status, value);
+  if (isAdmin && url.pathname.startsWith("/api/mkt/admin/")) {
+    if (await handleAdminOperations({ request, response, pathname: url.pathname, body, user, sendJson })) return true;
+  }
   if (url.pathname.startsWith("/api/vendor-quote/")) return handleVendorQuote(request, response, url.pathname, body);
   if (url.pathname.startsWith("/api/mkt/vendor-po/")) return handlePublicVendorPo(request, response, url.pathname, body);
   if (isAdmin && url.pathname.startsWith("/api/mkt/admin/")) return handleAdminMarketplace(request, response, url.pathname, body, user);
   if (url.pathname.startsWith("/api/mkt/portal/")) {
     if (!user) fail(401, "Authentication required.");
     if (user.role !== "customer") fail(403, "Customer authorization required.");
+    if (await handlePortalOperations({ request, response, pathname: url.pathname, body, user, sendJson })) return true;
     if (await handlePortalAction(request, response, user, url.pathname, body)) return true;
     if (await handlePortalPurchaseOrders(request, response, url.pathname, user)) return true;
     const quotation = url.pathname.match(/^\/api\/mkt\/portal\/rfqs\/(\d+)\/quotation$/);

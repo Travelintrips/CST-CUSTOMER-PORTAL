@@ -1087,8 +1087,9 @@ async function route(request, response) {
         : await requireUser(request, response);
     if (!isPublicMarketplaceRoute && !user) return;
     if (isPublicMarketplaceRoute || user) {
+      const isMultipart = String(request.headers["content-type"] ?? "").startsWith("multipart/form-data");
       const body = ["POST", "PUT", "PATCH"].includes(request.method ?? "")
-        ? await readJson(request)
+        ? isMultipart ? await readMultipartForm(request) : await readJson(request)
         : {};
       const handled = await handleMarketplaceRoute({
         request,
@@ -1107,6 +1108,16 @@ async function route(request, response) {
         sendJson(response, 404, {
           message: "Marketplace link tidak ditemukan.",
           code: "TOKEN_INVALID",
+        });
+        return;
+      }
+      // Every marketplace namespace is owned by the standalone service.
+      // An unknown or not-yet-migrated route must fail locally instead of
+      // falling through to the shared API (which may be production).
+      if (pathname.startsWith("/api/mkt/")) {
+        sendJson(response, 404, {
+          message: "Marketplace route tidak ditemukan.",
+          service: "customer-portal-api",
         });
         return;
       }
@@ -1323,7 +1334,7 @@ const server = http.createServer(async (request, response) => {
     await route(request, response);
   } catch (error) {
     const status = Number(error?.statusCode) || 500;
-    if (status >= 500) console.error("[customer-portal-api] request failed", error?.message ?? error);
+    if (status >= 500) console.error("[customer-portal-api] request failed", error?.stack ?? error?.message ?? error);
     if (!response.headersSent) sendError(response, status, status === 500 ? "Internal server error." : error.message);
     else response.end();
   }

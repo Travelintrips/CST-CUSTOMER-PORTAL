@@ -1,0 +1,946 @@
+import { pool, query } from "./db.mjs";
+
+const SHIPMENT_EVENT_STATUS = {
+  packing: "packing",
+  loaded: "loading",
+  departed: "in_transit",
+  customs: "customs",
+  warehouse: "warehouse",
+  arrived: "arrived",
+  delivered: "delivered",
+};
+
+const SHIPMENT_TRANSITIONS = {
+  planned: new Set(["packing", "cancelled"]),
+  packing: new Set(["loading", "cancelled"]),
+  loading: new Set(["ready_to_ship", "in_transit", "cancelled"]),
+  ready_to_ship: new Set(["in_transit", "cancelled"]),
+  in_transit: new Set(["customs", "warehouse", "arrived", "cancelled"]),
+  customs: new Set(["warehouse", "arrived", "cancelled"]),
+  warehouse: new Set(["arrived", "cancelled"]),
+  arrived: new Set(["delivered", "cancelled"]),
+  delivered: new Set(),
+  partially_delivered: new Set(["delivered"]),
+  rejected_goods: new Set(["delivered"]),
+  cancelled: new Set(),
+};
+
+const PO_ACTION_STATUS = {
+  issue: "issued",
+  production: "production",
+  "ready-to-ship": "ready_to_ship",
+  "in-transit": "in_transit",
+  delivered: "delivered",
+  complete: "completed",
+  close: "closed",
+};
+
+const PO_TRANSITIONS = {
+  pending: new Set(["issued", "cancelled"]),
+  confirmed: new Set(["issued", "production", "cancelled"]),
+  issued: new Set(["vendor_accepted", "revision_requested", "cancelled"]),
+  vendor_accepted: new Set(["production", "cancelled"]),
+  revision_requested: new Set(["issued", "cancelled"]),
+  production: new Set(["ready_to_ship", "cancelled"]),
+  ready_to_ship: new Set(["in_transit", "cancelled"]),
+  in_transit: new Set(["delivered", "cancelled"]),
+  delivered: new Set(["completed", "closed"]),
+  completed: new Set(["closed"]),
+  closed: new Set(),
+  cancelled: new Set(),
+  vendor_rejected: new Set(["issued", "cancelled"]),
+  partially_delivered: new Set(["delivered", "completed", "closed"]),
+  rejected_goods: new Set(["delivered", "cancelled"]),
+};
+
+function fail(statusCode, message) {
+  const error = new Error(message);
+  error.statusCode = statusCode;
+  throw error;
+}
+
+function integer(value, label) {
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed) || parsed <= 0) fail(400, `${label} tidak valid.`);
+  return parsed;
+}
+
+function decimal(value, label, { positive = false } = {}) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || (positive ? parsed <= 0 : parsed < 0)) {
+    fail(400, `${label} tidak valid.`);
+  }
+  return parsed;
+}
+
+function text(value, fallback = null) {
+  return typeof value === "string" && value.trim() ? value.trim() : fallback;
+}
+
+function idempotencyKey(request, body) {
+  return text(request.headers["idempotency-key"]) ?? text(body?.idempotencyKey);
+}
+
+function actor(user, actorType = "admin") {
+  return {
+    actorType,
+    actorId: user?.id == null ? null : String(user.id),
+    actorName: user?.name ?? user?.email ?? actorType,
+  };
+}
+
+async function accessibleCompanyIds(user, db = query) {
+  const result = await db(
+    `select company_id
+       from public.portal_company_members
+      where portal_customer_id = $1 and is_active = true and company_id is not null`,
+    [user.id],
+  );
+  return result.rows.map((row) => Number(row.company_id)).filter(Number.isInteger);
+}
+
+function ownerSql(alias = "r", start = 1) {
+  return `(
+    ${alias}.portal_customer_id = $${start}
+    or lower(coalesce(${alias}.buyer_email, '')) = lower($${start + 1})
+    or ${alias}.company_id = any($${start + 2}::int[])
+  )`;
+}
+
+async function withTransaction(work) {
+  const client = await pool.connect();
+  const db = (sql, values) => client.query(sql, values);
+  try {
+    await client.query("begin");
+    const result = await work(db);
+    await client.query("commit");
+    return result;
+  } catch (error) {
+    await client.query("rollback").catch(() => {});
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+async function loadPo(poId, user, { client = query, forUpdate = false, isAdmin = false } = {}) {
+  const id = integer(poId, "PO");
+  if (isAdmin) {
+    const result = await client(
+      `select po.*, r.rfq_number, r.portal_customer_id, r.buyer_email, r.buyer_name,
+              r.delivery_address
+         from public.mkt_purchase_orders po
+         join public.mkt_rfqs r on r.id = po.rfq_id
+        where po.id = $1
+        limit 1${forUpdate ? " for update of po" : ""}`,
+      [id],
+    );
+    if (!result.rows[0]) fail(404, "Purchase Order tidak ditemukan.");
+    return result.rows[0];
+  }
+
+  const companyIds = await accessibleCompanyIds(user, client === query ? query : client);
+  const result = await client(
+    `select po.*, r.rfq_number, r.portal_customer_id, r.buyer_email, r.buyer_name,
+            r.delivery_address
+       from public.mkt_purchase_orders po
+       join public.mkt_rfqs r on r.id = po.rfq_id
+      where po.id = $4 and ${ownerSql("r")}
+      limit 1${forUpdate ? " for update of po" : ""}`,
+    [user.id, user.email, companyIds, id],
+  );
+  if (!result.rows[0]) fail(404, "Purchase Order tidak ditemukan.");
+  return result.rows[0];
+}
+
+async function loadShipment(shipmentId, user, { client = query, forUpdate = false, isAdmin = false } = {}) {
+  const id = integer(shipmentId, "Shipment");
+  const lock = forUpdate ? " for update of s" : "";
+  if (isAdmin) {
+    const result = await client(
+      `select s.*, po.po_number, po.status as po_status, po.rfq_id,
+              r.portal_customer_id, r.buyer_email, r.buyer_name
+         from public.mkt_po_shipments s
+         join public.mkt_purchase_orders po on po.id=s.po_id
+         join public.mkt_rfqs r on r.id=po.rfq_id
+        where s.id=$1
+        limit 1${lock}`,
+      [id],
+    );
+    if (!result.rows[0]) fail(404, "Shipment tidak ditemukan.");
+    return result.rows[0];
+  }
+
+  const companyIds = await accessibleCompanyIds(user, client === query ? query : client);
+  const result = await client(
+    `select s.*, po.po_number, po.status as po_status, po.rfq_id,
+            r.portal_customer_id, r.buyer_email, r.buyer_name
+       from public.mkt_po_shipments s
+       join public.mkt_purchase_orders po on po.id=s.po_id
+       join public.mkt_rfqs r on r.id=po.rfq_id
+      where s.id=$4 and ${ownerSql("r")}
+      limit 1${lock}`,
+    [user.id, user.email, companyIds, id],
+  );
+  if (!result.rows[0]) fail(404, "Shipment tidak ditemukan.");
+  return result.rows[0];
+}
+
+function mapShipment(row) {
+  return {
+    id: Number(row.id),
+    poId: Number(row.po_id),
+    shipmentNumber: row.shipment_number,
+    shipmentStatus: row.shipment_status,
+    shipmentType: row.shipment_type,
+    carrierName: row.carrier_name,
+    trackingNumber: row.tracking_number,
+    vehicleType: row.vehicle_type,
+    vehicleNumber: row.vehicle_number,
+    driverName: row.driver_name,
+    driverPhone: row.driver_phone,
+    containerNumber: row.container_number,
+    sealNumber: row.seal_number,
+    origin: row.origin,
+    destination: row.destination,
+    plannedDeparture: row.planned_departure,
+    actualDeparture: row.actual_departure,
+    estimatedArrival: row.estimated_arrival,
+    actualArrival: row.actual_arrival,
+    notes: row.notes,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+async function shipmentItems(db, shipmentId) {
+  const result = await db(
+    `select si.id, si.shipment_id, si.po_line_id, si.line_number, si.qty, si.uom,
+            si.weight, si.volume, si.package_count, si.remarks,
+            pol.item_name, pol.unit, pol.notes as po_line_notes
+       from public.mkt_po_shipment_items si
+       join public.mkt_purchase_order_lines pol on pol.id=si.po_line_id
+      where si.shipment_id=$1
+      order by si.line_number, si.id`,
+    [shipmentId],
+  );
+  return result.rows.map((row) => ({
+    id: Number(row.id),
+    shipmentId: Number(row.shipment_id),
+    poLineId: Number(row.po_line_id),
+    lineNumber: Number(row.line_number),
+    qty: row.qty,
+    uom: row.uom ?? row.unit ?? null,
+    weight: row.weight,
+    volume: row.volume,
+    packageCount: row.package_count,
+    remarks: row.remarks ?? row.po_line_notes ?? null,
+    itemName: row.item_name,
+  }));
+}
+
+async function shipmentDetail(db, shipment) {
+  return {
+    ...mapShipment(shipment),
+    items: await shipmentItems(db, shipment.id),
+  };
+}
+
+async function writeActivity(db, {
+  poId,
+  user,
+  action,
+  oldValue = null,
+  newValue = null,
+  description = action,
+  key = null,
+}) {
+  await db(
+    `insert into public.activity_logs
+       (actor_type, actor_id, actor_name, action, old_value, new_value,
+        description, mkt_purchase_order_id, deduplication_key)
+     values ($1,$2,$3,$4,$5::jsonb,$6::jsonb,$7,$8,$9)
+     on conflict (deduplication_key) where deduplication_key is not null do nothing`,
+    [
+      user?.actorType ?? "admin",
+      user?.actorId ?? (user?.id == null ? null : String(user.id)),
+      user?.actorName ?? user?.name ?? user?.email ?? "system",
+      action,
+      JSON.stringify(oldValue),
+      JSON.stringify(newValue),
+      description,
+      poId,
+      key,
+    ],
+  );
+}
+
+async function queueNotification(db, {
+  eventType,
+  po,
+  payload = {},
+  key,
+}) {
+  await db(
+    `insert into public.mkt_notification_queue
+       (event_type, channel, recipient_type, recipient_id, rfq_id,
+        purchase_order_id, payload_json, deduplication_key)
+     values ($1,'internal','customer',$2,$3,$4,$5::jsonb,$6)
+     on conflict do nothing`,
+    [
+      eventType,
+      po.portal_customer_id ?? null,
+      po.rfq_id,
+      po.id,
+      JSON.stringify({ poId: Number(po.id), poNumber: po.po_number, ...payload }),
+      key,
+    ],
+  );
+}
+
+async function getShipmentList(poId, user, isAdmin) {
+  const po = await loadPo(poId, user, { isAdmin });
+  const result = await query(
+    `select * from public.mkt_po_shipments where po_id=$1 order by created_at asc, id asc`,
+    [po.id],
+  );
+  return result.rows.map(mapShipment);
+}
+
+async function listPoLines(poId, user, isAdmin) {
+  const po = await loadPo(poId, user, { isAdmin });
+  const result = await query(
+    `select id, po_id, item_name, qty, unit, unit_price, subtotal, notes, created_at
+       from public.mkt_purchase_order_lines
+      where po_id=$1
+      order by id`,
+    [po.id],
+  );
+  return result.rows.map((row) => ({
+    id: Number(row.id),
+    poId: Number(row.po_id),
+    itemName: row.item_name,
+    qty: row.qty,
+    unit: row.unit,
+    unitPrice: row.unit_price,
+    subtotal: row.subtotal,
+    notes: row.notes,
+    createdAt: row.created_at,
+  }));
+}
+
+function existingShipmentResult(row) {
+  return { id: Number(row.id), alreadyProcessed: true, shipment: mapShipment(row) };
+}
+
+async function createShipment({ poId, body, request, user, isAdmin }) {
+  const key = idempotencyKey(request, body);
+  if (!key) fail(400, "Idempotency-Key wajib diisi untuk membuat shipment.");
+  const shipmentType = text(body.shipmentType, "trucking");
+
+  return withTransaction(async (db) => {
+    const po = await loadPo(poId, user, { client: db, forUpdate: true, isAdmin });
+    const existing = (await db(
+      `select * from public.mkt_po_shipments where po_id=$1 and idempotency_key=$2 limit 1`,
+      [po.id, key],
+    )).rows[0];
+    if (existing) return existingShipmentResult(existing);
+
+    if (!["issued", "vendor_accepted", "production", "ready_to_ship"].includes(po.status)) {
+      fail(409, "PO belum berada pada status yang mengizinkan assignment shipment.");
+    }
+    const lines = (await db(
+      `select id, qty, unit from public.mkt_purchase_order_lines where po_id=$1 order by id`,
+      [po.id],
+    )).rows;
+    if (!lines.length) fail(409, "PO belum memiliki line item.");
+    const requestedItems = Array.isArray(body.items) && body.items.length ? body.items : lines;
+    const lineMap = new Map(lines.map((line) => [Number(line.id), line]));
+    for (const item of requestedItems) {
+      const line = lineMap.get(integer(item.poLineId ?? item.id, "PO line"));
+      if (!line) fail(404, "PO line bukan bagian dari PO ini.");
+      const qty = decimal(item.qty ?? line.qty, "Qty shipment", { positive: true });
+      if (qty > Number(line.qty)) fail(409, "Qty shipment melebihi qty PO.");
+    }
+    const nextNumber = (await db(
+      `select count(*)::int as count from public.mkt_po_shipments where po_id=$1`,
+      [po.id],
+    )).rows[0].count + 1;
+    const inserted = await db(
+      `insert into public.mkt_po_shipments
+         (po_id, shipment_number, shipment_status, shipment_type,
+          carrier_name, tracking_number, vehicle_type, vehicle_number,
+          driver_name, driver_phone, container_number, seal_number,
+          origin, destination, notes, created_by, idempotency_key)
+       values ($1,$2,'planned',$3,
+               $4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)
+       returning *`,
+      [
+        po.id,
+        `SHP-${po.id}-${String(nextNumber).padStart(3, "0")}`,
+        shipmentType,
+        text(body.carrierName),
+        text(body.trackingNumber),
+        text(body.vehicleType),
+        text(body.vehicleNumber),
+        text(body.driverName),
+        text(body.driverPhone),
+        text(body.containerNumber),
+        text(body.sealNumber),
+        text(body.origin),
+        text(body.destination ?? po.delivery_address),
+        text(body.notes),
+        String(user?.id ?? "system"),
+        key,
+      ],
+    );
+    const shipment = inserted.rows[0];
+    for (let index = 0; index < requestedItems.length; index += 1) {
+      const item = requestedItems[index];
+      const poLineId = integer(item.poLineId ?? item.id, "PO line");
+      const line = lineMap.get(poLineId);
+      await db(
+        `insert into public.mkt_po_shipment_items
+           (shipment_id, po_line_id, line_number, qty, uom, weight, volume, package_count, remarks)
+         values ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+        [
+          shipment.id,
+          poLineId,
+          Number(item.lineNumber ?? index + 1),
+          decimal(item.qty ?? line.qty, "Qty shipment", { positive: true }),
+          text(item.uom ?? line.unit),
+          item.weight == null ? null : decimal(item.weight, "Weight"),
+          item.volume == null ? null : decimal(item.volume, "Volume"),
+          item.packageCount == null ? null : integer(item.packageCount, "Package count"),
+          text(item.remarks),
+        ],
+      );
+    }
+    const eventKey = `shipment-created:${shipment.id}`;
+    await writeActivity(db, {
+      poId: po.id,
+      user: actor(user, isAdmin ? "admin" : "customer"),
+      action: "shipment_created",
+      newValue: { shipmentId: Number(shipment.id), status: shipment.shipment_status },
+      description: "Shipment canonical dibuat dan di-assign ke PO.",
+      key: eventKey,
+    });
+    await queueNotification(db, {
+      eventType: "shipment_created",
+      po,
+      payload: { shipmentId: Number(shipment.id), shipmentNumber: shipment.shipment_number },
+      key: eventKey,
+    });
+    if (["issued", "vendor_accepted"].includes(po.status)) {
+      const updatedPo = await db(
+        `update public.mkt_purchase_orders
+            set status='production'::mkt_po_status, updated_at=now()
+          where id=$1 and status=$2::mkt_po_status
+          returning status`,
+        [po.id, po.status],
+      );
+      if (updatedPo.rowCount) {
+        await writeActivity(db, {
+          poId: po.id,
+          user: actor(user, isAdmin ? "admin" : "customer"),
+          action: "po_production",
+          oldValue: { status: po.status },
+          newValue: { status: "production" },
+          description: "PO masuk tahap fulfillment/assignment.",
+          key: `po:${po.id}:production`,
+        });
+      }
+    }
+    return { id: Number(shipment.id), alreadyProcessed: false, shipment: mapShipment(shipment) };
+  });
+}
+
+async function appendShipmentEvent({ shipmentId, body, request, user, isAdmin }) {
+  const key = idempotencyKey(request, body);
+  if (!key) fail(400, "Idempotency-Key wajib diisi untuk event shipment.");
+  const eventType = text(body.eventType);
+  if (!eventType) fail(400, "Event shipment wajib diisi.");
+  const targetStatus = SHIPMENT_EVENT_STATUS[eventType];
+  if (!targetStatus) fail(400, "Tipe event shipment tidak valid.");
+
+  return withTransaction(async (db) => {
+    let shipment = await loadShipment(shipmentId, user, { client: db, forUpdate: true, isAdmin });
+    const existing = (await db(
+      `select * from public.mkt_po_shipment_events where shipment_id=$1 and idempotency_key=$2 limit 1`,
+      [shipment.id, key],
+    )).rows[0];
+    if (existing) return { id: Number(existing.id), alreadyProcessed: true, event: mapEvent(existing) };
+    if (shipment.shipment_status === targetStatus) {
+      fail(409, `Shipment sudah berada pada status ${targetStatus}; event concurrent/stale ditolak.`);
+    }
+    if (!SHIPMENT_TRANSITIONS[shipment.shipment_status]?.has(targetStatus)) {
+      fail(409, `Shipment tidak dapat berpindah dari ${shipment.shipment_status} ke ${targetStatus}.`);
+    }
+    const updated = await db(
+      `update public.mkt_po_shipments
+          set shipment_status=$1,
+              actual_departure=case when $1='in_transit' then coalesce(actual_departure,now()) else actual_departure end,
+              actual_arrival=case when $1='arrived' then coalesce(actual_arrival,now()) else actual_arrival end,
+              updated_at=now()
+        where id=$2 and shipment_status=$3
+        returning *`,
+      [targetStatus, shipment.id, shipment.shipment_status],
+    );
+    if (!updated.rowCount) fail(409, "Shipment berubah oleh proses lain. Muat ulang lalu coba lagi.");
+    shipment = updated.rows[0];
+    const sequence = Number((await db(
+      `select coalesce(max(event_sequence),0)+1 as next
+         from public.mkt_po_shipment_events
+        where shipment_id=$1`,
+      [shipment.id],
+    )).rows[0].next);
+    const inserted = await db(
+      `insert into public.mkt_po_shipment_events
+         (shipment_id,event_sequence,event_type,note,location,latitude,longitude,
+          actor_type,actor_id,idempotency_key)
+       values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+       returning *`,
+      [
+        shipment.id,
+        sequence,
+        eventType,
+        text(body.note),
+        text(body.location),
+        body.latitude == null ? null : decimal(body.latitude, "Latitude"),
+        body.longitude == null ? null : decimal(body.longitude, "Longitude"),
+        isAdmin ? "admin" : "customer",
+        String(user?.id ?? "system"),
+        key,
+      ],
+    );
+    await writeActivity(db, {
+      poId: shipment.po_id,
+      user: actor(user, isAdmin ? "admin" : "customer"),
+      action: `shipment_${eventType}`,
+      oldValue: { status: body.previousStatus ?? null },
+      newValue: { status: targetStatus, shipmentId: Number(shipment.id) },
+      description: text(body.note, `Shipment event ${eventType}`),
+      key: `shipment-event:${shipment.id}:${key}`,
+    });
+    await queueNotification(db, {
+      eventType: `shipment_${eventType}`,
+      po: { ...shipment, id: shipment.po_id },
+      payload: { shipmentId: Number(shipment.id), eventType, status: targetStatus },
+      key: `shipment-event:${shipment.id}:${key}`,
+    });
+    return { id: Number(inserted.rows[0].id), alreadyProcessed: false, event: mapEvent(inserted.rows[0]) };
+  });
+}
+
+function mapEvent(row) {
+  return {
+    id: Number(row.id),
+    shipmentId: Number(row.shipment_id),
+    eventSequence: Number(row.event_sequence),
+    eventType: row.event_type,
+    note: row.note,
+    location: row.location,
+    latitude: row.latitude,
+    longitude: row.longitude,
+    actorType: row.actor_type,
+    actorId: row.actor_id,
+    createdAt: row.created_at,
+  };
+}
+
+async function listTimeline(shipmentId, user, isAdmin) {
+  const shipment = await loadShipment(shipmentId, user, { isAdmin });
+  const result = await query(
+    `select * from public.mkt_po_shipment_events where shipment_id=$1 order by event_sequence,id`,
+    [shipment.id],
+  );
+  return result.rows.map(mapEvent);
+}
+
+async function submitPod({ shipmentId, body, request, user, isAdmin }) {
+  const key = idempotencyKey(request, body);
+  if (!key) fail(400, "Idempotency-Key wajib diisi untuk POD.");
+  const url = text(body.photoUrl ?? body.podUrl ?? body.url);
+  if (!url) {
+    fail(400, "POD canonical memerlukan photoUrl/podUrl yang sudah berada di storage development.");
+  }
+  return withTransaction(async (db) => {
+    const shipment = await loadShipment(shipmentId, user, { client: db, forUpdate: true, isAdmin });
+    const existing = (await db(
+      `select * from public.mkt_po_shipment_events
+        where shipment_id=$1 and event_type='pod_submitted' and idempotency_key=$2
+        limit 1`,
+      [shipment.id, key],
+    )).rows[0];
+    if (existing) return { alreadyProcessed: true, pod: mapPod(existing) };
+    if (!["arrived", "delivered", "partially_delivered"].includes(shipment.shipment_status)) {
+      fail(409, "POD hanya dapat disubmit setelah shipment tiba.");
+    }
+    const sequence = Number((await db(
+      `select coalesce(max(event_sequence),0)+1 as next
+         from public.mkt_po_shipment_events where shipment_id=$1`,
+      [shipment.id],
+    )).rows[0].next);
+    const inserted = await db(
+      `insert into public.mkt_po_shipment_events
+         (shipment_id,event_sequence,event_type,note,attachment_object_path,
+          actor_type,actor_id,idempotency_key)
+       values ($1,$2,'pod_submitted',$3,$4,$5,$6,$7)
+       returning *`,
+      [
+        shipment.id,
+        sequence,
+        text(body.note),
+        url,
+        isAdmin ? "admin" : "customer",
+        String(user?.id ?? "system"),
+        key,
+      ],
+    );
+    await writeActivity(db, {
+      poId: shipment.po_id,
+      user: actor(user, isAdmin ? "admin" : "customer"),
+      action: "shipment_pod_submitted",
+      newValue: { shipmentId: Number(shipment.id), url },
+      description: "POD shipment disubmit.",
+      key: `shipment-pod:${shipment.id}:${key}`,
+    });
+    await queueNotification(db, {
+      eventType: "shipment_pod_submitted",
+      po: { ...shipment, id: shipment.po_id },
+      payload: { shipmentId: Number(shipment.id) },
+      key: `shipment-pod:${shipment.id}:${key}`,
+    });
+    await maybeCompletePo(db, shipment.po_id, user, isAdmin);
+    return { alreadyProcessed: false, pod: mapPod(inserted.rows[0]) };
+  });
+}
+
+function mapPod(row) {
+  return {
+    available: true,
+    url: row.attachment_object_path,
+    uploadedAt: row.created_at,
+    note: row.note,
+  };
+}
+
+async function getPod(shipmentId, user, isAdmin) {
+  const shipment = await loadShipment(shipmentId, user, { isAdmin });
+  const result = await query(
+    `select * from public.mkt_po_shipment_events
+      where shipment_id=$1 and event_type='pod_submitted'
+      order by created_at desc,id desc limit 1`,
+    [shipment.id],
+  );
+  if (!result.rows[0]) fail(404, "POD belum tersedia.");
+  return mapPod(result.rows[0]);
+}
+
+async function goodsReceipts(shipmentId, user, isAdmin, client = query) {
+  const shipment = await loadShipment(shipmentId, user, { client, isAdmin });
+  const receipts = await client(
+    `select * from public.mkt_po_goods_receipts
+      where shipment_id=$1 order by created_at desc,id desc`,
+    [shipment.id],
+  );
+  const data = [];
+  for (const receipt of receipts.rows) {
+    const items = await client(
+      `select gri.*, si.line_number, si.po_line_id
+         from public.mkt_po_goods_receipt_items gri
+         join public.mkt_po_shipment_items si on si.id=gri.shipment_item_id
+        where gri.goods_receipt_id=$1 order by gri.id`,
+      [receipt.id],
+    );
+    data.push({
+      id: Number(receipt.id),
+      shipmentId: Number(receipt.shipment_id),
+      receiptNumber: receipt.receipt_number,
+      receiptType: receipt.receipt_type,
+      inspectionStatus: receipt.inspection_status,
+      receivedBy: receipt.received_by,
+      receivedAt: receipt.received_at,
+      notes: receipt.notes,
+      createdAt: receipt.created_at,
+      items: items.rows.map((item) => ({
+        id: Number(item.id),
+        shipmentItemId: Number(item.shipment_item_id),
+        lineNumber: Number(item.line_number),
+        poLineId: Number(item.po_line_id),
+        receivedQty: item.received_qty,
+        acceptedQty: item.accepted_qty,
+        rejectedQty: item.rejected_qty,
+        condition: item.condition,
+        notes: item.notes,
+      })),
+    });
+  }
+  return data;
+}
+
+async function createGoodsReceipt({ shipmentId, body, request, user, isAdmin }) {
+  const key = idempotencyKey(request, body);
+  if (!key) fail(400, "Idempotency-Key wajib diisi untuk goods receipt.");
+  const receiptType = text(body.receiptType);
+  if (!["full", "partial", "rejected"].includes(receiptType)) fail(400, "Receipt type tidak valid.");
+  const items = Array.isArray(body.items) ? body.items : [];
+  if (!items.length) fail(400, "Goods receipt harus memiliki item.");
+
+  return withTransaction(async (db) => {
+    const shipment = await loadShipment(shipmentId, user, { client: db, forUpdate: true, isAdmin });
+    const existing = (await db(
+      `select * from public.mkt_po_goods_receipts where shipment_id=$1 and idempotency_key=$2 limit 1`,
+      [shipment.id, key],
+    )).rows[0];
+    if (existing) return { alreadyProcessed: true, receipt: (await goodsReceipts(shipment.id, user, isAdmin, db)).find((row) => row.id === Number(existing.id)) };
+    if (!["arrived", "delivered", "partially_delivered"].includes(shipment.shipment_status)) {
+      fail(409, "Goods receipt hanya dapat dibuat setelah shipment tiba.");
+    }
+    const validItems = (await db(
+      `select si.*, pol.item_name from public.mkt_po_shipment_items si
+         join public.mkt_purchase_order_lines pol on pol.id=si.po_line_id
+        where si.shipment_id=$1`,
+      [shipment.id],
+    )).rows;
+    const itemMap = new Map(validItems.map((item) => [Number(item.id), item]));
+    for (const item of items) {
+      const shipmentItem = itemMap.get(integer(item.shipmentItemId, "Shipment item"));
+      if (!shipmentItem) fail(404, "Shipment item bukan bagian dari shipment ini.");
+      const receivedQty = decimal(item.receivedQty, "Received qty");
+      const acceptedQty = decimal(item.acceptedQty ?? receivedQty, "Accepted qty");
+      const rejectedQty = decimal(item.rejectedQty ?? 0, "Rejected qty");
+      if (acceptedQty + rejectedQty > receivedQty || receivedQty > Number(shipmentItem.qty)) {
+        fail(409, "Qty goods receipt tidak valid terhadap qty shipment.");
+      }
+    }
+    const receiptNumber = `GR-${shipment.id}-${key.replace(/[^a-zA-Z0-9]/g, "").slice(0, 32) || Date.now()}`;
+    const inserted = await db(
+      `insert into public.mkt_po_goods_receipts
+         (shipment_id,receipt_number,receipt_type,inspection_status,received_by,
+          received_at,notes,idempotency_key)
+       values ($1,$2,$3,$4,$5,coalesce($6::timestamp,now()),$7,$8)
+       returning *`,
+      [
+        shipment.id,
+        receiptNumber,
+        receiptType,
+        text(body.inspectionStatus, receiptType === "rejected" ? "failed" : "passed"),
+        text(body.receivedBy, user?.name ?? user?.email ?? "admin"),
+        text(body.receivedAt),
+        text(body.notes),
+        key,
+      ],
+    );
+    for (const item of items) {
+      const receivedQty = decimal(item.receivedQty, "Received qty");
+      const acceptedQty = decimal(item.acceptedQty ?? receivedQty, "Accepted qty");
+      const rejectedQty = decimal(item.rejectedQty ?? 0, "Rejected qty");
+      await db(
+        `insert into public.mkt_po_goods_receipt_items
+           (goods_receipt_id,shipment_item_id,received_qty,accepted_qty,rejected_qty,condition,notes)
+         values ($1,$2,$3,$4,$5,$6,$7)`,
+        [
+          inserted.rows[0].id,
+          integer(item.shipmentItemId, "Shipment item"),
+          receivedQty,
+          acceptedQty,
+          rejectedQty,
+          text(item.condition, "GOOD"),
+          text(item.notes),
+        ],
+      );
+    }
+    const nextShipmentStatus = receiptType === "full"
+      ? "delivered"
+      : receiptType === "partial" ? "partially_delivered" : "rejected_goods";
+    if (shipment.shipment_status !== nextShipmentStatus) {
+      if (!SHIPMENT_TRANSITIONS[shipment.shipment_status]?.has(nextShipmentStatus)) {
+        fail(409, `Shipment tidak dapat berpindah dari ${shipment.shipment_status} ke ${nextShipmentStatus}.`);
+      }
+      await db(
+        `update public.mkt_po_shipments set shipment_status=$1, actual_arrival=coalesce(actual_arrival,now()), updated_at=now()
+          where id=$2 and shipment_status=$3`,
+        [nextShipmentStatus, shipment.id, shipment.shipment_status],
+      );
+    }
+    await writeActivity(db, {
+      poId: shipment.po_id,
+      user: actor(user, isAdmin ? "admin" : "customer"),
+      action: "goods_receipt_created",
+      newValue: { shipmentId: Number(shipment.id), receiptId: Number(inserted.rows[0].id), receiptType },
+      description: `Goods receipt ${receiptType} dibuat.`,
+      key: `goods-receipt:${shipment.id}:${key}`,
+    });
+    await queueNotification(db, {
+      eventType: "goods_receipt_created",
+      po: { ...shipment, id: shipment.po_id },
+      payload: { shipmentId: Number(shipment.id), receiptId: Number(inserted.rows[0].id), receiptType },
+      key: `goods-receipt:${shipment.id}:${key}`,
+    });
+    if (receiptType === "full") await maybeCompletePo(db, shipment.po_id, user, isAdmin);
+    const receipt = (await goodsReceipts(shipment.id, user, isAdmin, db)).find((row) => row.id === Number(inserted.rows[0].id));
+    return { alreadyProcessed: false, receipt };
+  });
+}
+
+async function maybeCompletePo(db, poId, user, isAdmin) {
+  const po = await loadPo(poId, user, { client: db, forUpdate: true, isAdmin });
+  const gate = (await db(
+    `select exists(
+       select 1 from public.mkt_po_shipments s
+        where s.po_id=$1 and s.shipment_status='delivered'
+          and exists (select 1 from public.mkt_po_shipment_events e where e.shipment_id=s.id and e.event_type='pod_submitted')
+          and exists (select 1 from public.mkt_po_goods_receipts gr where gr.shipment_id=s.id and gr.receipt_type='full')
+     ) as ready`,
+    [po.id],
+  )).rows[0]?.ready;
+  if (!gate || ["completed", "closed", "cancelled"].includes(po.status)) return false;
+  const updated = await db(
+    `update public.mkt_purchase_orders
+        set status='completed'::mkt_po_status, actual_completion_date=current_date, updated_at=now()
+      where id=$1 and status <> 'completed'::mkt_po_status
+      returning id`,
+    [po.id],
+  );
+  if (!updated.rowCount) return false;
+  await writeActivity(db, {
+    poId: po.id,
+    user: actor(user, isAdmin ? "admin" : "system"),
+    action: "po_completed",
+    oldValue: { status: po.status },
+    newValue: { status: "completed" },
+    description: "PO completed setelah POD dan goods receipt full.",
+    key: `po:${po.id}:completed`,
+  });
+  await queueNotification(db, {
+    eventType: "po_completed",
+    po,
+    payload: { status: "completed" },
+    key: `po:${po.id}:completed`,
+  });
+  return true;
+}
+
+async function transitionPo({ poId, action, body, request, user, isAdmin }) {
+  const target = PO_ACTION_STATUS[action];
+  if (!target) return false;
+  const key = idempotencyKey(request, body) ?? `po-action:${poId}:${action}`;
+  return withTransaction(async (db) => {
+    const po = await loadPo(poId, user, { client: db, forUpdate: true, isAdmin });
+    if (po.status === target) return { status: target, alreadyProcessed: true };
+    if (!PO_TRANSITIONS[po.status]?.has(target)) {
+      fail(409, `PO tidak dapat berpindah dari ${po.status} ke ${target}.`);
+    }
+    if (target === "completed") {
+      const completed = await maybeCompletePo(db, po.id, user, isAdmin);
+      if (!completed) fail(409, "PO belum memenuhi gate POD dan goods receipt full.");
+      return { status: "completed", alreadyProcessed: false };
+    }
+    const updated = await db(
+      `update public.mkt_purchase_orders set status=$1::mkt_po_status,
+              confirmed_at=case when $1='vendor_accepted' then coalesce(confirmed_at,now()) else confirmed_at end,
+              closed_at=case when $1='closed' then now() else closed_at end,
+              updated_at=now()
+        where id=$2 and status=$3::mkt_po_status
+        returning status`,
+      [target, po.id, po.status],
+    );
+    if (!updated.rowCount) fail(409, "PO berubah oleh proses lain. Muat ulang lalu coba lagi.");
+    await writeActivity(db, {
+      poId: po.id,
+      user: actor(user, "admin"),
+      action: `po_${target}`,
+      oldValue: { status: po.status },
+      newValue: { status: target },
+      description: text(body.reason, `PO berpindah ke ${target}.`),
+      key: `po-transition:${po.id}:${key}`,
+    });
+    await queueNotification(db, {
+      eventType: `po_${target}`,
+      po,
+      payload: { status: target },
+      key: `po-transition:${po.id}:${key}`,
+    });
+    return { status: target, alreadyProcessed: false };
+  });
+}
+
+async function handlePortalOperations({ request, response, pathname, body, user, sendJson }) {
+  const shipmentList = pathname.match(/^\/api\/mkt\/portal\/purchase-orders\/(\d+)\/shipments$/);
+  if (request.method === "GET" && shipmentList) {
+    sendJson(response, 200, { ok: true, data: await getShipmentList(shipmentList[1], user, false) });
+    return true;
+  }
+  const selection = pathname.match(/^\/api\/mkt\/portal\/purchase-orders\/(\d+)\/shipment-selection$/);
+  if (request.method === "POST" && selection) {
+    sendJson(response, 200, { ok: true, data: await createShipment({ poId: selection[1], body, request, user, isAdmin: false }) });
+    return true;
+  }
+  const goods = pathname.match(/^\/api\/mkt\/portal\/shipments\/(\d+)\/goods-receipts$/);
+  if (request.method === "GET" && goods) {
+    sendJson(response, 200, { ok: true, data: await goodsReceipts(goods[1], user, false) });
+    return true;
+  }
+  const timeline = pathname.match(/^\/api\/mkt\/portal\/shipments\/(\d+)\/timeline$/);
+  if (request.method === "GET" && timeline) {
+    sendJson(response, 200, { ok: true, data: await listTimeline(timeline[1], user, false) });
+    return true;
+  }
+  const pod = pathname.match(/^\/api\/mkt\/portal\/shipments\/(\d+)\/pod$/);
+  if (request.method === "GET" && pod) {
+    sendJson(response, 200, { ok: true, data: await getPod(pod[1], user, false) });
+    return true;
+  }
+  return false;
+}
+
+async function handleAdminOperations({ request, response, pathname, body, user, sendJson }) {
+  const poLines = pathname.match(/^\/api\/mkt\/admin\/purchase-orders\/(\d+)\/lines$/);
+  if (request.method === "GET" && poLines) {
+    sendJson(response, 200, { ok: true, data: await listPoLines(poLines[1], user, true) });
+    return true;
+  }
+  const poShipments = pathname.match(/^\/api\/mkt\/admin\/purchase-orders\/(\d+)\/shipments$/);
+  if (request.method === "GET" && poShipments) {
+    sendJson(response, 200, { ok: true, data: await getShipmentList(poShipments[1], user, true) });
+    return true;
+  }
+  if (request.method === "POST" && poShipments) {
+    sendJson(response, 200, { ok: true, data: await createShipment({ poId: poShipments[1], body, request, user, isAdmin: true }) });
+    return true;
+  }
+  const poAction = pathname.match(/^\/api\/mkt\/admin\/purchase-orders\/(\d+)\/(issue|production|ready-to-ship|in-transit|delivered|complete|close)$/);
+  if (poAction && request.method === "POST") {
+    sendJson(response, 200, { ok: true, data: await transitionPo({ poId: poAction[1], action: poAction[2], body, request, user, isAdmin: true }) });
+    return true;
+  }
+  const shipmentDetailMatch = pathname.match(/^\/api\/mkt\/admin\/shipments\/(\d+)$/);
+  if (request.method === "GET" && shipmentDetailMatch) {
+    const shipment = await loadShipment(shipmentDetailMatch[1], user, { isAdmin: true });
+    sendJson(response, 200, { ok: true, data: await shipmentDetail(query, shipment) });
+    return true;
+  }
+  const shipmentEvent = pathname.match(/^\/api\/mkt\/admin\/shipments\/(\d+)\/events$/);
+  if (request.method === "POST" && shipmentEvent) {
+    sendJson(response, 200, { ok: true, data: await appendShipmentEvent({ shipmentId: shipmentEvent[1], body, request, user, isAdmin: true }) });
+    return true;
+  }
+  const shipmentReceipts = pathname.match(/^\/api\/mkt\/admin\/shipments\/(\d+)\/goods-receipts$/);
+  if (request.method === "GET" && shipmentReceipts) {
+    sendJson(response, 200, { ok: true, data: await goodsReceipts(shipmentReceipts[1], user, true) });
+    return true;
+  }
+  if (request.method === "POST" && shipmentReceipts) {
+    sendJson(response, 200, { ok: true, data: await createGoodsReceipt({ shipmentId: shipmentReceipts[1], body, request, user, isAdmin: true }) });
+    return true;
+  }
+  const shipmentPod = pathname.match(/^\/api\/mkt\/admin\/shipments\/(\d+)\/pod$/);
+  if (request.method === "POST" && shipmentPod) {
+    sendJson(response, 200, { ok: true, data: await submitPod({ shipmentId: shipmentPod[1], body, request, user, isAdmin: true }) });
+    return true;
+  }
+  return false;
+}
+
+export { handleAdminOperations, handlePortalOperations };
