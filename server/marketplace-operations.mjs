@@ -111,7 +111,7 @@ async function withTransaction(work) {
   const client = await pool.connect();
   const db = (sql, values) => client.query(sql, values);
   try {
-    await client.query("begin");
+    await client.query("begin read write");
     const result = await work(db);
     await client.query("commit");
     return result;
