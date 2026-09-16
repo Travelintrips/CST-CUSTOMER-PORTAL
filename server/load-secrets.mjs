@@ -18,6 +18,12 @@ const REQUIRED_SECRETS = [
 const DEVELOPMENT_STORAGE_SECRETS = [
   "SUPABASE_SERVICE_ROLE_KEY_DEV",
   "SUPABASE_STORAGE_BUCKET_DEV",
+  "SUPABASE_URL_DEV",
+];
+const DEVELOPMENT_ALIAS_SOURCES = [
+  ["SUPABASE_SERVICE_ROLE_KEY_DEV", ["SUPABASE_SERVICE_ROLE_KEY"]],
+  ["SUPABASE_STORAGE_BUCKET_DEV", ["SUPABASE_STORAGE_BUCKET"]],
+  ["SUPABASE_URL_DEV", ["SUPABASE_URL", "VITE_SUPABASE_URL", "VITE_SUPABASE_URL_DEV"]],
 ];
 
 function resolveEnvironment(env) {
@@ -85,16 +91,24 @@ function injectBundle(payload, appEnv, target) {
     }
   }
 
+  if (appEnv === "development") {
+    for (const [developmentKey, sourceKeys] of DEVELOPMENT_ALIAS_SOURCES) {
+      if (payload[developmentKey]) continue;
+      const sourceKey = sourceKeys.find((key) => typeof payload[key] === "string" && payload[key]);
+      if (sourceKey) set(developmentKey, payload[sourceKey]);
+    }
+  }
+
   return [...new Set(injected)];
 }
 
-function validateLoadedEnvironment(env, appEnv) {
+function validateLoadedEnvironment(env, appEnv, loadedKeys) {
   const missing = REQUIRED_SECRETS
     .filter(([key, minLength]) => !env[key] || env[key].length < minLength)
     .map(([key]) => key);
   if (appEnv === "development") {
     for (const key of DEVELOPMENT_STORAGE_SECRETS) {
-      if (!env[key]) missing.push(key);
+      if (!env[key] || !loadedKeys.includes(key)) missing.push(key);
     }
   }
   if (missing.length) {
@@ -121,7 +135,7 @@ async function loadSecrets() {
   }
 
   const loadedKeys = injectBundle(payload, appEnv, process.env);
-  validateLoadedEnvironment(process.env, appEnv);
+  validateLoadedEnvironment(process.env, appEnv, loadedKeys);
 
   if (appEnv === "development") {
     console.log(

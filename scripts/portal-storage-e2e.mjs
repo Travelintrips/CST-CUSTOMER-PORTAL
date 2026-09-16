@@ -74,11 +74,23 @@ class Client {
       redirect: "manual",
     });
     setCookies(response.headers, this.jar);
-    assert(expected.includes(response.status), `${this.label} ${path} returned ${response.status}; expected ${expected.join("/")}.`);
     const raw = await response.text();
+    let parsed = null;
+    if (raw) {
+      try {
+        parsed = JSON.parse(raw);
+      } catch {
+        parsed = null;
+      }
+    }
+    assert(
+      expected.includes(response.status),
+      `${this.label} ${path} returned ${response.status}; expected ${expected.join("/")}. ` +
+      `${parsed?.message ?? raw.slice(0, 240)}`,
+    );
     if (!raw) return null;
     try {
-      return JSON.parse(raw);
+      return parsed ?? JSON.parse(raw);
     } catch {
       fail(`${this.label} ${path} returned non-JSON.`);
     }

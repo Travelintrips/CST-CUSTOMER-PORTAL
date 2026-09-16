@@ -6,6 +6,7 @@ const MAX_FILE_BYTES = 5 * 1024 * 1024;
 const SIGNED_URL_TTL_SECONDS = 5 * 60;
 const ALLOWED_DOCUMENT_TYPES = new Set(["ktp", "legalitas", "sim", "stnk"]);
 const ALLOWED_MIME_TYPES = new Set(["image/jpeg", "image/png", "application/pdf"]);
+const bucketChecks = new Map();
 
 function isProduction() {
   return process.env.APP_ENV === "production" || process.env.NODE_ENV === "production";
@@ -17,9 +18,10 @@ function storageConfig() {
     error.statusCode = 503;
     throw error;
   }
-  const url = process.env.VITE_SUPABASE_URL_DEV || process.env.SUPABASE_URL_DEV;
+  const url = (process.env.SUPABASE_URL_DEV || process.env.VITE_SUPABASE_URL_DEV || "").trim();
   const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY_DEV;
-  const bucket = process.env.SUPABASE_STORAGE_BUCKET_DEV;
+  const rawBucket = (process.env.SUPABASE_STORAGE_BUCKET_DEV || "").trim();
+  const bucket = /^(['"]).*\1$/.test(rawBucket) ? rawBucket.slice(1, -1).trim() : rawBucket;
   if (!url || !serviceRoleKey || !bucket) {
     const error = new Error("Development document storage is not configured.");
     error.statusCode = 503;
@@ -48,6 +50,38 @@ function client() {
       realtime: { transport: WebSocket },
     }),
   };
+}
+
+async function ensurePrivateBucket(storage) {
+  const key = `${storage.url}/${storage.bucket}`;
+  if (!bucketChecks.has(key)) {
+    bucketChecks.set(key, (async () => {
+      const existing = await storage.supabase.storage.getBucket(storage.bucket);
+      if (!existing.error && existing.data) {
+        if (existing.data.public) {
+          const error = new Error("Development document storage bucket must be private.");
+          error.statusCode = 503;
+          throw error;
+        }
+        return;
+      }
+      if (existing.error?.statusCode !== 404 && existing.error?.status !== 404) {
+        throw existing.error ?? new Error("Development storage bucket lookup failed.");
+      }
+      const created = await storage.supabase.storage.createBucket(storage.bucket, {
+        public: false,
+        fileSizeLimit: String(MAX_FILE_BYTES),
+        allowedMimeTypes: [...ALLOWED_MIME_TYPES],
+      });
+      if (created.error) throw created.error;
+    })());
+  }
+  try {
+    await bucketChecks.get(key);
+  } catch (error) {
+    bucketChecks.delete(key);
+    throw error;
+  }
 }
 
 function safeFileName(name) {
@@ -103,6 +137,7 @@ export function customerObjectPrefix(customerId, companyId) {
 
 async function storageRemove(storage, path) {
   if (!path || typeof path !== "string" || !path.startsWith("customers/")) return;
+  await ensurePrivateBucket(storage);
   const { error } = await storage.supabase.storage.from(storage.bucket).remove([path]);
   if (error) throw error;
 }
@@ -111,6 +146,7 @@ export async function uploadDocument({ customerId, companyId, documentType: type
   const normalizedType = documentType(type);
   const { mimeType, size } = validateDocumentFile(file);
   const storage = client();
+  await ensurePrivateBucket(storage);
   const buffer = Buffer.from(await file.arrayBuffer());
   const path = `${customerObjectPrefix(customerId, companyId)}/${normalizedType}/${crypto.randomUUID()}-${safeFileName(file.name || `document.${extensionForMime(mimeType)}`)}`;
   const { error } = await storage.supabase.storage.from(storage.bucket).upload(path, buffer, {
@@ -119,6 +155,12 @@ export async function uploadDocument({ customerId, companyId, documentType: type
     upsert: false,
   });
   if (error) {
+    console.error(
+      "[customer-portal-api] development storage upload failed",
+      error?.name ?? "StorageError",
+      error?.message ?? "unknown storage error",
+      error?.statusCode ?? error?.status ?? "",
+    );
     const failure = new Error("Upload dokumen ke development storage gagal.");
     failure.statusCode = 502;
     throw failure;
@@ -133,6 +175,7 @@ export async function deleteDocumentObject(path) {
 
 export async function signedDocumentUrl(path) {
   const storage = client();
+  await ensurePrivateBucket(storage);
   if (!path || !path.startsWith("customers/")) {
     const error = new Error("Object path dokumen tidak valid.");
     error.statusCode = 404;
