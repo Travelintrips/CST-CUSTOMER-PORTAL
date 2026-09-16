@@ -32,6 +32,11 @@ function storageConfig() {
     error.statusCode = 503;
     throw error;
   }
+  if (!/^[a-z0-9][a-z0-9._-]{0,62}$/.test(bucket)) {
+    const error = new Error("Development document storage bucket configuration is invalid.");
+    error.statusCode = 503;
+    throw error;
+  }
   const parsedUrl = new URL(url);
   if (!parsedUrl.hostname.endsWith(".supabase.co")) {
     const error = new Error("Development document storage URL is invalid.");
