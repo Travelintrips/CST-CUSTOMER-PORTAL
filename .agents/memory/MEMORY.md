@@ -10,3 +10,4 @@
 - [Local portal route boundary](local-portal-route-boundary.md) — authenticated business routes must stay local or use a reachable non-production upstream, never self-loop or fall back to production.
 - [Portal profile schema](portal-profile-schema.md) — customer profiles are not unique by customer_id; use deterministic lookup then update/insert.
 - [Portal upload boundary](portal-upload-boundary.md) — without local object storage, document uploads must fail closed instead of proxying to upstream production.
+- [Marketplace transaction boundary](marketplace-transaction-boundary.md) — canonical marketplace transactions use a callable query adapter; supplier IDs are not portal vendor-notification IDs.

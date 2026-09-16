@@ -1100,6 +1100,16 @@ async function route(request, response) {
         sendJson,
       });
       if (handled) return;
+      // Public marketplace links must never fall through to the shared API.
+      // A malformed or unknown token is still a local 404, not an upstream
+      // response that could expose a different token contract.
+      if (isPublicMarketplaceRoute) {
+        sendJson(response, 404, {
+          message: "Marketplace link tidak ditemukan.",
+          code: "TOKEN_INVALID",
+        });
+        return;
+      }
     }
   }
   if (request.method === "GET" && pathname === "/api/portal/auth/capabilities") {
