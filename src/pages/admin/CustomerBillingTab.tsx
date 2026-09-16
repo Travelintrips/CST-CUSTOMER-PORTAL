@@ -36,6 +36,21 @@ const money = (value: number) =>
 const date = (value: string | null | undefined) =>
   value ? new Intl.DateTimeFormat("id-ID", { dateStyle: "medium" }).format(new Date(value)) : "—";
 
+const statusLabel: Record<string, string> = {
+  to_invoice: "Siap diterbitkan",
+  invoiced: "Terbit",
+  unpaid: "Belum dibayar",
+  partial: "Sebagian dibayar",
+  paid: "Lunas",
+  pending: "Menunggu konfirmasi",
+  waiting_confirmation: "Menunggu konfirmasi",
+  confirmed: "Dikonfirmasi",
+  rejected: "Ditolak",
+  failed: "Gagal",
+  expired: "Kedaluwarsa",
+  cancelled: "Dibatalkan",
+};
+
 export function CustomerBillingTab() {
   const [invoices, setInvoices] = useState<Invoice[]>([]);
   const [payments, setPayments] = useState<Payment[]>([]);
@@ -86,20 +101,20 @@ export function CustomerBillingTab() {
     }
   }
 
-  async function markPaid(id: number) {
+  async function markPaymentStatus(id: number, status: "paid") {
     setBusy(id);
     try {
       const response = await fetch(`/api/portal/admin/payments/${id}/status`, {
         method: "POST",
         headers: { ...getAuthHeaders(), "Content-Type": "application/json" },
         credentials: "include",
-        body: JSON.stringify({ status: "paid" }),
+        body: JSON.stringify({ status }),
       });
       const body = await response.json();
-      if (!response.ok) throw new Error(body.message ?? "Gagal mengonfirmasi payment");
+      if (!response.ok) throw new Error(body.message ?? "Gagal memperbarui payment");
       await load();
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Gagal mengonfirmasi payment");
+      setError(cause instanceof Error ? cause.message : "Gagal memperbarui payment");
     } finally {
       setBusy(null);
     }
@@ -135,7 +150,9 @@ export function CustomerBillingTab() {
                   </div>
                   <div className="text-right">
                     <p className="font-semibold text-slate-900">{money(invoice.amount)}</p>
-                    <p className="text-xs text-slate-500">Sisa {money(invoice.outstanding)} · {invoice.invoiceStatus}</p>
+                    <p className="text-xs text-slate-500">
+                      Sisa {money(invoice.outstanding)} · {statusLabel[invoice.invoiceStatus] ?? invoice.invoiceStatus} · {statusLabel[invoice.paymentStatus] ?? invoice.paymentStatus}
+                    </p>
                   </div>
                   {invoice.invoiceStatus !== "invoiced" && (
                     <button type="button" disabled={busy === invoice.id} onClick={() => void issueInvoice(invoice.id)}
@@ -161,13 +178,17 @@ export function CustomerBillingTab() {
                   </div>
                   <div className="text-right">
                     <p className="font-semibold text-slate-900">{money(payment.amount)}</p>
-                    <p className="text-xs text-slate-500">{payment.status} · {payment.paymentMethod ?? "—"}</p>
+                    <p className="text-xs text-slate-500">
+                      {statusLabel[payment.status] ?? payment.status} · {payment.paymentMethod ?? "—"}
+                    </p>
                   </div>
                   {payment.status === "pending" && (
-                    <button type="button" disabled={busy === payment.id} onClick={() => void markPaid(payment.id)}
-                      className="inline-flex items-center gap-2 rounded-lg bg-emerald-600 px-3 py-2 text-sm font-medium text-white hover:bg-emerald-700 disabled:opacity-50">
-                      {busy === payment.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />} Tandai paid
-                    </button>
+                    <div className="flex items-center gap-2">
+                      <button type="button" disabled={busy === payment.id} onClick={() => void markPaymentStatus(payment.id, "paid")}
+                        className="inline-flex items-center gap-2 rounded-lg bg-emerald-600 px-3 py-2 text-sm font-medium text-white hover:bg-emerald-700 disabled:opacity-50">
+                        {busy === payment.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />} Tandai paid
+                      </button>
+                    </div>
                   )}
                 </div>
               ))}

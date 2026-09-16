@@ -1,8 +1,15 @@
 import { pool, query } from "./db.mjs";
 
-const INVOICEABLE_STATUSES = new Set(["confirmed", "done"]);
-const PAYMENT_STATUSES = new Set(["pending", "waiting_confirmation", "confirmed"]);
-const ADMIN_PAYMENT_STATUSES = new Set(["paid", "rejected", "failed", "expired", "cancelled"]);
+const INVOICEABLE_STATUSES = new Set(["confirmed", "done", "completed"]);
+const PAYMENT_STATUSES = new Set(["pending"]);
+const ADMIN_PAYMENT_STATUSES = new Set(["paid", "failed", "expired", "cancelled"]);
+const PAYMENT_TRANSITIONS = {
+  pending: new Set(["paid", "failed", "expired", "cancelled"]),
+  paid: new Set(),
+  failed: new Set(),
+  expired: new Set(),
+  cancelled: new Set(),
+};
 
 function fail(statusCode, message) {
   const error = new Error(message);
@@ -109,6 +116,66 @@ function mapInvoice(row) {
     updatedAt: row.updated_at,
     notes: row.notes ?? null,
   };
+}
+
+async function invoiceCustomerIds(db, invoice) {
+  const result = await db(
+    `select id
+       from public.portal_customers
+      where $1::int is not null and id = $1::int
+     union
+     select pcm.portal_customer_id as id
+       from public.portal_company_members pcm
+      where $2::int is not null
+        and pcm.company_id = $2::int
+        and pcm.is_active = true`,
+    [invoice.customer_id, invoice.company_id],
+  );
+  return result.rows.map((row) => Number(row.id)).filter(Number.isInteger);
+}
+
+async function writeBillingActivity(db, { user, action, invoice, oldValue = null, newValue = null, deduplicationKey, description }) {
+  await db(
+    `insert into public.activity_logs
+       (actor_type, actor_id, actor_name, action, old_value, new_value, description, deduplication_key)
+     values ($1, $2, $3, $4, $5::jsonb, $6::jsonb, $7, $8)
+     on conflict (deduplication_key) where deduplication_key is not null do nothing`,
+    [
+      user.role === "admin" ? "admin" : "customer",
+      String(user.id),
+      user.name ?? user.email ?? `Portal user ${user.id}`,
+      action,
+      JSON.stringify(oldValue),
+      JSON.stringify(newValue),
+      description,
+      deduplicationKey,
+    ],
+  );
+}
+
+async function notifyInvoiceCustomers(db, invoice, { eventKey, type, title, message, payload = {} }) {
+  const customerIds = await invoiceCustomerIds(db, invoice);
+  for (const customerId of customerIds) {
+    await db(
+      `insert into public.portal_customer_notifications
+         (portal_customer_id, event_key, type, title, message, payload)
+       values ($1, $2, $3, $4, $5, $6::jsonb)
+       on conflict (portal_customer_id, event_key) do nothing`,
+      [
+        customerId,
+        eventKey,
+        type,
+        title,
+        message,
+        JSON.stringify({
+          invoiceId: Number(invoice.id),
+          invoiceNumber: invoice.invoice_number ?? `INV-${invoice.doc_number}`,
+          documentNumber: invoice.doc_number,
+          ...payload,
+        }),
+      ],
+    );
+  }
 }
 
 const INVOICE_COLUMNS = `
@@ -278,6 +345,14 @@ export async function handleCustomerInvoices({ request, response, user, sendJson
           JSON.stringify({ source: "customer_portal", idempotencyKey: key }),
         ],
       );
+      await writeBillingActivity(db, {
+        user,
+        action: "sales_payment_submitted",
+        invoice,
+        newValue: { paymentId: payment.rows[0].id, amount, status: "pending" },
+        deduplicationKey: `sales-payment-submitted:${payment.rows[0].id}`,
+        description: `Payment customer untuk invoice ${invoice.invoice_number ?? invoice.doc_number} dibuat.`,
+      });
       return { payment: mapPayment(payment.rows[0]), replayed: false };
     });
     sendJson(response, result.replayed ? 200 : 201, result);
@@ -323,7 +398,24 @@ export async function handleAdminInvoices({ request, response, user, sendJson, s
         returning ${INVOICE_COLUMNS}`,
       [row.id],
     );
-    return mapInvoice(updated.rows[0]);
+    const mapped = mapInvoice(updated.rows[0]);
+    await writeBillingActivity(db, {
+      user,
+      action: "sales_invoice_issued",
+      invoice: updated.rows[0],
+      oldValue: { invoiceStatus: row.invoice_status },
+      newValue: { invoiceStatus: "invoiced", invoiceNumber: mapped.invoiceNumber },
+      deduplicationKey: `sales-invoice-issued:${row.id}`,
+      description: `Invoice ${mapped.invoiceNumber} diterbitkan untuk order ${row.doc_number}.`,
+    });
+    await notifyInvoiceCustomers(db, updated.rows[0], {
+      eventKey: `sales-invoice:${row.id}:invoiced`,
+      type: "sales_invoice_issued",
+      title: "Invoice diterbitkan",
+      message: `Invoice ${mapped.invoiceNumber} sudah tersedia untuk dibayar.`,
+      payload: { invoiceStatus: "invoiced" },
+    });
+    return mapped;
   });
   sendJson(response, 200, result);
 }
@@ -369,6 +461,9 @@ export async function handleAdminPayments({ request, response, user, sendJson, s
     if (payment.status === "paid" && nextStatus !== "paid") {
       fail(409, "Payment paid tidak dapat dibatalkan melalui portal.");
     }
+    if (!PAYMENT_TRANSITIONS[payment.status]?.has(nextStatus)) {
+      fail(409, `Payment ${payment.status} tidak dapat diubah menjadi ${nextStatus}.`);
+    }
     const docResult = await db(
       `select ${INVOICE_COLUMNS}
          from public.sales_documents
@@ -412,9 +507,34 @@ export async function handleAdminPayments({ request, response, user, sendJson, s
         where id = $1`,
       [invoice.id, amountPaid],
     );
+    const updatedInvoice = {
+      ...invoice,
+      amount_paid: amountPaid,
+      payment_status: amountPaid >= Number(invoice.grand_total)
+        ? "paid"
+        : amountPaid > 0 ? "partial" : "unpaid",
+    };
+    await writeBillingActivity(db, {
+      user,
+      action: "sales_payment_status_changed",
+      invoice,
+      oldValue: { paymentId: payment.id, status: payment.status },
+      newValue: { paymentId: payment.id, status: nextStatus, amountPaid },
+      deduplicationKey: `sales-payment-status:${payment.id}:${nextStatus}`,
+      description: `Payment ${payment.id} untuk invoice ${invoice.invoice_number ?? invoice.doc_number} berstatus ${nextStatus}.`,
+    });
+    await notifyInvoiceCustomers(db, updatedInvoice, {
+      eventKey: `sales-payment:${payment.id}:${nextStatus}`,
+      type: "sales_payment_status_changed",
+      title: nextStatus === "paid" ? "Pembayaran dikonfirmasi" : "Status pembayaran diperbarui",
+      message: nextStatus === "paid"
+        ? `Pembayaran invoice ${invoice.invoice_number ?? invoice.doc_number} sudah dikonfirmasi.`
+        : `Status pembayaran invoice ${invoice.invoice_number ?? invoice.doc_number}: ${nextStatus}.`,
+      payload: { paymentId: payment.id, paymentStatus: nextStatus, amountPaid },
+    });
     return {
       payment: mapPayment(updatedPayment.rows[0]),
-      invoice: { ...mapInvoice(invoice), amountPaid, outstanding: Math.max(0, Number(invoice.grand_total) - amountPaid) },
+      invoice: mapInvoice(updatedInvoice),
       replayed: false,
     };
   });
