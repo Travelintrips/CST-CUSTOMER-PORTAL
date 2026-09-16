@@ -12,3 +12,4 @@
 - [Portal profile schema](portal-profile-schema.md) — customer profiles are not unique by customer_id; use deterministic lookup then update/insert.
 - [Portal upload boundary](portal-upload-boundary.md) — without local object storage, document uploads must fail closed instead of proxying to upstream production.
 - [Marketplace transaction boundary](marketplace-transaction-boundary.md) — canonical marketplace transactions use a callable query adapter; supplier IDs are not portal vendor-notification IDs.
+- [Canonical billing enums](canonical-billing-enums.md) — validate live public payment/provider enum labels before choosing API defaults or UI transitions.
