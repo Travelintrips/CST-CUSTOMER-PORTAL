@@ -29,6 +29,7 @@ import {
   handleServiceOperations,
   handleVerification,
 } from "./admin-portal.mjs";
+import { handleMarketplaceRoute } from "./marketplace-service.mjs";
 
 const PORT = Number(process.env.CUSTOMER_PORTAL_API_PORT ?? 18444);
 const APP_ENV = process.env.APP_ENV ?? process.env.NODE_ENV ?? "development";
@@ -1073,6 +1074,33 @@ async function route(request, response) {
       ...corsHeaders(request),
     });
     return;
+  }
+  if (pathname.startsWith("/api/vendor-quote/") || pathname.startsWith("/api/mkt/")) {
+    const isPublicMarketplaceRoute =
+      pathname.startsWith("/api/vendor-quote/") ||
+      pathname.startsWith("/api/mkt/vendor-po/");
+    const isMarketplaceAdminRoute = pathname.startsWith("/api/mkt/admin/");
+    const user = isPublicMarketplaceRoute
+      ? null
+      : isMarketplaceAdminRoute
+        ? await requireAdmin(request, response)
+        : await requireUser(request, response);
+    if (!isPublicMarketplaceRoute && !user) return;
+    if (isPublicMarketplaceRoute || user) {
+      const body = ["POST", "PUT", "PATCH"].includes(request.method ?? "")
+        ? await readJson(request)
+        : {};
+      const handled = await handleMarketplaceRoute({
+        request,
+        response,
+        url,
+        body,
+        user,
+        isAdmin: isMarketplaceAdminRoute,
+        sendJson,
+      });
+      if (handled) return;
+    }
   }
   if (request.method === "GET" && pathname === "/api/portal/auth/capabilities") {
     await handleCapabilities(response);

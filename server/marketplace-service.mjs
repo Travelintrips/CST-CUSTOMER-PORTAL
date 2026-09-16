@@ -1,0 +1,793 @@
+import { randomBytes } from "node:crypto";
+import { pool, query } from "./db.mjs";
+
+const RFQ_TERMINAL = new Set(["awarded", "cancelled", "expired"]);
+const QUOTE_TERMINAL = new Set(["selected", "rejected", "expired", "withdrawn"]);
+const PO_TERMINAL = new Set(["completed", "closed", "cancelled", "vendor_rejected"]);
+
+function fail(statusCode, message) {
+  const error = new Error(message);
+  error.statusCode = statusCode;
+  throw error;
+}
+
+function integer(value, label) {
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed) || parsed <= 0) fail(400, `${label} tidak valid.`);
+  return parsed;
+}
+
+function decimal(value, label, { positive = false } = {}) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || (positive ? parsed <= 0 : parsed < 0)) {
+    fail(400, `${label} tidak valid.`);
+  }
+  return parsed;
+}
+
+function text(value, fallback = null) {
+  return typeof value === "string" && value.trim() ? value.trim() : fallback;
+}
+
+function token() {
+  return randomBytes(24).toString("hex");
+}
+
+function actor(user, actorType = "customer") {
+  return {
+    actorType,
+    actorId: user?.id == null ? null : String(user.id),
+    actorName: user?.name ?? user?.email ?? actorType,
+  };
+}
+
+async function accessibleCompanyIds(user) {
+  const result = await query(
+    `select company_id
+       from public.portal_company_members
+      where portal_customer_id = $1 and is_active = true and company_id is not null`,
+    [user.id],
+  );
+  return result.rows.map((row) => Number(row.company_id)).filter(Number.isInteger);
+}
+
+function ownerSql(alias = "r") {
+  return `(
+    ${alias}.portal_customer_id = $1
+    or lower(coalesce(${alias}.buyer_email, '')) = lower($2)
+    or ${alias}.company_id = any($3::int[])
+  )`;
+}
+
+async function loadOwnedRfq(rfqId, user, { client = query, forUpdate = false } = {}) {
+  const companyIds = await accessibleCompanyIds(user);
+  const result = await client(
+    `select r.*
+       from public.mkt_rfqs r
+      where r.id = $4 and ${ownerSql("r")}
+      limit 1${forUpdate ? " for update" : ""}`,
+    [user.id, user.email, companyIds, rfqId],
+  );
+  if (!result.rows[0]) fail(404, "RFQ tidak ditemukan.");
+  return result.rows[0];
+}
+
+async function loadAdminRfq(rfqId, { client = query, forUpdate = false } = {}) {
+  const result = await client(
+    `select r.* from public.mkt_rfqs r where r.id = $1 limit 1${forUpdate ? " for update" : ""}`,
+    [rfqId],
+  );
+  if (!result.rows[0]) fail(404, "RFQ tidak ditemukan.");
+  return result.rows[0];
+}
+
+function mapRfq(row) {
+  return {
+    id: Number(row.id),
+    rfq_number: row.rfq_number,
+    status: row.status,
+    approval_status: row.approval_status ?? "none",
+    buyer_name: row.buyer_name,
+    buyer_email: row.buyer_email,
+    buyer_company: row.buyer_company,
+    notes: row.notes,
+    required_delivery_date: row.required_delivery_date,
+    delivery_address: row.delivery_address,
+    destination_place_id: row.destination_place_id,
+    destination_lat: row.destination_lat,
+    destination_lng: row.destination_lng,
+    created_at: row.created_at,
+    updated_at: row.updated_at,
+    winner_selected_at: row.winner_selected_at,
+    proposed_quote_id: row.proposed_quote_id,
+    winning_quote_id: row.winning_quote_id,
+    company_id: row.company_id,
+    portal_customer_id: row.portal_customer_id,
+    quote_count: Number(row.quote_count ?? 0),
+    line_count: Number(row.line_count ?? 0),
+  };
+}
+
+async function writeEvent(db, data, key = null) {
+  const event = {
+    rfqId: data.rfqId ?? null,
+    quoteId: data.quoteId ?? null,
+    poId: data.poId ?? null,
+    ...actor(data.user, data.actorType ?? "admin"),
+  };
+  const activity = await db(
+    `insert into public.activity_logs
+       (rfq_id, actor_type, actor_id, actor_name, action, old_value, new_value,
+        description, mkt_rfq_id, mkt_vendor_quote_id, mkt_purchase_order_id, deduplication_key)
+     values ($1,$2,$3,$4,$5,$6::jsonb,$7::jsonb,$8,$1,$9,$10,$11)
+     on conflict (deduplication_key) where deduplication_key is not null do nothing
+     returning id`,
+    [
+      event.rfqId,
+      event.actorType,
+      event.actorId,
+      event.actorName,
+      data.action,
+      JSON.stringify(data.oldValue ?? null),
+      JSON.stringify(data.newValue ?? null),
+      data.description ?? data.action,
+      event.quoteId,
+      event.poId,
+      key,
+    ],
+  );
+  if (!activity.rowCount) return false;
+  if (event.rfqId) {
+    await db(
+      `insert into public.rfq_activity_logs
+         (rfq_id, actor_type, actor_id, actor_name, action, description)
+       values ($1,$2,$3,$4,$5,$6)`,
+      [event.rfqId, event.actorType, event.actorId, event.actorName, data.action, data.description ?? data.action],
+    );
+  }
+  return true;
+}
+
+async function queueEvent(db, {
+  eventType, recipientType, recipientId = null, recipientPhone = null,
+  rfqId = null, quoteId = null, poId = null, payload = {}, key,
+}) {
+  await db(
+    `insert into public.mkt_notification_queue
+       (event_type, channel, recipient_type, recipient_id, recipient_phone,
+        rfq_id, vendor_quote_id, purchase_order_id, payload_json, deduplication_key)
+     values ($1,'internal',$2,$3,$4,$5,$6,$7,$8::jsonb,$9)
+     on conflict do nothing`,
+    [eventType, recipientType, recipientId, recipientPhone, rfqId, quoteId, poId, JSON.stringify(payload), key],
+  );
+}
+
+async function customerNotification(db, rfq, eventKey, type, title, message, payload = {}) {
+  if (!rfq.portal_customer_id) return;
+  await db(
+    `insert into public.portal_customer_notifications
+       (portal_customer_id, event_key, type, title, message, payload)
+     values ($1,$2,$3,$4,$5,$6::jsonb)
+     on conflict (portal_customer_id, event_key) do nothing`,
+    [rfq.portal_customer_id, eventKey, type, title, message, JSON.stringify({ rfq_id: rfq.id, rfq_number: rfq.rfq_number, ...payload })],
+  );
+}
+
+async function vendorNotification(db, vendorId, type, title, message, payload = {}) {
+  await db(
+    `insert into public.vendor_notifications
+       (vendor_id, type, title, message, payload)
+     values ($1,$2,$3,$4,$5::jsonb)`,
+    [vendorId, type, title, message, JSON.stringify(payload)],
+  );
+}
+
+async function withTransaction(work) {
+  const client = await pool.connect();
+  try {
+    await client.query("begin");
+    const result = await work(client);
+    await client.query("commit");
+    return result;
+  } catch (error) {
+    await client.query("rollback").catch(() => {});
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+async function rfqLines(db, rfqId) {
+  const result = await db(
+    `select id, rfq_id, vendor_catalog_item_id, item_name, item_description,
+            item_unit, requested_qty, target_price_per_unit, notes, sort_order
+       from public.mkt_rfq_lines where rfq_id = $1 order by sort_order, id`,
+    [rfqId],
+  );
+  return result.rows.map((row) => ({
+    id: Number(row.id),
+    rfqId: Number(row.rfq_id),
+    itemName: row.item_name,
+    itemDescription: row.item_description,
+    itemUnit: row.item_unit,
+    requestedQty: row.requested_qty,
+    targetPricePerUnit: row.target_price_per_unit,
+    notes: row.notes,
+    sortOrder: row.sort_order,
+  }));
+}
+
+async function quoteDetail(db, quoteId) {
+  const result = await db(
+    `select q.*, s.name as vendor_name, s.phone as vendor_phone, s.contact_email as vendor_email
+       from public.mkt_vendor_quotes q
+       left join public.suppliers s on s.id = q.vendor_id
+      where q.id = $1`,
+    [quoteId],
+  );
+  const quote = result.rows[0];
+  if (!quote) return null;
+  const lines = await db(
+    `select ql.*, rl.item_name, rl.requested_qty, rl.item_unit
+       from public.mkt_vendor_quote_lines ql
+       join public.mkt_rfq_lines rl on rl.id = ql.rfq_line_id
+      where ql.quote_id = $1 order by rl.sort_order, ql.id`,
+    [quoteId],
+  );
+  const mappedLines = lines.rows.map((row) => ({
+    rfqLineId: Number(row.rfq_line_id),
+    itemName: row.item_name,
+    requestedQty: row.requested_qty,
+    offeredQty: row.offered_qty,
+    vendorUnitPrice: row.offered_unit_price,
+    dealUnitPrice: row.negotiated_unit_price ?? row.offered_unit_price,
+    dealSubtotal: row.negotiated_subtotal ?? row.subtotal,
+    offeredUnitPrice: row.offered_unit_price,
+    subtotal: row.subtotal,
+    currency: row.currency,
+    leadTimeDays: row.lead_time_days,
+    stockStatus: row.stock_status,
+    notes: row.notes,
+  }));
+  const total = mappedLines.reduce((sum, row) => sum + Number(row.dealSubtotal ?? 0), 0);
+  return {
+    id: Number(quote.id),
+    rfqId: Number(quote.rfq_id),
+    vendorId: Number(quote.vendor_id),
+    vendorName: quote.vendor_name,
+    vendorPhone: quote.vendor_phone,
+    vendorEmail: quote.vendor_email,
+    status: quote.status,
+    validUntil: quote.valid_until,
+    openedAt: quote.opened_at,
+    submittedAt: quote.submitted_at,
+    quotationNumber: quote.quotation_number,
+    quotationDate: quote.quotation_date,
+    paymentTerms: quote.payment_terms,
+    incoterm: quote.incoterm,
+    deliveryLocation: quote.delivery_location,
+    notes: quote.notes,
+    requoteNotes: quote.requote_notes,
+    requoteDeadline: quote.requote_deadline,
+    requoteRound: quote.requote_round,
+    updatedAt: quote.updated_at,
+    grandTotal: total,
+    lines: mappedLines,
+  };
+}
+
+async function poDetail(db, poId) {
+  const result = await db(
+    `select po.*, r.rfq_number, r.status as rfq_status, r.buyer_name, r.buyer_email,
+            r.buyer_company, r.notes as rfq_notes, s.name as vendor_name,
+            s.phone as vendor_phone, s.contact_email as vendor_email
+       from public.mkt_purchase_orders po
+       join public.mkt_rfqs r on r.id = po.rfq_id
+       left join public.suppliers s on s.id = po.vendor_id
+      where po.id = $1`,
+    [poId],
+  );
+  const row = result.rows[0];
+  if (!row) return null;
+  const lines = await db(
+    `select id, item_name, qty, unit, unit_price, subtotal, notes
+       from public.mkt_purchase_order_lines where po_id = $1 order by id`,
+    [poId],
+  );
+  return {
+    id: Number(row.id),
+    poNumber: row.po_number,
+    rfqId: Number(row.rfq_id),
+    quoteId: row.quote_id == null ? null : Number(row.quote_id),
+    status: row.status,
+    grandTotal: row.grand_total,
+    taxAmount: row.tax_amount,
+    totalAmount: row.total_amount,
+    createdAt: row.created_at,
+    confirmedAt: row.confirmed_at,
+    cancelledAt: row.cancelled_at,
+    cancelReason: row.cancel_reason,
+    updatedAt: row.updated_at,
+    vendorNameSnapshot: row.vendor_name_snapshot,
+    vendorAddressSnapshot: row.vendor_address_snapshot,
+    paymentTermsSnapshot: row.payment_terms_snapshot,
+    incotermSnapshot: row.incoterm_snapshot,
+    quotationNumberSnapshot: row.quotation_number_snapshot,
+    quotationDateSnapshot: row.quotation_date_snapshot,
+    currencySnapshot: row.currency_snapshot,
+    leadTimeDaysSnapshot: row.lead_time_days_snapshot,
+    expectedCompletionDate: row.expected_completion_date,
+    actualCompletionDate: row.actual_completion_date,
+    vendorTokenExpiresAt: row.vendor_token_expires_at,
+    revisionNotes: row.revision_notes,
+    rfqNumber: row.rfq_number,
+    rfqStatus: row.rfq_status,
+    buyerName: row.buyer_name,
+    buyerEmail: row.buyer_email,
+    buyerCompany: row.buyer_company,
+    rfqNotes: row.rfq_notes,
+    vendorName: row.vendor_name,
+    vendorPhone: row.vendor_phone,
+    vendorEmail: row.vendor_email,
+    lines: lines.rows.map((line, index) => ({
+      id: Number(line.id),
+      lineNumber: index + 1,
+      itemName: line.item_name,
+      qty: line.qty,
+      unit: line.unit,
+      unitPrice: line.unit_price,
+      subtotal: line.subtotal,
+      notes: line.notes,
+    })),
+  };
+}
+
+async function createPo(db, rfq, quote, user) {
+  const existing = await db("select id from public.mkt_purchase_orders where rfq_id = $1 for update", [rfq.id]);
+  if (existing.rows[0]) return Number(existing.rows[0].id);
+  const details = await quoteDetail(db, quote.id);
+  if (!details || !details.lines.length) fail(409, "Quotation belum memiliki line yang valid.");
+  const vendor = (await db("select id, name, address from public.suppliers where id = $1", [quote.vendor_id])).rows[0];
+  if (!vendor) fail(409, "Vendor quotation tidak ditemukan.");
+  const total = details.lines.reduce((sum, line) => sum + Number(line.dealSubtotal ?? 0), 0);
+  const inserted = await db(
+    `insert into public.mkt_purchase_orders
+       (po_number, rfq_id, quote_id, company_id, vendor_id, status, total_amount,
+        tax_amount, grand_total, created_by, vendor_name_snapshot, vendor_address_snapshot,
+        payment_terms_snapshot, incoterm_snapshot, quotation_number_snapshot,
+        quotation_date_snapshot, currency_snapshot, lead_time_days_snapshot,
+        vendor_token, vendor_token_expires_at, expected_completion_date)
+     values (
+       'PENDING-' || $1::text, $2, $3, $4, $5, 'issued'::mkt_po_status, $6, 0, $6,
+       $7, $8, $9, $10, $11, $12, $13, 'IDR', $14, $15, now() + interval '14 days',
+       case when $14 is null then null else current_date + $14 end
+     )
+     returning id`,
+    [
+      rfq.id,
+      rfq.id,
+      quote.id,
+      rfq.company_id,
+      quote.vendor_id,
+      total,
+      user?.email ?? "customer-approval",
+      vendor.name,
+      vendor.address,
+      quote.payment_terms,
+      quote.incoterm,
+      quote.quotation_number,
+      quote.quotation_date,
+      details.lines.reduce((max, line) => Math.max(max, Number(line.leadTimeDays ?? 0)), 0) || null,
+      token(),
+    ],
+  );
+  const poId = Number(inserted.rows[0].id);
+  await db("update public.mkt_purchase_orders set po_number = 'PO-' || to_char(current_date, 'YYYYMMDD') || '-' || lpad(id::text, 5, '0') where id = $1", [poId]);
+  for (const line of details.lines) {
+    await db(
+      `insert into public.mkt_purchase_order_lines (po_id, item_name, qty, unit, unit_price, subtotal, notes)
+       values ($1,$2,$3,$4,$5,$6,$7)`,
+      [poId, line.itemName, line.offeredQty, null, line.dealUnitPrice, line.dealSubtotal, line.notes],
+    );
+  }
+  return poId;
+}
+
+async function transitionRfq(db, rfq, status, user, description, data = {}) {
+  if (RFQ_TERMINAL.has(String(rfq.status)) && rfq.status !== status) fail(409, "RFQ sudah berada pada status terminal.");
+  const updated = await db(
+    `update public.mkt_rfqs set status = $1::mkt_rfq_status, updated_at = now() where id = $2 and status = $3::mkt_rfq_status returning *`,
+    [status, rfq.id, rfq.status],
+  );
+  if (!updated.rowCount) fail(409, "RFQ berubah oleh proses lain. Muat ulang lalu coba lagi.");
+  await writeEvent(db, { rfqId: rfq.id, user, action: `rfq_${status}`, oldValue: { status: rfq.status }, newValue: { status }, description, ...data }, data.idempotencyKey ?? null);
+  return updated.rows[0];
+}
+
+async function portalRfqs(request, response, url, user, rfqId = null) {
+  const companyIds = await accessibleCompanyIds(user);
+  if (rfqId) {
+    const result = await query(
+      `select r.* from public.mkt_rfqs r where r.id=$4 and ${ownerSql("r")} limit 1`,
+      [user.id, user.email, companyIds, rfqId],
+    );
+    if (!result.rows[0]) fail(404, "RFQ tidak ditemukan.");
+    const row = result.rows[0];
+    const [lines, approvals] = await Promise.all([
+      rfqLines(query, row.id),
+      query(`select id, approver_level, status, requested_at, responded_at, response_notes from public.mkt_rfq_approvals where rfq_id=$1 order by requested_at desc`, [row.id]),
+    ]);
+    response._sendJson(200, { ok: true, data: { ...mapRfq(row), lines, pendingApproval: approvals.rows.find((item) => item.status === "pending") ?? null, approvals: approvals.rows } });
+    return;
+  }
+  const limit = Math.min(Math.max(Number(url.searchParams.get("limit") ?? 200), 1), 200);
+  const result = await query(
+    `select r.*, a.id as pending_approval_id, a.approver_level, a.status as pending_approval_status,
+            a.requested_at, a.response_notes
+       from public.mkt_rfqs r
+       left join lateral (
+         select id, approver_level, status, requested_at, response_notes
+           from public.mkt_rfq_approvals where rfq_id=r.id order by requested_at desc limit 1
+       ) a on true
+      where ${ownerSql("r")} order by r.created_at desc limit $4`,
+    [user.id, user.email, companyIds, limit],
+  );
+  response._sendJson(200, {
+    ok: true,
+    data: result.rows.map((row) => ({
+      rfqId: Number(row.id),
+      rfqNumber: row.rfq_number,
+      rfqStatus: row.status,
+      approvalStatus: row.approval_status ?? "none",
+      approvalRequestedAt: row.approval_requested_at,
+      approvalResolvedAt: row.approval_resolved_at,
+      buyerName: row.buyer_name,
+      buyerEmail: row.buyer_email,
+      buyerCompany: row.buyer_company,
+      buyerApprovalLevel: row.buyer_approval_level,
+      notes: row.notes,
+      requiredDeliveryDate: row.required_delivery_date,
+      createdAt: row.created_at,
+      pendingApproval: row.pending_approval_id ? {
+        id: Number(row.pending_approval_id), approverLevel: row.approver_level,
+        status: row.pending_approval_status, requestedAt: row.requested_at, responseNotes: row.response_notes,
+      } : null,
+    })),
+    count: result.rowCount,
+  });
+}
+
+async function submitRfq(user, rfqId, action) {
+  return withTransaction(async (db) => {
+    const rfq = await loadOwnedRfq(rfqId, user, { client: db, forUpdate: true });
+    const lines = await rfqLines(db, rfq.id);
+    if (!lines.length) fail(409, "RFQ harus memiliki minimal satu item.");
+    if (action === "cancel") {
+      if (!["draft", "submitted"].includes(rfq.status)) fail(409, "RFQ tidak dapat dibatalkan pada status ini.");
+      await db("update public.mkt_rfqs set status='cancelled', approval_status='none', updated_at=now() where id=$1", [rfq.id]);
+      await writeEvent(db, { rfqId: rfq.id, user, action: "rfq_cancelled", oldValue: { status: rfq.status }, newValue: { status: "cancelled" }, description: "RFQ dibatalkan customer" });
+      return { status: "cancelled" };
+    }
+    if (rfq.status !== "draft") fail(409, "RFQ hanya dapat dikirim dari status draft.");
+    await transitionRfq(db, rfq, "submitted", user, "RFQ dikirim customer");
+    return { status: "submitted" };
+  });
+}
+
+async function customerDecision(user, rfqId, approved, reason = null) {
+  return withTransaction(async (db) => {
+    const rfq = await loadOwnedRfq(rfqId, user, { client: db, forUpdate: true });
+    if (rfq.status !== "customer_review" || !rfq.proposed_quote_id) fail(409, "RFQ belum menunggu keputusan customer.");
+    const quote = (await db("select * from public.mkt_vendor_quotes where id=$1 and rfq_id=$2 for update", [rfq.proposed_quote_id, rfq.id])).rows[0];
+    if (!quote) fail(409, "Quotation yang diajukan tidak ditemukan.");
+    if (!approved) {
+      await db("update public.mkt_rfqs set status='quoted', approval_status='rejected', approval_resolved_at=now(), proposed_quote_id=null, updated_at=now() where id=$1", [rfq.id]);
+      await db("update public.mkt_vendor_quotes set status='requote_requested', requote_notes=$1, requote_round=requote_round+1, updated_at=now() where id=$1", [reason]);
+      await writeEvent(db, { rfqId: rfq.id, quoteId: quote.id, user, action: "customer_rejected_quote", oldValue: { status: rfq.status }, newValue: { status: "quoted", approvalStatus: "rejected" }, description: reason || "Quotation ditolak customer" });
+      await customerNotification(db, rfq, `rfq-${rfq.id}-customer-rejected-${quote.id}`, "rfq_quote_rejected", "Quotation ditolak", reason || "Quotation ditolak dan dikembalikan untuk evaluasi.");
+      await vendorNotification(db, quote.vendor_id, "quote_rejected", "Quotation perlu dievaluasi", "Quotation Anda belum disetujui customer.", { rfqId: rfq.id, quoteId: quote.id });
+      return { status: "quoted", rejected: true };
+    }
+    const poId = await createPo(db, rfq, quote, user);
+    await db("update public.mkt_vendor_quotes set status='selected', updated_at=now() where id=$1 and status in ('submitted','selected')", [quote.id]);
+    await db("update public.mkt_vendor_quotes set status='rejected', updated_at=now() where rfq_id=$1 and id<>$2 and status not in ('rejected','expired','withdrawn')", [rfq.id, quote.id]);
+    await db("update public.mkt_rfqs set status='awarded', approval_status='approved', approval_resolved_at=now(), winning_quote_id=$1, winner_selected_at=now(), winner_selected_by=$2, updated_at=now() where id=$3 and status='customer_review'", [quote.id, String(user.id), rfq.id]);
+    await writeEvent(db, { rfqId: rfq.id, quoteId: quote.id, poId, user, action: "customer_approved_quote", oldValue: { status: rfq.status }, newValue: { status: "awarded", poId }, description: "Quotation disetujui customer dan PO dibuat" }, `rfq:${rfq.id}:customer-approve`);
+    await customerNotification(db, rfq, `rfq-${rfq.id}-po-created`, "purchase_order_created", "Purchase Order dibuat", "Quotation disetujui dan Purchase Order telah dibuat.", { quoteId: quote.id, poId });
+    await queueEvent(db, { eventType: "po_created", recipientType: "vendor", recipientId: quote.vendor_id, rfqId: rfq.id, quoteId: quote.id, poId, payload: { rfqId: rfq.id, quoteId: quote.id, poId }, key: `po-created:${poId}` });
+    return { status: "awarded", poId, poNumber: (await db("select po_number from public.mkt_purchase_orders where id=$1", [poId])).rows[0].po_number, vendorName: quote.vendor_id };
+  });
+}
+
+async function handlePortalAction(request, response, user, pathname, body) {
+  const submit = pathname.match(/^\/api\/mkt\/portal\/rfqs\/(\d+)\/(submit|cancel)$/);
+  if (request.method === "POST" && submit) {
+    const data = await submitRfq(user, integer(submit[1], "RFQ"), submit[2]);
+    response._sendJson(200, { ok: true, data });
+    return true;
+  }
+  const decision = pathname.match(/^\/api\/mkt\/portal\/rfqs\/(\d+)\/customer-(approve|reject)$/);
+  if (request.method === "POST" && decision) {
+    const data = await customerDecision(user, integer(decision[1], "RFQ"), decision[2] === "approve", text(body.reason));
+    response._sendJson(200, { ok: true, data: { ...data, poId: data.poId, poNumber: data.poNumber, vendorName: data.vendorName } });
+    return true;
+  }
+  if (request.method === "GET" && pathname === "/api/mkt/portal/rfqs/pending-approvals") {
+    const companyIds = await accessibleCompanyIds(user);
+    const result = await query(
+      `select r.id, r.rfq_number, r.buyer_name, r.buyer_company, r.status, r.approval_status,
+              r.proposed_quote_id, r.created_at, a.id as approval_id, a.approver_level
+         from public.mkt_rfqs r join public.mkt_rfq_approvals a on a.rfq_id=r.id and a.status='pending'
+        where ${ownerSql("r")} order by a.requested_at desc`,
+      [user.id, user.email, companyIds],
+    );
+    response._sendJson(200, { ok: true, data: result.rows });
+    return true;
+  }
+  const approval = pathname.match(/^\/api\/mkt\/portal\/rfqs\/(\d+)\/(approve|reject)$/);
+  if (request.method === "POST" && approval) {
+    const rfqId = integer(approval[1], "RFQ");
+    const companyIds = await accessibleCompanyIds(user);
+    const member = (await query(
+      `select m.* from public.portal_company_members m where m.portal_customer_id=$1 and m.is_active=true and m.company_id=any($2::int[]) limit 1`,
+      [user.id, companyIds],
+    )).rows[0];
+    if (!member) fail(403, "Anda tidak memiliki hak approval perusahaan.");
+    await withTransaction(async (db) => {
+      const rfq = await loadOwnedRfq(rfqId, user, { client: db, forUpdate: true });
+      const approvalRow = (await db("select * from public.mkt_rfq_approvals where rfq_id=$1 and status='pending' order by requested_at desc limit 1 for update", [rfq.id])).rows[0];
+      if (!approvalRow) fail(409, "Tidak ada approval pending.");
+      const status = approval[2] === "approve" ? "approved" : "rejected";
+      await db("update public.mkt_rfq_approvals set status=$1, responded_at=now(), response_notes=$2, responder_member_id=$3 where id=$4", [status, text(body.notes), member.id, approvalRow.id]);
+      await db("update public.mkt_rfqs set approval_status=$1, approval_resolved_at=now(), updated_at=now() where id=$2", [status, rfq.id]);
+      await writeEvent(db, { rfqId: rfq.id, user, actorType: "customer_approver", action: `rfq_approval_${status}`, oldValue: { approvalStatus: "pending" }, newValue: { approvalStatus: status }, description: text(body.notes) || `Approval ${status}` });
+    });
+    response._sendJson(200, { ok: true, status: approval[2] === "approve" ? "approved" : "rejected" });
+    return true;
+  }
+  return false;
+}
+
+async function handleVendorQuote(request, response, pathname, body) {
+  const match = pathname.match(/^\/api\/vendor-quote\/([^/]+)(?:\/(save|submit))?$/);
+  if (!match) return false;
+  const quote = (await query(
+    `select q.*, r.rfq_number, r.status as rfq_status, r.buyer_name, r.buyer_company,
+            r.notes as rfq_notes, r.delivery_address, r.required_delivery_date,
+            r.destination_place_id, r.destination_lat, r.destination_lng,
+            s.id as supplier_id, s.name as supplier_name, s.phone as supplier_phone, s.contact_email as supplier_email
+       from public.mkt_vendor_quotes q join public.mkt_rfqs r on r.id=q.rfq_id
+       left join public.suppliers s on s.id=q.vendor_id
+      where q.token=$1 or q.token_hash=encode(sha256($1::bytea),'hex') limit 1`,
+    [match[1]],
+  )).rows[0];
+  if (!quote) fail(404, "Link quotation tidak ditemukan.");
+  const isExpired = quote.valid_until && new Date(quote.valid_until) < new Date();
+  if (isExpired && !["submitted", "selected"].includes(quote.status)) fail(410, "Link quotation sudah kedaluwarsa.");
+  if (request.method === "GET") {
+    if (quote.status === "invited") await query("update public.mkt_vendor_quotes set status='opened', opened_at=coalesce(opened_at,now()), updated_at=now() where id=$1 and status='invited'", [quote.id]);
+    const lines = await rfqLines(query, quote.rfq_id);
+    const details = await quoteDetail(query, quote.id);
+    response._sendJson(200, { ok: true, data: {
+      quote: { ...details, id: Number(quote.id), rfqId: Number(quote.rfq_id), vendorId: Number(quote.vendor_id), status: quote.status === "invited" ? "opened" : quote.status, validUntil: quote.valid_until, openedAt: quote.opened_at, submittedAt: quote.submitted_at, quotationNumber: quote.quotation_number, quotationDate: quote.quotation_date, paymentTerms: quote.payment_terms, incoterm: quote.incoterm, deliveryLocation: quote.delivery_location, notes: quote.notes, requoteNotes: quote.requote_notes, requoteDeadline: quote.requote_deadline, requoteRound: quote.requote_round },
+      vendor: { id: Number(quote.supplier_id), name: quote.supplier_name, phone: quote.supplier_phone, email: quote.supplier_email },
+      rfq: { id: Number(quote.rfq_id), rfqNumber: quote.rfq_number, status: quote.rfq_status, buyerName: quote.buyer_name, buyerCompany: quote.buyer_company, notes: quote.rfq_notes, deliveryAddress: quote.delivery_address, destinationPlaceId: quote.destination_place_id, destinationLat: quote.destination_lat, destinationLng: quote.destination_lng, requiredDeliveryDate: quote.required_delivery_date, createdAt: quote.created_at },
+      rfqLines: lines, quoteLines: details?.lines ?? [], meta: { canEdit: ["invited", "opened", "requote_requested"].includes(quote.status), canSubmit: ["invited", "opened", "requote_requested"].includes(quote.status), allowedCurrencies: ["IDR"] },
+    }});
+    return true;
+  }
+  if (request.method !== "POST" || !match[2]) return false;
+  if (!["invited", "opened", "requote_requested"].includes(quote.status)) fail(409, "Quotation tidak dapat diedit pada status ini.");
+  const lines = Array.isArray(body.lines) ? body.lines : [];
+  if (!lines.length) fail(400, "Line quotation wajib diisi.");
+  await withTransaction(async (db) => {
+    for (const line of lines) {
+      const rfqLineId = integer(line.rfqLineId, "RFQ line");
+      const price = decimal(line.offeredUnitPrice, "Harga", { positive: true });
+      const qty = decimal(line.offeredQty, "Qty", { positive: true });
+      const validUntil = text(line.validUntil);
+      const existingLine = (await db(
+        "select id from public.mkt_vendor_quote_lines where quote_id=$1 and rfq_line_id=$2 limit 1",
+        [quote.id, rfqLineId],
+      )).rows[0];
+      const lineValues = [
+        price,
+        qty,
+        line.leadTimeDays == null ? null : integer(line.leadTimeDays, "Lead time"),
+        text(line.stockStatus, "available"),
+        text(line.notes),
+        text(line.currency, "IDR"),
+        line.minimumOrderQty == null ? null : decimal(line.minimumOrderQty, "MOQ"),
+        validUntil,
+      ];
+      if (existingLine) {
+        await db(
+          `update public.mkt_vendor_quote_lines
+              set offered_unit_price=$1, offered_qty=$2, subtotal=$1*$2, lead_time_days=$3,
+                  stock_status=$4::mkt_stock_status, notes=$5, currency=$6,
+                  minimum_order_qty=$7, valid_until=$8, updated_at=now()
+            where id=$9`,
+          [...lineValues, existingLine.id],
+        );
+      } else {
+        await db(
+          `insert into public.mkt_vendor_quote_lines
+             (quote_id, rfq_line_id, vendor_catalog_item_id, offered_unit_price, offered_qty,
+              subtotal, lead_time_days, stock_status, notes, currency, minimum_order_qty, valid_until)
+           values ($1,$2,$3,$4,$5,$4*$5,$6,$7::mkt_stock_status,$8,$9,$10,$11)`,
+          [quote.id, rfqLineId, line.vendorCatalogItemId ?? null, ...lineValues],
+        );
+      }
+    }
+    await db(
+      `update public.mkt_vendor_quotes
+          set notes=$1, payment_terms=$2, quotation_date=$3, quotation_number=coalesce(quotation_number,'QT-'||rfq_id::text||'-'||vendor_id::text),
+              status=case when $4 then 'submitted'::mkt_quote_status else status end,
+              submitted_at=case when $4 then now() else submitted_at end, updated_at=now()
+        where id=$5`,
+      [text(body.notes), text(body.paymentTerms), text(body.quotationDate), match[2] === "submit", quote.id],
+    );
+    if (match[2] === "submit") {
+      await db("update public.mkt_rfqs set status=case when status in ('submitted','quoting') then 'quoted'::mkt_rfq_status else status end, quote_count=(select count(*) from public.mkt_vendor_quotes where rfq_id=$1 and status='submitted'), updated_at=now() where id=$1", [quote.rfq_id]);
+      await writeEvent(db, { rfqId: quote.rfq_id, quoteId: quote.id, actorType: "vendor", actorId: String(quote.vendor_id), actorName: quote.supplier_name, action: "vendor_quote_submitted", description: "Vendor mengirim quotation" });
+      await queueEvent(db, { eventType: "vendor_quote_submitted", recipientType: "admin", rfqId: quote.rfq_id, quoteId: quote.id, payload: { rfqId: quote.rfq_id, quoteId: quote.id }, key: `quote-submitted:${quote.id}:${quote.updated_at}` });
+    }
+  });
+  response._sendJson(200, { ok: true, data: { quoteId: Number(quote.id), status: match[2] === "submit" ? "submitted" : quote.status } });
+  return true;
+}
+
+async function handleAdminMarketplace(request, response, pathname, body, user) {
+  const rfqList = pathname === "/api/mkt/admin/rfqs";
+  if (request.method === "GET" && rfqList) {
+    const rows = await query(`select id, rfq_number, status, approval_status, buyer_name, buyer_company, quote_count, line_count, created_at from public.mkt_rfqs order by created_at desc limit 500`);
+    response._sendJson(200, { ok: true, data: rows.rows.map((r) => ({ rfqId: Number(r.id), rfqNumber: r.rfq_number, rfqStatus: r.status, approvalStatus: r.approval_status, buyerName: r.buyer_name, buyerCompany: r.buyer_company, quoteCount: r.quote_count, lineCount: r.line_count, createdAt: r.created_at })) });
+    return true;
+  }
+  const quotes = pathname.match(/^\/api\/mkt\/admin\/rfqs\/(\d+)\/vendor-quotes$/);
+  if (request.method === "GET" && quotes) {
+    const result = await query(`select q.id, q.vendor_id, q.status, q.updated_at, s.name as vendor_name, coalesce(sum(ql.negotiated_subtotal),sum(ql.subtotal),0) as deal_total from public.mkt_vendor_quotes q left join public.suppliers s on s.id=q.vendor_id left join public.mkt_vendor_quote_lines ql on ql.quote_id=q.id where q.rfq_id=$1 group by q.id,s.name order by q.created_at desc`, [integer(quotes[1], "RFQ")]);
+    response._sendJson(200, { ok: true, data: result.rows.map((r) => ({ id: Number(r.id), quoteId: Number(r.id), vendorId: Number(r.vendor_id), vendorName: r.vendor_name, status: r.status, updatedAt: r.updated_at, dealTotal: Number(r.deal_total) })) });
+    return true;
+  }
+  const deal = pathname.match(/^\/api\/mkt\/admin\/rfqs\/(\d+)\/quotes\/(\d+)\/deal-price$/);
+  if (deal) {
+    const rfqId = integer(deal[1], "RFQ");
+    const quoteId = integer(deal[2], "Quotation");
+    if (request.method === "GET") {
+      const details = await quoteDetail(query, quoteId);
+      if (!details || details.rfqId !== rfqId) fail(404, "Quotation tidak ditemukan.");
+      response._sendJson(200, { ok: true, data: { ...details, quoteId, lines: details.lines.map((line) => ({ ...line, unit: null })) } });
+      return true;
+    }
+    if (request.method === "PUT") {
+      await withTransaction(async (db) => {
+        const q = (await db("select * from public.mkt_vendor_quotes where id=$1 and rfq_id=$2 for update", [quoteId, rfqId])).rows[0];
+        if (!q) fail(404, "Quotation tidak ditemukan.");
+        for (const line of Array.isArray(body.lines) ? body.lines : []) {
+          const price = decimal(line.dealUnitPrice, "Harga deal", { positive: true });
+          await db("update public.mkt_vendor_quote_lines set negotiated_unit_price=$1, negotiated_subtotal=$1*offered_qty, updated_at=now() where quote_id=$2 and rfq_line_id=$3", [price, quoteId, integer(line.rfqLineId, "RFQ line")]);
+        }
+        await db("update public.mkt_vendor_quotes set negotiated_by=$1, negotiated_at=now(), negotiated_notes=$2, updated_at=now() where id=$3", [user.email, text(body.dealNotes), quoteId]);
+        await writeEvent(db, { rfqId, quoteId, user, action: "deal_price_updated", description: "Harga deal quotation diperbarui" });
+      });
+      response._sendJson(200, { ok: true });
+      return true;
+    }
+  }
+  const approveInvite = pathname.match(/^\/api\/mkt\/admin\/rfqs\/(\d+)\/approve-and-invite$/);
+  if (request.method === "POST" && approveInvite) {
+    const rfqId = integer(approveInvite[1], "RFQ");
+    const vendorIds = Array.isArray(body.vendorIds) ? body.vendorIds.map((id) => integer(id, "Vendor")) : [];
+    if (!vendorIds.length) fail(400, "Minimal satu vendor wajib dipilih.");
+    await withTransaction(async (db) => {
+      const rfq = await loadAdminRfq(rfqId, { client: db, forUpdate: true });
+      if (RFQ_TERMINAL.has(rfq.status)) fail(409, "RFQ sudah terminal.");
+      await transitionRfq(db, rfq, "quoting", user, "RFQ diarahkan ke vendor");
+      for (const vendorId of vendorIds) {
+        const vendor = (await db("select id, name, phone, is_active from public.suppliers where id=$1", [vendorId])).rows[0];
+        if (!vendor || vendor.is_active === false) continue;
+        const quote = await db(
+          `insert into public.mkt_vendor_quotes (rfq_id,vendor_id,token,token_hash,valid_until,status)
+           values ($1,$2,$3,encode(sha256($3::bytea),'hex'),now()+interval '7 days','invited')
+           on conflict (rfq_id,vendor_id) do update set updated_at=now() returning id`,
+          [rfqId, vendorId, token()],
+        );
+        await queueEvent(db, { eventType: "rfq_vendor_invited", recipientType: "vendor", recipientId: vendorId, recipientPhone: vendor.phone, rfqId, quoteId: quote.rows[0].id, payload: { rfqId, quoteId: quote.rows[0].id, vendorId }, key: `rfq:${rfqId}:vendor:${vendorId}:invited` });
+        await vendorNotification(db, vendorId, "rfq_invitation", "Undangan quotation baru", `Anda diundang untuk memberi quotation RFQ #${rfqId}.`, { rfqId, quoteId: quote.rows[0].id });
+      }
+    });
+    response._sendJson(200, { ok: true });
+    return true;
+  }
+  const sendCustomer = pathname.match(/^\/api\/mkt\/admin\/rfqs\/(\d+)\/send-to-customer$/);
+  if (request.method === "POST" && sendCustomer) {
+    const rfqId = integer(sendCustomer[1], "RFQ");
+    const quoteId = integer(body.quoteId, "Quotation");
+    await withTransaction(async (db) => {
+      const rfq = await loadAdminRfq(rfqId, { client: db, forUpdate: true });
+      const quote = (await db("select * from public.mkt_vendor_quotes where id=$1 and rfq_id=$2 and status='submitted' for update", [quoteId, rfqId])).rows[0];
+      if (!quote) fail(409, "Quotation submitted tidak ditemukan.");
+      await db("update public.mkt_vendor_quotes set status='selected', updated_at=now() where id=$1", [quoteId]);
+      await db("update public.mkt_vendor_quotes set status='rejected', updated_at=now() where rfq_id=$1 and id<>$2 and status not in ('rejected','expired','withdrawn')", [rfqId, quoteId]);
+      await db("update public.mkt_rfqs set status='customer_review', approval_status='pending', approval_requested_at=now(), proposed_quote_id=$1, updated_at=now() where id=$2 and status in ('quoted','quoting')", [quoteId, rfqId]);
+      await writeEvent(db, { rfqId, quoteId, user, action: "quote_sent_to_customer", oldValue: { status: rfq.status }, newValue: { status: "customer_review" }, description: text(body.notes) || "Quotation dikirim ke customer" });
+      await customerNotification(db, rfq, `rfq-${rfqId}-customer-review-${quoteId}`, "rfq_customer_review", "Quotation menunggu persetujuan", "Quotation vendor siap ditinjau dan disetujui.", { quoteId });
+    });
+    response._sendJson(200, { ok: true, status: "customer_review" });
+    return true;
+  }
+  return false;
+}
+
+async function handlePortalPurchaseOrders(request, response, pathname, user) {
+  const list = pathname === "/api/mkt/portal/purchase-orders";
+  const detailMatch = pathname.match(/^\/api\/mkt\/portal\/purchase-orders\/(\d+)$/);
+  const fromRfq = pathname.match(/^\/api\/mkt\/portal\/rfqs\/(\d+)\/purchase-order$/);
+  if (request.method !== "GET" || (!list && !detailMatch && !fromRfq)) return false;
+  const companyIds = await accessibleCompanyIds(user);
+  const where = list ? `(${ownerSql("r")})` : `${ownerSql("r")} and ${fromRfq ? "r.id=$4" : "po.id=$4"}`;
+  const values = list ? [user.id, user.email, companyIds] : [user.id, user.email, companyIds, integer((fromRfq ?? detailMatch)[1], "PO/RFQ")];
+  const result = await query(
+    `select po.id from public.mkt_purchase_orders po join public.mkt_rfqs r on r.id=po.rfq_id where ${where} order by po.created_at desc`,
+    values,
+  );
+  if (!result.rows.length) fail(404, "Purchase Order tidak ditemukan.");
+  if (list) {
+    const data = [];
+    for (const row of result.rows) data.push(await poDetail(query, row.id));
+    response._sendJson(200, { ok: true, data });
+  } else {
+    response._sendJson(200, { ok: true, data: await poDetail(query, result.rows[0].id) });
+  }
+  return true;
+}
+
+async function handlePublicVendorPo(request, response, pathname, body) {
+  const match = pathname.match(/^\/api\/mkt\/vendor-po\/([^/]+)(?:\/(accept|reject|request-revision))?$/);
+  if (!match) return false;
+  const po = (await query(
+    `select po.*, r.id as rfq_id, r.rfq_number, s.name as vendor_name
+       from public.mkt_purchase_orders po join public.mkt_rfqs r on r.id=po.rfq_id
+       join public.suppliers s on s.id=po.vendor_id
+      where po.vendor_token=$1`,
+    [match[1]],
+  )).rows[0];
+  if (!po) fail(404, "Link PO tidak ditemukan.");
+  if (po.vendor_token_expires_at && new Date(po.vendor_token_expires_at) < new Date()) fail(410, "Link PO sudah kedaluwarsa.");
+  if (request.method === "GET" && !match[2]) {
+    response._sendJson(200, await poDetail(query, po.id));
+    return true;
+  }
+  if (request.method !== "POST" || !match[2]) return false;
+  if (po.status !== "issued") fail(409, "PO tidak menunggu konfirmasi vendor.");
+  const next = match[2] === "accept" ? "vendor_accepted" : match[2] === "reject" ? "vendor_rejected" : "revision_requested";
+  await withTransaction(async (db) => {
+    const updated = await db("update public.mkt_purchase_orders set status=$1::mkt_po_status, revision_notes=$2, confirmed_at=case when $1='vendor_accepted' then now() else confirmed_at end, updated_at=now() where id=$3 and status='issued' returning *", [next, text(body.reason ?? body.notes), po.id]);
+    if (!updated.rowCount) fail(409, "PO berubah oleh proses lain.");
+    await writeEvent(db, { rfqId: po.rfq_id, poId: po.id, actorType: "vendor", actorId: String(po.vendor_id), actorName: po.vendor_name, action: `po_${next}`, description: text(body.reason ?? body.notes) || `Vendor ${next}` });
+    await queueEvent(db, { eventType: `po_${next}`, recipientType: "admin", rfqId: po.rfq_id, poId: po.id, payload: { poId: po.id, status: next }, key: `po:${po.id}:${next}` });
+  });
+  response._sendJson(200, { ok: true, status: next, poNumber: po.po_number });
+  return true;
+}
+
+async function handleMarketplaceRoute({ request, response, url, body, user, isAdmin = false, sendJson }) {
+  response._sendJson = (status, value) => sendJson(response, status, value);
+  if (url.pathname.startsWith("/api/vendor-quote/")) return handleVendorQuote(request, response, url.pathname, body);
+  if (url.pathname.startsWith("/api/mkt/vendor-po/")) return handlePublicVendorPo(request, response, url.pathname, body);
+  if (isAdmin && url.pathname.startsWith("/api/mkt/admin/")) return handleAdminMarketplace(request, response, url.pathname, body, user);
+  if (url.pathname.startsWith("/api/mkt/portal/")) {
+    if (!user) fail(401, "Authentication required.");
+    if (await handlePortalAction(request, response, user, url.pathname, body)) return true;
+    if (await handlePortalPurchaseOrders(request, response, url.pathname, user)) return true;
+    const detail = url.pathname.match(/^\/api\/mkt\/portal\/rfqs\/(\d+)$/);
+    if (request.method === "GET" && (detail || url.pathname === "/api/mkt/portal/rfqs")) {
+      await portalRfqs(request, response, url, user, detail ? integer(detail[1], "RFQ") : null);
+      return true;
+    }
+  }
+  return false;
+}
+
+export { handleMarketplaceRoute };
