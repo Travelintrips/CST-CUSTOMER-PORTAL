@@ -1,4 +1,10 @@
 import { pool, query } from "./db.mjs";
+import {
+  bestEffortNotificationWrite,
+  marketplaceNotificationDetails,
+  notifyAdmins,
+  notifyPortalCustomers,
+} from "./notification-service.mjs";
 
 const SHIPMENT_EVENT_STATUS = {
   packing: "packing",
@@ -281,7 +287,7 @@ async function queueNotification(db, {
   payload = {},
   key,
 }) {
-  await db(
+  await bestEffortNotificationWrite(db, () => db(
     `insert into public.mkt_notification_queue
        (event_type, channel, recipient_type, recipient_id, rfq_id,
         purchase_order_id, payload_json, deduplication_key)
@@ -295,7 +301,37 @@ async function queueNotification(db, {
       JSON.stringify({ poId: Number(po.id), poNumber: po.po_number, ...payload }),
       key,
     ],
-  );
+  ));
+}
+
+async function notifyMarketplaceEvent(db, { eventType, po, payload = {}, key }) {
+  const details = marketplaceNotificationDetails(eventType, po, payload);
+  const customerIds = po.portal_customer_id ? [po.portal_customer_id] : [];
+  if (customerIds.length) {
+    await notifyPortalCustomers(db, {
+      customerIds,
+      eventKey: key,
+      ...details,
+    });
+  } else if (po.buyer_email) {
+    await bestEffortNotificationWrite(db, async () => {
+      const customer = await db(
+        `select id from public.portal_customers where lower(email)=lower($1) limit 1`,
+        [po.buyer_email],
+      );
+      if (!customer.rows[0]) return false;
+      return notifyPortalCustomers(db, {
+        customerIds: [customer.rows[0].id],
+        eventKey: key,
+        ...details,
+      });
+    });
+  }
+  await notifyAdmins(db, {
+    eventKey: key,
+    ...details,
+    payload: { rfqId: po.rfq_id, ...details.payload },
+  });
 }
 
 async function getShipmentList(poId, user, isAdmin) {
@@ -431,6 +467,7 @@ async function createShipment({ poId, body, request, user, isAdmin }) {
       payload: { shipmentId: Number(shipment.id), shipmentNumber: shipment.shipment_number },
       key: eventKey,
     });
+    await notifyMarketplaceEvent(db, { eventType: "shipment_created", po, payload: { shipmentId: Number(shipment.id), shipmentNumber: shipment.shipment_number }, key: eventKey });
     if (["issued", "vendor_accepted"].includes(po.status)) {
       const updatedPo = await db(
         `update public.mkt_purchase_orders
@@ -528,6 +565,12 @@ async function appendShipmentEvent({ shipmentId, body, request, user, isAdmin })
       payload: { shipmentId: Number(shipment.id), eventType, status: targetStatus },
       key: `shipment-event:${shipment.id}:${key}`,
     });
+    await notifyMarketplaceEvent(db, {
+      eventType: `shipment_${eventType}`,
+      po: { ...shipment, id: shipment.po_id },
+      payload: { shipmentId: Number(shipment.id), eventType, status: targetStatus },
+      key: `shipment-event:${shipment.id}:${key}`,
+    });
     return { id: Number(inserted.rows[0].id), alreadyProcessed: false, event: mapEvent(inserted.rows[0]) };
   });
 }
@@ -606,6 +649,12 @@ async function submitPod({ shipmentId, body, request, user, isAdmin }) {
       key: `shipment-pod:${shipment.id}:${key}`,
     });
     await queueNotification(db, {
+      eventType: "shipment_pod_submitted",
+      po: { ...shipment, id: shipment.po_id },
+      payload: { shipmentId: Number(shipment.id) },
+      key: `shipment-pod:${shipment.id}:${key}`,
+    });
+    await notifyMarketplaceEvent(db, {
       eventType: "shipment_pod_submitted",
       po: { ...shipment, id: shipment.po_id },
       payload: { shipmentId: Number(shipment.id) },
@@ -778,6 +827,12 @@ async function createGoodsReceipt({ shipmentId, body, request, user, isAdmin }) 
       payload: { shipmentId: Number(shipment.id), receiptId: Number(inserted.rows[0].id), receiptType },
       key: `goods-receipt:${shipment.id}:${key}`,
     });
+    await notifyMarketplaceEvent(db, {
+      eventType: "goods_receipt_created",
+      po: { ...shipment, id: shipment.po_id },
+      payload: { shipmentId: Number(shipment.id), receiptId: Number(inserted.rows[0].id), receiptType },
+      key: `goods-receipt:${shipment.id}:${key}`,
+    });
     if (receiptType === "full") await maybeCompletePo(db, shipment.po_id, user, isAdmin);
     const receipt = (await goodsReceipts(shipment.id, user, isAdmin, db)).find((row) => row.id === Number(inserted.rows[0].id));
     return { alreadyProcessed: false, receipt };
@@ -814,6 +869,12 @@ async function maybeCompletePo(db, poId, user, isAdmin) {
     key: `po:${po.id}:completed`,
   });
   await queueNotification(db, {
+    eventType: "po_completed",
+    po,
+    payload: { status: "completed" },
+    key: `po:${po.id}:completed`,
+  });
+  await notifyMarketplaceEvent(db, {
     eventType: "po_completed",
     po,
     payload: { status: "completed" },
@@ -857,6 +918,12 @@ async function transitionPo({ poId, action, body, request, user, isAdmin }) {
       key: `po-transition:${po.id}:${key}`,
     });
     await queueNotification(db, {
+      eventType: `po_${target}`,
+      po,
+      payload: { status: target },
+      key: `po-transition:${po.id}:${key}`,
+    });
+    await notifyMarketplaceEvent(db, {
       eventType: `po_${target}`,
       po,
       payload: { status: target },

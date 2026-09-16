@@ -763,21 +763,48 @@ async function handleNotifications(request, response) {
   if (!user) return;
 
   const result = await query(
-    `select id, type, title, message, payload, is_read, created_at
+    `select id, event_key, type, title, message, payload, is_read, created_at
        from public.portal_customer_notifications
       where portal_customer_id = $1
+        and coalesce(payload->>'audience', 'customer') = 'customer'
       order by created_at desc
       limit 50`,
     [user.id],
   );
   const items = result.rows.map((row) => ({
-    id: row.id,
-    type: row.type,
-    title: row.title,
-    message: row.message,
-    payload: row.payload ?? {},
-    isRead: row.is_read,
-    createdAt: row.created_at,
+    ...(() => {
+      const rawPayload = row.payload ?? {};
+      const resourceId = rawPayload.resourceId
+        ?? rawPayload.poId
+        ?? rawPayload.invoiceId
+        ?? rawPayload.rfq_id
+        ?? null;
+      const resourceType = rawPayload.resourceType
+        ?? (rawPayload.poId ? "purchase_order" : rawPayload.invoiceId ? "invoice" : rawPayload.rfq_id ? "rfq" : null);
+      const link = rawPayload.link
+        ?? (resourceType === "purchase_order" && resourceId
+          ? `/marketplace/my-purchase-orders/${Number(resourceId)}`
+          : resourceType === "rfq" && resourceId
+            ? `/marketplace/my-rfqs/${Number(resourceId)}`
+            : resourceType === "invoice" ? "/portal-invoice" : null);
+      return {
+        id: row.id,
+        eventKey: row.event_key ?? `${row.type}:${resourceType ?? "notification"}:${resourceId ?? row.id}:${row.id}`,
+        type: row.type,
+        title: row.title,
+        message: row.message,
+        payload: {
+          ...rawPayload,
+          audience: rawPayload.audience ?? "customer",
+          resourceType,
+          resourceId: resourceId == null ? null : Number(resourceId),
+          link,
+          url: rawPayload.url ?? link,
+        },
+        isRead: row.is_read,
+        createdAt: row.created_at,
+      };
+    })(),
   }));
   sendJson(response, 200, {
     items,

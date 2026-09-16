@@ -207,6 +207,17 @@ async function main() {
   const rfqDetail = await customer.request(`/api/mkt/portal/rfqs/${rfq.rfqId}`);
   assert(Number(rfqDetail?.data?.id) === Number(rfq.rfqId), "RFQ detail did not match the listed RFQ.");
 
+  const customerNotifications = await customer.request("/api/portal/notifications");
+  const customerEventKeys = (customerNotifications?.items ?? []).map((item) => item.eventKey);
+  assert(
+    new Set(customerEventKeys).size === customerEventKeys.length,
+    "customer notifications contain duplicate event keys.",
+  );
+  assert(
+    (customerNotifications?.items ?? []).every((item) => item.payload?.audience !== "admin"),
+    "customer notification inbox leaked an admin-scoped notification.",
+  );
+
   await customer.request("/api/portal/notifications/read-all", {
     method: "POST",
     expected: [204],
@@ -215,8 +226,33 @@ async function main() {
   const otherAccount = new PortalClient(baseUrl, "other-account");
   const otherProfile = await otherAccount.devLogin("admin");
   assert(otherProfile.id !== profile.id, "isolation check did not use a separate portal account.");
+  await customer.request("/api/portal/admin/service-operations/notifications", { expected: [403] });
+  const adminNotifications = await otherAccount.request("/api/portal/admin/service-operations/notifications?limit=50");
+  const adminEventKeys = (adminNotifications?.data ?? []).map((item) => item.event_key);
+  assert(
+    new Set(adminEventKeys).size === adminEventKeys.length,
+    "admin notifications contain duplicate event keys.",
+  );
+  assert(
+    (adminNotifications?.data ?? []).every((item) =>
+      typeof item.link === "string" && item.link.startsWith("/") &&
+      typeof item.resource_type === "string" &&
+      Number.isInteger(Number(item.resource_id)),
+    ),
+    "admin notifications are missing canonical link/resource fields.",
+  );
+  if (adminNotifications?.data?.[0]) {
+    const notificationId = adminNotifications.data[0].id;
+    await otherAccount.request(`/api/portal/admin/service-operations/notifications/${notificationId}/read`, {
+      method: "POST",
+      expected: [204],
+    });
+    const afterRead = await otherAccount.request("/api/portal/admin/service-operations/notifications?limit=50");
+    const readItem = (afterRead?.data ?? []).find((item) => item.id === notificationId);
+    assert(readItem?.read_at, "admin notification read mutation did not persist.");
+  }
   await otherAccount.request(`/api/mkt/portal/rfqs/${rfq.rfqId}`, {
-    expected: [404],
+    expected: [403, 404],
   });
 
   console.log(

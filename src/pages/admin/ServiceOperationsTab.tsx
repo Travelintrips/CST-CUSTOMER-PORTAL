@@ -54,6 +54,9 @@ type Notification = {
   body: string;
   read_at: string | null;
   created_at: string;
+  link?: string | null;
+  resource_type?: string | null;
+  resource_id?: number | null;
 };
 
 type Detail = {
@@ -358,7 +361,10 @@ export function ServiceOperationsTab() {
               <button
                 type="button"
                 key={item.id}
-                onClick={() => item.read_at ? undefined : void markRead(item.id)}
+                onClick={() => {
+                  if (!item.read_at) void markRead(item.id);
+                  if (item.link) window.location.assign(item.link);
+                }}
                 className={`w-full text-left px-4 py-3 hover:bg-slate-50 ${item.read_at ? "" : "bg-amber-50/50"}`}
               >
                 <div className="flex items-start gap-3">

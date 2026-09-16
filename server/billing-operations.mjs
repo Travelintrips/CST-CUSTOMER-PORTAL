@@ -1,4 +1,9 @@
 import { pool, query } from "./db.mjs";
+import {
+  bestEffortNotificationWrite,
+  notifyAdmins,
+  notifyPortalCustomers,
+} from "./notification-service.mjs";
 
 const INVOICEABLE_STATUSES = new Set(["confirmed", "done", "completed"]);
 const PAYMENT_STATUSES = new Set(["pending"]);
@@ -154,28 +159,49 @@ async function writeBillingActivity(db, { user, action, invoice, oldValue = null
 }
 
 async function notifyInvoiceCustomers(db, invoice, { eventKey, type, title, message, payload = {} }) {
-  const customerIds = await invoiceCustomerIds(db, invoice);
-  for (const customerId of customerIds) {
-    await db(
-      `insert into public.portal_customer_notifications
-         (portal_customer_id, event_key, type, title, message, payload)
-       values ($1, $2, $3, $4, $5, $6::jsonb)
-       on conflict (portal_customer_id, event_key) do nothing`,
-      [
-        customerId,
-        eventKey,
-        type,
-        title,
-        message,
-        JSON.stringify({
-          invoiceId: Number(invoice.id),
-          invoiceNumber: invoice.invoice_number ?? `INV-${invoice.doc_number}`,
-          documentNumber: invoice.doc_number,
-          ...payload,
-        }),
-      ],
-    );
-  }
+  return bestEffortNotificationWrite(db, async () => {
+    const customerIds = await invoiceCustomerIds(db, invoice);
+    return notifyPortalCustomers(db, {
+      customerIds,
+      eventKey,
+      type,
+      title,
+      message,
+      resourceType: payload.paymentId ? "payment" : "invoice",
+      resourceId: payload.paymentId ?? invoice.id,
+      link: "/portal-invoice",
+      payload: {
+        invoiceId: Number(invoice.id),
+        invoiceNumber: invoice.invoice_number ?? `INV-${invoice.doc_number}`,
+        documentNumber: invoice.doc_number,
+        ...payload,
+      },
+    });
+  });
+}
+
+async function notifyInvoiceAdmins(db, invoice, {
+  eventKey,
+  type,
+  title,
+  message,
+  payload = {},
+}) {
+  return notifyAdmins(db, {
+    eventKey,
+    type,
+    title,
+    message,
+    resourceType: payload.paymentId ? "payment" : "invoice",
+    resourceId: payload.paymentId ?? invoice.id,
+    link: "/admin?tab=service-operations",
+    payload: {
+      invoiceId: Number(invoice.id),
+      invoiceNumber: invoice.invoice_number ?? `INV-${invoice.doc_number}`,
+      documentNumber: invoice.doc_number,
+      ...payload,
+    },
+  });
 }
 
 const INVOICE_COLUMNS = `
@@ -353,6 +379,13 @@ export async function handleCustomerInvoices({ request, response, user, sendJson
         deduplicationKey: `sales-payment-submitted:${payment.rows[0].id}`,
         description: `Payment customer untuk invoice ${invoice.invoice_number ?? invoice.doc_number} dibuat.`,
       });
+      await notifyInvoiceAdmins(db, invoice, {
+        eventKey: `sales-payment:${payment.rows[0].id}:submitted`,
+        type: "sales_payment_submitted",
+        title: "Payment customer masuk",
+        message: `Customer mengajukan payment untuk invoice ${invoice.invoice_number ?? invoice.doc_number}.`,
+        payload: { paymentId: payment.rows[0].id, paymentStatus: "pending", amount },
+      });
       return { payment: mapPayment(payment.rows[0]), replayed: false };
     });
     sendJson(response, result.replayed ? 200 : 201, result);
@@ -415,6 +448,13 @@ export async function handleAdminInvoices({ request, response, user, sendJson, s
       message: `Invoice ${mapped.invoiceNumber} sudah tersedia untuk dibayar.`,
       payload: { invoiceStatus: "invoiced" },
     });
+      await notifyInvoiceAdmins(db, updated.rows[0], {
+        eventKey: `sales-invoice:${row.id}:invoiced`,
+        type: "sales_invoice_issued",
+        title: "Invoice diterbitkan",
+        message: `Invoice ${mapped.invoiceNumber} diterbitkan dan menunggu pembayaran customer.`,
+        payload: { invoiceStatus: "invoiced" },
+      });
     return mapped;
   });
   sendJson(response, 200, result);
@@ -532,6 +572,13 @@ export async function handleAdminPayments({ request, response, user, sendJson, s
         : `Status pembayaran invoice ${invoice.invoice_number ?? invoice.doc_number}: ${nextStatus}.`,
       payload: { paymentId: payment.id, paymentStatus: nextStatus, amountPaid },
     });
+      await notifyInvoiceAdmins(db, updatedInvoice, {
+        eventKey: `sales-payment:${payment.id}:${nextStatus}`,
+        type: "sales_payment_status_changed",
+        title: "Status payment berubah",
+        message: `Payment ${payment.id} untuk invoice ${invoice.invoice_number ?? invoice.doc_number} berstatus ${nextStatus}.`,
+        payload: { paymentId: payment.id, paymentStatus: nextStatus, amountPaid },
+      });
     return {
       payment: mapPayment(updatedPayment.rows[0]),
       invoice: mapInvoice(updatedInvoice),

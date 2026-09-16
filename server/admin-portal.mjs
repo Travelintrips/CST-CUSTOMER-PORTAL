@@ -1230,10 +1230,18 @@ async function handleServiceOperations(ctx) {
     if (!row.status_known) item.ambiguous += 1;
     return acc;
   }, {}));
+  const unreadResult = await query(
+    `select count(*)::int as count
+       from public.portal_customer_notifications
+      where portal_customer_id = $1
+        and coalesce(payload->>'audience', '') = 'admin'
+        and is_read = false`,
+    [ctx.user.id],
+  );
   ctx.sendJson(response, 200, {
     data: rows.slice(offset, offset + limit).map(publicServiceRow),
     summary, total: rows.length,
-    unreadNotifications: 0,
+    unreadNotifications: Number(unreadResult.rows[0]?.count ?? 0),
   });
 }
 
@@ -1242,17 +1250,34 @@ async function handleAdminNotifications(ctx) {
   if (request.method === "GET" && url.pathname === "/api/portal/admin/service-operations/notifications") {
     const limit = Math.min(Math.max(Number(url.searchParams.get("limit") ?? 8), 1), 50);
     const result = await query(
-      `select id, type, title, message, payload, is_read, created_at, read_at
-         from public.portal_customer_notifications order by created_at desc limit $1`,
-      [limit],
+      `select id, event_key, type, title, message, payload, is_read, created_at, read_at
+         from public.portal_customer_notifications
+        where portal_customer_id = $2
+          and coalesce(payload->>'audience', '') = 'admin'
+        order by created_at desc
+        limit $1`,
+      [limit, ctx.user.id],
     );
     const data = result.rows.map((row) => {
       const payload = jsonValue(row.payload, {}) ?? {};
+      const resourceId = payload.resourceId
+        ?? payload.poId
+        ?? payload.invoiceId
+        ?? payload.rfq_id
+        ?? null;
+      const resourceType = payload.resourceType
+        ?? (payload.poId ? "purchase_order" : payload.invoiceId ? "invoice" : payload.rfq_id ? "rfq" : null);
       return {
-        id: Number(row.id), type: row.type, order_number: payload.order_number ?? payload.reference ?? "",
+        id: Number(row.id),
+        event_key: row.event_key ?? `${row.type}:${resourceType ?? "notification"}:${resourceId ?? row.id}:${row.id}`,
+        type: row.type,
+        order_number: payload.order_number ?? payload.reference ?? payload.poNumber ?? payload.rfqNumber ?? "",
         customer_name: payload.customer_name ?? "", company_name: payload.company_name ?? null,
         title: row.title, body: row.message, read_at: row.read_at ?? (row.is_read ? row.created_at : null),
         created_at: row.created_at,
+        link: typeof payload.link === "string" ? payload.link : null,
+        resource_type: resourceType,
+        resource_id: resourceId == null ? null : Number(resourceId),
       };
     });
     ctx.sendJson(response, 200, { data, unread: data.filter((item) => !item.read_at).length });
@@ -1260,12 +1285,26 @@ async function handleAdminNotifications(ctx) {
   }
   const readMatch = url.pathname.match(/^\/api\/portal\/admin\/service-operations\/notifications\/(\d+)\/read$/);
   if (request.method === "POST" && readMatch) {
-    await query("update public.portal_customer_notifications set is_read = true, read_at = now() where id = $1", [Number(readMatch[1])]);
+    await query(
+      `update public.portal_customer_notifications
+          set is_read = true, read_at = now()
+        where id = $1
+          and portal_customer_id = $2
+          and coalesce(payload->>'audience', '') = 'admin'`,
+      [Number(readMatch[1]), ctx.user.id],
+    );
     ctx.sendEmpty(response, 204);
     return;
   }
   if (request.method === "POST" && url.pathname === "/api/portal/admin/service-operations/notifications/mark-all-read") {
-    await query("update public.portal_customer_notifications set is_read = true, read_at = now() where is_read = false");
+    await query(
+      `update public.portal_customer_notifications
+          set is_read = true, read_at = now()
+        where portal_customer_id = $1
+          and coalesce(payload->>'audience', '') = 'admin'
+          and is_read = false`,
+      [ctx.user.id],
+    );
     ctx.sendEmpty(response, 204);
     return;
   }

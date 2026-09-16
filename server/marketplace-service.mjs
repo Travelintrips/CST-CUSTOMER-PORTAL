@@ -1,5 +1,10 @@
 import { randomBytes } from "node:crypto";
 import { pool, query } from "./db.mjs";
+import {
+  bestEffortNotificationWrite,
+  notifyAdmins,
+  notifyRfqCustomer,
+} from "./notification-service.mjs";
 import { handleAdminOperations, handlePortalOperations } from "./marketplace-operations.mjs";
 
 const RFQ_TERMINAL = new Set(["awarded", "cancelled", "expired"]);
@@ -153,33 +158,29 @@ async function queueEvent(db, {
   eventType, recipientType, recipientId = null, recipientPhone = null,
   rfqId = null, quoteId = null, poId = null, payload = {}, key,
 }) {
-  await db(
+  await bestEffortNotificationWrite(db, () => db(
     `insert into public.mkt_notification_queue
        (event_type, channel, recipient_type, recipient_id, recipient_phone,
         rfq_id, vendor_quote_id, purchase_order_id, payload_json, deduplication_key)
      values ($1,'internal',$2,$3,$4,$5,$6,$7,$8::jsonb,$9)
      on conflict do nothing`,
     [eventType, recipientType, recipientId, recipientPhone, rfqId, quoteId, poId, JSON.stringify(payload), key],
-  );
+  ));
 }
 
 async function customerNotification(db, rfq, eventKey, type, title, message, payload = {}) {
-  let customerId = rfq.portal_customer_id;
-  if (!customerId && rfq.buyer_email) {
-    const customer = await db(
-      `select id from public.portal_customers where lower(email)=lower($1) limit 1`,
-      [rfq.buyer_email],
-    );
-    customerId = customer.rows[0]?.id ?? null;
-  }
-  if (!customerId) return;
-  await db(
-    `insert into public.portal_customer_notifications
-       (portal_customer_id, event_key, type, title, message, payload)
-     values ($1,$2,$3,$4,$5,$6::jsonb)
-     on conflict (portal_customer_id, event_key) do nothing`,
-    [customerId, eventKey, type, title, message, JSON.stringify({ rfq_id: rfq.id, rfq_number: rfq.rfq_number, ...payload })],
-  );
+  return notifyRfqCustomer(db, rfq, {
+    eventKey,
+    type,
+    title,
+    message,
+    resourceType: payload.poId ? "purchase_order" : "rfq",
+    resourceId: payload.poId ?? rfq.id,
+    link: payload.poId
+      ? `/marketplace/my-purchase-orders/${Number(payload.poId)}`
+      : `/marketplace/my-rfqs/${Number(rfq.id)}`,
+    payload,
+  });
 }
 
 async function vendorNotification(db, vendorId, type, title, message, payload = {}) {
@@ -510,6 +511,16 @@ async function submitRfq(user, rfqId, action) {
     }
     if (rfq.status !== "draft") fail(409, "RFQ hanya dapat dikirim dari status draft.");
     await transitionRfq(db, rfq, "submitted", user, "RFQ dikirim customer");
+    await notifyAdmins(db, {
+      eventKey: `rfq-${rfq.id}-submitted`,
+      type: "rfq_submitted",
+      title: "RFQ baru masuk",
+      message: `RFQ ${rfq.rfq_number ?? rfq.id} dikirim customer dan perlu diproses.`,
+      resourceType: "rfq",
+      resourceId: rfq.id,
+      link: `/admin?tab=service-operations`,
+      payload: { rfqId: Number(rfq.id), rfqNumber: rfq.rfq_number },
+    });
     return { status: "submitted" };
   });
 }
@@ -558,6 +569,16 @@ async function customerDecision(user, rfqId, approved, reason = null, idempotenc
         `rfq:${rfq.id}:customer-reject:${quote.id}:${idempotencyKey ?? quote.requote_round}`,
       );
       await customerNotification(db, rfq, `rfq-${rfq.id}-customer-rejected-${quote.id}`, "rfq_quote_rejected", "Quotation ditolak", reason || "Quotation ditolak dan dikembalikan untuk evaluasi.");
+      await notifyAdmins(db, {
+        eventKey: `rfq-${rfq.id}-customer-rejected-${quote.id}`,
+        type: "rfq_quote_rejected",
+        title: "Quotation ditolak customer",
+        message: `Quotation untuk RFQ ${rfq.rfq_number ?? rfq.id} ditolak customer.`,
+        resourceType: "rfq",
+        resourceId: rfq.id,
+        link: `/admin?tab=service-operations`,
+        payload: { rfqId: Number(rfq.id), quoteId: Number(quote.id), reason: reason ?? null },
+      });
       await vendorNotification(db, quote.vendor_id, "quote_rejected", "Quotation perlu dievaluasi", "Quotation Anda belum disetujui customer.", { rfqId: rfq.id, quoteId: quote.id });
       return { status: "quoted", rejected: true };
     }
@@ -567,6 +588,16 @@ async function customerDecision(user, rfqId, approved, reason = null, idempotenc
     await db("update public.mkt_rfqs set status='awarded', approval_status='approved', approval_resolved_at=now(), winning_quote_id=$1, winner_selected_at=now(), winner_selected_by=$2, updated_at=now() where id=$3 and status='customer_review'", [quote.id, String(user.id), rfq.id]);
     await writeEvent(db, { rfqId: rfq.id, quoteId: quote.id, poId, user, action: "customer_approved_quote", oldValue: { status: rfq.status }, newValue: { status: "awarded", poId }, description: "Quotation disetujui customer dan PO dibuat" }, `rfq:${rfq.id}:customer-approve`);
     await customerNotification(db, rfq, `rfq-${rfq.id}-po-created`, "purchase_order_created", "Purchase Order dibuat", "Quotation disetujui dan Purchase Order telah dibuat.", { quoteId: quote.id, poId });
+    await notifyAdmins(db, {
+      eventKey: `rfq-${rfq.id}-po-created`,
+      type: "purchase_order_created",
+      title: "Purchase Order dibuat",
+      message: `PO untuk RFQ ${rfq.rfq_number ?? rfq.id} berhasil dibuat.`,
+      resourceType: "purchase_order",
+      resourceId: poId,
+      link: `/admin?tab=service-operations`,
+      payload: { rfqId: Number(rfq.id), quoteId: Number(quote.id), poId: Number(poId) },
+    });
     await queueEvent(db, { eventType: "po_created", recipientType: "vendor", recipientId: quote.vendor_id, rfqId: rfq.id, quoteId: quote.id, poId, payload: { rfqId: rfq.id, quoteId: quote.id, poId }, key: `po-created:${poId}` });
     return { status: "awarded", poId, poNumber: (await db("select po_number from public.mkt_purchase_orders where id=$1", [poId])).rows[0].po_number, vendorName: quote.vendor_id };
   });
@@ -742,6 +773,16 @@ async function handleVendorQuote(request, response, pathname, body) {
       if (!updatedRfq.rowCount) fail(409, "RFQ sudah tidak menerima quotation.");
       await writeEvent(db, { rfqId: lockedQuote.rfq_id, quoteId: lockedQuote.id, actorType: "vendor", actorId: String(lockedQuote.vendor_id), actorName: lockedQuote.supplier_name, action: "vendor_quote_submitted", description: "Vendor mengirim quotation" }, `quote-submitted:${lockedQuote.id}:${lockedQuote.requote_round ?? 0}`);
       await queueEvent(db, { eventType: "vendor_quote_submitted", recipientType: "admin", rfqId: lockedQuote.rfq_id, quoteId: lockedQuote.id, payload: { rfqId: lockedQuote.rfq_id, quoteId: lockedQuote.id }, key: `quote-submitted:${lockedQuote.id}:${lockedQuote.requote_round ?? 0}` });
+      await notifyAdmins(db, {
+        eventKey: `quote-submitted:${lockedQuote.id}:${lockedQuote.requote_round ?? 0}`,
+        type: "vendor_quote_submitted",
+        title: "Quotation vendor masuk",
+        message: `Vendor mengirim quotation untuk RFQ ${lockedQuote.rfq_number ?? lockedQuote.rfq_id}.`,
+        resourceType: "rfq",
+        resourceId: lockedQuote.rfq_id,
+        link: `/admin?tab=service-operations`,
+        payload: { rfqId: Number(lockedQuote.rfq_id), quoteId: Number(lockedQuote.id) },
+      });
     }
   });
   response._sendJson(200, { ok: true, data: { quoteId: Number(quote.id), status: resultingStatus } });
@@ -858,6 +899,16 @@ async function handleAdminMarketplace(request, response, pathname, body, user) {
        if (!updated.rowCount) fail(409, "RFQ sudah tidak tersedia untuk dikirim ke customer.");
       await writeEvent(db, { rfqId, quoteId, user, action: "quote_sent_to_customer", oldValue: { status: rfq.status }, newValue: { status: "customer_review" }, description: text(body.notes) || "Quotation dikirim ke customer" });
       await customerNotification(db, rfq, `rfq-${rfqId}-customer-review-${quoteId}`, "rfq_customer_review", "Quotation menunggu persetujuan", "Quotation vendor siap ditinjau dan disetujui.", { quoteId });
+       await notifyAdmins(db, {
+         eventKey: `rfq-${rfqId}-customer-review-${quoteId}`,
+         type: "rfq_customer_review",
+         title: "Quotation dikirim ke customer",
+         message: `Quotation RFQ ${rfq.rfq_number ?? rfqId} menunggu keputusan customer.`,
+         resourceType: "rfq",
+         resourceId: rfqId,
+         link: `/admin?tab=service-operations`,
+         payload: { rfqId, quoteId },
+       });
     });
     response._sendJson(200, { ok: true, status: "customer_review" });
     return true;
