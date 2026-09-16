@@ -30,6 +30,12 @@ import {
   handleVerification,
 } from "./admin-portal.mjs";
 import { handleMarketplaceRoute } from "./marketplace-service.mjs";
+import {
+  handleAdminInvoices,
+  handleAdminPayments,
+  handleCustomerInvoices,
+  handleCustomerPayments,
+} from "./billing-operations.mjs";
 
 const PORT = Number(process.env.CUSTOMER_PORTAL_API_PORT ?? 18444);
 const APP_ENV = process.env.APP_ENV ?? process.env.NODE_ENV ?? "development";
@@ -1191,6 +1197,100 @@ async function route(request, response) {
   if (pathname === "/api/portal/admin/customers/stats") {
     const user = await requireAdmin(request, response);
     if (user) await handleAdminCustomerStats({ request, response, url, user, sendJson, sendError });
+    return;
+  }
+  const customerInvoicePaymentMatch = pathname.match(/^\/api\/portal\/me\/invoices\/(\d+)\/payments$/);
+  if (customerInvoicePaymentMatch && request.method === "POST") {
+    const user = await requireUser(request, response);
+    if (user) {
+      request.body = await readJson(request);
+      await handleCustomerInvoices({
+        request,
+        response,
+        user,
+        sendJson,
+        sendError,
+        invoiceId: Number(customerInvoicePaymentMatch[1]),
+      });
+    }
+    return;
+  }
+  const customerInvoiceMatch = pathname.match(/^\/api\/portal\/me\/invoices\/(\d+)$/);
+  if (request.method === "GET" && customerInvoiceMatch) {
+    const user = await requireUser(request, response);
+    if (user) await handleCustomerInvoices({
+      request,
+      response,
+      user,
+      sendJson,
+      sendError,
+      invoiceId: Number(customerInvoiceMatch[1]),
+    });
+    return;
+  }
+  if (request.method === "GET" && pathname === "/api/portal/me/invoices") {
+    const user = await requireUser(request, response);
+    if (user) await handleCustomerInvoices({ request, response, user, sendJson, sendError });
+    return;
+  }
+  if (request.method === "GET" && pathname === "/api/portal/me/payments") {
+    const user = await requireUser(request, response);
+    if (user) await handleCustomerPayments({ request, response, user, sendJson, sendError });
+    return;
+  }
+  const adminInvoiceActionMatch = pathname.match(/^\/api\/portal\/admin\/invoices\/(\d+)\/action$/);
+  if (adminInvoiceActionMatch && request.method === "POST") {
+    const user = await requireAdmin(request, response);
+    if (user) {
+      request.body = await readJson(request);
+      await handleAdminInvoices({
+        request,
+        response,
+        user,
+        sendJson,
+        sendError,
+        invoiceId: Number(adminInvoiceActionMatch[1]),
+      });
+    }
+    return;
+  }
+  const adminInvoiceMatch = pathname.match(/^\/api\/portal\/admin\/invoices\/(\d+)$/);
+  if (request.method === "GET" && adminInvoiceMatch) {
+    const user = await requireAdmin(request, response);
+    if (user) await handleAdminInvoices({
+      request,
+      response,
+      user,
+      sendJson,
+      sendError,
+      invoiceId: Number(adminInvoiceMatch[1]),
+    });
+    return;
+  }
+  if (request.method === "GET" && pathname === "/api/portal/admin/invoices") {
+    const user = await requireAdmin(request, response);
+    if (user) await handleAdminInvoices({ request, response, user, sendJson, sendError });
+    return;
+  }
+  const adminPaymentStatusMatch = pathname.match(/^\/api\/portal\/admin\/payments\/(\d+)\/status$/);
+  if (adminPaymentStatusMatch && request.method === "POST") {
+    const user = await requireAdmin(request, response);
+    if (user) {
+      request.body = await readJson(request);
+      await handleAdminPayments({
+        request,
+        response,
+        user,
+        sendJson,
+        sendError,
+        paymentId: Number(adminPaymentStatusMatch[1]),
+      });
+    }
+    return;
+  }
+  if (request.method === "GET" && pathname === "/api/portal/admin/payments") {
+    const user = await requireAdmin(request, response);
+    if (user) await handleAdminPayments({ request, response, user, sendJson, sendError });
     return;
   }
   if (pathname === "/api/portal/admin/customers" || /^\/api\/portal\/admin\/customers\/\d+$/.test(pathname)) {
