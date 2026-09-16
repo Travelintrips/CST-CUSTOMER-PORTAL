@@ -331,7 +331,7 @@ export async function handleCustomerInvoices({ request, response, user, sendJson
         `insert into public.payments
           (ref_kind, ref_id, ref_doc_number, amount, status, provider,
            provider_order_id, provider_merchant_trade_no, payment_method, raw)
-         values ('sales', $1, $2, $3, 'pending', 'unknown', $4, $5, $6, $7::jsonb)
+         values ('sales', $1, $2, $3, 'pending', 'paylabs', $4, $5, $6, $7::jsonb)
          returning id, ref_kind, ref_id, ref_doc_number, amount, status, provider,
                    provider_order_id, provider_merchant_trade_no, payment_method,
                    payment_url, expired_at, paid_at, created_at, updated_at`,
