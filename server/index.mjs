@@ -408,7 +408,7 @@ async function handleCapabilities(response) {
   sendJson(response, 200, {
     google: false,
     emailOtp: false,
-    whatsappOtp: false,
+    whatsapp: false,
     devLogin: !IS_PRODUCTION,
   });
 }

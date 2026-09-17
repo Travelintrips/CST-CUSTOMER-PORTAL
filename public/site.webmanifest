@@ -34,7 +34,7 @@
     {
       "src": "/api/storage/public-objects/portal-assets/static/customer-portal/images/og-cover.webp",
       "sizes": "1200x630",
-      "type": "image/png",
+      "type": "image/webp",
       "form_factor": "wide",
       "label": "B2B Marketplace dan Logistik Indonesia"
     }
