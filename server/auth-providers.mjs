@@ -244,6 +244,48 @@ function smtpConfig() {
   return { pass, from, user, host, port, secure: port === 465 };
 }
 
+const GOOGLE_CALLBACK_PATH = "/api/callback/google";
+
+function normalizeGoogleRedirectBase(value) {
+  let parsed;
+  try {
+    parsed = new URL(String(value ?? "").trim());
+  } catch {
+    throw errorWithStatus(503, "Konfigurasi callback Google tidak valid.");
+  }
+
+  if (
+    !["http:", "https:"].includes(parsed.protocol)
+    || parsed.origin === "null"
+    || parsed.username
+    || parsed.password
+    || parsed.search
+    || parsed.hash
+  ) {
+    throw errorWithStatus(503, "Konfigurasi callback Google tidak valid.");
+  }
+  if (IS_PRODUCTION && parsed.protocol !== "https:") {
+    throw errorWithStatus(503, "Konfigurasi callback Google production harus menggunakan HTTPS.");
+  }
+
+  const configuredPath = parsed.pathname.replace(/\/+$/, "");
+  if (configuredPath && configuredPath !== GOOGLE_CALLBACK_PATH) {
+    throw errorWithStatus(503, "Path callback Google harus /api/callback/google.");
+  }
+
+  parsed.pathname = GOOGLE_CALLBACK_PATH;
+  return parsed.toString();
+}
+
+function googleRedirectBaseConfigured() {
+  try {
+    normalizeGoogleRedirectBase(process.env.GOOGLE_REDIRECT_BASE_URL);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 function emailConfigured() {
   const config = smtpConfig();
   return Boolean(config.pass && config.from && config.user);
@@ -251,9 +293,10 @@ function emailConfigured() {
 
 function googleConfigured() {
   return Boolean(
-    process.env.GOOGLE_CLIENT_ID?.trim() &&
-    process.env.GOOGLE_CLIENT_SECRET?.trim() &&
-    process.env.GOOGLE_REDIRECT_BASE_URL?.trim(),
+    process.env.GOOGLE_CLIENT_ID?.trim()
+      && process.env.GOOGLE_CLIENT_SECRET?.trim()
+      && process.env.GOOGLE_REDIRECT_BASE_URL?.trim()
+      && googleRedirectBaseConfigured(),
   );
 }
 
@@ -615,9 +658,9 @@ function requestOrigin(request) {
   return `${String(protocol).split(",")[0].trim()}://${String(host).split(",")[0].trim()}`;
 }
 
-function googleRedirectUri(request) {
+export function googleRedirectUri(request) {
   const base = process.env.GOOGLE_REDIRECT_BASE_URL?.trim() || requestOrigin(request);
-  return `${base.replace(/\/+$/, "")}/api/callback/google`;
+  return normalizeGoogleRedirectBase(base);
 }
 
 function signedOAuthState(state, returnTo, issuedAt) {
