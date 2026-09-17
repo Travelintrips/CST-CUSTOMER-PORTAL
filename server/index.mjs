@@ -284,7 +284,7 @@ function normalizeUser(row) {
 
 async function findPortalUser(id) {
   const result = await query(
-    `select id, name, email, phone, company, role, customer_type, account_status
+    `select id, name, email, phone, company, role, customer_type, account_status, created_at
        from public.portal_customers
       where id = $1
       limit 1`,
@@ -512,12 +512,22 @@ async function handleSetCookie(request, response) {
 async function handleAuthMe(request, response) {
   const user = await requireUser(request, response);
   if (!user) return;
+  const services = await query(
+    `select service_id
+       from public.portal_customer_services
+      where customer_id = $1
+      order by service_id`,
+    [user.id],
+  );
   sendJson(response, 200, {
     id: user.id,
     name: user.name,
     email: user.email,
     phone: user.phone ?? null,
+    company: user.company ?? null,
     role: user.role,
+    serviceIds: services.rows.map((row) => Number(row.service_id)),
+    createdAt: user.created_at ?? null,
   });
 }
 
@@ -727,6 +737,264 @@ async function handlePortalOrderFeed(request, response) {
       approvalStatus: row.approval_status,
       createdAt: row.created_at,
     })),
+  });
+}
+
+function mapPortalOrder(row) {
+  return {
+    id: Number(row.id),
+    docNumber: row.doc_number ?? String(row.id),
+    status: row.status,
+    grandTotal: Number(row.grand_total ?? 0),
+    createdAt: row.created_at,
+    items: row.items ?? row.line_items ?? null,
+  };
+}
+
+function mapPortalLogisticOrder(row) {
+  return {
+    id: Number(row.id),
+    orderNumber: row.order_number,
+    status: row.status,
+    grandTotal: Number(row.grand_total ?? 0),
+    createdAt: row.created_at,
+    shipmentType: row.shipment_type ?? "",
+    origin: row.origin ?? "",
+    destination: row.destination ?? "",
+  };
+}
+
+function mapPortalProductOrder(row) {
+  return {
+    id: Number(row.id),
+    orderNumber: row.order_number,
+    status: row.status,
+    grandTotal: Number(row.grand_total ?? 0),
+    createdAt: row.created_at,
+    trackingToken: row.tracking_token ?? null,
+  };
+}
+
+function mapPortalServiceOrder(row) {
+  return {
+    id: Number(row.id),
+    orderNumber: row.request_number,
+    serviceType: row.trade_type ?? row.request_type ?? "service-request",
+    status: row.status,
+    grandTotal: Number(row.total_quoted_price ?? row.total_estimated_price ?? 0),
+    createdAt: row.created_at,
+    subtitle: row.package_name_snapshot ?? row.request_type ?? "Service request",
+  };
+}
+
+async function handlePortalCompatOrders(request, response, kind) {
+  const user = await requireUser(request, response);
+  if (!user) return;
+  const companyIds = await getAccessibleCompanyIds(user);
+  const params = [user.id, user.email, companyIds];
+
+  if (kind === "orders") {
+    if (request.method === "PATCH") {
+      const id = Number(new URL(request.url ?? "/", `http://${request.headers.host ?? "localhost"}`).pathname.split("/").at(-2));
+      if (!Number.isInteger(id) || id <= 0) {
+        sendError(response, 400, "Order tidak valid.");
+        return;
+      }
+      const updated = await query(
+        `update public.orders
+            set status = 'cancelled'
+          where id = $1
+            and status = 'draft'
+            and (
+              lower(coalesce(customer_email, '')) = lower($2)
+              or lower(coalesce(email, '')) = lower($2)
+              or company_id = any($3::int[])
+            )
+          returning id, coalesce(id::text, '') as doc_number, status,
+                    coalesce(grand_total, total_amount, total, 0) as grand_total,
+                    created_at, items, line_items`,
+        [id, user.email, companyIds],
+      );
+      if (!updated.rows[0]) {
+        sendError(response, 404, "Order tidak ditemukan atau tidak dapat dibatalkan.");
+        return;
+      }
+      sendJson(response, 200, mapPortalOrder(updated.rows[0]));
+      return;
+    }
+    if (request.method !== "GET") {
+      sendError(response, 405, "Method tidak didukung.");
+      return;
+    }
+    const result = await query(
+      `select id, coalesce(id::text, '') as doc_number, status,
+              coalesce(grand_total, total_amount, total, 0) as grand_total,
+              created_at, items, line_items
+         from public.orders
+        where (
+          lower(coalesce(customer_email, '')) = lower($1)
+          or lower(coalesce(email, '')) = lower($1)
+          or company_id = any($2::int[])
+        )
+        order by created_at desc
+        limit 100`,
+      [user.email, companyIds],
+    );
+    sendJson(response, 200, result.rows.map(mapPortalOrder));
+    return;
+  }
+
+  if (kind === "logistic-orders") {
+    if (request.method === "PATCH") {
+      const id = Number(new URL(request.url ?? "/", `http://${request.headers.host ?? "localhost"}`).pathname.split("/").at(-2));
+      if (!Number.isInteger(id) || id <= 0) {
+        sendError(response, 400, "Logistic order tidak valid.");
+        return;
+      }
+      const updated = await query(
+        `update public.logistic_orders
+            set status = 'Cancelled', updated_at = now()
+          where id = $4
+            and status in ('Order Received', 'New Order', 'draft')
+            and (
+              portal_customer_id = $1
+              or lower(coalesce(email, '')) = lower($2)
+              or company_id = any($3::int[])
+            )
+          returning id, order_number, status, grand_total, created_at,
+                    shipment_type, origin, destination`,
+        params.concat(id),
+      );
+      if (!updated.rows[0]) {
+        sendError(response, 404, "Logistic order tidak ditemukan atau tidak dapat dibatalkan.");
+        return;
+      }
+      sendJson(response, 200, mapPortalLogisticOrder(updated.rows[0]));
+      return;
+    }
+    if (request.method !== "GET") {
+      sendError(response, 405, "Method tidak didukung.");
+      return;
+    }
+    const result = await query(
+      `select id, order_number, status, grand_total, created_at,
+              shipment_type, origin, destination
+         from public.logistic_orders
+        where (
+          portal_customer_id = $1
+          or lower(coalesce(email, '')) = lower($2)
+          or company_id = any($3::int[])
+        )
+        order by created_at desc
+        limit 100`,
+      [user.id, null, companyIds],
+    );
+    sendJson(response, 200, result.rows.map(mapPortalLogisticOrder));
+    return;
+  }
+
+  if (kind === "product-orders") {
+    if (request.method !== "GET") {
+      sendError(response, 405, "Method tidak didukung.");
+      return;
+    }
+    const result = await query(
+      `select id, order_number, status, grand_total, created_at, tracking_token
+         from public.portal_product_orders
+        where (
+          portal_customer_id = $1
+          or lower(coalesce(email, '')) = lower($2)
+          or company_id = any($3::int[])
+        )
+        order by created_at desc
+        limit 100`,
+      params,
+    );
+    sendJson(response, 200, result.rows.map(mapPortalProductOrder));
+    return;
+  }
+
+  if (kind === "service-orders") {
+    if (request.method !== "GET") {
+      sendError(response, 405, "Method tidak didukung.");
+      return;
+    }
+    const result = await query(
+      `select id, request_number, request_type, trade_type, status,
+              total_estimated_price, total_quoted_price, package_name_snapshot, created_at
+         from public.customer_service_requests
+        where (
+          portal_customer_id = $1
+          or customer_id = $1
+          or lower(coalesce(customer_email, '')) = lower($2)
+          or company_id = any($3::int[])
+        )
+        order by created_at desc
+        limit 100`,
+      params,
+    );
+    sendJson(response, 200, result.rows.map(mapPortalServiceOrder));
+    return;
+  }
+
+  sendError(response, 404, "Portal order route not found.");
+}
+
+async function handlePortalDashboardStats(request, response) {
+  const user = await requireUser(request, response);
+  if (!user) return;
+  const companyIds = await getAccessibleCompanyIds(user);
+  const params = [user.id, user.email, companyIds];
+  const [logistic, product, service, invoices] = await Promise.all([
+    query(
+      `select count(*)::int as total,
+              count(*) filter (where status not in ('Completed','Cancelled','completed','cancelled','delivered'))::int as active,
+              count(*) filter (where status in ('Completed','completed','delivered','done'))::int as completed
+         from public.logistic_orders
+        where portal_customer_id = $1
+           or lower(coalesce(email, '')) = lower($2)
+           or company_id = any($3::int[])`,
+      params,
+    ),
+    query(
+      `select count(*)::int as total,
+              count(*) filter (where status not in ('Completed','Cancelled','completed','cancelled','delivered'))::int as active,
+              count(*) filter (where status in ('Completed','completed','delivered','done'))::int as completed
+         from public.portal_product_orders
+        where portal_customer_id = $1
+           or lower(coalesce(email, '')) = lower($2)
+           or company_id = any($3::int[])`,
+      params,
+    ),
+    query(
+      `select count(*)::int as total,
+              count(*) filter (where status not in ('completed','cancelled','done','rejected'))::int as active,
+              count(*) filter (where status in ('completed','done'))::int as completed
+         from public.customer_service_requests
+        where portal_customer_id = $1
+           or customer_id = $1
+           or lower(coalesce(customer_email, '')) = lower($2)
+           or company_id = any($3::int[])`,
+      params,
+    ),
+    query(
+      `select count(*) filter (where payment_status <> 'paid')::int as outstanding_count,
+              coalesce(sum(greatest(grand_total - amount_paid, 0))
+                filter (where payment_status <> 'paid'), 0) as outstanding_amount
+         from public.sales_documents
+        where invoice_status = 'invoiced'
+          and (customer_id = $1 or company_id = any($2::int[]))`,
+      [user.id, companyIds],
+    ),
+  ]);
+  const rows = [logistic.rows[0], product.rows[0], service.rows[0]];
+  sendJson(response, 200, {
+    totalOrders: rows.reduce((sum, row) => sum + Number(row?.total ?? 0), 0),
+    activeOrders: rows.reduce((sum, row) => sum + Number(row?.active ?? 0), 0),
+    completedOrders: rows.reduce((sum, row) => sum + Number(row?.completed ?? 0), 0),
+    invoiceOutstandingCount: Number(invoices.rows[0]?.outstanding_count ?? 0),
+    invoiceOutstandingAmount: Number(invoices.rows[0]?.outstanding_amount ?? 0),
+    trackingActive: Number(logistic.rows[0]?.active ?? 0),
   });
 }
 
@@ -1496,6 +1764,36 @@ async function route(request, response) {
       const body = ["POST", "PUT", "PATCH"].includes(request.method ?? "") ? await readJson(request) : {};
       await handleOrganizationMutation({ request, response, url, user, body, sendJson, sendError });
     }
+    return;
+  }
+  if (request.method === "GET" && pathname === "/api/portal/me") {
+    await handleAuthMe(request, response);
+    return;
+  }
+  if (
+    pathname === "/api/portal/orders"
+    || /^\/api\/portal\/orders\/\d+\/cancel$/.test(pathname)
+  ) {
+    await handlePortalCompatOrders(request, response, "orders");
+    return;
+  }
+  if (
+    pathname === "/api/portal/logistic-orders"
+    || /^\/api\/portal\/logistic-orders\/\d+\/cancel$/.test(pathname)
+  ) {
+    await handlePortalCompatOrders(request, response, "logistic-orders");
+    return;
+  }
+  if (request.method === "GET" && pathname === "/api/portal/product-orders") {
+    await handlePortalCompatOrders(request, response, "product-orders");
+    return;
+  }
+  if (request.method === "GET" && pathname === "/api/portal/service-orders") {
+    await handlePortalCompatOrders(request, response, "service-orders");
+    return;
+  }
+  if (request.method === "GET" && pathname === "/api/portal/me/dashboard-stats") {
+    await handlePortalDashboardStats(request, response);
     return;
   }
   if (request.method === "GET" && pathname === "/api/portal/organization/companies") {
