@@ -16,11 +16,21 @@ const baseUrl = new URL(
   process.env.PORTAL_PRODUCTION_SMOKE_BASE_URL
     ?? `http://127.0.0.1:${process.env.PORTAL_PRODUCTION_SMOKE_PORT ?? "18445"}`,
 );
+// The production API trusts the reverse proxy's HTTPS scheme. When this
+// script targets a local HTTP listener, model that proxy boundary explicitly
+// instead of sending an HTTP Origin that production would correctly reject.
+const publicOrigin = baseUrl.protocol === "http:"
+  ? `https://${baseUrl.host}`
+  : baseUrl.origin;
+const proxyHeaders = baseUrl.protocol === "http:"
+  ? { "X-Forwarded-Proto": "https" }
+  : {};
 
 async function request(path, options = {}) {
   const response = await fetch(new URL(path, baseUrl), {
     redirect: "manual",
     ...options,
+    headers: { ...proxyHeaders, ...(options.headers ?? {}) },
   });
   const text = await response.text();
   let body = null;
@@ -90,13 +100,13 @@ async function main() {
 
   const sameOriginMutation = await request("/api/portal/auth/logout", {
     method: "POST",
-    headers: { Origin: baseUrl.origin },
+    headers: { Origin: publicOrigin },
   });
   assertStatus(sameOriginMutation, 204, "same-origin mutation policy");
 
   const unauthenticatedUpload = await request("/api/portal/onboarding/upload-doc", {
     method: "POST",
-    headers: { Origin: baseUrl.origin },
+    headers: { Origin: publicOrigin },
   });
   assertStatus(unauthenticatedUpload, 401, "unauthenticated document upload");
 
