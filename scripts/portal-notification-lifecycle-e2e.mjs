@@ -419,7 +419,6 @@ async function main() {
     fixture.poLineId = Number(poLine.rows[0]?.id);
     assert(fixture.poLineId, "fixture PO has no line.");
 
-    const shipmentKey = remember(`shipment-created:${fixture.poId}`);
     const shipment = await customerClient.request(`/api/mkt/portal/purchase-orders/${fixture.poId}/shipment-selection`, {
       method: "POST",
       headers: { "Idempotency-Key": key("shipment") },
@@ -434,6 +433,7 @@ async function main() {
     });
     fixture.shipmentId = Number(shipment?.data?.id);
     assert(fixture.shipmentId, "shipment creation did not return an id.");
+    const shipmentKey = remember(`shipment-created:${fixture.shipmentId}`);
     const shipmentOwnership = await query(
       `select r.portal_customer_id, r.buyer_email, po.id as po_id, s.id as shipment_id
          from public.mkt_po_shipments s
@@ -512,6 +512,7 @@ async function main() {
 
     const payment = await customerClient.request(`/api/portal/me/invoices/${fixture.invoiceId}/payments`, {
       method: "POST",
+      expected: [200, 201],
       headers: { "Idempotency-Key": key("payment") },
       body: { amount: 100, paymentMethod: "portal_manual" },
     });

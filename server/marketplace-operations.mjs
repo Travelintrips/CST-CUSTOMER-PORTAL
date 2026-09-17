@@ -330,6 +330,7 @@ async function notifyMarketplaceEvent(db, { eventType, po, payload = {}, key }) 
   await notifyAdmins(db, {
     eventKey: key,
     ...details,
+    link: "/admin?tab=service-operations",
     payload: { rfqId: po.rfq_id, ...details.payload },
   });
 }
@@ -524,7 +525,7 @@ async function appendShipmentEvent({ shipmentId, body, request, user, isAdmin })
       [targetStatus, shipment.id, shipment.shipment_status],
     );
     if (!updated.rowCount) fail(409, "Shipment berubah oleh proses lain. Muat ulang lalu coba lagi.");
-    shipment = updated.rows[0];
+    shipment = { ...shipment, ...updated.rows[0] };
     const sequence = Number((await db(
       `select coalesce(max(event_sequence),0)+1 as next
          from public.mkt_po_shipment_events
