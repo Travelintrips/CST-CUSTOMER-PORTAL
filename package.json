@@ -15,7 +15,8 @@
     "test": "vitest run",
     "test:portal:e2e": "node scripts/portal-auth-e2e.mjs",
     "test:portal:notification-lifecycle:e2e": "node scripts/portal-notification-lifecycle-e2e.mjs",
-    "test:portal:storage-e2e": "node scripts/portal-storage-e2e.mjs"
+    "test:portal:storage-e2e": "node scripts/portal-storage-e2e.mjs",
+    "test:portal:production-smoke": "node scripts/portal-production-smoke.mjs"
   },
   "devDependencies": {
     "@hookform/resolvers": "^5.2.2",

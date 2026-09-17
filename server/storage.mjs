@@ -101,7 +101,7 @@ async function ensurePrivateBucket(storage) {
         return;
       }
       if (existing.error?.statusCode !== 404 && existing.error?.status !== 404) {
-        throw existing.error ?? new Error("Development storage bucket lookup failed.");
+        throw existing.error ?? new Error("Document storage bucket lookup failed.");
       }
       if (isProduction()) {
         const error = new Error("Production document storage bucket does not exist.");
