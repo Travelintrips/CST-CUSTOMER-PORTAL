@@ -38,6 +38,17 @@ import {
   handleCustomerInvoices,
   handleCustomerPayments,
 } from "./billing-operations.mjs";
+import {
+  handleCapabilities,
+  handleEmailOtpRequest,
+  handleEmailOtpVerify,
+  handleGoogleCallback,
+  handleGoogleStart,
+  handleWaLogin,
+  handleWaOtpRequest,
+  handleWaOtpVerify,
+  handleWaTrustedLogin,
+} from "./auth-providers.mjs";
 
 const PORT = Number(process.env.PORT ?? process.env.CUSTOMER_PORTAL_API_PORT ?? 18444);
 const APP_ENV = process.env.APP_ENV ?? process.env.NODE_ENV ?? "development";
@@ -402,15 +413,6 @@ async function handleReadiness(response) {
       storage: "unavailable",
     });
   }
-}
-
-async function handleCapabilities(response) {
-  sendJson(response, 200, {
-    google: false,
-    emailOtp: false,
-    whatsapp: false,
-    devLogin: !IS_PRODUCTION,
-  });
 }
 
 async function handleDevLogin(request, response) {
@@ -1251,12 +1253,44 @@ async function route(request, response) {
     await handleCapabilities(response);
     return;
   }
+  if (request.method === "GET" && pathname === "/api/login/google") {
+    handleGoogleStart(request, response, url);
+    return;
+  }
+  if (request.method === "GET" && pathname === "/api/callback/google") {
+    await handleGoogleCallback(request, response, url);
+    return;
+  }
   if (request.method === "POST" && pathname === "/api/portal/auth/dev-login") {
     await handleDevLogin(request, response);
     return;
   }
   if (request.method === "POST" && pathname === "/api/portal/auth/login") {
     await handleLogin(request, response);
+    return;
+  }
+  if (request.method === "POST" && pathname === "/api/portal/auth/otp/request") {
+    await handleEmailOtpRequest(request, response);
+    return;
+  }
+  if (request.method === "POST" && pathname === "/api/portal/auth/otp/verify") {
+    await handleEmailOtpVerify(request, response);
+    return;
+  }
+  if (request.method === "POST" && pathname === "/api/portal/auth/wa-otp/send") {
+    await handleWaOtpRequest(request, response);
+    return;
+  }
+  if (request.method === "POST" && pathname === "/api/portal/auth/wa-otp/verify") {
+    await handleWaOtpVerify(request, response);
+    return;
+  }
+  if (request.method === "POST" && pathname === "/api/portal/auth/wa-login") {
+    await handleWaLogin(request, response);
+    return;
+  }
+  if (request.method === "POST" && pathname === "/api/portal/auth/wa-trusted-login") {
+    await handleWaTrustedLogin(request, response);
     return;
   }
   if (request.method === "POST" && pathname === "/api/portal/auth/set-cookie") {
