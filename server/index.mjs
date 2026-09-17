@@ -1,6 +1,7 @@
 import http from "node:http";
 import { timingSafeEqual } from "node:crypto";
 import bcrypt from "bcryptjs";
+import { serveStatic } from "./static-server.mjs";
 import {
   checkDatabase,
   closeDatabase,
@@ -29,6 +30,7 @@ import {
   handleServiceOperations,
   handleVerification,
 } from "./admin-portal.mjs";
+import { checkStorageReadiness } from "./storage.mjs";
 import { handleMarketplaceRoute } from "./marketplace-service.mjs";
 import {
   handleAdminInvoices,
@@ -37,16 +39,19 @@ import {
   handleCustomerPayments,
 } from "./billing-operations.mjs";
 
-const PORT = Number(process.env.CUSTOMER_PORTAL_API_PORT ?? 18444);
+const PORT = Number(process.env.PORT ?? process.env.CUSTOMER_PORTAL_API_PORT ?? 18444);
 const APP_ENV = process.env.APP_ENV ?? process.env.NODE_ENV ?? "development";
 const IS_PRODUCTION = APP_ENV === "production" || process.env.NODE_ENV === "production";
 const MAX_BODY_BYTES = 2 * 1024 * 1024;
 const MAX_MULTIPART_BODY_BYTES = 6 * 1024 * 1024;
-const UPSTREAM_API_URL = (
-  process.env.CUSTOMER_PORTAL_API_UPSTREAM_URL ??
-  process.env.VITE_API_SERVER_URL ??
-  ""
-).replace(/\/+$/, "");
+const UPSTREAM_API_URL = IS_PRODUCTION
+  ? ""
+  : (
+      process.env.CUSTOMER_PORTAL_API_UPSTREAM_URL ??
+      process.env.VITE_API_SERVER_URL ??
+      ""
+    ).replace(/\/+$/, "");
+const MUTATION_METHODS = new Set(["POST", "PUT", "PATCH", "DELETE"]);
 
 const HOP_BY_HOP_HEADERS = new Set([
   "connection",
@@ -83,15 +88,71 @@ function sendError(response, status, message) {
   sendJson(response, status, { message });
 }
 
+function forwardedValue(request, name) {
+  const value = request.headers[name];
+  return Array.isArray(value) ? value[0] : value?.split(",")[0]?.trim();
+}
+
+function requestOrigin(request) {
+  const protocol = forwardedValue(request, "x-forwarded-proto")
+    ?? (IS_PRODUCTION ? "https" : "http");
+  const host = forwardedValue(request, "x-forwarded-host")
+    ?? request.headers.host
+    ?? "localhost";
+  return `${protocol}://${host}`;
+}
+
+function allowedOrigins(request) {
+  const configured = (process.env.PORTAL_ALLOWED_ORIGINS ?? "")
+    .split(",")
+    .map((value) => value.trim().replace(/\/+$/, ""))
+    .filter(Boolean);
+  const sameOrigin = requestOrigin(request);
+  if (IS_PRODUCTION) return new Set([...configured, sameOrigin]);
+
+  const previewDomain = process.env.REPLIT_DEV_DOMAIN?.trim();
+  if (previewDomain) {
+    configured.push(`https://${previewDomain}`, `https://${previewDomain}:3000`);
+  }
+  configured.push(
+    "http://localhost:5000",
+    "http://127.0.0.1:5000",
+    sameOrigin,
+  );
+  return new Set(configured);
+}
+
+function isAllowedOrigin(request, origin) {
+  return Boolean(origin) && allowedOrigins(request).has(origin.replace(/\/+$/, ""));
+}
+
 function corsHeaders(request) {
   const origin = request.headers.origin;
-  return origin
+  return origin && isAllowedOrigin(request, origin)
     ? {
         "Access-Control-Allow-Origin": origin,
         "Access-Control-Allow-Credentials": "true",
         Vary: "Origin",
       }
     : {};
+}
+
+function enforceRequestPolicy(request) {
+  const origin = request.headers.origin;
+  if (origin && !isAllowedOrigin(request, origin)) {
+    const error = new Error("Origin is not allowed.");
+    error.statusCode = 403;
+    throw error;
+  }
+
+  if (!IS_PRODUCTION || !MUTATION_METHODS.has(request.method ?? "")) return;
+
+  const fetchSite = request.headers["sec-fetch-site"];
+  if (fetchSite && !["same-origin", "none"].includes(fetchSite)) {
+    const error = new Error("Cross-site mutation is not allowed.");
+    error.statusCode = 403;
+    throw error;
+  }
 }
 
 async function readRawBody(request, limit = MAX_BODY_BYTES) {
@@ -314,6 +375,31 @@ async function handleHealth(response) {
       database: "unavailable",
       databaseEnvironment,
       databaseConnectionSource,
+    });
+  }
+}
+
+async function handleReadiness(response) {
+  try {
+    await checkDatabase();
+    const storage = await checkStorageReadiness();
+    sendJson(response, 200, {
+      status: "ready",
+      service: "customer-portal",
+      appEnv: APP_ENV,
+      database: "connected",
+      databaseEnvironment,
+      storage: storage.private ? "private" : "unavailable",
+      storageBucket: storage.bucket,
+    });
+  } catch {
+    sendJson(response, 503, {
+      status: "not_ready",
+      service: "customer-portal",
+      appEnv: APP_ENV,
+      database: "unavailable",
+      databaseEnvironment,
+      storage: "unavailable",
     });
   }
 }
@@ -1090,12 +1176,17 @@ async function handleMarketplaceCategories(response) {
 async function route(request, response) {
   const url = new URL(request.url ?? "/", `http://${request.headers.host ?? "localhost"}`);
   const { pathname } = url;
+  enforceRequestPolicy(request);
   for (const [name, value] of Object.entries(corsHeaders(request))) {
     response.setHeader(name, value);
   }
 
   if (request.method === "GET" && pathname === "/api/healthz") {
     await handleHealth(response);
+    return;
+  }
+  if (request.method === "GET" && pathname === "/api/readyz") {
+    await handleReadiness(response);
     return;
   }
   if (request.method === "OPTIONS") {
@@ -1442,10 +1533,13 @@ async function route(request, response) {
     return;
   }
 
-  // Public Replit preview traffic reaches this service on external port 3000.
-  // Keep the standalone auth/session routes above authoritative, then proxy
-  // the rest of the API surface to the development CST API when available.
-  if (UPSTREAM_API_URL && pathname.startsWith("/api/")) {
+  if (!pathname.startsWith("/api/") && IS_PRODUCTION) {
+    if (await serveStatic(request, response, pathname)) return;
+  }
+
+  // Development preview traffic may proxy unmigrated API routes. Production
+  // must never fall back to the shared API: unknown /api routes are local 404s.
+  if (!IS_PRODUCTION && UPSTREAM_API_URL && pathname.startsWith("/api/")) {
     await proxyToUpstream(request, response);
     return;
   }
