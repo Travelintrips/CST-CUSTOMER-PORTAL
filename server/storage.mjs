@@ -23,17 +23,29 @@ function isProduction() {
 }
 
 function storageConfig() {
-  if (isProduction()) {
-    const error = new Error("Development document storage is disabled in production.");
-    error.statusCode = 503;
-    throw error;
-  }
-  const url = (process.env.SUPABASE_URL_DEV || process.env.VITE_SUPABASE_URL_DEV || "").trim();
-  const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY_DEV;
-  const rawBucket = (process.env.SUPABASE_STORAGE_BUCKET_DEV || "").trim();
+  const production = isProduction();
+  const url = (
+    production
+      ? process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL
+      : process.env.SUPABASE_URL_DEV || process.env.VITE_SUPABASE_URL_DEV
+  || ""
+  ).trim();
+  const serviceRoleKey = production
+    ? process.env.SUPABASE_SERVICE_ROLE_KEY
+    : process.env.SUPABASE_SERVICE_ROLE_KEY_DEV;
+  const rawBucket = (
+    production
+      ? process.env.SUPABASE_STORAGE_BUCKET
+      : process.env.SUPABASE_STORAGE_BUCKET_DEV
+    || ""
+  ).trim();
   const bucket = /^(['"]).*\1$/.test(rawBucket) ? rawBucket.slice(1, -1).trim() : rawBucket;
   if (!url || !serviceRoleKey || !bucket) {
-    const error = new Error("Development document storage is not configured.");
+    const error = new Error(
+      production
+        ? "Production document storage is not configured."
+        : "Development document storage is not configured.",
+    );
     error.statusCode = 503;
     throw error;
   }
@@ -43,13 +55,21 @@ function storageConfig() {
     throw error;
   }
   if (!isValidBucketName(bucket)) {
-    const error = new Error("Development document storage bucket configuration is invalid.");
+    const error = new Error(
+      production
+        ? "Production document storage bucket configuration is invalid."
+        : "Development document storage bucket configuration is invalid.",
+    );
     error.statusCode = 503;
     throw error;
   }
   const parsedUrl = new URL(url);
   if (!parsedUrl.hostname.endsWith(".supabase.co")) {
-    const error = new Error("Development document storage URL is invalid.");
+    const error = new Error(
+      production
+        ? "Production document storage URL is invalid."
+        : "Development document storage URL is invalid.",
+    );
     error.statusCode = 503;
     throw error;
   }
@@ -74,7 +94,7 @@ async function ensurePrivateBucket(storage) {
       const existing = await storage.supabase.storage.getBucket(storage.bucket);
       if (!existing.error && existing.data) {
         if (existing.data.public) {
-          const error = new Error("Development document storage bucket must be private.");
+          const error = new Error("Document storage bucket must be private.");
           error.statusCode = 503;
           throw error;
         }
@@ -82,6 +102,11 @@ async function ensurePrivateBucket(storage) {
       }
       if (existing.error?.statusCode !== 404 && existing.error?.status !== 404) {
         throw existing.error ?? new Error("Development storage bucket lookup failed.");
+      }
+      if (isProduction()) {
+        const error = new Error("Production document storage bucket does not exist.");
+        error.statusCode = 503;
+        throw error;
       }
       const created = await storage.supabase.storage.createBucket(storage.bucket, {
         public: false,
@@ -97,6 +122,26 @@ async function ensurePrivateBucket(storage) {
     bucketChecks.delete(key);
     throw error;
   }
+}
+
+export async function checkStorageReadiness() {
+  const storage = client();
+  const existing = await storage.supabase.storage.getBucket(storage.bucket);
+  if (existing.error || !existing.data) {
+    const error = new Error(
+      isProduction()
+        ? "Production document storage bucket is unavailable."
+        : "Development document storage bucket is unavailable.",
+    );
+    error.statusCode = 503;
+    throw error;
+  }
+  if (existing.data.public) {
+    const error = new Error("Document storage bucket must be private.");
+    error.statusCode = 503;
+    throw error;
+  }
+  return { bucket: storage.bucket, private: true };
 }
 
 function safeFileName(name) {
@@ -171,12 +216,10 @@ export async function uploadDocument({ customerId, companyId, documentType: type
   });
   if (error) {
     console.error(
-      "[customer-portal-api] development storage upload failed",
-      error?.name ?? "StorageError",
-      error?.message ?? "unknown storage error",
+      "[customer-portal-api] document storage upload failed",
       error?.statusCode ?? error?.status ?? "",
     );
-    const failure = new Error("Upload dokumen ke development storage gagal.");
+    const failure = new Error("Upload dokumen ke private storage gagal.");
     failure.statusCode = 502;
     throw failure;
   }

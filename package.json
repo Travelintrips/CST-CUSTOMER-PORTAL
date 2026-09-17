@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "bash start-dev.sh",
     "api:dev": "node server/load-secrets.mjs node server/index.mjs",
+    "start:prod": "bash start-production.sh",
     "build": "node scripts/validate-translations.mjs && node scripts/build-vite.mjs && node scripts/prerender.mjs",
     "serve": "vite preview --config vite.config.ts --host 0.0.0.0",
     "typecheck": "tsc -p tsconfig.json --noEmit",
