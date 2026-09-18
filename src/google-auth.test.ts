@@ -78,12 +78,26 @@ function fakeDb(initialUsers: User[] = [user()], initialIdentities: Identity[] =
           (record) => record.customer_id === Number(values[0])
             && record.provider.trim().toLowerCase() === String(values[1]),
         );
+      } else if (
+        normalizedSql.includes("where customer_id = $1 and lower(trim(provider)) = 'google'")
+      ) {
+        rows = rows.filter(
+          (record) => record.customer_id === Number(values[0])
+            && record.provider.trim().toLowerCase() === "google",
+        );
       }
       return { rows: normalizedSql.startsWith("update ") ? [] : rows.slice(0, 1) };
     }
 
     if (normalizedSql.startsWith("update public.portal_auth_identities")) {
       const record = identities.find((item) => item.id === Number(values[0]));
+      if (normalizedSql.includes("set subject = $2")) {
+        if (record && record.subject === String(values[2])) {
+          record.subject = String(values[1]);
+          return { rows: [{ id: record.id }], rowCount: 1 };
+        }
+        return { rows: [], rowCount: 0 };
+      }
       return { rows: [], rowCount: record ? 1 : 0 };
     }
 
@@ -101,6 +115,10 @@ function fakeDb(initialUsers: User[] = [user()], initialIdentities: Identity[] =
     if (normalizedSql.startsWith("update public.portal_customers")) {
       const record = users.find((item) => item.id === Number(values[0]));
       if (record) {
+        if (normalizedSql.includes("oauth_id = $2")) {
+          record.oauth_id = String(values[1]);
+          return { rows: [], rowCount: 1 };
+        }
         record.oauth_provider ??= "google";
         record.oauth_id ??= String(values[2]);
       }
@@ -174,7 +192,22 @@ describe("canonical Google identity linking", () => {
     expect(verifySession(second.token)).toMatchObject({ id: 7 });
   });
 
-  it("fails closed when a different Google subject is already bound", async () => {
+  it("migrates a stale legacy Google subject for the same verified email", async () => {
+    const state = fakeDb(
+      [user({ oauth_provider: "google", oauth_id: "different-subject" })],
+      [{ id: 1, customer_id: 7, provider: "google", subject: "different-subject" }],
+    );
+
+    const result = await resolveGoogleLogin(googleProfile(), state.db);
+
+    expect(result.user.id).toBe(7);
+    expect(state.users[0].oauth_id).toBe("google-subject-1");
+    expect(state.identities).toEqual([
+      expect.objectContaining({ customer_id: 7, provider: "google", subject: "google-subject-1" }),
+    ]);
+  });
+
+  it("fails closed when a password customer has a conflicting Google identity", async () => {
     const state = fakeDb(
       [user({ oauth_provider: "password" })],
       [{ id: 1, customer_id: 7, provider: "google", subject: "different-subject" }],

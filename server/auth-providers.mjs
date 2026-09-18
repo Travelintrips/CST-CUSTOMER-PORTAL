@@ -1002,12 +1002,50 @@ async function googleUser(request, code) {
   };
 }
 
-function validateGoogleIdentityBinding(user, subject) {
+async function reconcileGoogleIdentityBinding(user, subject, dbQuery) {
   const legacyProvider = String(user?.oauth_provider ?? "").trim().toLowerCase();
   const legacySubject = String(user?.oauth_id ?? "").trim();
-  if (legacyProvider === "google" && legacySubject && legacySubject !== subject) {
-    throw errorWithStatus(409, "Akun sudah memiliki identitas Google yang berbeda.");
+  if (legacyProvider !== "google" || !legacySubject || legacySubject === subject) return;
+
+  // Google subjects are scoped to an OAuth client/project. When production
+  // changes client IDs, the same verified Google email can receive a new
+  // subject. Repair the legacy Google binding only for that already-Google
+  // account; password/email accounts and cross-account identities still fail
+  // closed in linkIdentity().
+  const existing = await dbQuery(
+    `select id, subject
+       from public.portal_auth_identities
+      where customer_id = $1 and lower(trim(provider)) = 'google'
+      limit 1`,
+    [user.id],
+  );
+  if (existing.rows[0]) {
+    try {
+      const updated = await dbQuery(
+        `update public.portal_auth_identities
+            set subject = $2, last_used_at = now()
+          where id = $1 and subject = $3
+          returning id`,
+        [existing.rows[0].id, subject, existing.rows[0].subject],
+      );
+      if (!updated.rows[0]) {
+        throw errorWithStatus(409, "Akun sudah memiliki identitas Google yang berbeda.");
+      }
+    } catch (error) {
+      if (error?.code === "23505") {
+        throw errorWithStatus(409, "Identitas Google sudah terhubung ke akun lain.");
+      }
+      throw error;
+    }
   }
+  await dbQuery(
+    `update public.portal_customers
+        set oauth_id = $2
+      where id = $1
+        and lower(trim(oauth_provider)) = 'google'
+        and oauth_id = $3`,
+    [user.id, subject, legacySubject],
+  );
 }
 
 export async function googleResolveUser(profile, dbQuery = query) {
@@ -1044,7 +1082,9 @@ export async function googleResolveUser(profile, dbQuery = query) {
       user = await findUserByEmail(profile.email, dbQuery);
     }
   } else {
-    if (!identity.rows[0]) validateGoogleIdentityBinding(user, profile.subject);
+    if (!identity.rows[0]) {
+      await reconcileGoogleIdentityBinding(user, profile.subject, dbQuery);
+    }
     await linkIdentity(user.id, "google", profile.subject, dbQuery);
     identityLinked = true;
     await dbQuery(
