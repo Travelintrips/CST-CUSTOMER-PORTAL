@@ -195,8 +195,11 @@ export function ServicesTab() {
 
   const fetchServices = async () => {
     try {
-      const data = await apiGet<Service[]>("/api/portal/services");
-      setServices(data);
+      const data = await apiGet<Service[] | { items?: Service[] }>("/api/portal/services");
+      // Accept the old envelope while deployments roll forward, but always
+      // keep component state as an array before rendering with .map().
+      const items = Array.isArray(data) ? data : Array.isArray(data.items) ? data.items : [];
+      setServices(items);
     } catch {
       toast({ title: "Gagal memuat layanan", variant: "destructive" });
     } finally {

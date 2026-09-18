@@ -58,6 +58,7 @@ import {
   handleVendorInvitationRoute,
   handleVendorPortalRoutes,
 } from "./vendor-portal.mjs";
+import { handleAdminCatalog } from "./admin-catalog.mjs";
 import {
   handleAdminReply,
   handleChat,
@@ -2229,19 +2230,25 @@ async function handleServices(response) {
       where is_active = true
       order by category nulls last, service_name`,
   );
-  sendJson(response, 200, {
-    items: result.rows.map((row) => ({
-      id: row.id,
-      code: row.service_code,
-      name: row.service_name,
-      category: row.category,
-      description: row.description,
-      basePrice: row.base_price,
-      currency: row.currency,
-      estimatedDays: row.estimated_days,
-      slaHours: row.sla_hours,
-    })),
-  });
+  // This endpoint is consumed by both the public catalog and the admin
+  // catalog. Keep the response as an array, matching /api/portal/products
+  // and the generated portal client contract.
+  sendJson(response, 200, result.rows.map((row) => ({
+    id: row.id,
+    code: row.service_code,
+    name: row.service_name,
+    category: row.category,
+    categories: row.category ? [row.category] : [],
+    description: row.description,
+    price: row.base_price == null ? 0 : Number(row.base_price),
+    basePrice: row.base_price == null ? null : Number(row.base_price),
+    currency: row.currency,
+    estimatedDays: row.estimated_days,
+    slaHours: row.sla_hours,
+    isActive: row.is_active,
+    imageUrl: null,
+    mediaItems: [],
+  })));
 }
 
 function parseJson(value, fallback) {
@@ -2681,6 +2688,29 @@ async function route(request, response) {
     if (user) {
       const body = ["POST", "PUT", "PATCH"].includes(request.method ?? "") ? await readJson(request) : {};
       const handled = await handleAdminVendorRoutes({
+        request,
+        response,
+        url,
+        body,
+        user,
+        sendJson,
+        sendError,
+        sendEmpty,
+      });
+      if (handled) return;
+    }
+  }
+  if (
+    pathname === "/api/portal/admin/services"
+    || /^\/api\/portal\/admin\/services\/\d+$/.test(pathname)
+    || pathname === "/api/portal/admin/products"
+    || /^\/api\/portal\/admin\/products\/\d+$/.test(pathname)
+    || pathname === "/api/portal/admin/product-categories"
+  ) {
+    const user = await requireAdmin(request, response);
+    if (user) {
+      const body = ["POST", "PUT", "PATCH"].includes(request.method ?? "") ? await readJson(request) : {};
+      const handled = await handleAdminCatalog({
         request,
         response,
         url,
