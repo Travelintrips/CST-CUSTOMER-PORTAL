@@ -646,7 +646,7 @@ export async function handleAdminVendorRoutes({ request, response, url, body, us
   }
   if (url.pathname === "/api/portal/admin/suppliers" && request.method === "GET") {
     const result = await query(
-      `select s.id, s.name, coalesce(s.contact_email, s.email) as email, s.phone,
+      `select s.id, s.name, s.contact_email as email, s.phone,
               s.status, s.is_active, s.is_verified, coalesce(s.marketplace_status, 'draft') as marketplace_status,
               coalesce(s.is_premium, false) as is_premium, s.created_at,
               count(v.id) filter (where v.status = 'published' and v.is_published) as published_items,

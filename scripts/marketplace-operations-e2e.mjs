@@ -7,7 +7,7 @@
  */
 
 import { createSession } from "../server/session.mjs";
-import { query, closeDatabase } from "../server/db.mjs";
+import { pool, query, closeDatabase } from "../server/db.mjs";
 
 const BASE_URL = process.env.PORTAL_OPERATIONS_E2E_BASE_URL ?? "http://127.0.0.1:18444";
 const USERS = {
@@ -28,15 +28,15 @@ function assert(condition, message) {
 class Client {
   constructor(user, label) {
     this.label = label;
-    this.cookie = `portal_session=${createSession(user)}`;
+    this.cookie = user ? `portal_session=${createSession(user)}` : "";
   }
 
   async request(path, { method = "GET", body, expected = [200], headers = {} } = {}) {
     const requestHeaders = {
       Accept: "application/json",
-      Cookie: this.cookie,
       ...headers,
     };
+    if (this.cookie) requestHeaders.Cookie = this.cookie;
     let requestBody;
     if (body !== undefined) {
       requestHeaders["Content-Type"] = "application/json";
@@ -64,6 +64,145 @@ class Client {
   }
 }
 
+async function createFixture({ nonce, customerId }) {
+  const client = await pool.connect();
+  const fixture = {
+    nonce,
+    rfqId: null,
+    rfqLineId: null,
+    quoteId: null,
+    quoteToken: `marketplace-operations-e2e-${nonce}`,
+    poId: null,
+  };
+  try {
+    await client.query("begin");
+    const vendor = (await client.query(
+      "select id from public.suppliers order by id limit 1",
+    )).rows[0];
+    if (!vendor) fail("development database has no supplier fixture.");
+
+    const rfq = await client.query(
+      `insert into public.mkt_rfqs
+        (rfq_number, buyer_name, buyer_email, buyer_company, status, priority,
+         required_delivery_date, delivery_address, notes, email_verified,
+         line_count, portal_customer_id, approval_status)
+       values ($1,$2,$3,$4,'draft'::mkt_rfq_status,'normal'::mkt_rfq_priority,
+               current_date + 14, $5, $6, true, 1, $7, 'none')
+       returning id`,
+      [
+        `E2E-MARKETPLACE-${nonce}`,
+        "Disposable Marketplace Customer",
+        "dev-customer@dev.local",
+        "E2E Marketplace Company",
+        "Development-only destination",
+        `Disposable marketplace operations fixture ${nonce}`,
+        customerId,
+      ],
+    );
+    fixture.rfqId = Number(rfq.rows[0].id);
+
+    const line = await client.query(
+      `insert into public.mkt_rfq_lines
+        (rfq_id, item_name, item_unit, requested_qty, notes, sort_order)
+       values ($1,'Disposable Marketplace Cargo','box',2,'development fixture',0)
+       returning id`,
+      [fixture.rfqId],
+    );
+    fixture.rfqLineId = Number(line.rows[0].id);
+
+    const quote = await client.query(
+      `insert into public.mkt_vendor_quotes
+        (rfq_id, vendor_id, token, status, valid_until, quotation_number,
+         quotation_date, payment_terms, incoterm, delivery_location, requote_round)
+       values ($1,$2,$3,'invited'::mkt_quote_status,now() + interval '7 days',
+               $4,current_date,'NET 30','DAP','Development-only destination',1)
+       returning id`,
+      [fixture.rfqId, vendor.id, fixture.quoteToken, `E2E-MKT-QT-${nonce}`],
+    );
+    fixture.quoteId = Number(quote.rows[0].id);
+    await client.query("commit");
+    return fixture;
+  } catch (error) {
+    await client.query("rollback").catch(() => {});
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+async function cleanupFixture(fixture) {
+  if (!fixture?.rfqId) return;
+  const client = await pool.connect();
+  try {
+    await client.query("begin");
+    const shipmentIds = fixture.poId
+      ? (await client.query(
+        "select id from public.mkt_po_shipments where po_id=$1",
+        [fixture.poId],
+      )).rows.map((row) => Number(row.id))
+      : [];
+    if (shipmentIds.length) {
+      const receiptIds = (await client.query(
+        "select id from public.mkt_po_goods_receipts where shipment_id=any($1::int[])",
+        [shipmentIds],
+      )).rows.map((row) => Number(row.id));
+      if (receiptIds.length) {
+        await client.query(
+          "delete from public.mkt_po_goods_receipt_items where goods_receipt_id=any($1::int[])",
+          [receiptIds],
+        );
+      }
+      await client.query(
+        "delete from public.mkt_po_goods_receipts where shipment_id=any($1::int[])",
+        [shipmentIds],
+      );
+      await client.query(
+        "delete from public.mkt_po_shipment_events where shipment_id=any($1::int[])",
+        [shipmentIds],
+      );
+      await client.query(
+        "delete from public.mkt_po_shipment_items where shipment_id=any($1::int[])",
+        [shipmentIds],
+      );
+      await client.query(
+        "delete from public.mkt_po_shipments where id=any($1::int[])",
+        [shipmentIds],
+      );
+    }
+    if (fixture.poId) {
+      await client.query("delete from public.mkt_purchase_order_lines where po_id=$1", [fixture.poId]);
+      await client.query("delete from public.mkt_purchase_orders where id=$1", [fixture.poId]);
+    }
+    await client.query(
+      `delete from public.portal_customer_notifications
+        where payload->>'rfqId'=$1 or payload->>'rfq_id'=$1
+           or payload->>'poId'=$2`,
+      [String(fixture.rfqId), String(fixture.poId ?? -1)],
+    );
+    await client.query(
+      "delete from public.mkt_notification_queue where rfq_id=$1 or vendor_quote_id=$2 or purchase_order_id=$3",
+      [fixture.rfqId, fixture.quoteId ?? -1, fixture.poId ?? -1],
+    );
+    await client.query(
+      "delete from public.activity_logs where mkt_rfq_id=$1 or mkt_vendor_quote_id=$2 or mkt_purchase_order_id=$3",
+      [fixture.rfqId, fixture.quoteId ?? -1, fixture.poId ?? -1],
+    );
+    if (fixture.quoteId) {
+      await client.query("delete from public.mkt_vendor_quote_lines where quote_id=$1", [fixture.quoteId]);
+      await client.query("delete from public.mkt_vendor_quotes where id=$1", [fixture.quoteId]);
+    }
+    await client.query("delete from public.mkt_rfq_approvals where rfq_id=$1", [fixture.rfqId]);
+    await client.query("delete from public.mkt_rfq_lines where rfq_id=$1", [fixture.rfqId]);
+    await client.query("delete from public.mkt_rfqs where id=$1", [fixture.rfqId]);
+    await client.query("commit");
+  } catch (error) {
+    await client.query("rollback").catch(() => {});
+    console.error(`[marketplace-operations-e2e] fixture cleanup failed: ${error.message}`);
+  } finally {
+    client.release();
+  }
+}
+
 async function main() {
   assert(
     process.env.APP_ENV !== "production" &&
@@ -72,7 +211,6 @@ async function main() {
     "this test is development-only.",
   );
 
-  const poId = 2;
   const admin = new Client(USERS.admin, "admin");
   const customer = new Client(USERS.customer, "customer");
   const otherCustomer = new Client(USERS.otherCustomer, "other-customer");
@@ -80,10 +218,59 @@ async function main() {
   const health = await admin.request("/api/healthz");
   assert(health?.databaseEnvironment === "development", "API is not connected to development.");
 
-  const lines = (await admin.request(`/api/mkt/admin/purchase-orders/${poId}/lines`)).data;
-  assert(Array.isArray(lines) && lines.length > 0, "development PO has no line items.");
-
   const suffix = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  let fixture = null;
+  let poId = null;
+  try {
+    const eligible = await query(
+      `select po.id
+         from public.mkt_purchase_orders po
+         join public.mkt_rfqs r on r.id=po.rfq_id
+        where po.status::text = any($1::text[])
+          and r.portal_customer_id=$2
+        order by po.id
+        limit 1`,
+      [["issued", "vendor_accepted", "production", "ready_to_ship"], USERS.customer.id],
+    );
+    poId = Number(eligible.rows[0]?.id);
+    if (!poId) {
+      fixture = await createFixture({ nonce: suffix, customerId: USERS.customer.id });
+      const anonymous = new Client(null, "anonymous");
+      await customer.request(`/api/mkt/portal/rfqs/${fixture.rfqId}/submit`, { method: "POST" });
+      await anonymous.request(`/api/vendor-quote/${fixture.quoteToken}`);
+      await anonymous.request(`/api/vendor-quote/${fixture.quoteToken}/submit`, {
+        method: "POST",
+        body: {
+          notes: `Disposable marketplace quote ${suffix}`,
+          paymentTerms: "NET 30",
+          quotationDate: new Date().toISOString().slice(0, 10),
+          lines: [{
+            rfqLineId: fixture.rfqLineId,
+            offeredUnitPrice: 50,
+            offeredQty: 2,
+            leadTimeDays: 3,
+            stockStatus: "available",
+            currency: "IDR",
+          }],
+        },
+      });
+      await admin.request(`/api/mkt/admin/rfqs/${fixture.rfqId}/send-to-customer`, {
+        method: "POST",
+        body: { quoteId: fixture.quoteId, notes: "Disposable marketplace operations fixture" },
+      });
+      const approval = await customer.request(`/api/mkt/portal/rfqs/${fixture.rfqId}/customer-approve`, {
+        method: "POST",
+        headers: { "Idempotency-Key": `marketplace-operations-e2e-approve-${suffix}` },
+        body: {},
+      });
+      poId = Number(approval?.data?.poId);
+      fixture.poId = poId;
+      assert(poId, "fixture customer approval did not create a PO.");
+    }
+
+    const lines = (await admin.request(`/api/mkt/admin/purchase-orders/${poId}/lines`)).data;
+    assert(Array.isArray(lines) && lines.length > 0, "development PO has no line items.");
+
   const idempotencyKey = `marketplace-operations-e2e-${suffix}`;
   const shipmentBody = {
     shipmentType: "trucking",
@@ -223,6 +410,9 @@ async function main() {
     `[marketplace-operations-e2e] PASS: shipment, ownership, transition guard, ` +
     `idempotency, concurrent update, POD, goods receipt, auto-complete, and local route boundary.`,
   );
+  } finally {
+    await cleanupFixture(fixture);
+  }
 }
 
 main()

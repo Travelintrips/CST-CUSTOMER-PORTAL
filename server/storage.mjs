@@ -235,6 +235,93 @@ export async function deleteDocumentObject(path) {
   await storageRemove(storage, path);
 }
 
+function publicAssetStorage() {
+  const url = (
+    isProduction()
+      ? process.env.SUPABASE_URL ?? process.env.VITE_SUPABASE_URL
+      : process.env.SUPABASE_URL_DEV
+        ?? process.env.VITE_SUPABASE_URL_DEV
+        ?? process.env.SUPABASE_URL
+        ?? process.env.VITE_SUPABASE_URL
+  )?.trim();
+  const serviceRoleKey = isProduction()
+    ? process.env.SUPABASE_SERVICE_ROLE_KEY
+    : process.env.SUPABASE_SERVICE_ROLE_KEY_DEV;
+  if (!url || !serviceRoleKey) {
+    const error = new Error("Public asset storage is not configured.");
+    error.statusCode = 503;
+    throw error;
+  }
+  const parsedUrl = new URL(url);
+  if (!parsedUrl.hostname.endsWith(".supabase.co")) {
+    const error = new Error("Public asset storage URL is invalid.");
+    error.statusCode = 503;
+    throw error;
+  }
+  return {
+    url: parsedUrl.origin,
+    serviceRoleKey,
+    bucket: "public-assets",
+    supabase: createClient(parsedUrl.origin, serviceRoleKey, {
+      auth: { autoRefreshToken: false, persistSession: false, detectSessionInUrl: false },
+      realtime: { transport: WebSocket },
+    }),
+  };
+}
+
+export async function uploadPublicAsset({ prefix, file }) {
+  if (!file || typeof file.arrayBuffer !== "function") {
+    const error = new Error("File aset wajib diunggah.");
+    error.statusCode = 400;
+    throw error;
+  }
+  const mimeType = String(file.type || "").toLowerCase();
+  const size = Number(file.size);
+  if (!["image/jpeg", "image/png", "image/webp"].includes(mimeType)) {
+    const error = new Error("Aset hanya mendukung JPG, PNG, atau WEBP.");
+    error.statusCode = 415;
+    throw error;
+  }
+  if (!Number.isFinite(size) || size <= 0 || size > MAX_FILE_BYTES) {
+    const error = new Error("Ukuran aset harus lebih dari 0 dan maksimal 5 MB.");
+    error.statusCode = 413;
+    throw error;
+  }
+  const storage = publicAssetStorage();
+  const cleanPrefix = String(prefix || "portal-assets").replace(/^\/+|\/+$/g, "");
+  if (!cleanPrefix || cleanPrefix.split("/").some((part) => part === "." || part === ".." || part.includes("\\"))) {
+    const error = new Error("Prefix aset tidak valid.");
+    error.statusCode = 400;
+    throw error;
+  }
+  const path = `${cleanPrefix}/${crypto.randomUUID()}-${safeFileName(file.name || "asset")}`;
+  const { error } = await storage.supabase.storage.from(storage.bucket).upload(
+    path,
+    Buffer.from(await file.arrayBuffer()),
+    { contentType: mimeType, cacheControl: "3600", upsert: false },
+  );
+  if (error) {
+    const failure = new Error("Upload aset publik gagal.");
+    failure.statusCode = 502;
+    throw failure;
+  }
+  return {
+    path,
+    fileName: safeFileName(file.name),
+    mimeType,
+    size,
+    url: `${storage.url}/storage/v1/object/public/${storage.bucket}/${path}`,
+  };
+}
+
+export async function deletePublicAsset(path) {
+  const storage = publicAssetStorage();
+  const normalized = String(path || "");
+  if (!normalized || normalized.split("/").some((part) => part === "." || part === ".." || part.includes("\\"))) return;
+  const { error } = await storage.supabase.storage.from(storage.bucket).remove([normalized]);
+  if (error) throw error;
+}
+
 export async function signedDocumentUrl(path) {
   const storage = client();
   await ensurePrivateBucket(storage);

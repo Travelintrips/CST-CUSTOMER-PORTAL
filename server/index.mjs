@@ -59,6 +59,8 @@ import {
   handleVendorPortalRoutes,
 } from "./vendor-portal.mjs";
 import { handleAdminCatalog } from "./admin-catalog.mjs";
+import { handleAdminFeatured } from "./admin-featured.mjs";
+import { handleAdminVendorCatalog } from "./admin-vendor-catalog.mjs";
 import { handleAdminLegacy, handlePortalContent } from "./admin-legacy.mjs";
 import {
   handleAdminReply,
@@ -2672,6 +2674,75 @@ async function route(request, response) {
     if (user) {
       const body = ["POST", "PUT", "PATCH"].includes(request.method ?? "") ? await readJson(request) : {};
       const handled = await handleAdminCatalog({
+        request,
+        response,
+        url,
+        body,
+        user,
+        sendJson,
+        sendError,
+        sendEmpty,
+      });
+      if (handled) return;
+    }
+  }
+  if (
+    pathname === "/api/portal/admin/vendor-catalog-items"
+    || pathname.startsWith("/api/portal/admin/vendor-catalog-items/")
+  ) {
+    const user = await requireAdmin(request, response);
+    if (user) {
+      const isMultipart = String(request.headers["content-type"] ?? "").startsWith("multipart/form-data");
+      const body = request.method === "POST" && isMultipart
+        ? await readMultipartForm(request)
+        : ["POST", "PUT", "PATCH"].includes(request.method ?? "") ? await readJson(request) : {};
+      const handled = await handleAdminVendorCatalog({
+        request,
+        response,
+        url,
+        body,
+        user,
+        sendJson,
+        sendError,
+        sendEmpty,
+      });
+      if (handled) return;
+    }
+  }
+  if (
+    pathname.startsWith("/api/portal/admin/featured-packages")
+    || pathname.startsWith("/api/portal/admin/featured-requests")
+    || pathname.startsWith("/api/portal/admin/featured-maintenance/")
+    || pathname.startsWith("/api/portal/admin/internal-featured/")
+  ) {
+    const user = await requireAdmin(request, response);
+    if (user) {
+      const body = ["POST", "PATCH", "PUT"].includes(request.method ?? "") ? await readJson(request) : {};
+      const handled = await handleAdminFeatured({
+        request,
+        response,
+        url,
+        body,
+        user,
+        sendJson,
+        sendError,
+        sendEmpty,
+      });
+      if (handled) return;
+    }
+  }
+  if (
+    pathname === "/api/settings/vehicle-images"
+    || pathname === "/api/settings/vehicle-images/upload"
+    || pathname === "/api/settings/vehicle-order"
+  ) {
+    const user = await requireAdmin(request, response);
+    if (user) {
+      const isMultipart = String(request.headers["content-type"] ?? "").startsWith("multipart/form-data");
+      const body = request.method === "POST" && isMultipart
+        ? await readMultipartForm(request)
+        : ["POST", "PUT", "PATCH"].includes(request.method ?? "") ? await readJson(request) : {};
+      const handled = await handleAdminLegacy({
         request,
         response,
         url,

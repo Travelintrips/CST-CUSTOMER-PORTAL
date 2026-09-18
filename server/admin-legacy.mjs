@@ -1,10 +1,17 @@
 import crypto from "node:crypto";
 import { query } from "./db.mjs";
+import { uploadPublicAsset } from "./storage.mjs";
 
 const DELIVERY_VENDOR_KEY = "admin_delivery_vendors";
 const TRUCKING_RATES_KEY = "admin_trucking_rates";
 const FREIGHT_RATES_KEY = "admin_freight_rates";
 const MASTER_PRICE_APPROVAL_KEY = "master_price_require_approval";
+const VEHICLE_IMAGES_KEY = "admin_vehicle_images";
+const VEHICLE_ORDER_KEY = "admin_vehicle_order";
+const VEHICLE_IDS = [
+  "mobil", "mobil-xl", "van", "pickup-kecil", "box-kecil", "engkel",
+  "double-engkel", "cdd-long", "fuso", "tronton", "truk-trailer", "truk-reefer",
+];
 
 function jsonValue(value, fallback) {
   if (value == null) return fallback;
@@ -53,6 +60,51 @@ async function setSetting(key, value) {
        set value = excluded.value, updated_at = now()`,
     [key, JSON.stringify(value)],
   );
+}
+
+async function handleVehicleSettings({ request, response, url, body, sendJson, sendError }) {
+  if (url.pathname === "/api/settings/vehicle-images" && request.method === "GET") {
+    const value = await getSetting(VEHICLE_IMAGES_KEY, {});
+    sendJson(response, 200, value && typeof value === "object" && !Array.isArray(value) ? value : {});
+    return true;
+  }
+  if (url.pathname === "/api/settings/vehicle-images" && request.method === "PUT") {
+    if (!body || typeof body !== "object" || Array.isArray(body)) {
+      sendError(response, 400, "Data gambar kendaraan tidak valid.");
+      return true;
+    }
+    const images = {};
+    for (const vehicleId of VEHICLE_IDS) {
+      if (typeof body[vehicleId] === "string" && body[vehicleId].trim()) {
+        images[vehicleId] = body[vehicleId].trim().slice(0, 2000);
+      }
+    }
+    await setSetting(VEHICLE_IMAGES_KEY, images);
+    sendJson(response, 200, images);
+    return true;
+  }
+  if (url.pathname === "/api/settings/vehicle-images/upload" && request.method === "POST") {
+    const uploaded = await uploadPublicAsset({ prefix: "portal-assets/vehicle-images", file: body?.file });
+    sendJson(response, 201, uploaded);
+    return true;
+  }
+  if (url.pathname === "/api/settings/vehicle-order" && request.method === "GET") {
+    const value = await getSetting(VEHICLE_ORDER_KEY, []);
+    const order = Array.isArray(value) ? value.filter((item) => VEHICLE_IDS.includes(item)) : [];
+    sendJson(response, 200, order);
+    return true;
+  }
+  if (url.pathname === "/api/settings/vehicle-order" && request.method === "PUT") {
+    if (!Array.isArray(body)) {
+      sendError(response, 400, "Urutan kendaraan tidak valid.");
+      return true;
+    }
+    const order = [...new Set(body.filter((item) => typeof item === "string" && VEHICLE_IDS.includes(item)))];
+    await setSetting(VEHICLE_ORDER_KEY, order);
+    sendJson(response, 200, order);
+    return true;
+  }
+  return false;
 }
 
 function mapDeliveryVendor(item, index) {
@@ -711,6 +763,7 @@ export async function handlePortalContent(ctx) {
 }
 
 export async function handleAdminLegacy(ctx) {
+  if (await handleVehicleSettings(ctx)) return true;
   if (await handleContent(ctx)) return true;
   if (await handleLogistics(ctx)) return true;
   if (await handleMiniForms(ctx)) return true;
