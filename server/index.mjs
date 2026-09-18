@@ -998,6 +998,861 @@ async function handlePortalDashboardStats(request, response) {
   });
 }
 
+function serviceItemResponse(row) {
+  return {
+    id: Number(row.id),
+    itemType: row.item_type,
+    serviceCategory: row.service_category ?? null,
+    sequenceNo: Number(row.sequence_no ?? 1),
+    title: row.title,
+    description: row.description ?? "",
+    formData: row.form_data ?? {},
+    requiredDocuments: row.required_documents ?? [],
+    isRequired: Boolean(row.is_required),
+    status: row.status,
+    estimatedPrice: row.estimated_price == null ? null : Number(row.estimated_price),
+    quotedPrice: row.quoted_price == null ? null : Number(row.quoted_price),
+  };
+}
+
+async function getOwnedServiceRequest(user, requestId) {
+  const companyIds = await getAccessibleCompanyIds(user);
+  const result = await query(
+    `select id, request_number, request_type, trade_type, order_mode,
+            package_id, package_name_snapshot, pricing_mode, status,
+            customer_name, customer_email, customer_phone, customer_company,
+            notes, admin_notes, created_at, updated_at, submitted_at
+       from public.customer_service_requests
+      where id = $1
+        and (
+          portal_customer_id = $2
+          or customer_id = $2
+          or company_id = any($3::int[])
+          or lower(customer_email) = lower($4)
+        )
+      limit 1`,
+    [requestId, user.id, companyIds, user.email],
+  );
+  return result.rows[0] ?? null;
+}
+
+async function getServiceRequestItems(requestId) {
+  const result = await query(
+    `select id, item_type, service_category, sequence_no, title, description,
+            form_data, required_documents, is_required, status,
+            estimated_price, quoted_price
+       from public.customer_service_request_items
+      where request_id = $1
+      order by sequence_no, id`,
+    [requestId],
+  );
+  return result.rows.map(serviceItemResponse);
+}
+
+function serviceRequestResponse(row, items = []) {
+  return {
+    id: Number(row.id),
+    requestNumber: row.request_number,
+    requestType: row.request_type,
+    tradeType: row.trade_type,
+    orderMode: row.order_mode,
+    packageId: row.package_id == null ? null : Number(row.package_id),
+    packageName: row.package_name_snapshot ?? null,
+    pricingMode: row.pricing_mode,
+    status: row.status,
+    customerName: row.customer_name,
+    customerEmail: row.customer_email,
+    customerPhone: row.customer_phone ?? "",
+    customerCompany: row.customer_company ?? "",
+    notes: row.notes ?? "",
+    adminNotes: row.admin_notes ?? null,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at ?? row.created_at,
+    submittedAt: row.submitted_at ?? null,
+    items,
+  };
+}
+
+async function handleCustomerServiceRoutes(request, response, url, user, body = {}) {
+  const pathMatch = url.pathname.match(/^\/api\/customer-service-requests\/(\d+)(?:\/(items|submit))?(?:\/(\d+))?$/);
+  const trackMatch = url.pathname.match(/^\/api\/customer-service-requests\/by-number\/([^/]+)$/);
+  const packageApplyMatch = url.pathname.match(/^\/api\/service-packages\/(\d+)\/apply\/(\d+)$/);
+  const requestId = pathMatch ? Number(pathMatch[1]) : null;
+
+  if (request.method === "GET" && trackMatch) {
+    const requestNumber = decodeURIComponent(trackMatch[1]);
+    const companyIds = await getAccessibleCompanyIds(user);
+    const result = await query(
+      `select id, request_number, trade_type, status, notes, admin_notes,
+              created_at, updated_at
+         from public.customer_service_requests
+        where request_number = $1
+          and (
+            portal_customer_id = $2
+            or customer_id = $2
+            or company_id = any($3::int[])
+            or lower(customer_email) = lower($4)
+          )
+        limit 1`,
+      [requestNumber, user.id, companyIds, user.email],
+    );
+    const row = result.rows[0];
+    if (!row) {
+      sendError(response, 404, "Service request tidak ditemukan.");
+      return true;
+    }
+    const items = await getServiceRequestItems(row.id);
+    const documents = await query(
+      `select id, file_name, document_type, verification_status
+         from public.customer_service_request_documents
+        where request_id = $1
+        order by created_at, id`,
+      [row.id],
+    );
+    sendJson(response, 200, {
+      requestNumber: row.request_number,
+      tradeType: row.trade_type,
+      status: row.status,
+      notes: row.notes ?? null,
+      adminNotes: row.admin_notes ?? null,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at ?? row.created_at,
+      items: items.map((item) => ({
+        id: item.id,
+        title: item.title,
+        description: item.description,
+        status: item.status,
+      })),
+      documents: documents.rows.map((document) => ({
+        id: Number(document.id),
+        fileName: document.file_name ?? null,
+        documentType: document.document_type,
+        verificationStatus: document.verification_status ?? "pending",
+      })),
+    });
+    return true;
+  }
+
+  if (request.method === "GET" && pathMatch && !pathMatch[2]) {
+    const row = await getOwnedServiceRequest(user, requestId);
+    if (!row) {
+      sendError(response, 404, "Service request tidak ditemukan.");
+      return true;
+    }
+    sendJson(response, 200, serviceRequestResponse(row, await getServiceRequestItems(row.id)));
+    return true;
+  }
+
+  if (request.method === "POST" && url.pathname === "/api/customer-service-requests") {
+    const customerName = String(body.customerName ?? "").trim();
+    const customerEmail = String(body.customerEmail ?? "").trim().toLowerCase();
+    const tradeType = String(body.tradeType ?? "").trim().toUpperCase();
+    const orderMode = String(body.orderMode ?? "ITEM_MANDIRI").trim().toUpperCase();
+    if (!customerName || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(customerEmail)) {
+      sendError(response, 400, "Nama dan email customer wajib diisi.");
+      return true;
+    }
+    if (!["EXPORT", "IMPORT", "DOMESTIC"].includes(tradeType)) {
+      sendError(response, 400, "Trade type tidak valid.");
+      return true;
+    }
+    if (!["ITEM_MANDIRI", "PAKET_BORONGAN"].includes(orderMode)) {
+      sendError(response, 400, "Order mode tidak valid.");
+      return true;
+    }
+    const companyIds = await getAccessibleCompanyIds(user);
+    const result = await query(
+      `insert into public.customer_service_requests (
+         id, request_number, customer_id, customer_name, customer_email,
+         customer_phone, customer_company, request_type, trade_type, order_mode,
+         pricing_mode, status, notes, portal_customer_id, company_id
+       ) values (
+         nextval('public.customer_service_requests_id_seq'),
+         concat('CSR-', to_char(clock_timestamp(), 'YYMMDD'), '-',
+                lpad(currval('public.customer_service_requests_id_seq')::text, 6, '0')),
+         $1, $2, $3, $4, $5, 'service', $6, $7, $8, 'draft', $9, $1, $10
+       )
+       returning id, request_number`,
+      [
+        user.id,
+        customerName,
+        customerEmail,
+        body.customerPhone ? String(body.customerPhone).trim() : null,
+        body.customerCompany ? String(body.customerCompany).trim() : null,
+        tradeType,
+        orderMode,
+        body.pricingMode ? String(body.pricingMode).trim().toUpperCase() : "PER_ITEM",
+        body.notes ? String(body.notes).trim() : null,
+        companyIds[0] ?? null,
+      ],
+    );
+    sendJson(response, 201, {
+      id: Number(result.rows[0].id),
+      requestNumber: result.rows[0].request_number,
+    });
+    return true;
+  }
+
+  if (request.method === "GET" && url.pathname === "/api/service-packages") {
+    const tradeType = String(url.searchParams.get("tradeType") ?? "").trim().toUpperCase();
+    const result = await query(
+      `select p.id, p.package_code, p.package_name, p.package_type,
+              p.trade_type, p.description, p.pricing_mode, p.icon_emoji,
+              i.id as item_id, i.item_type, i.item_title, i.is_required,
+              i.sequence_no, i.required_documents, i.description as item_description
+         from public.service_packages p
+         left join public.service_package_items i on i.package_id = p.id
+        where p.is_active = true
+          and ($1 = '' or upper(p.trade_type) = $1)
+        order by p.sort_order, p.id, i.sequence_no, i.id`,
+      [tradeType],
+    );
+    const packages = new Map();
+    for (const row of result.rows) {
+      if (!packages.has(row.id)) {
+        packages.set(row.id, {
+          id: Number(row.id),
+          packageCode: row.package_code,
+          packageName: row.package_name,
+          packageType: row.package_type,
+          tradeType: row.trade_type,
+          description: row.description ?? null,
+          pricingMode: row.pricing_mode,
+          iconEmoji: row.icon_emoji ?? "📦",
+          items: [],
+        });
+      }
+      if (row.item_id) {
+        packages.get(row.id).items.push({
+          id: Number(row.item_id),
+          itemType: row.item_type,
+          itemTitle: row.item_title,
+          isRequired: Boolean(row.is_required),
+          sequenceNo: Number(row.sequence_no ?? 1),
+          requiredDocuments: row.required_documents ?? [],
+          description: row.item_description ?? null,
+        });
+      }
+    }
+    sendJson(response, 200, [...packages.values()]);
+    return true;
+  }
+
+  if (request.method === "POST" && packageApplyMatch) {
+    const packageId = Number(packageApplyMatch[1]);
+    const targetRequestId = Number(packageApplyMatch[2]);
+    const serviceRequest = await getOwnedServiceRequest(user, targetRequestId);
+    if (!serviceRequest) {
+      sendError(response, 404, "Service request tidak ditemukan.");
+      return true;
+    }
+    if (!["draft", "revision_requested"].includes(serviceRequest.status)) {
+      sendError(response, 409, "Service request sudah tidak dapat diubah.");
+      return true;
+    }
+    const packageResult = await query(
+      `select id, package_name, trade_type
+         from public.service_packages
+        where id = $1 and is_active = true
+        limit 1`,
+      [packageId],
+    );
+    const packageRow = packageResult.rows[0];
+    if (!packageRow || String(packageRow.trade_type).toUpperCase() !== String(serviceRequest.trade_type).toUpperCase()) {
+      sendError(response, 400, "Paket tidak sesuai dengan trade type.");
+      return true;
+    }
+    await query(
+      `update public.customer_service_requests
+          set package_id = $1, package_name_snapshot = $2,
+              order_mode = 'PAKET_BORONGAN', updated_at = now()
+        where id = $3`,
+      [packageId, packageRow.package_name, targetRequestId],
+    );
+    const packageItems = await query(
+      `select item_type, service_category, item_title, is_required,
+              sequence_no, required_documents, description
+         from public.service_package_items
+        where package_id = $1
+        order by sequence_no, id`,
+      [packageId],
+    );
+    for (const item of packageItems.rows) {
+      await query(
+        `insert into public.customer_service_request_items (
+           request_id, item_type, service_category, sequence_no, title,
+           description, required_documents, is_required
+         )
+         select $1, $2, $3, $4, $5, $6, $7::jsonb, $8
+          where not exists (
+            select 1 from public.customer_service_request_items
+             where request_id = $1 and item_type = $2 and title = $5
+          )`,
+        [
+          targetRequestId,
+          item.item_type,
+          item.service_category,
+          item.sequence_no,
+          item.item_title,
+          item.description,
+          JSON.stringify(item.required_documents ?? []),
+          Boolean(item.is_required),
+        ],
+      );
+    }
+    sendJson(response, 200, { items: await getServiceRequestItems(targetRequestId) });
+    return true;
+  }
+
+  if (pathMatch && pathMatch[2] === "submit" && request.method === "POST") {
+    const serviceRequest = await getOwnedServiceRequest(user, requestId);
+    if (!serviceRequest) {
+      sendError(response, 404, "Service request tidak ditemukan.");
+      return true;
+    }
+    const items = await getServiceRequestItems(requestId);
+    if (!items.length) {
+      sendError(response, 400, "Tambahkan minimal satu item layanan.");
+      return true;
+    }
+    if (!["draft", "revision_requested"].includes(serviceRequest.status)) {
+      sendError(response, 409, "Service request sudah dikirim.");
+      return true;
+    }
+    await query(
+      `update public.customer_service_requests
+          set status = 'submitted', submitted_at = now(), updated_at = now()
+        where id = $1`,
+      [requestId],
+    );
+    sendJson(response, 200, { ok: true, requestNumber: serviceRequest.request_number });
+    return true;
+  }
+
+  if (pathMatch && pathMatch[2] === "items" && request.method === "POST") {
+    const serviceRequest = await getOwnedServiceRequest(user, requestId);
+    if (!serviceRequest) {
+      sendError(response, 404, "Service request tidak ditemukan.");
+      return true;
+    }
+    if (!["draft", "revision_requested"].includes(serviceRequest.status)) {
+      sendError(response, 409, "Service request sudah tidak dapat diubah.");
+      return true;
+    }
+    const itemType = String(body.itemType ?? "").trim();
+    const title = String(body.title ?? "").trim();
+    if (!itemType || !title) {
+      sendError(response, 400, "Jenis dan judul item wajib diisi.");
+      return true;
+    }
+    const result = await query(
+      `insert into public.customer_service_request_items (
+         request_id, item_type, title, description, form_data,
+         required_documents, is_required, sequence_no
+       ) values (
+         $1, $2, $3, $4, $5::jsonb, $6::jsonb, false,
+         coalesce((select max(sequence_no) + 1 from public.customer_service_request_items where request_id = $1), 1)
+       )
+       returning id, item_type, service_category, sequence_no, title, description,
+                 form_data, required_documents, is_required, status,
+                 estimated_price, quoted_price`,
+      [
+        requestId,
+        itemType,
+        title,
+        body.description ? String(body.description) : null,
+        JSON.stringify(body.formData ?? {}),
+        JSON.stringify(body.requiredDocuments ?? []),
+      ],
+    );
+    sendJson(response, 201, serviceItemResponse(result.rows[0]));
+    return true;
+  }
+
+  if (pathMatch && pathMatch[2] === "items" && pathMatch[3]) {
+    const itemId = Number(pathMatch[3]);
+    const serviceRequest = await getOwnedServiceRequest(user, requestId);
+    if (!serviceRequest) {
+      sendError(response, 404, "Service request tidak ditemukan.");
+      return true;
+    }
+    if (!["draft", "revision_requested"].includes(serviceRequest.status)) {
+      sendError(response, 409, "Service request sudah tidak dapat diubah.");
+      return true;
+    }
+    if (request.method === "DELETE") {
+      await query(
+        `delete from public.customer_service_request_items
+          where id = $1 and request_id = $2 and is_required = false`,
+        [itemId, requestId],
+      );
+      sendEmpty(response, 204);
+      return true;
+    }
+    if (request.method === "PUT") {
+      const result = await query(
+        `update public.customer_service_request_items
+            set item_type = $1, title = $2, description = $3,
+                form_data = $4::jsonb, required_documents = $5::jsonb,
+                updated_at = now()
+          where id = $6 and request_id = $7
+          returning id, item_type, service_category, sequence_no, title, description,
+                    form_data, required_documents, is_required, status,
+                    estimated_price, quoted_price`,
+        [
+          String(body.itemType ?? "").trim(),
+          String(body.title ?? "").trim(),
+          body.description ? String(body.description) : null,
+          JSON.stringify(body.formData ?? {}),
+          JSON.stringify(body.requiredDocuments ?? []),
+          itemId,
+          requestId,
+        ],
+      );
+      if (!result.rows[0]) {
+        sendError(response, 404, "Item layanan tidak ditemukan.");
+        return true;
+      }
+      sendJson(response, 200, serviceItemResponse(result.rows[0]));
+      return true;
+    }
+  }
+
+  return false;
+}
+
+async function handleServiceProfile(request, response, url, user, body = {}) {
+  const email = String(url.searchParams.get("email") ?? body.email ?? user.email).trim().toLowerCase();
+  if (!email || (email !== user.email && user.role !== "admin")) {
+    sendError(response, 403, "Profile hanya dapat diakses oleh pemiliknya.");
+    return;
+  }
+  if (request.method === "GET") {
+    const result = await query(
+      `select company_name, npwp, nib, company_address, pic_name, pic_whatsapp,
+              pic_email, legal_doc_url, ktp_pic_url, surat_kuasa_url,
+              api_nik_izin_url, additional_notes, profile_status, is_verified
+         from public.portal_customer_profiles
+        where customer_id = $1 or lower(coalesce(pic_email, guest_email, '')) = $2
+        order by customer_id = $1 desc, updated_at desc nulls last
+        limit 1`,
+      [user.id, email],
+    );
+    const row = result.rows[0];
+    if (!row) {
+      sendJson(response, 200, {});
+      return;
+    }
+    sendJson(response, 200, {
+      companyName: row.company_name ?? "",
+      npwp: row.npwp ?? "",
+      nib: row.nib ?? "",
+      companyAddress: row.company_address ?? "",
+      picName: row.pic_name ?? "",
+      picWhatsapp: row.pic_whatsapp ?? "",
+      picEmail: row.pic_email ?? email,
+      legalDocUrl: row.legal_doc_url ?? "",
+      ktpPicUrl: row.ktp_pic_url ?? "",
+      suratKuasaUrl: row.surat_kuasa_url ?? "",
+      apiNikIzinUrl: row.api_nik_izin_url ?? "",
+      additionalNotes: row.additional_notes ?? "",
+      profileStatus: row.profile_status ?? "draft",
+      isVerified: Boolean(row.is_verified),
+    });
+    return;
+  }
+  if (request.method === "PUT") {
+    const values = [
+      body.companyName ?? null, body.npwp ?? null, body.nib ?? null,
+      body.companyAddress ?? null, body.picName ?? null, body.picWhatsapp ?? null,
+      body.picEmail ?? email, body.legalDocUrl ?? null, body.ktpPicUrl ?? null,
+      body.suratKuasaUrl ?? null, body.apiNikIzinUrl ?? null,
+      body.additionalNotes ?? null, user.id,
+    ];
+    const existing = await query(
+      `select id
+         from public.portal_customer_profiles
+        where customer_id = $1
+        order by updated_at desc nulls last, id desc
+        limit 1`,
+      [user.id],
+    );
+    if (existing.rows[0]) {
+      await query(
+        `update public.portal_customer_profiles
+            set company_name = $1, npwp = $2, nib = $3, company_address = $4,
+                pic_name = $5, pic_whatsapp = $6, pic_email = $7,
+                legal_doc_url = $8, ktp_pic_url = $9, surat_kuasa_url = $10,
+                api_nik_izin_url = $11, additional_notes = $12, updated_at = now()
+          where id = $13`,
+        values,
+      );
+    } else {
+      await query(
+        `insert into public.portal_customer_profiles (
+           customer_id, company_name, npwp, nib, company_address, pic_name,
+           pic_whatsapp, pic_email, legal_doc_url, ktp_pic_url, surat_kuasa_url,
+           api_nik_izin_url, additional_notes, profile_status, updated_at
+         ) values ($13, $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, 'draft', now())`,
+        values,
+      );
+    }
+    sendJson(response, 200, { ok: true });
+    return;
+  }
+  sendError(response, 405, "Method tidak didukung.");
+}
+
+function logisticItemResponse(row) {
+  return {
+    id: Number(row.id),
+    orderId: Number(row.order_id),
+    category: row.category,
+    serviceName: row.service_name,
+    calculatorType: row.calculator_type,
+    inputData: row.input_data ?? {},
+    calculationResult: row.calculation_result ?? {},
+    subtotal: Number(row.subtotal ?? 0),
+    createdAt: row.created_at,
+    itemSource: row.item_source ?? null,
+    vendorCatalogItemId: row.vendor_catalog_item_id == null ? null : Number(row.vendor_catalog_item_id),
+    vendorId: row.vendor_id == null ? null : Number(row.vendor_id),
+    serviceType: row.service_type ?? null,
+    priceSnapshot: row.price_snapshot ?? null,
+    calculationInput: row.calculation_input ?? null,
+    templateSnapshot: null,
+  };
+}
+
+async function getLogisticItems(orderId) {
+  const result = await query(
+    `select id, order_id, category, service_name, calculator_type,
+            input_data, calculation_result, subtotal, created_at, item_source,
+            vendor_catalog_item_id, vendor_id, service_type, price_snapshot,
+            calculation_input
+       from public.logistic_order_items
+      where order_id = $1
+      order by id`,
+    [orderId],
+  );
+  return result.rows.map(logisticItemResponse);
+}
+
+function logisticOrderResponse(row, items = []) {
+  return {
+    id: Number(row.id),
+    orderNumber: row.order_number,
+    companyName: row.company_name,
+    customerName: row.customer_name,
+    email: row.email,
+    phone: row.phone,
+    shipmentType: row.shipment_type,
+    origin: row.origin,
+    destination: row.destination,
+    commodity: row.commodity ?? null,
+    cargoDescription: row.cargo_description ?? null,
+    grossWeight: row.gross_weight == null ? null : Number(row.gross_weight),
+    volumeCbm: row.volume_cbm == null ? null : Number(row.volume_cbm),
+    jumlahKoli: row.jumlah_koli == null ? null : Number(row.jumlah_koli),
+    requiredDate: row.required_date ?? null,
+    notes: row.notes ?? null,
+    paymentType: row.payment_type ?? null,
+    paymentMethod: row.payment_method ?? null,
+    namaPenerima: row.nama_penerima ?? null,
+    nomorPenerima: row.nomor_penerima ?? null,
+    jamOrder: row.jam_order ?? null,
+    source: row.source,
+    subtotal: Number(row.subtotal ?? 0),
+    tax: Number(row.tax ?? 0),
+    grandTotal: Number(row.grand_total ?? 0),
+    status: row.status,
+    approvedQuoteId: row.approved_quote_id == null ? null : Number(row.approved_quote_id),
+    adminApprovalStatus: row.admin_approval_status ?? null,
+    approvedAt: row.approved_at ?? null,
+    approvedVendorId: row.approved_vendor_id == null ? null : Number(row.approved_vendor_id),
+    finalSellingPrice: row.final_selling_price == null ? null : Number(row.final_selling_price),
+    quotationSentAt: row.quotation_sent_at ?? null,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at ?? row.created_at,
+    transportMode: row.transport_mode ?? null,
+    originDistrict: row.origin_district ?? null,
+    destDistrict: row.dest_district ?? null,
+    pickupDate: row.pickup_date ?? null,
+    pickupTime: row.pickup_time ?? null,
+    truckType: row.truck_type ?? null,
+    originPort: row.origin_port ?? null,
+    destPort: row.dest_port ?? null,
+    weightKg: row.weight_kg == null ? null : Number(row.weight_kg),
+    incoterm: row.incoterm ?? null,
+    etd: row.etd ?? null,
+    eta: row.eta ?? null,
+    paymentStatus: row.payment_status ?? null,
+    paymentProofUrl: row.payment_proof_url ?? null,
+    items,
+  };
+}
+
+async function getOwnedLogisticOrder(user, orderNumber) {
+  const companyIds = await getAccessibleCompanyIds(user);
+  const result = await query(
+    `select *
+       from public.logistic_orders
+      where order_number = $1
+        and (
+          portal_customer_id = $2
+          or lower(email) = lower($3)
+          or company_id = any($4::int[])
+        )
+      limit 1`,
+    [orderNumber, user.id, user.email, companyIds],
+  );
+  return result.rows[0] ?? null;
+}
+
+async function handleLogisticCustomerRoutes(request, response, url, user, body = {}) {
+  const orderNumberMatch = url.pathname.match(/^\/api\/logistic\/orders\/([^/]+)(?:\/(payment-proof|create-paylabs-link))?$/);
+  const trackMatch = url.pathname.match(/^\/api\/logistic\/orders\/track\/([^/]+)$/);
+
+  if (request.method === "POST" && url.pathname === "/api/logistic/orders") {
+    const required = ["companyName", "customerName", "email", "phone", "shipmentType", "origin", "destination"];
+    if (required.some((field) => !String(body[field] ?? "").trim())) {
+      sendError(response, 400, "Data order logistik belum lengkap.");
+      return true;
+    }
+    const companyIds = await getAccessibleCompanyIds(user);
+    const items = Array.isArray(body.items) ? body.items : [];
+    const result = await query(
+      `insert into public.logistic_orders (
+         id, order_number, company_name, customer_name, email, phone,
+         shipment_type, origin, destination, commodity, cargo_description,
+         gross_weight, volume_cbm, jumlah_koli, required_date, notes,
+         payment_type, payment_method, nama_penerima, nomor_penerima, jam_order,
+         source, subtotal, tax, grand_total, order_type, transport_mode,
+         origin_district, dest_district, pickup_date, pickup_time, truck_type,
+         origin_port, dest_port, weight_kg, incoterm, etd, eta, sender_name,
+         portal_customer_id, company_id
+       ) values (
+         nextval('public.logistic_orders_id_seq'),
+         concat('LOG-', to_char(clock_timestamp(), 'YYMMDD'), '-',
+                lpad(currval('public.logistic_orders_id_seq')::text, 6, '0')),
+         $1, $2, lower($3), $4, $5, $6, $7, $8, $9, $10, $11, $12, $13,
+          $14, $15, $16, $17, $18, $19, 'customer_portal',
+          coalesce($20, 0), coalesce($21, 0), coalesce($22, 0),
+          coalesce($23, 'shipment'), $24, $25, $26, $27, $28, $29, $30,
+          $31, $32, $33, $34, $35, $36, $37, $38
+       )
+       returning *`,
+      [
+        String(body.companyName).trim(),
+        String(body.customerName).trim(),
+        String(body.email).trim(),
+        String(body.phone).trim(),
+        String(body.shipmentType).trim(),
+        String(body.origin).trim(),
+        String(body.destination).trim(),
+        body.commodity ? String(body.commodity) : null,
+        body.cargoDescription ? String(body.cargoDescription) : null,
+        body.grossWeight ?? null,
+        body.volumeCbm ?? null,
+        body.jumlahKoli ?? null,
+        body.requiredDate ?? null,
+        body.notes ? String(body.notes) : null,
+        body.paymentType ?? null,
+        body.paymentMethod ?? null,
+        body.namaPenerima ?? null,
+        body.nomorPenerima ?? null,
+        body.jamOrder ?? null,
+        body.subtotal ?? 0,
+        body.tax ?? 0,
+        body.grandTotal ?? 0,
+        body.orderType ?? "shipment",
+        body.transportMode ?? null,
+        body.originDistrict ?? null,
+        body.destDistrict ?? null,
+        body.pickupDate ?? null,
+        body.pickupTime ?? null,
+        body.truckType ?? null,
+        body.originPort ?? null,
+        body.destPort ?? null,
+        body.weightKg ?? null,
+        body.incoterm ?? null,
+        body.etd ?? null,
+        body.eta ?? null,
+        body.senderName ?? null,
+        user.id,
+        companyIds[0] ?? null,
+      ],
+    );
+    const row = result.rows[0];
+    for (const item of items) {
+      if (!item || !String(item.category ?? "").trim() || !String(item.serviceName ?? "").trim()) continue;
+      await query(
+        `insert into public.logistic_order_items (
+           order_id, category, service_name, calculator_type, input_data,
+           calculation_result, subtotal, item_source, vendor_catalog_item_id,
+           vendor_id, service_type, price_snapshot, calculation_input
+         ) values ($1, $2, $3, $4, $5::jsonb, $6::jsonb, $7, $8, $9, $10, $11, $12::jsonb, $13::jsonb)`,
+        [
+          row.id,
+          String(item.category),
+          String(item.serviceName),
+          String(item.calculatorType ?? "manual"),
+          JSON.stringify(item.inputData ?? {}),
+          JSON.stringify(item.calculationResult ?? {}),
+          item.subtotal ?? 0,
+          item.itemSource ?? "manual",
+          item.vendorCatalogItemId ?? null,
+          item.vendorId ?? null,
+          item.serviceType ?? null,
+          JSON.stringify(item.priceSnapshot ?? null),
+          JSON.stringify(item.calculationInput ?? item.templateSnapshot ?? null),
+        ],
+      );
+    }
+    sendJson(response, 201, logisticOrderResponse(row, await getLogisticItems(row.id)));
+    return true;
+  }
+
+  if (request.method === "GET" && orderNumberMatch && !orderNumberMatch[2]) {
+    const row = await getOwnedLogisticOrder(user, decodeURIComponent(orderNumberMatch[1]));
+    if (!row) {
+      sendError(response, 404, "Order logistik tidak ditemukan.");
+      return true;
+    }
+    sendJson(response, 200, logisticOrderResponse(row, await getLogisticItems(row.id)));
+    return true;
+  }
+
+  if (request.method === "PATCH" && orderNumberMatch?.[2] === "payment-proof") {
+    const orderNumber = decodeURIComponent(orderNumberMatch[1]);
+    const row = await getOwnedLogisticOrder(user, orderNumber);
+    if (!row) {
+      sendError(response, 404, "Order logistik tidak ditemukan.");
+      return true;
+    }
+    const proofUrl = String(body.proofUrl ?? "").trim();
+    if (!proofUrl || !proofUrl.startsWith("customers/")) {
+      sendError(response, 400, "Object path bukti pembayaran tidak valid.");
+      return true;
+    }
+    const updated = await query(
+      `update public.logistic_orders
+          set payment_proof_url = $1, payment_status = 'proof_submitted', updated_at = now()
+        where id = $2
+        returning *`,
+      [proofUrl, row.id],
+    );
+    sendJson(response, 200, logisticOrderResponse(updated.rows[0], await getLogisticItems(row.id)));
+    return true;
+  }
+
+  if (request.method === "POST" && orderNumberMatch?.[2] === "create-paylabs-link") {
+    const row = await getOwnedLogisticOrder(user, decodeURIComponent(orderNumberMatch[1]));
+    if (!row) {
+      sendError(response, 404, "Order logistik tidak ditemukan.");
+      return true;
+    }
+    sendJson(response, 200, {
+      paymentUrl: null,
+      amount: Number(row.grand_total ?? 0),
+      expiredAt: null,
+      configured: false,
+      reused: false,
+      message: "Payment gateway belum dikonfigurasi untuk Customer Portal standalone.",
+    });
+    return true;
+  }
+
+  if (request.method === "GET" && trackMatch) {
+    const orderNumber = decodeURIComponent(trackMatch[1]);
+    const providedPhone = String(url.searchParams.get("phone") ?? "").replace(/\D/g, "");
+    const sessionRow = user ? await getOwnedLogisticOrder(user, orderNumber) : null;
+    const result = sessionRow
+      ? { rows: [sessionRow] }
+      : await query(
+        `select * from public.logistic_orders
+          where order_number = $1
+            and right(regexp_replace(phone, '[^0-9]', '', 'g'), 4) = $2
+          limit 1`,
+        [orderNumber, providedPhone],
+      );
+    const row = result.rows[0];
+    if (!row) {
+      if (!providedPhone) {
+        sendJson(response, 403, {
+          message: "Verifikasi empat digit terakhir nomor telepon diperlukan.",
+          requiresPhoneVerification: true,
+        });
+      } else {
+        sendError(response, 404, "Order tidak ditemukan.");
+      }
+      return true;
+    }
+    const [items, updates, progress, invoice] = await Promise.all([
+      getLogisticItems(row.id),
+      query(
+        `select id, status, notes, actor_type, actor_name, created_at
+           from public.order_updates
+          where order_id = $1 and is_public = true
+          order by created_at, id`,
+        [row.id],
+      ),
+      query(
+        `select id, status, notes, updated_by, created_at, photo_url
+           from public.order_tracking_progress
+          where order_id = $1 and is_public = true
+          order by created_at, id`,
+        [row.id],
+      ),
+      query(
+        `select payment_proof_token, invoice_number, grand_total, due_date,
+                payment_status, status, confirmed_at, created_at
+           from public.sales_documents
+          where logistic_order_id = $1
+          order by created_at desc
+          limit 20`,
+        [row.id],
+      ),
+    ]);
+    sendJson(response, 200, {
+      ...logisticOrderResponse(row, items),
+      orderNumber: row.order_number,
+      driverJob: null,
+      rfqQuote: null,
+      orderUpdates: updates.rows.map((item) => ({
+        id: Number(item.id),
+        status: item.status ?? null,
+        notes: item.notes ?? null,
+        actorType: item.actor_type,
+        actorName: item.actor_name ?? null,
+        createdAt: item.created_at,
+      })),
+      progressEvents: progress.rows.map((item) => ({
+        id: Number(item.id),
+        status: item.status,
+        notes: item.notes ?? null,
+        updatedBy: item.updated_by,
+        createdAt: item.created_at,
+        photoUrl: item.photo_url ?? null,
+      })),
+      podSubmissions: [],
+      invoiceLinks: invoice.rows.map((item) => ({
+        token: item.payment_proof_token,
+        invoiceNumber: item.invoice_number ?? null,
+        grandTotal: item.grand_total == null ? null : Number(item.grand_total),
+        dueDate: item.due_date ?? null,
+        paymentStatus: item.payment_status,
+        status: item.status ?? null,
+        confirmedAt: item.confirmed_at ?? null,
+        createdAt: item.created_at,
+      })),
+    });
+    return true;
+  }
+
+  return false;
+}
+
 async function handleMarketplaceRfqs(request, response, url) {
   const user = await requireUser(request, response);
   if (!user) return;
@@ -1575,6 +2430,50 @@ async function route(request, response) {
   }
   if (request.method === "GET" && pathname === "/api/portal/auth/bootstrap") {
     await handleBootstrap(request, response, url);
+    return;
+  }
+  if (
+    pathname === "/api/service-packages"
+    || pathname.startsWith("/api/service-packages/")
+    || pathname === "/api/customer-service-requests"
+    || pathname.startsWith("/api/customer-service-requests/")
+  ) {
+    const user = await requireUser(request, response);
+    if (!user) return;
+    const body = ["POST", "PUT", "PATCH"].includes(request.method ?? "")
+      ? await readJson(request)
+      : {};
+    const handled = await handleCustomerServiceRoutes(request, response, url, user, body);
+    if (!handled) sendError(response, 404, "Customer service route tidak ditemukan.");
+    return;
+  }
+  if (pathname === "/api/portal/customer-profile") {
+    const user = await requireUser(request, response);
+    if (!user) return;
+    const body = request.method === "PUT" ? await readJson(request) : {};
+    await handleServiceProfile(request, response, url, user, body);
+    return;
+  }
+  if (pathname === "/api/portal/customer-profile/by-email") {
+    const user = await requireUser(request, response);
+    if (!user) return;
+    await handleServiceProfile(request, response, url, user);
+    return;
+  }
+  if (
+    pathname === "/api/logistic/orders"
+    || pathname.startsWith("/api/logistic/orders/")
+  ) {
+    const isPublicTrack = /^\/api\/logistic\/orders\/track\/[^/]+$/.test(pathname);
+    const user = isPublicTrack
+      ? (getSession(request) ? await requireUser(request, response) : null)
+      : await requireUser(request, response);
+    if (!isPublicTrack && !user) return;
+    const body = ["POST", "PUT", "PATCH"].includes(request.method ?? "")
+      ? await readJson(request)
+      : {};
+    const handled = await handleLogisticCustomerRoutes(request, response, url, user, body);
+    if (!handled) sendError(response, 404, "Logistic route tidak ditemukan.");
     return;
   }
   if (request.method === "GET" && pathname === "/api/portal/onboarding/status") {
