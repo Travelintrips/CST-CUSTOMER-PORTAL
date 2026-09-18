@@ -58,6 +58,15 @@ import {
   handleVendorInvitationRoute,
   handleVendorPortalRoutes,
 } from "./vendor-portal.mjs";
+import {
+  handleAdminReply,
+  handleChat,
+  handleQuickOrder,
+  handleQuickProductOrder,
+  handleSession,
+  handleSessionByOrder,
+  handleUpload,
+} from "./ai-agent.mjs";
 
 const PORT = Number(process.env.PORT ?? process.env.CUSTOMER_PORTAL_API_PORT ?? 18444);
 const APP_ENV = process.env.APP_ENV ?? process.env.NODE_ENV ?? "development";
@@ -2512,6 +2521,57 @@ async function route(request, response) {
   }
   if (request.method === "GET" && pathname === "/api/portal/auth/capabilities") {
     await handleCapabilities(response);
+    return;
+  }
+  if (pathname.startsWith("/api/ai-agent/")) {
+    if (request.method === "POST" && pathname === "/api/ai-agent/chat") {
+      await handleChat(request, response, await readJson(request));
+      return;
+    }
+    const sessionMatch = pathname.match(/^\/api\/ai-agent\/session\/([^/]+)$/);
+    if (request.method === "GET" && sessionMatch) {
+      await handleSession(request, response, sessionMatch[1], url);
+      return;
+    }
+    const adminReplyMatch = pathname.match(/^\/api\/ai-agent\/session\/([^/]+)\/admin-reply$/);
+    if (request.method === "POST" && adminReplyMatch) {
+      const user = await requireAdmin(request, response);
+      if (user) await handleAdminReply(
+        request,
+        response,
+        adminReplyMatch[1],
+        await readJson(request),
+        user,
+      );
+      return;
+    }
+    const byOrderMatch = pathname.match(/^\/api\/ai-agent\/session\/by-order\/(\d+)$/);
+    if (request.method === "GET" && byOrderMatch) {
+      const user = await requireAdmin(request, response);
+      if (user) await handleSessionByOrder(response, byOrderMatch[1], user);
+      return;
+    }
+    if (request.method === "POST" && pathname === "/api/ai-agent/quick-order") {
+      const user = getSession(request) ? await requireUser(request, response) : null;
+      if (getSession(request) && !user) return;
+      await handleQuickOrder(request, response, await readJson(request), user);
+      return;
+    }
+    if (request.method === "POST" && pathname === "/api/ai-agent/quick-product-order") {
+      const user = getSession(request) ? await requireUser(request, response) : null;
+      if (getSession(request) && !user) return;
+      await handleQuickProductOrder(request, response, await readJson(request), user);
+      return;
+    }
+    if (request.method === "POST" && pathname === "/api/ai-agent/upload") {
+      const form = await readMultipartForm(request);
+      await handleUpload(response, form.file, form.docType);
+      return;
+    }
+    sendJson(response, 404, {
+      message: "AI agent route tidak ditemukan.",
+      service: "customer-portal-api",
+    });
     return;
   }
   if (pathname.startsWith("/api/portal/vendor-invite/")) {

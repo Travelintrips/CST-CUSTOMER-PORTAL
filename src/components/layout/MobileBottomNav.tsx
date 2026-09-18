@@ -3,7 +3,7 @@ import {
   Home, Store, Ship, MapPin, User, LayoutDashboard,
   Plus, LogOut, ClipboardList,
 } from "lucide-react";
-import { isAuthenticated, removeAuthToken, getPortalRole, logout as portalLogout } from "@/lib/auth";
+import { removeAuthToken, getPortalRole, logout as portalLogout, usePortalAuthStatus } from "@/lib/auth";
 import { useLanguage } from "@/i18n/LanguageContext";
 
 /**
@@ -12,7 +12,8 @@ import { useLanguage } from "@/i18n/LanguageContext";
  */
 export function MobileBottomNav() {
   const [location, setLocation] = useLocation();
-  const isAuth = isAuthenticated();
+  const authStatus = usePortalAuthStatus();
+  const isAuth = authStatus === "authenticated";
   const { t } = useLanguage();
 
   function handleLogout() {

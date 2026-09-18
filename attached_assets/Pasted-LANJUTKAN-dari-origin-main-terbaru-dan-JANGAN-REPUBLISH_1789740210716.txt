@@ -1,0 +1,11 @@
+LANJUTKAN dari origin/main terbaru dan JANGAN REPUBLISH. Owner ingin semua masalah diselesaikan dulu agar hanya sekali republish final. Jangan audit seluruh aplikasi.
+
+1. FIX AUTH/SESSION END-TO-END. Screenshot production menunjukkan /login masih menampilkan form “Selamat datang kembali”, sementara navbar sudah tampil sebagai user login (Dashboard, Shipment Saya, Profil, logout). Telusuri canonical portal_session, /api/portal/me, auth context/store, navbar state, login route guard, logout, hydration/cache, dan redirect. Harus ada satu source of truth. Jika session valid dan /api/portal/me authenticated, membuka /login harus otomatis redirect ke dashboard/customer landing dan TIDAK menampilkan form login. Jika session invalid/expired, navbar juga tidak boleh tampil sebagai authenticated. Pastikan Google patch commit 070c62a tetap dipertahankan.
+
+2. TEST SEMUA LOGIN sebelum dianggap selesai: Google existing password/email user linking, Email OTP, WhatsApp OTP 08↔62, Password, repeated login, refresh browser, buka /login saat sudah login, logout → /login, expired/invalid cookie, dan /api/portal/me. Jangan hanya test endpoint/capability; verifikasi UI + session state end-to-end.
+
+3. FIX CHATBOT. Reproduce chatbot dari UI Customer Portal, trace tombol/widget → frontend request → canonical local API → provider/config → response → UI. Cari exact error dan perbaiki sampai chatbot benar-benar dapat mengirim dan menerima pesan. Jangan gunakan legacy CST-SUPER-APP API fallback, dummy response, atau hardcoded success. Jika provider eksternal/config memang blocker, buktikan exact blocker tanpa menampilkan secret.
+
+4. Setelah fix: jalankan regression tests + auth E2E + chatbot E2E/smoke + typecheck + production build. Lakukan browser verification untuk login/session/navbar dan chatbot. Jangan ubah Central Finance, production data, DNS/domain, deployment atau secret secara spekulatif.
+
+Jangan berhenti hanya karena test unit PASS. Target akhir: authenticated UI konsisten, /login redirect ketika session valid, semua metode login bekerja pada flow nyata yang dapat diuji, chatbot bekerja, tidak ada regression. Setelah semuanya PASS, commit + push main, working tree clean, HEAD=origin/main, lalu laporkan satu status READY-FOR-FINAL-REPUBLISH. JANGAN deploy.

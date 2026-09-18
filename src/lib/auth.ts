@@ -16,6 +16,7 @@
  * Trusted device (phone OTP remember-me) is still stored in localStorage because it
  * is a separate low-privilege token used only as a login shortcut, not for API auth.
  */
+import { useSyncExternalStore } from "react";
 import { supabase } from "./supabase";
 
 export const TOKEN_KEY       = "portal_token";
@@ -26,6 +27,30 @@ export const REMEMBER_DAYS   = 30;
 let portalAuthBootstrapCache: PortalAuthBootstrap | null = null;
 let portalAuthBootstrapInFlight: Promise<PortalAuthBootstrap | null> | null = null;
 let portalAuthBootstrapRequestVersion = 0;
+type PortalAuthStatus = "unknown" | "authenticated" | "anonymous";
+let portalAuthStatus: PortalAuthStatus = "unknown";
+const portalAuthListeners = new Set<() => void>();
+
+function notifyPortalAuthStatus(status: PortalAuthStatus): void {
+  portalAuthStatus = status;
+  for (const listener of portalAuthListeners) listener();
+  if (typeof window !== "undefined") {
+    window.dispatchEvent(new CustomEvent("portal-auth-state-change", { detail: status }));
+  }
+}
+
+function subscribePortalAuthStatus(listener: () => void): () => void {
+  portalAuthListeners.add(listener);
+  return () => portalAuthListeners.delete(listener);
+}
+
+export function usePortalAuthStatus(): PortalAuthStatus {
+  return useSyncExternalStore(
+    subscribePortalAuthStatus,
+    () => portalAuthStatus,
+    () => "anonymous",
+  );
+}
 
 interface PortalProfile {
   customerId: number;
@@ -123,7 +148,7 @@ async function getSupabaseToken(): Promise<string | null> {
 // `portal_session` is HttpOnly (invisible to JS).
 // The server also sets `portal_session_hint=1` (non-httponly) as a JS-readable signal.
 
-function hasCookieSession(): boolean {
+export function hasCookieSession(): boolean {
   try {
     return document.cookie.split(";").some((c) => c.trim().startsWith("portal_session_hint=1"));
   } catch {
@@ -207,6 +232,7 @@ export function clearPortalAuthBootstrap(): void {
   portalAuthBootstrapCache = null;
   portalAuthBootstrapInFlight = null;
   portalAuthBootstrapRequestVersion += 1;
+  notifyPortalAuthStatus("anonymous");
 }
 
 export function getCachedPortalAuthBootstrap(): PortalAuthBootstrap | null {
@@ -215,6 +241,7 @@ export function getCachedPortalAuthBootstrap(): PortalAuthBootstrap | null {
 
 function storePortalAuthBootstrap(data: PortalAuthBootstrap): PortalAuthBootstrap {
   portalAuthBootstrapCache = data;
+  notifyPortalAuthStatus("authenticated");
   setPortalProfile({
     customerId: data.user.id,
     role: data.user.role,
@@ -234,13 +261,14 @@ export async function fetchPortalAuthBootstrap(
   options?: { force?: boolean },
 ): Promise<PortalAuthBootstrap | null> {
   const force = options?.force === true;
-  const requestVersion = portalAuthBootstrapRequestVersion;
   if (force) {
     // A bootstrap request started while /login was rendering can still be
     // in-flight when the user finishes logging in. Do not let that old 401
     // win over the newly-created session cookie.
     clearPortalAuthBootstrap();
-  } else {
+  }
+  const requestVersion = portalAuthBootstrapRequestVersion;
+  if (!force) {
     if (portalAuthBootstrapCache && !requestedReturnTo) return portalAuthBootstrapCache;
     if (portalAuthBootstrapInFlight) return portalAuthBootstrapInFlight;
   }
@@ -298,7 +326,7 @@ export function getAuthHeaders(): { Authorization?: string } {
  * not have the readable hint cookie.
  */
 export function isAuthenticated(): boolean {
-  return hasCookieSession() || portalAuthBootstrapCache !== null;
+  return portalAuthStatus === "authenticated";
 }
 
 export function getPortalProfile(): PortalProfile | null {

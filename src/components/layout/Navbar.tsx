@@ -15,7 +15,7 @@ import {
   Bell, CheckCheck,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
-import { isAuthenticated, removeAuthToken, isPortalAdmin, getPortalRole, logout as portalLogout } from "@/lib/auth";
+import { removeAuthToken, isPortalAdmin, getPortalRole, logout as portalLogout, usePortalAuthStatus } from "@/lib/auth";
 import { useGetPortalCompany } from "@shared/api-client-react";
 import { CART_KEY } from "@/lib/logistic-cart";
 import { LanguageSelector } from "@/components/layout/LanguageSelector";
@@ -53,7 +53,8 @@ interface CustomerNotification {
 }
 
 function CustomerNotificationBell() {
-  const isCustomer = isAuthenticated() && getPortalRole() === "customer";
+  const authStatus = usePortalAuthStatus();
+  const isCustomer = authStatus === "authenticated" && getPortalRole() === "customer";
   const [open, setOpen] = useState(false);
   const [items, setItems] = useState<CustomerNotification[]>([]);
   const [unreadCount, setUnreadCount] = useState(0);
@@ -489,7 +490,8 @@ export function Navbar() {
   const [logoUploading, setLogoUploading]           = useState(false);
 
   const [location, setLocation] = useLocation();
-  const isAuth  = isAuthenticated();
+  const authStatus = usePortalAuthStatus();
+  const isAuth  = authStatus === "authenticated";
   const isAdmin = isPortalAdmin();
   const { t } = useLanguage();
   const servicesGroups = getServicesGroups(t);

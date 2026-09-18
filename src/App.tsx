@@ -18,7 +18,9 @@ import { supabase } from "@/lib/supabase";
 import {
   fetchPortalAuthBootstrap,
   getCachedPortalAuthBootstrap,
+  hasCookieSession,
   isAuthenticated,
+  usePortalAuthStatus,
   type PortalAuthBootstrap,
 } from "@/lib/auth";
 
@@ -249,7 +251,7 @@ function OAuthRedirectHandler() {
     // `/login` is also a session recovery boundary. Do not require the
     // readable hint first: older valid HttpOnly sessions can predate the hint
     // cookie, and the canonical bootstrap endpoint is the authority.
-    if (path === "/login" || (path === "/" && isAuthenticated())) {
+    if (path === "/" && hasCookieSession()) {
       void resolvePostAuth();
     }
 
@@ -275,6 +277,13 @@ function OAuthRedirectHandler() {
       subscription.unsubscribe();
     };
   }, [setLocation]);
+  return null;
+}
+
+function PortalSessionResolver() {
+  useEffect(() => {
+    if (hasCookieSession()) void fetchPortalAuthBootstrap();
+  }, []);
   return null;
 }
 
@@ -344,6 +353,7 @@ function PageFallback() {
 
 function AppShell() {
   const [location, setLocation] = useLocation();
+  usePortalAuthStatus();
   const isLogisticPage = LOGISTIC_ROUTES.some(
     (p) => location === p || location.startsWith(p + "/") || location.startsWith("/logistic-admin")
   );
@@ -500,6 +510,7 @@ function App() {
         <LanguageProvider>
           <WouterRouter base={import.meta.env.BASE_URL.replace(/\/$/, "")}>
             <EditModeProvider>
+              <PortalSessionResolver />
               <OAuthRedirectHandler />
               <AppShell />
             </EditModeProvider>
