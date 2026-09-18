@@ -137,9 +137,10 @@ function loginResponse(row, token) {
   return { token, user: publicUser(row) };
 }
 
-async function findUserById(id) {
-  const result = await query(
-    `select id, name, email, phone, company, role, customer_type, account_status
+async function findUserById(id, dbQuery = query) {
+  const result = await dbQuery(
+    `select id, name, email, phone, company, role, customer_type, account_status,
+            oauth_provider, oauth_id
        from public.portal_customers
       where id = $1
       limit 1`,
@@ -148,9 +149,10 @@ async function findUserById(id) {
   return result.rows[0] ?? null;
 }
 
-async function findUserByEmail(email) {
-  const result = await query(
-    `select id, name, email, phone, company, role, customer_type, account_status
+async function findUserByEmail(email, dbQuery = query) {
+  const result = await dbQuery(
+    `select id, name, email, phone, company, role, customer_type, account_status,
+            oauth_provider, oauth_id
        from public.portal_customers
       where lower(email) = $1
       limit 1`,
@@ -196,25 +198,29 @@ async function createOrFindEmailUser(email) {
   }
 }
 
-async function linkIdentity(customerId, provider, subject) {
+export async function linkIdentity(customerId, provider, subject, dbQuery = query) {
+  const normalizedProvider = String(provider).trim().toLowerCase();
   const normalizedSubject = String(subject).trim();
-  const byProvider = await query(
+  if (!normalizedProvider || !normalizedSubject) {
+    throw errorWithStatus(400, "Provider dan subject login diperlukan.");
+  }
+  const byProvider = await dbQuery(
     `select id, customer_id, subject
        from public.portal_auth_identities
-      where provider = $1 and subject = $2
+      where lower(trim(provider)) = $1 and subject = $2
       limit 1`,
-    [provider, normalizedSubject],
+    [normalizedProvider, normalizedSubject],
   );
   if (byProvider.rows[0] && Number(byProvider.rows[0].customer_id) !== Number(customerId)) {
     throw errorWithStatus(409, "Identitas login sudah terhubung ke akun lain.");
   }
 
-  const byCustomer = await query(
+  const byCustomer = await dbQuery(
     `select id, customer_id, subject
        from public.portal_auth_identities
-      where customer_id = $1 and provider = $2
+      where customer_id = $1 and lower(trim(provider)) = $2
       limit 1`,
-    [customerId, provider],
+    [customerId, normalizedProvider],
   );
   if (byCustomer.rows[0] && byCustomer.rows[0].subject !== normalizedSubject) {
     throw errorWithStatus(409, "Akun sudah memiliki identitas provider yang berbeda.");
@@ -222,7 +228,7 @@ async function linkIdentity(customerId, provider, subject) {
 
   const existing = byProvider.rows[0] ?? byCustomer.rows[0];
   if (existing) {
-    await query(
+    await dbQuery(
       `update public.portal_auth_identities
           set last_used_at = now()
         where id = $1`,
@@ -231,15 +237,55 @@ async function linkIdentity(customerId, provider, subject) {
     return;
   }
   try {
-    await query(
+    await dbQuery(
       `insert into public.portal_auth_identities
         (customer_id, provider, subject, verified_at, last_used_at)
        values ($1, $2, $3, now(), now())`,
-      [customerId, provider, normalizedSubject],
+      [customerId, normalizedProvider, normalizedSubject],
     );
   } catch (error) {
     if (error?.code === "23505") {
-      throw errorWithStatus(409, "Identitas login sedang terhubung ke akun lain. Coba lagi.");
+      const concurrentByProvider = await dbQuery(
+        `select id, customer_id, subject
+           from public.portal_auth_identities
+          where lower(trim(provider)) = $1 and subject = $2
+          limit 1`,
+        [normalizedProvider, normalizedSubject],
+      );
+      if (
+        concurrentByProvider.rows[0]
+        && Number(concurrentByProvider.rows[0].customer_id) !== Number(customerId)
+      ) {
+        throw errorWithStatus(409, "Identitas login sudah terhubung ke akun lain.");
+      }
+      if (concurrentByProvider.rows[0]) {
+        await dbQuery(
+          `update public.portal_auth_identities
+              set last_used_at = now()
+            where id = $1`,
+          [concurrentByProvider.rows[0].id],
+        );
+        return;
+      }
+      const concurrentByCustomer = await dbQuery(
+        `select id, customer_id, subject
+           from public.portal_auth_identities
+          where customer_id = $1 and lower(trim(provider)) = $2
+          limit 1`,
+        [customerId, normalizedProvider],
+      );
+      if (concurrentByCustomer.rows[0]) {
+        if (concurrentByCustomer.rows[0].subject !== normalizedSubject) {
+          throw errorWithStatus(409, "Akun sudah memiliki identitas provider yang berbeda.");
+        }
+        await dbQuery(
+          `update public.portal_auth_identities
+              set last_used_at = now()
+            where id = $1`,
+          [concurrentByCustomer.rows[0].id],
+        );
+        return;
+      }
     }
     throw error;
   }
@@ -916,6 +962,7 @@ async function googleUser(request, code) {
       email: normalizedEmail(profile.email),
       name: String(profile.name || profile.email.split("@")[0]).trim().slice(0, 200),
       avatarUrl: typeof profile.picture === "string" ? profile.picture.slice(0, 1000) : null,
+      emailVerified: true,
     };
   }
 
@@ -951,29 +998,56 @@ async function googleUser(request, code) {
     email: normalizedEmail(tokenInfo.email),
     name: String(tokenInfo.name || tokenInfo.email.split("@")[0]).trim().slice(0, 200),
     avatarUrl: null,
+    emailVerified: true,
   };
 }
 
-async function googleResolveUser(profile) {
-  const identity = await query(
+function validateGoogleIdentityBinding(user, subject) {
+  const legacyProvider = String(user?.oauth_provider ?? "").trim().toLowerCase();
+  const legacySubject = String(user?.oauth_id ?? "").trim();
+  if (legacyProvider === "google" && legacySubject && legacySubject !== subject) {
+    throw errorWithStatus(409, "Akun sudah memiliki identitas Google yang berbeda.");
+  }
+}
+
+export async function googleResolveUser(profile, dbQuery = query) {
+  if (profile?.emailVerified !== true) {
+    throw oauthError(401, "Profil Google tidak tervalidasi.", "google_profile_invalid");
+  }
+  const identity = await dbQuery(
     `select customer_id
        from public.portal_auth_identities
-      where provider = 'google' and subject = $1
+      where lower(trim(provider)) = 'google' and subject = $1
       limit 1`,
     [profile.subject],
   );
-  let user = identity.rows[0] ? await findUserById(identity.rows[0].customer_id) : await findUserByEmail(profile.email);
+  let user = identity.rows[0]
+    ? await findUserById(identity.rows[0].customer_id, dbQuery)
+    : await findUserByEmail(profile.email, dbQuery);
+  let identityLinked = false;
+  if (identity.rows[0] && !user) {
+    throw errorWithStatus(409, "Identitas Google terhubung ke akun yang tidak ditemukan.");
+  }
   if (!user) {
-    const inserted = await query(
-      `insert into public.portal_customers
-        (name, email, password_hash, role, oauth_provider, oauth_id, avatar_url)
-       values ($1, $2, '', 'customer', 'google', $3, $4)
-       returning id, name, email, phone, company, role, customer_type, account_status`,
-      [profile.name, profile.email, profile.subject, profile.avatarUrl],
-    );
-    user = inserted.rows[0];
+    try {
+      const inserted = await dbQuery(
+        `insert into public.portal_customers
+          (name, email, password_hash, role, oauth_provider, oauth_id, avatar_url)
+         values ($1, $2, '', 'customer', 'google', $3, $4)
+         returning id, name, email, phone, company, role, customer_type, account_status,
+                   oauth_provider, oauth_id`,
+        [profile.name, profile.email, profile.subject, profile.avatarUrl],
+      );
+      user = inserted.rows[0];
+    } catch (error) {
+      if (error?.code !== "23505") throw error;
+      user = await findUserByEmail(profile.email, dbQuery);
+    }
   } else {
-    await query(
+    if (!identity.rows[0]) validateGoogleIdentityBinding(user, profile.subject);
+    await linkIdentity(user.id, "google", profile.subject, dbQuery);
+    identityLinked = true;
+    await dbQuery(
       `update public.portal_customers
           set avatar_url = coalesce($2, avatar_url),
               oauth_provider = case when oauth_provider is null then 'google' else oauth_provider end,
@@ -983,8 +1057,15 @@ async function googleResolveUser(profile) {
     );
   }
   if (!user) throw errorWithStatus(500, "Akun portal gagal disiapkan.");
-  await linkIdentity(user.id, "google", profile.subject);
-  return findUserById(user.id);
+  if (!identityLinked) {
+    await linkIdentity(user.id, "google", profile.subject, dbQuery);
+  }
+  return findUserById(user.id, dbQuery);
+}
+
+export async function resolveGoogleLogin(profile, dbQuery = query) {
+  const user = await googleResolveUser(profile, dbQuery);
+  return loginUser(user);
 }
 
 export async function handleGoogleCallback(request, response, url) {
