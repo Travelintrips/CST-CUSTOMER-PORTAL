@@ -31,6 +31,13 @@ function errorWithStatus(statusCode, message) {
   return error;
 }
 
+function oauthError(statusCode, message, code, details = {}) {
+  const error = errorWithStatus(statusCode, message);
+  error.oauthCode = code;
+  Object.assign(error, details);
+  return error;
+}
+
 function json(response, status, value, headers = {}) {
   response.writeHead(status, {
     "Content-Type": "application/json; charset=utf-8",
@@ -841,9 +848,13 @@ function redirect(response, location, cookies = []) {
   response.end();
 }
 
-function googleFailureTarget(returnTo = "/login") {
+function googleFailureTargetWithCode(returnTo = "/login", code = "google_callback_failed") {
   const target = safeReturnTo(returnTo);
-  return `${target}${target.includes("?") ? "&" : "?"}oauth_error=google_callback_failed`;
+  const params = new URLSearchParams({
+    oauth_error: "google_callback_failed",
+    oauth_code: code,
+  });
+  return `${target}${target.includes("?") ? "&" : "?"}${params.toString()}`;
 }
 
 export function handleGoogleStart(request, response, url) {
@@ -885,20 +896,61 @@ async function googleUser(request, code) {
     signal: AbortSignal.timeout(10_000),
   });
   const tokenBody = await tokenResponse.json().catch(() => ({}));
-  if (!tokenResponse.ok || !tokenBody.access_token) throw errorWithStatus(502, "Google token exchange gagal.");
+  if (!tokenResponse.ok || !tokenBody.access_token) {
+    throw oauthError(502, "Google token exchange gagal.", "google_token_exchange_failed", {
+      providerError: typeof tokenBody.error === "string" ? tokenBody.error : null,
+      providerErrorDescription: typeof tokenBody.error_description === "string"
+        ? tokenBody.error_description.slice(0, 200)
+        : null,
+    });
+  }
   const profileResponse = await fetch("https://openidconnect.googleapis.com/v1/userinfo", {
     headers: { Authorization: `Bearer ${tokenBody.access_token}` },
     signal: AbortSignal.timeout(10_000),
   });
   const profile = await profileResponse.json().catch(() => ({}));
-  if (!profileResponse.ok || !profile.sub || !profile.email || profile.email_verified !== true) {
-    throw errorWithStatus(401, "Profil Google tidak tervalidasi.");
+  const emailVerified = profile.email_verified === true || profile.email_verified === "true";
+  if (profileResponse.ok && profile.sub && profile.email && emailVerified) {
+    return {
+      subject: String(profile.sub),
+      email: normalizedEmail(profile.email),
+      name: String(profile.name || profile.email.split("@")[0]).trim().slice(0, 200),
+      avatarUrl: typeof profile.picture === "string" ? profile.picture.slice(0, 1000) : null,
+    };
   }
+
+  // Google normally returns userinfo. If that endpoint briefly fails,
+  // validate the OpenID ID token through Google's tokeninfo endpoint instead.
+  if (typeof tokenBody.id_token !== "string" || !tokenBody.id_token) {
+    throw oauthError(401, "Profil Google tidak tervalidasi.", "google_profile_invalid", {
+      providerStatus: profileResponse.status,
+    });
+  }
+  const tokenInfoResponse = await fetch(
+    `https://oauth2.googleapis.com/tokeninfo?id_token=${encodeURIComponent(tokenBody.id_token)}`,
+    { signal: AbortSignal.timeout(10_000) },
+  );
+  const tokenInfo = await tokenInfoResponse.json().catch(() => ({}));
+  const tokenAudience = String(tokenInfo.aud ?? "");
+  const tokenEmailVerified = tokenInfo.email_verified === true || tokenInfo.email_verified === "true";
+  if (
+    !tokenInfoResponse.ok
+      || tokenAudience !== process.env.GOOGLE_CLIENT_ID.trim()
+      || !tokenInfo.sub
+      || !tokenInfo.email
+      || !tokenEmailVerified
+  ) {
+    throw oauthError(401, "Profil Google tidak tervalidasi.", "google_profile_invalid", {
+      providerStatus: profileResponse.status,
+      tokenInfoStatus: tokenInfoResponse.status,
+    });
+  }
+
   return {
-    subject: String(profile.sub),
-    email: normalizedEmail(profile.email),
-    name: String(profile.name || profile.email.split("@")[0]).trim().slice(0, 200),
-    avatarUrl: typeof profile.picture === "string" ? profile.picture.slice(0, 1000) : null,
+    subject: String(tokenInfo.sub),
+    email: normalizedEmail(tokenInfo.email),
+    name: String(tokenInfo.name || tokenInfo.email.split("@")[0]).trim().slice(0, 200),
+    avatarUrl: null,
   };
 }
 
@@ -952,11 +1004,20 @@ export async function handleGoogleCallback(request, response, url) {
     }
     context = { returnTo: safeReturnTo(decoded.returnTo) };
   } catch {
-    redirect(response, googleFailureTarget("/login"), [clearOAuthStateCookie()]);
+    redirect(response, googleFailureTargetWithCode("/login", "google_state_invalid"), [clearOAuthStateCookie()]);
     return;
   }
   if (url.searchParams.get("error") || !url.searchParams.get("code")) {
-    redirect(response, googleFailureTarget(context.returnTo), [clearOAuthStateCookie()]);
+    redirect(
+      response,
+      googleFailureTargetWithCode(
+        context.returnTo,
+        url.searchParams.get("error") === "access_denied"
+          ? "google_access_denied"
+          : "google_authorization_failed",
+      ),
+      [clearOAuthStateCookie()],
+    );
     return;
   }
   try {
@@ -968,7 +1029,21 @@ export async function handleGoogleCallback(request, response, url) {
       clearOAuthStateCookie(),
     ]);
   } catch (error) {
-    console.error("[customer-portal-api] Google OAuth callback failed", error?.message ?? error);
-    redirect(response, googleFailureTarget(context.returnTo), [clearOAuthStateCookie()]);
+    console.error("[customer-portal-api] Google OAuth callback failed", {
+      code: error?.oauthCode ?? "google_account_or_database_failed",
+      message: error?.message ?? String(error),
+      providerError: error?.providerError ?? null,
+      providerErrorDescription: error?.providerErrorDescription ?? null,
+      providerStatus: error?.providerStatus ?? null,
+      tokenInfoStatus: error?.tokenInfoStatus ?? null,
+    });
+    redirect(
+      response,
+      googleFailureTargetWithCode(
+        context.returnTo,
+        error?.oauthCode ?? "google_account_or_database_failed",
+      ),
+      [clearOAuthStateCookie()],
+    );
   }
 }

@@ -68,6 +68,7 @@ export default function Login() {
   const returnTo = new URLSearchParams(window.location.search).get("returnTo");
   const { t } = useLanguage();
   const oauthError = new URLSearchParams(window.location.search).get("oauth_error");
+  const oauthCode = new URLSearchParams(window.location.search).get("oauth_code");
 
   const [mode, setMode] = useState<LoginMode>("otp");
   const [capabilities, setCapabilities] = useState<AuthCapabilities>({
@@ -96,9 +97,18 @@ export default function Login() {
 
   useEffect(() => {
     if (oauthError === "google_callback_failed") {
-      setErrorMsg(t("login.googleCallbackFailed", "Login Google gagal saat memproses callback. Silakan coba lagi."));
+      const message = oauthCode === "google_token_exchange_failed"
+        ? "Login Google gagal memverifikasi kredensial aplikasi. Silakan coba lagi atau gunakan login email."
+        : oauthCode === "google_profile_invalid"
+          ? "Profil Google tidak berhasil diverifikasi. Silakan coba lagi."
+          : oauthCode === "google_state_invalid"
+            ? "Sesi login Google kedaluwarsa. Silakan coba lagi."
+            : oauthCode === "google_access_denied"
+              ? "Login Google dibatalkan."
+              : t("login.googleCallbackFailed", "Login Google gagal saat memproses callback. Silakan coba lagi.");
+      setErrorMsg(message);
     }
-  }, [oauthError, t]);
+  }, [oauthCode, oauthError, t]);
 
   // `/login` is a session boundary: do not render a login form over an
   // already-authenticated navbar. Resolve the cookie session before showing
