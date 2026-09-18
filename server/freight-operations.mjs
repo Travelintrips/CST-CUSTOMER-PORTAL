@@ -313,7 +313,7 @@ async function createAirOrder(body, user) {
   return { ok: true, id: Number(row.id), order_number: row.order_number };
 }
 
-async function createOceanOrder(body, user) {
+async function createOceanOrder(body, user = null) {
   const originPort = text(body.origin_port);
   const destinationPort = text(body.destination_port);
   const commodity = text(body.commodity);
@@ -345,10 +345,10 @@ async function createOceanOrder(body, user) {
      returning id, order_number, status, tracking_status`,
     [
       orderNo,
-      user.id,
-      text(body.customer_name, user.name),
-      text(body.customer_phone, user.phone),
-      text(body.customer_email, user.email),
+      user?.id ?? null,
+      text(body.customer_name, user?.name),
+      text(body.customer_phone, user?.phone),
+      text(body.customer_email, user?.email),
       text(body.origin_city),
       originPort,
       text(body.destination_city),
@@ -449,16 +449,20 @@ export async function handleFreightRoute({
       await airTracking(decodeURIComponent(airTrack[1]), sendJson, response);
       return true;
     }
-    if (pathname === "/api/ocean-freight/calculate" && request.method === "POST") {
+    if (
+      (pathname === "/api/ocean-freight/calculate"
+        || pathname === "/api/ocean-freight-public/estimate")
+      && request.method === "POST"
+    ) {
       const options = await oceanEstimate(body);
       sendJson(response, 200, { options });
       return true;
     }
-    if (pathname === "/api/ocean-freight/inquiry" && request.method === "POST") {
-      if (!user) {
-        sendError(response, 401, "Authentication required.");
-        return true;
-      }
+    if (
+      (pathname === "/api/ocean-freight/inquiry"
+        || pathname === "/api/ocean-freight-public/inquiry")
+      && request.method === "POST"
+    ) {
       sendJson(response, 201, await createOceanOrder(body, user));
       return true;
     }

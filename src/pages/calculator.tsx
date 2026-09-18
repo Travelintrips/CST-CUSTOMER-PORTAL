@@ -27,12 +27,12 @@ interface ServiceRates {
   warehousing: { palletRatePerDay: number; cbmRatePerDay: number; sqmRatePerDay: number; inboundFee: number; outboundFeePerPallet: number; inventoryFeePerMonth: number; };
 }
 
-const DEFAULT_RATES: ServiceRates = {
-  airFreight: { ratePerKg: 90000, fuelSurchargePct: 25, securityFeePerKg: 2000, handlingFee: 350000, awbFee: 250000, documentationFee: 200000, insurancePct: 0.15, ppnPct: 11 },
-  seaFreight: { ratePerCbmLcl: 2500000, ratePerContainer: { "20GP": 12000000, "40GP": 18000000, "40HC": 20000000, "Reefer": 35000000, "Open Top": 25000000, "Flat Rack": 28000000 }, thc: 1500000, documentationFee: 750000, customsClearance: 1500000, truckingFee: 1200000, insurancePct: 0.10, ppnPct: 11 },
-  customs: { jasaPpjk: 2500000, customsHandling: 750000, documentProcessing: 500000, pibSubmission: 350000, courierFee: 150000, additionalServiceFee: 500000 },
-  domestic: { vehicleRates: { pickup: 500000, blindVan: 600000, CDE: 750000, CDD: 1000000, Fuso: 1500000, Wingbox: 2000000, "Trailer 20FT": 3500000, "Trailer 40FT": 5000000 }, distanceRatePerKm: 8500, loadingFee: 350000, unloadingFee: 350000, overnightFee: 500000, helperFeePerDay: 200000 },
-  warehousing: { palletRatePerDay: 15000, cbmRatePerDay: 25000, sqmRatePerDay: 8000, inboundFee: 25000, outboundFeePerPallet: 25000, inventoryFeePerMonth: 500000 },
+const EMPTY_RATES: ServiceRates = {
+  airFreight: { ratePerKg: 0, fuelSurchargePct: 0, securityFeePerKg: 0, handlingFee: 0, awbFee: 0, documentationFee: 0, insurancePct: 0, ppnPct: 0 },
+  seaFreight: { ratePerCbmLcl: 0, ratePerContainer: { "20GP": 0, "40GP": 0, "40HC": 0, "Reefer": 0, "Open Top": 0, "Flat Rack": 0 }, thc: 0, documentationFee: 0, customsClearance: 0, truckingFee: 0, insurancePct: 0, ppnPct: 0 },
+  customs: { jasaPpjk: 0, customsHandling: 0, documentProcessing: 0, pibSubmission: 0, courierFee: 0, additionalServiceFee: 0 },
+  domestic: { vehicleRates: { pickup: 0, blindVan: 0, CDE: 0, CDD: 0, Fuso: 0, Wingbox: 0, "Trailer 20FT": 0, "Trailer 40FT": 0 }, distanceRatePerKm: 0, loadingFee: 0, unloadingFee: 0, overnightFee: 0, helperFeePerDay: 0 },
+  warehousing: { palletRatePerDay: 0, cbmRatePerDay: 0, sqmRatePerDay: 0, inboundFee: 0, outboundFeePerPallet: 0, inventoryFeePerMonth: 0 },
 };
 
 interface CostItem { label: string; value: number; note?: string; isNegative?: boolean; }
@@ -165,8 +165,8 @@ export default function CalculatorPage() {
     queryFn: () => fetch("/api/portal/calculator-rates-v2").then(r => r.ok ? r.json() : null),
     staleTime: 5 * 60 * 1000,
   });
-  const rates = ratesData ?? DEFAULT_RATES;
-  const isUsingFallback = !ratesData;
+  const rates = ratesData ?? EMPTY_RATES;
+  const ratesUnavailable = !ratesData;
 
   useEffect(() => {
     const es = new EventSource("/api/ecommerce/events");
@@ -336,6 +336,10 @@ export default function CalculatorPage() {
   function handleCalculate(e: React.FormEvent) {
     e.preventDefault();
     setError(""); setResult(null);
+    if (ratesUnavailable) {
+      setError("Canonical rate calculator belum tersedia. Silakan coba lagi setelah rate card aktif.");
+      return;
+    }
     if (!service) { setError(t("calculator.validationNoService")); return; }
     if (!destination.trim()) { setError(t("calculator.validationNoDest")); return; }
 
@@ -499,13 +503,17 @@ export default function CalculatorPage() {
     if (!quoteWa.trim()) { setQuoteError(t("calculator.validationWa")); return; }
     setQuoteSubmitting(true);
     try {
-      const res = await fetch("/api/portal/request-quote", {
+      if (!quoteEmail.trim()) {
+        setQuoteError("Email wajib diisi untuk membuat service request.");
+        return;
+      }
+      const res = await fetch("/api/customer-service-requests/public", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          name: quoteName.trim(),
-          email: quoteEmail.trim() || undefined,
-          whatsapp: quoteWa.trim(),
+          customerName: quoteName.trim(),
+          customerEmail: quoteEmail.trim(),
+          customerPhone: quoteWa.trim(),
           service,
           origin,
           destination,
@@ -628,10 +636,10 @@ export default function CalculatorPage() {
 
       {/* ── Content ── */}
       <div className="max-w-6xl mx-auto px-4 md:px-8 py-7">
-        {isUsingFallback && (
+        {ratesUnavailable && (
           <div className="flex items-start gap-3 mb-5 px-4 py-3 rounded-xl border border-amber-200 bg-amber-50 text-amber-800 text-[13px]">
             <AlertTriangle className="h-4 w-4 shrink-0 text-amber-500 mt-0.5" />
-            <span>{t("calculator.fallbackWarning")}</span>
+            <span>Canonical rate calculator belum tersedia. Kalkulasi tidak dijalankan dengan angka fallback.</span>
           </div>
         )}
         <div className="grid lg:grid-cols-5 gap-6 items-start">

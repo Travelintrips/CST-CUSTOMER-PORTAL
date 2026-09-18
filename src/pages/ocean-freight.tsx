@@ -491,7 +491,7 @@ export default function OceanFreightPage() {
     setLoading(true);
     setNoRates(false);
     try {
-      const res = await fetch("/api/ocean-freight-public/estimate", {
+      const res = await fetch("/api/ocean-freight/calculate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -505,7 +505,8 @@ export default function OceanFreightPage() {
           selected_additional_services: additionalSvcs,
         }),
       });
-      const data = await res.json() as { options?: EstimateOption[] };
+      const data = await res.json() as { options?: EstimateOption[]; message?: string };
+      if (!res.ok) throw new Error(data.message ?? "Gagal menghitung estimasi");
       if (data.options && data.options.length > 0) {
         setEstimateResults(data.options);
         setStep("results");
@@ -525,7 +526,7 @@ export default function OceanFreightPage() {
     if (!custName.trim()) { toast({ title: "Error", description: t("oceanFreight.custNameRequired"), variant: "destructive" }); return; }
     setSubmitting(true);
     try {
-      const res = await fetch("/api/ocean-freight-public/inquiry", {
+      const res = await fetch("/api/ocean-freight/inquiry", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -549,8 +550,8 @@ export default function OceanFreightPage() {
           customer_notes: custNotes,
         }),
       });
-      const data = await res.json() as { order_number?: string; error?: string };
-      if (!res.ok) throw new Error(data.error ?? t("oceanFreight.submitFailed", "Gagal submit"));
+      const data = await res.json() as { order_number?: string; message?: string };
+      if (!res.ok) throw new Error(data.message ?? t("oceanFreight.submitFailed", "Gagal submit"));
       setSuccessOrder(data.order_number ?? "");
       setStep("success");
     } catch (e: unknown) {

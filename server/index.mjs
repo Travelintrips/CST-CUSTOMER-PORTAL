@@ -1423,6 +1423,60 @@ async function handleCustomerServiceRoutes(request, response, url, user, body = 
   return false;
 }
 
+async function handlePublicCalculatorQuote(request, response, body = {}) {
+  const customerName = String(body.customerName ?? body.name ?? "").trim();
+  const customerEmail = String(body.customerEmail ?? body.email ?? "").trim().toLowerCase();
+  const customerPhone = String(body.customerPhone ?? body.whatsapp ?? "").trim() || null;
+  const service = String(body.service ?? "").trim();
+  const tradeType = service === "customs"
+    ? "IMPORT"
+    : ["domestic", "warehousing"].includes(service)
+      ? "DOMESTIC"
+      : "EXPORT";
+  if (!customerName || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(customerEmail)) {
+    sendError(response, 400, "Nama dan email customer wajib diisi.");
+    return;
+  }
+  if (!service) {
+    sendError(response, 400, "Jenis layanan wajib diisi.");
+    return;
+  }
+
+  const notes = JSON.stringify({
+    source: "customer_portal_calculator",
+    service,
+    origin: body.origin ?? null,
+    destination: body.destination ?? null,
+    cargoDesc: body.cargoDesc ?? null,
+    cargoValue: body.cargoValue ?? null,
+    incoterms: body.incoterms ?? null,
+    insurance: Boolean(body.insurance),
+    result: body.result ?? null,
+    extraData: body.extraData ?? null,
+    notes: body.notes ?? null,
+  }).slice(0, 12000);
+  const result = await query(
+    `insert into public.customer_service_requests (
+       id, request_number, customer_id, customer_name, customer_email,
+       customer_phone, request_type, trade_type, order_mode,
+       pricing_mode, status, notes
+     ) values (
+       nextval('public.customer_service_requests_id_seq'),
+       concat('CSR-', to_char(clock_timestamp(), 'YYMMDD'), '-',
+              lpad(currval('public.customer_service_requests_id_seq')::text, 6, '0')),
+       null, $1, $2, $3, 'service', $4, 'ITEM_MANDIRI',
+       'PER_ITEM', 'draft', $5
+     )
+     returning id, request_number`,
+    [customerName, customerEmail, customerPhone, tradeType, notes],
+  );
+  sendJson(response, 201, {
+    ok: true,
+    id: Number(result.rows[0].id),
+    requestNumber: result.rows[0].request_number,
+  });
+}
+
 async function handleServiceProfile(request, response, url, user, body = {}) {
   const email = String(url.searchParams.get("email") ?? body.email ?? user.email).trim().toLowerCase();
   if (!email || (email !== user.email && user.role !== "admin")) {
@@ -2482,7 +2536,10 @@ async function route(request, response) {
     pathname === "/api/service-packages"
     || pathname.startsWith("/api/service-packages/")
     || pathname === "/api/customer-service-requests"
-    || pathname.startsWith("/api/customer-service-requests/")
+    || (
+      pathname.startsWith("/api/customer-service-requests/")
+      && pathname !== "/api/customer-service-requests/public"
+    )
   ) {
     const user = await requireUser(request, response);
     if (!user) return;
@@ -2512,16 +2569,35 @@ async function route(request, response) {
     return;
   }
   if (
+    pathname === "/api/customer-service-requests/public"
+    || pathname === "/api/portal/request-quote"
+  ) {
+    const body = request.method === "POST" ? await readJson(request) : {};
+    if (request.method !== "POST") {
+      sendError(response, 405, "Method tidak didukung.");
+      return;
+    }
+    await handlePublicCalculatorQuote(request, response, body);
+    return;
+  }
+  if (
     pathname.startsWith("/api/air-freight/")
     || pathname.startsWith("/api/ocean-freight/")
+    || pathname.startsWith("/api/ocean-freight-public/")
   ) {
+    const isPublicFreight =
+      pathname === "/api/air-freight/public/estimate"
+      || pathname === "/api/ocean-freight/calculate"
+      || pathname === "/api/ocean-freight/inquiry"
+      || pathname === "/api/ocean-freight-public/estimate"
+      || pathname === "/api/ocean-freight-public/inquiry";
     const isPublicTracking =
       /^\/api\/air-freight\/public\/track\/[^/]+$/.test(pathname)
       || /^\/api\/ocean-freight\/track\/[^/]+$/.test(pathname);
-    const user = isPublicTracking
+    const user = isPublicTracking || isPublicFreight
       ? null
       : await requireUser(request, response);
-    if (!isPublicTracking && !user) return;
+    if (!isPublicTracking && !isPublicFreight && !user) return;
     const body = ["POST", "PUT", "PATCH"].includes(request.method ?? "")
       ? await readJson(request)
       : {};

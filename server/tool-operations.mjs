@@ -48,68 +48,126 @@ function tariffResponse(row) {
   };
 }
 
-const DEFAULT_CALCULATOR_RATES = {
-  airFreight: {
-    ratePerKg: 90000,
-    fuelSurchargePct: 25,
-    securityFeePerKg: 2000,
-    handlingFee: 350000,
-    awbFee: 250000,
-    documentationFee: 200000,
-    insurancePct: 0.15,
-    ppnPct: 11,
-  },
-  seaFreight: {
-    ratePerCbmLcl: 2500000,
-    ratePerContainer: {
-      "20GP": 12000000,
-      "40GP": 18000000,
-      "40HC": 20000000,
-      Reefer: 35000000,
-      "Open Top": 25000000,
-      "Flat Rack": 28000000,
+function normalizedKey(value) {
+  return String(value ?? "").replace(/[^a-z0-9]/gi, "").toLowerCase();
+}
+
+function canonicalRateValue(rows, serviceType, aliases, selector) {
+  const serviceKey = normalizedKey(serviceType);
+  const aliasKeys = new Set(aliases.map(normalizedKey));
+  const row = rows.find((candidate) =>
+    normalizedKey(candidate.service_type) === serviceKey
+    && aliasKeys.has(normalizedKey(candidate.rate_key))
+    && (!selector || selector(candidate)),
+  );
+  return row?.value_amount == null ? null : numeric(row.value_amount, NaN);
+}
+
+function requireCanonicalRate(value, label) {
+  if (!Number.isFinite(value)) {
+    fail(503, `Canonical rate calculator belum dikonfigurasi: ${label}.`);
+  }
+  return value;
+}
+
+async function canonicalCalculatorRates() {
+  const result = await query(
+    `select rc.service_type, rs.rate_key, rs.value_amount,
+            rs.container_type, rs.vehicle_type
+       from public.logistics_rate_cards rc
+       join public.logistics_service_rates rs on rs.rate_card_id = rc.id
+      where rc.is_active = true
+        and (rc.valid_from is null or rc.valid_from <= now())
+        and (rc.valid_to is null or rc.valid_to >= now())
+      order by rc.updated_at desc nulls last, rc.id, rs.sort_order, rs.id`,
+  );
+  const rows = result.rows;
+  if (!rows.length) {
+    fail(503, "Canonical rate calculator belum dikonfigurasi.");
+  }
+
+  const value = (serviceType, aliases, label, selector) =>
+    requireCanonicalRate(
+      canonicalRateValue(rows, serviceType, aliases, selector),
+      label,
+    );
+  const containerValue = (containerType) => value(
+    "seaFreight",
+    ["ratePerContainer", "containerRate"],
+    `seaFreight.ratePerContainer.${containerType}`,
+    (row) => normalizedKey(row.container_type) === normalizedKey(containerType),
+  );
+  const vehicleValue = (vehicleType) => value(
+    "trucking",
+    ["vehicleRate", "ratePerVehicle"],
+    `trucking.vehicleRates.${vehicleType}`,
+    (row) => normalizedKey(row.vehicle_type) === normalizedKey(vehicleType),
+  );
+
+  return {
+    airFreight: {
+      ratePerKg: value("airFreight", ["ratePerKg"], "airFreight.ratePerKg"),
+      fuelSurchargePct: value("airFreight", ["fuelSurchargePct"], "airFreight.fuelSurchargePct"),
+      securityFeePerKg: value("airFreight", ["securityFeePerKg"], "airFreight.securityFeePerKg"),
+      handlingFee: value("airFreight", ["handlingFee"], "airFreight.handlingFee"),
+      awbFee: value("airFreight", ["awbFee"], "airFreight.awbFee"),
+      documentationFee: value("airFreight", ["documentationFee", "docFee"], "airFreight.documentationFee"),
+      insurancePct: value("airFreight", ["insurancePct", "insurancePercent"], "airFreight.insurancePct"),
+      ppnPct: value("airFreight", ["ppnPct", "ppnPercent"], "airFreight.ppnPct"),
     },
-    thc: 1500000,
-    documentationFee: 750000,
-    customsClearance: 1500000,
-    truckingFee: 1200000,
-    insurancePct: 0.1,
-    ppnPct: 11,
-  },
-  customs: {
-    jasaPpjk: 2500000,
-    customsHandling: 750000,
-    documentProcessing: 500000,
-    pibSubmission: 350000,
-    courierFee: 150000,
-    additionalServiceFee: 500000,
-  },
-  domestic: {
-    vehicleRates: {
-      pickup: 500000,
-      blindVan: 600000,
-      CDE: 750000,
-      CDD: 1000000,
-      Fuso: 1500000,
-      Wingbox: 2000000,
-      "Trailer 20FT": 3500000,
-      "Trailer 40FT": 5000000,
+    seaFreight: {
+      ratePerCbmLcl: value("seaFreight", ["ratePerCbmLcl", "lclRatePerCbm"], "seaFreight.ratePerCbmLcl"),
+      ratePerContainer: {
+        "20GP": containerValue("20GP"),
+        "40GP": containerValue("40GP"),
+        "40HC": containerValue("40HC"),
+        Reefer: containerValue("Reefer"),
+        "Open Top": containerValue("Open Top"),
+        "Flat Rack": containerValue("Flat Rack"),
+      },
+      thc: value("seaFreight", ["thc"], "seaFreight.thc"),
+      documentationFee: value("seaFreight", ["documentationFee", "docFee"], "seaFreight.documentationFee"),
+      customsClearance: value("seaFreight", ["customsClearance"], "seaFreight.customsClearance"),
+      truckingFee: value("seaFreight", ["truckingFee"], "seaFreight.truckingFee"),
+      insurancePct: value("seaFreight", ["insurancePct", "insurancePercent"], "seaFreight.insurancePct"),
+      ppnPct: value("seaFreight", ["ppnPct", "ppnPercent"], "seaFreight.ppnPct"),
     },
-    distanceRatePerKm: 8500,
-    loadingFee: 350000,
-    unloadingFee: 350000,
-    overnightFee: 500000,
-    helperFeePerDay: 200000,
-  },
-  warehousing: {
-    palletRatePerDay: 15000,
-    cbmRatePerDay: 25000,
-    sqmRatePerDay: 8000,
-    inboundFee: 25000,
-    outboundFeePerPallet: 25000,
-    inventoryFeePerMonth: 500000,
-  },
-};
+    customs: {
+      jasaPpjk: value("customs", ["jasaPpjk"], "customs.jasaPpjk"),
+      customsHandling: value("customs", ["customsHandling"], "customs.customsHandling"),
+      documentProcessing: value("customs", ["documentProcessing"], "customs.documentProcessing"),
+      pibSubmission: value("customs", ["pibSubmission"], "customs.pibSubmission"),
+      courierFee: value("customs", ["courierFee"], "customs.courierFee"),
+      additionalServiceFee: value("customs", ["additionalServiceFee"], "customs.additionalServiceFee"),
+    },
+    domestic: {
+      vehicleRates: {
+        pickup: vehicleValue("pickup"),
+        blindVan: vehicleValue("blindVan"),
+        CDE: vehicleValue("CDE"),
+        CDD: vehicleValue("CDD"),
+        Fuso: vehicleValue("Fuso"),
+        Wingbox: vehicleValue("Wingbox"),
+        "Trailer 20FT": vehicleValue("Trailer 20FT"),
+        "Trailer 40FT": vehicleValue("Trailer 40FT"),
+      },
+      distanceRatePerKm: value("trucking", ["distanceRatePerKm"], "trucking.distanceRatePerKm"),
+      loadingFee: value("trucking", ["loadingFee"], "trucking.loadingFee"),
+      unloadingFee: value("trucking", ["unloadingFee"], "trucking.unloadingFee"),
+      overnightFee: value("trucking", ["overnightFee"], "trucking.overnightFee"),
+      helperFeePerDay: value("trucking", ["helperFeePerDay"], "trucking.helperFeePerDay"),
+    },
+    warehousing: {
+      palletRatePerDay: value("warehousing", ["palletRatePerDay"], "warehousing.palletRatePerDay"),
+      cbmRatePerDay: value("warehousing", ["cbmRatePerDay"], "warehousing.cbmRatePerDay"),
+      sqmRatePerDay: value("warehousing", ["sqmRatePerDay"], "warehousing.sqmRatePerDay"),
+      inboundFee: value("warehousing", ["inboundFee"], "warehousing.inboundFee"),
+      outboundFeePerPallet: value("warehousing", ["outboundFeePerPallet"], "warehousing.outboundFeePerPallet"),
+      inventoryFeePerMonth: value("warehousing", ["inventoryFeePerMonth"], "warehousing.inventoryFeePerMonth"),
+    },
+    source: "logistics_rate_cards",
+  };
+}
 
 async function currencyRates() {
   const result = await query(
@@ -294,7 +352,7 @@ export async function handleToolRoute({ request, response, url, body, sendJson, 
       return true;
     }
     if (request.method === "GET" && url.pathname === "/api/portal/calculator-rates-v2") {
-      sendJson(response, 200, DEFAULT_CALCULATOR_RATES);
+      sendJson(response, 200, await canonicalCalculatorRates());
       return true;
     }
     return false;
