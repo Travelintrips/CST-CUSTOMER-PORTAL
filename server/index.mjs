@@ -38,6 +38,8 @@ import {
   handleCustomerInvoices,
   handleCustomerPayments,
 } from "./billing-operations.mjs";
+import { handleFreightRoute } from "./freight-operations.mjs";
+import { handleToolRoute } from "./tool-operations.mjs";
 import {
   handleCapabilities,
   handleEmailOtpRequest,
@@ -1609,6 +1611,29 @@ async function getOwnedLogisticOrder(user, orderNumber) {
   return result.rows[0] ?? null;
 }
 
+async function handleCompanyPickupAddress(request, response, user) {
+  if (request.method !== "GET") {
+    sendError(response, 405, "Method tidak didukung.");
+    return;
+  }
+  const result = await query(
+    `select company_name, company_address
+       from public.portal_customer_profiles
+      where customer_id = $1
+      order by updated_at desc nulls last, id desc
+      limit 1`,
+    [user.id],
+  );
+  const row = result.rows[0] ?? {};
+  sendJson(response, 200, {
+    companyName: row.company_name ?? user.company ?? "",
+    companyAddress: row.company_address ?? "",
+    originCity: "",
+    originAirport: "",
+    originPort: "",
+  });
+}
+
 async function handleLogisticCustomerRoutes(request, response, url, user, body = {}) {
   const orderNumberMatch = url.pathname.match(/^\/api\/logistic\/orders\/([^/]+)(?:\/(payment-proof|create-paylabs-link))?$/);
   const trackMatch = url.pathname.match(/^\/api\/logistic\/orders\/track\/([^/]+)$/);
@@ -2376,6 +2401,27 @@ async function route(request, response) {
     await handleCapabilities(response);
     return;
   }
+  if (
+    pathname === "/api/import-calculator/rates"
+    || pathname === "/api/import-calculator/calculate"
+    || pathname === "/api/import-calculator/multi-calculate"
+    || pathname === "/api/btki/search"
+    || pathname === "/api/portal/calculator-rates-v2"
+  ) {
+    const body = ["POST", "PUT", "PATCH"].includes(request.method ?? "")
+      ? await readJson(request)
+      : {};
+    const handled = await handleToolRoute({
+      request,
+      response,
+      url,
+      body,
+      sendJson,
+      sendError,
+    });
+    if (!handled) sendError(response, 404, "Tool route tidak ditemukan.");
+    return;
+  }
   if (request.method === "GET" && pathname === "/api/login/google") {
     handleGoogleStart(request, response, url);
     return;
@@ -2458,6 +2504,37 @@ async function route(request, response) {
     const user = await requireUser(request, response);
     if (!user) return;
     await handleServiceProfile(request, response, url, user);
+    return;
+  }
+  if (pathname === "/api/settings/company-pickup-address") {
+    const user = await requireUser(request, response);
+    if (user) await handleCompanyPickupAddress(request, response, user);
+    return;
+  }
+  if (
+    pathname.startsWith("/api/air-freight/")
+    || pathname.startsWith("/api/ocean-freight/")
+  ) {
+    const isPublicTracking =
+      /^\/api\/air-freight\/public\/track\/[^/]+$/.test(pathname)
+      || /^\/api\/ocean-freight\/track\/[^/]+$/.test(pathname);
+    const user = isPublicTracking
+      ? null
+      : await requireUser(request, response);
+    if (!isPublicTracking && !user) return;
+    const body = ["POST", "PUT", "PATCH"].includes(request.method ?? "")
+      ? await readJson(request)
+      : {};
+    const handled = await handleFreightRoute({
+      request,
+      response,
+      url,
+      user,
+      body,
+      sendJson,
+      sendError,
+    });
+    if (!handled) sendError(response, 404, "Freight route tidak ditemukan.");
     return;
   }
   if (

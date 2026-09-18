@@ -282,6 +282,43 @@ async function paymentsForInvoice(id, db = query) {
   return result.rows.map(mapPayment);
 }
 
+async function linesForInvoice(id, db = query) {
+  const result = await db(
+    `select id, document_id, product_id, name, description, quantity,
+            unit_price, subtotal, sales_uom_id, base_qty, meta,
+            product_scope, service_scope
+       from public.sales_document_lines
+      where document_id = $1
+      order by id`,
+    [id],
+  );
+  return result.rows.map((row) => ({
+    id: Number(row.id),
+    documentId: Number(row.document_id),
+    productId: row.product_id == null ? null : Number(row.product_id),
+    name: row.name,
+    description: row.description ?? null,
+    quantity: Number(row.quantity ?? 0),
+    unitPrice: Number(row.unit_price ?? 0),
+    subtotal: Number(row.subtotal ?? 0),
+    salesUomId: row.sales_uom_id == null ? null : Number(row.sales_uom_id),
+    baseQty: row.base_qty == null ? null : Number(row.base_qty),
+    meta: row.meta ?? null,
+    productScope: row.product_scope ?? null,
+    serviceScope: row.service_scope ?? null,
+  }));
+}
+
+function paymentProofForInvoice(row) {
+  return {
+    uploaded: Boolean(row.proof_url || row.payment_proof_token || row.proof_uploaded_at),
+    url: row.proof_url ?? null,
+    token: row.payment_proof_token ?? null,
+    uploadedAt: row.proof_uploaded_at ?? null,
+    remarks: row.proof_remarks ?? null,
+  };
+}
+
 export async function handleCustomerInvoices({ request, response, user, sendJson, sendError, invoiceId = null }) {
   try {
     if (request.method === "GET" && invoiceId == null) {
@@ -292,13 +329,9 @@ export async function handleCustomerInvoices({ request, response, user, sendJson
       const row = await loadInvoice(invoiceId, user);
       sendJson(response, 200, {
         ...mapInvoice(row),
-        paymentProof: {
-          uploaded: false,
-          uploadedAt: null,
-          remarks: null,
-        },
+        paymentProof: paymentProofForInvoice(row),
         payments: await paymentsForInvoice(row.id),
-        lines: [],
+        lines: await linesForInvoice(row.id),
       });
       return;
     }
@@ -402,7 +435,12 @@ export async function handleAdminInvoices({ request, response, user, sendJson, s
   }
   if (request.method === "GET" && invoiceId != null) {
     const row = await loadInvoice(invoiceId, user, { admin: true });
-    sendJson(response, 200, { ...mapInvoice(row), payments: await paymentsForInvoice(row.id), lines: [] });
+    sendJson(response, 200, {
+      ...mapInvoice(row),
+      paymentProof: paymentProofForInvoice(row),
+      payments: await paymentsForInvoice(row.id),
+      lines: await linesForInvoice(row.id),
+    });
     return;
   }
   if (request.method !== "POST" || invoiceId == null) {
