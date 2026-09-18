@@ -23,6 +23,8 @@ const CANONICAL_PORTAL_ASSET_ROOT = "/api/storage/public-objects/portal-assets/"
 const PORTAL_ASSET_PATH_PREFIX =
   "/api/storage/public-objects/portal-assets";
 const LEGACY_OBJECT_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const PUBLIC_ASSET_URL_PREFIX = "/storage/v1/object/public/public-assets/";
+const LEGACY_PORTAL_BUCKET_URL_PREFIX = "/storage/v1/object/public/portal-assets/";
 
 export interface ResolveImageUrlOptions {
   /**
@@ -52,7 +54,7 @@ export interface ResolveImageUrlOptions {
   if (!url) return null;
   const trimmed = url.trim();
   if (!trimmed) return null;
-  const isAbsoluteUrl = /^[a-z][a-z\d+.-]*:/i.test(url) || url.startsWith("//");
+  const isAbsoluteUrl = /^[a-z][a-z\d+.-]*:/i.test(trimmed) || trimmed.startsWith("//");
   if (
     !isAbsoluteUrl &&
     (trimmed.includes("\\") || trimmed.split("/").some((part) => part === "." || part === ".."))
@@ -100,6 +102,26 @@ export interface ResolveImageUrlOptions {
     return supabasePublicAssetUrl(`portal-assets/${objectKey}`) || null;
   }
 
+  // Some records contain the storage REST URL without the public-assets
+  // bucket segment. Keep the same canonical bucket for those records instead
+  // of requesting a guaranteed 400/404 URL.
+  if (isAbsoluteUrl) {
+    try {
+      const parsed = new URL(trimmed, window.location.origin);
+      if (parsed.pathname.startsWith(LEGACY_PORTAL_BUCKET_URL_PREFIX)) {
+        const objectKey = parsed.pathname.slice(LEGACY_PORTAL_BUCKET_URL_PREFIX.length);
+        if (!objectKey || objectKey.split("/").some((part) => part === "." || part === ".." || part.includes("\\"))) {
+          return null;
+        }
+        const canonical = supabasePublicAssetUrl(`portal-assets/${objectKey}`);
+        return canonical ? `${canonical}${parsed.search}${parsed.hash}` : null;
+      }
+      if (parsed.pathname.includes(PUBLIC_ASSET_URL_PREFIX)) return trimmed;
+    } catch {
+      return null;
+    }
+  }
+
   // Legacy CMS values and old hard-coded paths all resolve to the same
   // canonical Customer Portal storage root. Keep path segments intact; do
   // not normalize arbitrary URLs or allow a caller to escape the image root.
@@ -117,5 +139,14 @@ export interface ResolveImageUrlOptions {
       return supabasePublicAssetUrl(canonicalKey) || null;
     }
   }
+
+  // Catalog uploads may be stored as an object key rather than a browser
+  // URL. Treat only the known public portal-assets namespace as canonical.
+  if (trimmed.startsWith("portal-assets/")) {
+    const objectKey = trimmed.slice("portal-assets/".length);
+    if (!objectKey || objectKey.split("/").some((part) => part === "." || part === ".." || part.includes("\\"))) return null;
+    return supabasePublicAssetUrl(trimmed) || null;
+  }
+
   return trimmed;
 }

@@ -175,9 +175,11 @@ function MediaGallery({ media, isProduct }: { media: ProductMediaItem[]; isProdu
   function renderMain(m: ProductMediaItem | null) {
     if (!m) return <ImagePlaceholder isProduct={isProduct} />;
     if (m.mediaType === "image" && m.fileUrl) {
+      const imageSrc = resolveImageUrl(m.fileUrl);
+      if (!imageSrc) return <ImagePlaceholder isProduct={isProduct} />;
       return (
         <img
-          src={resolveImageUrl(m.fileUrl) ?? m.fileUrl}
+          src={imageSrc}
           alt={m.title ?? "foto produk"}
           className="w-full h-full object-contain bg-slate-50"
           onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }}
@@ -214,7 +216,10 @@ function MediaGallery({ media, isProduct }: { media: ProductMediaItem[]; isProdu
 
   function renderThumb(m: ProductMediaItem) {
     if (m.mediaType === "image" && m.fileUrl) {
-      return <img src={resolveImageUrl(m.fileUrl) ?? m.fileUrl} alt="" className="w-full h-full object-cover" loading="lazy" />;
+      const imageSrc = resolveImageUrl(m.fileUrl);
+      return imageSrc
+        ? <img src={imageSrc} alt="" className="w-full h-full object-cover" loading="lazy" />
+        : <div className="w-full h-full bg-slate-200" />;
     }
     if (m.mediaType === "video" && m.fileUrl) {
       return (
@@ -1260,7 +1265,7 @@ function VendorProfileCard({ vendorId, itemLocation }: { vendorId: number; itemL
   const { vendor, performance: perf, productCount, serviceCount } = data;
   const memberYear = vendor.createdAt ? new Date(vendor.createdAt).getFullYear() : null;
   const vendorLogoUrl = vendor.logo && /^(?:https?:|\/)/i.test(vendor.logo)
-    ? (resolveImageUrl(vendor.logo) ?? vendor.logo)
+    ? resolveImageUrl(vendor.logo)
     : null;
 
   const responseText = (() => {
@@ -1375,13 +1380,20 @@ function ItemMiniCard({ item, onNavigate }: { item: CatalogItemSummary; onNaviga
       {/* Photo */}
       <div className="relative w-full h-[110px] overflow-hidden bg-slate-100">
         {item.primaryImageUrl ? (
-          <img
-            src={resolveImageUrl(item.primaryImageUrl) ?? item.primaryImageUrl}
-            alt={item.name}
-            className="w-full h-full object-cover"
-            loading="lazy"
-            onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = "none"; }}
-          />
+          (() => {
+            const imageSrc = resolveImageUrl(item.primaryImageUrl);
+            return imageSrc ? (
+              <img
+                src={imageSrc}
+                alt={item.name}
+                className="w-full h-full object-cover"
+                loading="lazy"
+                onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = "none"; }}
+              />
+            ) : (
+              <ImagePlaceholder isProduct={isProduct} />
+            );
+          })()
         ) : (
           <div className={`w-full h-full flex items-center justify-center ${isProduct ? "bg-gradient-to-br from-emerald-50 to-teal-50" : "bg-gradient-to-br from-sky-50 to-blue-50"}`}>
             {isProduct ? <Package className="h-8 w-8 text-emerald-200" /> : <Truck className="h-8 w-8 text-sky-200" />}

@@ -205,7 +205,7 @@ function generateComparisonReport(
     const catKey = item.categoryKey ?? item.serviceType ?? "";
     const cat = CATEGORY_PLACEHOLDER[catKey];
     const primaryImageUrl = item.primaryImageUrl
-      ? (resolveImageUrl(item.primaryImageUrl) ?? item.primaryImageUrl)
+      ? resolveImageUrl(item.primaryImageUrl)
       : null;
     const thumb = primaryImageUrl
       ? `<img src="${primaryImageUrl}" style="width:60px;height:60px;object-fit:cover;border-radius:8px;border:1px solid #e2e8f0" />`
@@ -523,8 +523,8 @@ export function CompareModal({
                   return (
                     <th key={item.id} className="border-b border-r border-slate-200 px-4 py-3 text-left min-w-[200px] bg-white">
                       <div className="flex items-start gap-3">
-                        {item.primaryImageUrl ? (
-                          <img src={resolveImageUrl(item.primaryImageUrl) ?? item.primaryImageUrl} alt={item.name} loading="lazy" className="w-12 h-12 rounded-xl object-cover shrink-0 border border-slate-200" />
+                        {item.primaryImageUrl && resolveImageUrl(item.primaryImageUrl) ? (
+                            <img src={resolveImageUrl(item.primaryImageUrl)!} alt={item.name} loading="lazy" className="w-12 h-12 rounded-xl object-cover shrink-0 border border-slate-200" />
                         ) : (
                           <div
                             className="w-12 h-12 rounded-xl flex items-center justify-center text-xl shrink-0"

@@ -290,9 +290,7 @@ function ItemCard({
 }) {
   const { t } = useLanguage();
   const isProduct = item.templateKind === "product";
-  const imageSrc = item.primaryImageUrl
-    ? (resolveImageUrl(item.primaryImageUrl) ?? item.primaryImageUrl)
-    : null;
+  const imageSrc = resolveImageUrl(item.primaryImageUrl);
   const hasImage = !!imageSrc;
   const daysUntilExpiry = useMemo(() => {
     if (!item.validityDate) return null;
@@ -956,7 +954,7 @@ function FeaturedProductsShowcase({
     return {
       id: featured.id,
       label: featured.name,
-      imageUrl: rawImage ? (resolveImageUrl(rawImage) ?? rawImage) : null,
+      imageUrl: resolveImageUrl(rawImage),
       vendorName: featured.vendorName,
       verified: Boolean(featured.vendorId),
     };
@@ -1737,23 +1735,25 @@ export default function MarketplacePage() {
                           const sub = t(`marketplace.catSub_${catKey}`, catKey);
                           const label = t(`marketplace.cat_${catKey}`);
                            const rawImg = customCategoryImgs[catKey] ?? img;
-                           const effectiveImg = resolveImageUrl(rawImg) ?? rawImg;
+                            const effectiveImg = resolveImageUrl(rawImg);
                           const isUploading = uploadingCat === label;
                           return (
                             <div
                               key={label}
                               className="group relative rounded-2xl overflow-hidden cursor-default h-[140px]"
                             >
-                              <img
-                                src={effectiveImg}
-                                alt={label}
-                                className="absolute inset-0 w-full h-full object-cover transition-transform duration-500 group-hover:scale-110"
-                                onError={(e) => {
-                                  const el = e.currentTarget;
-                                  el.style.display = "none";
-                                  if (el.parentElement) el.parentElement.style.background = "linear-gradient(145deg,#1a2a3a,#2a4060)";
-                                }}
-                              />
+                              {effectiveImg && (
+                                <img
+                                  src={effectiveImg}
+                                  alt={label}
+                                  className="absolute inset-0 w-full h-full object-cover transition-transform duration-500 group-hover:scale-110"
+                                  onError={(e) => {
+                                    const el = e.currentTarget;
+                                    el.style.display = "none";
+                                    if (el.parentElement) el.parentElement.style.background = "linear-gradient(145deg,#1a2a3a,#2a4060)";
+                                  }}
+                                />
+                              )}
                               <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/30 to-black/10" />
                               <div className="absolute bottom-0 left-0 right-0 p-3">
                                 <p className="text-white font-bold text-[13px] leading-tight drop-shadow">{label}</p>

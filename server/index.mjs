@@ -72,6 +72,9 @@ const UPSTREAM_API_URL = IS_PRODUCTION
       ""
     ).replace(/\/+$/, "");
 const MUTATION_METHODS = new Set(["POST", "PUT", "PATCH", "DELETE"]);
+const DEFAULT_PUBLIC_ASSET_ORIGIN = "https://xssrfshdrtdfupgqwfdw.supabase.co";
+const PUBLIC_ASSET_URL_PREFIX = "/storage/v1/object/public/public-assets/";
+const LEGACY_PORTAL_BUCKET_URL_PREFIX = "/storage/v1/object/public/portal-assets/";
 
 const HOP_BY_HOP_HEADERS = new Set([
   "connection",
@@ -106,6 +109,51 @@ function sendEmpty(response, status, headers = {}) {
 
 function sendError(response, status, message) {
   sendJson(response, status, { message });
+}
+
+function publicAssetOrigin() {
+  const configured = (
+    IS_PRODUCTION
+      ? process.env.SUPABASE_URL ?? process.env.VITE_SUPABASE_URL
+      : process.env.SUPABASE_URL_DEV
+        ?? process.env.VITE_SUPABASE_URL_DEV
+        ?? process.env.SUPABASE_URL
+        ?? process.env.VITE_SUPABASE_URL
+  )?.trim();
+  return (configured || DEFAULT_PUBLIC_ASSET_ORIGIN).replace(/\/+$/, "");
+}
+
+function canonicalPublicAssetUrl(value) {
+  if (typeof value !== "string" || !value.trim()) return null;
+  const trimmed = value.trim();
+
+  if (trimmed.startsWith("/api/storage/public-objects/portal-assets/")) {
+    const objectKey = trimmed.slice("/api/storage/public-objects/".length);
+    if (!objectKey || objectKey.split(/[?#]/, 1)[0].split("/").some((part) => part === "." || part === ".." || part.includes("\\"))) {
+      return null;
+    }
+    return `${publicAssetOrigin()}/storage/v1/object/public/public-assets/${objectKey}`;
+  }
+
+  if (trimmed.startsWith("portal-assets/")) {
+    const objectKey = trimmed.split(/[?#]/, 1)[0];
+    if (objectKey.split("/").some((part) => part === "." || part === ".." || part.includes("\\"))) return null;
+    return `${publicAssetOrigin()}/storage/v1/object/public/public-assets/${trimmed}`;
+  }
+
+  try {
+    const parsed = new URL(trimmed);
+    if (parsed.pathname.startsWith(LEGACY_PORTAL_BUCKET_URL_PREFIX)) {
+      const objectKey = parsed.pathname.slice(LEGACY_PORTAL_BUCKET_URL_PREFIX.length);
+      if (!objectKey || objectKey.split("/").some((part) => part === "." || part === ".." || part.includes("\\"))) return null;
+      return `${publicAssetOrigin()}/storage/v1/object/public/public-assets/portal-assets/${objectKey}${parsed.search}${parsed.hash}`;
+    }
+    if (parsed.pathname.includes(PUBLIC_ASSET_URL_PREFIX)) return trimmed;
+  } catch {
+    return trimmed.startsWith("/") ? null : trimmed;
+  }
+
+  return trimmed;
 }
 
 function forwardedValue(request, name) {
@@ -2216,14 +2264,18 @@ function mediaFromRow(row) {
   const raw = parseJson(row.media_assets, []);
   const assets = Array.isArray(raw) ? raw : [];
   const media = assets
-    .filter((asset) => asset && typeof asset.url === "string" && asset.url.trim())
-    .map((asset, index) => ({
+    .map((asset) => ({
+      asset,
+      url: asset && typeof asset.url === "string" ? canonicalPublicAssetUrl(asset.url) : null,
+    }))
+    .filter(({ asset, url }) => asset && url)
+    .map(({ asset, url }, index) => ({
       id: index + 1,
       vendorCatalogItemId: row.id,
       vendorId: row.vendor_id ?? null,
       mediaType: asset.type === "video" ? "video" : "image",
-      fileUrl: asset.url,
-      thumbnailUrl: asset.thumbnailUrl ?? null,
+      fileUrl: url,
+      thumbnailUrl: canonicalPublicAssetUrl(asset.thumbnailUrl),
       externalUrl: asset.externalUrl ?? null,
       title: asset.title ?? null,
       description: asset.description ?? null,
