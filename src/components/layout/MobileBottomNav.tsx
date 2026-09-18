@@ -17,7 +17,7 @@ export function MobileBottomNav() {
   const { t } = useLanguage();
 
   function handleLogout() {
-    portalLogout().finally(() => { removeAuthToken(); setLocation("/"); });
+    portalLogout().finally(() => { removeAuthToken(); setLocation("/login"); });
   }
 
   const guestItems = [

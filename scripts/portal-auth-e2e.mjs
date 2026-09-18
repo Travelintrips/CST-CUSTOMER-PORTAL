@@ -79,7 +79,8 @@ class CookieJar {
       const name = pair.slice(0, separator).trim();
       const value = pair.slice(separator + 1).trim();
       if (name === "portal_session") {
-        this.#cookies.set(name, value);
+        if (value) this.#cookies.set(name, value);
+        else this.#cookies.delete(name);
       }
     }
   }
@@ -182,6 +183,8 @@ async function main() {
 
   const customer = new PortalClient(baseUrl, "customer");
   const profile = await customer.devLogin("customer");
+  const repeatedProfile = await customer.devLogin("customer");
+  assert(repeatedProfile.id === profile.id, "repeated login returned a different customer account.");
   const bootstrap = await customer.request("/api/portal/auth/bootstrap");
   assert(bootstrap?.authenticated === true, "bootstrap did not authenticate the customer.");
   assert(bootstrap?.user?.id === profile.id, "bootstrap user does not match the login profile.");
@@ -189,6 +192,11 @@ async function main() {
   const authMe = await customer.request("/api/portal/auth/me");
   assert(authMe?.id === profile.id, "auth/me did not reuse portal_session.");
   assert(authMe?.email === profile.email, "auth/me returned the wrong customer.");
+  const invalidCookie = new PortalClient(baseUrl, "invalid-cookie");
+  await invalidCookie.request("/api/portal/auth/me", {
+    headers: { Cookie: "portal_session=invalid-or-expired" },
+    expected: [401],
+  });
 
   const organization = await customer.request("/api/portal/organization");
   assert(organization && typeof organization === "object", "organization response was invalid.");
@@ -254,10 +262,13 @@ async function main() {
   await otherAccount.request(`/api/mkt/portal/rfqs/${rfq.rfqId}`, {
     expected: [403, 404],
   });
+  await customer.request("/api/portal/auth/logout", { method: "POST", expected: [204] });
+  await customer.request("/api/portal/auth/me", { expected: [401] });
 
   console.log(
     `[portal-e2e] passed: development preview auth, organization, orders, RFQ detail, ` +
-    `idempotent notification mutation, and cross-account RFQ isolation.`,
+    `repeated login, invalid-cookie rejection, logout, idempotent notification mutation, ` +
+    `and cross-account RFQ isolation.`,
   );
 }
 
