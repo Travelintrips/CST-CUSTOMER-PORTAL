@@ -154,7 +154,15 @@ async function findUserByPhone(phone) {
   const result = await query(
     `select id, name, email, phone, company, role, customer_type, account_status
        from public.portal_customers
-      where regexp_replace(coalesce(phone, ''), '[^0-9]', '', 'g') = $1
+      where (
+        case
+          when regexp_replace(coalesce(phone, ''), '[^0-9]', '', 'g') like '0%'
+            then '62' || substr(regexp_replace(coalesce(phone, ''), '[^0-9]', '', 'g'), 2)
+          when regexp_replace(coalesce(phone, ''), '[^0-9]', '', 'g') like '8%'
+            then '62' || regexp_replace(coalesce(phone, ''), '[^0-9]', '', 'g')
+          else regexp_replace(coalesce(phone, ''), '[^0-9]', '', 'g')
+        end
+      ) = $1
       order by id
       limit 2`,
     [phone],
@@ -623,7 +631,15 @@ export async function handleWaTrustedLogin(request, response) {
     `select id, phone, expires_at
        from public.trusted_devices
       where (device_token_hash = $1 or device_token = $1)
-        and regexp_replace(phone, '[^0-9]', '', 'g') = $2
+        and (
+          case
+            when regexp_replace(coalesce(phone, ''), '[^0-9]', '', 'g') like '0%'
+              then '62' || substr(regexp_replace(coalesce(phone, ''), '[^0-9]', '', 'g'), 2)
+            when regexp_replace(coalesce(phone, ''), '[^0-9]', '', 'g') like '8%'
+              then '62' || regexp_replace(coalesce(phone, ''), '[^0-9]', '', 'g')
+            else regexp_replace(coalesce(phone, ''), '[^0-9]', '', 'g')
+          end
+        ) = $2
       limit 1`,
     [tokenHash, phone],
   );

@@ -170,6 +170,7 @@ export default function Login() {
     fetch(`${BASE}/api/portal/auth/wa-trusted-login`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
+      credentials: "include",
       body: JSON.stringify({ phone: stored.phone, deviceToken: stored.deviceToken }),
     })
       .then(async (res) => {
@@ -296,6 +297,7 @@ export default function Login() {
       const res = await fetch(`${BASE}/api/portal/auth/wa-otp/send`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
+        credentials: "include",
         body: JSON.stringify({ phone: waPhone.trim() }),
       });
       const json = await res.json() as { message?: string; phone?: string; _dev_code?: string };
@@ -317,6 +319,7 @@ export default function Login() {
       const res = await fetch(`${BASE}/api/portal/auth/wa-otp/verify`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
+        credentials: "include",
         body: JSON.stringify({ phone: waPhone.trim(), code: waCode.trim() }),
       });
       const json = await res.json() as { verifyToken?: string; message?: string };
@@ -329,6 +332,7 @@ export default function Login() {
       const loginRes = await fetch(`${BASE}/api/portal/auth/wa-login`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
+        credentials: "include",
         body: JSON.stringify({
           verifyToken: json.verifyToken,
           rememberDays: waRemember ? REMEMBER_DAYS : null,
