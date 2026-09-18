@@ -3191,6 +3191,7 @@ async function route(request, response) {
     if (await serveStatic(request, response, pathname)) return;
   }
 
+  if (response.writableEnded) return;
   sendJson(response, 404, {
     message: "Customer Portal API route not found.",
     service: "customer-portal-api",

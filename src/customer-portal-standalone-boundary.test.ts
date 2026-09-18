@@ -1,8 +1,9 @@
 import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
 const serverSource = readFileSync(
-  new URL("../server/index.mjs", import.meta.url),
+  join(process.cwd(), "server/index.mjs"),
   "utf8",
 );
 
