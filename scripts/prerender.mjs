@@ -49,7 +49,10 @@ function replaceMarker(html, markerName, replacement) {
 // ── SEO Config (mirrors src/config/seo.ts exactly) ──────────────────────────
 
 const BASE_URL    = 'https://cstlogistic.co.id';
-const SUPABASE_ORIGIN = String(process.env.VITE_SUPABASE_URL ?? '').replace(/\/+$/, '');
+const DEFAULT_PUBLIC_ASSET_ORIGIN = 'https://xssrfshdrtdfupgqwfdw.supabase.co';
+const SUPABASE_ORIGIN = String(
+  process.env.VITE_SUPABASE_URL ?? DEFAULT_PUBLIC_ASSET_ORIGIN,
+).replace(/\/+$/, '');
 const OG_IMAGE    = SUPABASE_ORIGIN
   ? `${SUPABASE_ORIGIN}/storage/v1/object/public/public-assets/portal-assets/static/customer-portal/images/og-cover.webp`
   : '';

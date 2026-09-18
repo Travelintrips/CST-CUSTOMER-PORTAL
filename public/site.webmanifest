@@ -12,19 +12,19 @@
   "categories": ["business", "productivity", "shopping"],
   "icons": [
     {
-      "src": "/api/storage/public-objects/portal-assets/static/customer-portal/images/logo.png?v=20260813",
+      "src": "https://xssrfshdrtdfupgqwfdw.supabase.co/storage/v1/object/public/public-assets/portal-assets/static/customer-portal/images/logo.png?v=20260813",
       "sizes": "500x500",
       "type": "image/png",
       "purpose": "any maskable"
     },
     {
-      "src": "/api/storage/public-objects/portal-assets/static/customer-portal/images/logo-baru.png",
+      "src": "https://xssrfshdrtdfupgqwfdw.supabase.co/storage/v1/object/public/public-assets/portal-assets/static/customer-portal/images/logo-baru.png",
       "sizes": "192x192",
       "type": "image/png",
       "purpose": "any"
     },
     {
-      "src": "/api/storage/public-objects/portal-assets/static/customer-portal/images/logo-baru.png",
+      "src": "https://xssrfshdrtdfupgqwfdw.supabase.co/storage/v1/object/public/public-assets/portal-assets/static/customer-portal/images/logo-baru.png",
       "sizes": "512x512",
       "type": "image/png",
       "purpose": "any maskable"
@@ -32,7 +32,7 @@
   ],
   "screenshots": [
     {
-      "src": "/api/storage/public-objects/portal-assets/static/customer-portal/images/og-cover.webp",
+      "src": "https://xssrfshdrtdfupgqwfdw.supabase.co/storage/v1/object/public/public-assets/portal-assets/static/customer-portal/images/og-cover.webp",
       "sizes": "1200x630",
       "type": "image/webp",
       "form_factor": "wide",

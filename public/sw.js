@@ -11,8 +11,8 @@ self.addEventListener("push", (event) => {
   const title = payload.title ?? "B2B Marketplace and Logistic";
   const options = {
     body: payload.body ?? "",
-    icon: "/api/storage/public-objects/portal-assets/static/customer-portal/images/logo-baru.png",
-    badge: "/api/storage/public-objects/portal-assets/static/customer-portal/images/logo-baru.png",
+    icon: "https://xssrfshdrtdfupgqwfdw.supabase.co/storage/v1/object/public/public-assets/portal-assets/static/customer-portal/images/logo-baru.png",
+    badge: "https://xssrfshdrtdfupgqwfdw.supabase.co/storage/v1/object/public/public-assets/portal-assets/static/customer-portal/images/logo-baru.png",
     tag: payload.tag ?? "cst-order-update",
     renotify: true,
     data: { url: payload.url ?? "/" },
