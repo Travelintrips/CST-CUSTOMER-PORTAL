@@ -467,6 +467,15 @@ async function approveInvitation(id, adminId) {
       error.statusCode = 404;
       throw error;
     }
+    await client.query(
+      `update public.vendor_profiles
+          set verification_status = 'verified',
+              approved_at = coalesce(approved_at, now()),
+              approval_date = coalesce(approval_date, now()),
+              updated_at = now()
+        where supplier_id = $1`,
+      [invitation.supplier_id],
+    );
     const payload = notificationPayload(invitation.id, invitation.supplier_id);
     const account = await client.query(
       `select c.id
@@ -557,6 +566,10 @@ export async function handleVendorInvitationRoute({ request, response, url, body
     }
     if (row.status === "rejected") {
       sendJson(response, 200, { alreadyProcessed: true, status: "rejected" });
+      return true;
+    }
+    if (row.status === "accepted") {
+      sendJson(response, 200, { alreadyProcessed: true, status: "accepted" });
       return true;
     }
     assertOpenInvitation(row);
@@ -657,9 +670,9 @@ export async function handleAdminVendorRoutes({ request, response, url, body, us
   const supplierMatch = url.pathname.match(/^\/api\/portal\/admin\/suppliers\/(\d+)\/marketplace$/);
   if (supplierMatch && request.method === "PATCH") {
     const supplierId = Number(supplierMatch[1]);
-    const marketplaceStatus = text(body?.marketplaceStatus);
-    const hasVerified = body?.isVerified !== undefined;
-    const isVerified = Boolean(body?.isVerified);
+    const marketplaceStatus = text(body?.marketplaceStatus ?? body?.marketplace_status);
+    const hasVerified = body?.isVerified !== undefined || body?.is_verified !== undefined;
+    const isVerified = Boolean(body?.isVerified ?? body?.is_verified);
     if (marketplaceStatus && !["draft", "published", "unpublished"].includes(marketplaceStatus)) {
       return sendError(response, 400, "Status marketplace tidak valid.");
     }
