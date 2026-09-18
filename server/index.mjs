@@ -59,6 +59,7 @@ import {
   handleVendorPortalRoutes,
 } from "./vendor-portal.mjs";
 import { handleAdminCatalog } from "./admin-catalog.mjs";
+import { handleAdminLegacy, handlePortalContent } from "./admin-legacy.mjs";
 import {
   handleAdminReply,
   handleChat,
@@ -2681,6 +2682,17 @@ async function route(request, response) {
     await handleBootstrap(request, response, url);
     return;
   }
+  if (request.method === "GET" && pathname === "/api/portal/content") {
+    await handlePortalContent({
+      request,
+      response,
+      url,
+      body: {},
+      sendJson,
+      sendError,
+    });
+    return;
+  }
   if (pathname.startsWith("/api/portal/admin/vendor-invitations")
       || pathname === "/api/portal/admin/suppliers"
       || pathname.startsWith("/api/portal/admin/suppliers/")) {
@@ -2711,6 +2723,38 @@ async function route(request, response) {
     if (user) {
       const body = ["POST", "PUT", "PATCH"].includes(request.method ?? "") ? await readJson(request) : {};
       const handled = await handleAdminCatalog({
+        request,
+        response,
+        url,
+        body,
+        user,
+        sendJson,
+        sendError,
+        sendEmpty,
+      });
+      if (handled) return;
+    }
+  }
+  if (
+    pathname === "/api/portal/admin/content"
+    || pathname === "/api/portal/admin/delivery-vendors"
+    || /^\/api\/portal\/admin\/delivery-vendors\/\d+$/.test(pathname)
+    || pathname === "/api/portal/admin/trucking-rates"
+    || pathname === "/api/portal/admin/freight-rates"
+    || pathname.startsWith("/api/portal/admin/vendor-form/")
+    || pathname === "/api/portal/admin/master-price"
+    || pathname.startsWith("/api/portal/admin/master-price/")
+    || pathname === "/api/portal/admin/wa-logs"
+    || pathname === "/api/portal/admin/wa-logs/stats"
+    || /^\/api\/portal\/admin\/wa-logs\/\d+\/retry$/.test(pathname)
+  ) {
+    const user = await requireAdmin(request, response);
+    if (user) {
+      const isMultipart = String(request.headers["content-type"] ?? "").startsWith("multipart/form-data");
+      const body = ["POST", "PUT", "PATCH"].includes(request.method ?? "")
+        ? isMultipart ? await readMultipartForm(request) : await readJson(request)
+        : {};
+      const handled = await handleAdminLegacy({
         request,
         response,
         url,
