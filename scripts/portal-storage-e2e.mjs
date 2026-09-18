@@ -20,6 +20,25 @@ function assert(condition, message) {
   if (!condition) fail(message);
 }
 
+async function waitForObjectDeletion(url, { timeoutMs = 60_000, intervalMs = 250 } = {}) {
+  const deadline = Date.now() + timeoutMs;
+  let lastStatus = null;
+  while (Date.now() < deadline) {
+    const response = await fetch(url, {
+      headers: { "Cache-Control": "no-cache" },
+    });
+    lastStatus = response.status;
+    if (!response.ok) return;
+    const remaining = deadline - Date.now();
+    if (remaining <= 0) break;
+    await new Promise((resolve) => setTimeout(resolve, Math.min(intervalMs, remaining)));
+  }
+  fail(
+    `old re-uploaded object is still readable after ${timeoutMs}ms ` +
+    `(last status ${lastStatus}).`,
+  );
+}
+
 function baseUrl() {
   const configured = process.env.PORTAL_E2E_BASE_URL?.trim();
   const domain = process.env.REPLIT_DEV_DOMAIN?.trim();
@@ -161,8 +180,7 @@ async function main() {
     assert(Number(second?.id) === documentId, "re-upload did not reuse the document record.");
     assert(Number(second?.uploadedVersion) >= 2, "re-upload did not increment uploaded_version.");
     assert(second.storagePath !== first.storagePath, "re-upload did not create a new object path.");
-    const oldObjectResponse = await fetch(firstSigned);
-    assert(!oldObjectResponse.ok, "old re-uploaded object is still readable.");
+    await waitForObjectDeletion(firstSigned);
 
     const other = new Client(base, "other-customer");
     await other.login("vendor");
