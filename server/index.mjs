@@ -75,28 +75,11 @@ const APP_ENV = process.env.APP_ENV ?? process.env.NODE_ENV ?? "development";
 const IS_PRODUCTION = APP_ENV === "production" || process.env.NODE_ENV === "production";
 const MAX_BODY_BYTES = 2 * 1024 * 1024;
 const MAX_MULTIPART_BODY_BYTES = 6 * 1024 * 1024;
-const UPSTREAM_API_URL = IS_PRODUCTION
-  ? ""
-  : (
-      process.env.CUSTOMER_PORTAL_API_UPSTREAM_URL ??
-      process.env.VITE_API_SERVER_URL ??
-      ""
-    ).replace(/\/+$/, "");
 const MUTATION_METHODS = new Set(["POST", "PUT", "PATCH", "DELETE"]);
 const DEFAULT_PUBLIC_ASSET_ORIGIN = "https://xssrfshdrtdfupgqwfdw.supabase.co";
 const PUBLIC_ASSET_URL_PREFIX = "/storage/v1/object/public/public-assets/";
 const LEGACY_PORTAL_BUCKET_URL_PREFIX = "/storage/v1/object/public/portal-assets/";
 
-const HOP_BY_HOP_HEADERS = new Set([
-  "connection",
-  "keep-alive",
-  "proxy-authenticate",
-  "proxy-authorization",
-  "te",
-  "trailer",
-  "transfer-encoding",
-  "upgrade",
-]);
 
 function sendJson(response, status, value, headers = {}) {
   const body = JSON.stringify(value);
@@ -247,40 +230,6 @@ async function readRawBody(request, limit = MAX_BODY_BYTES) {
     chunks.push(chunk);
   }
   return chunks.length ? Buffer.concat(chunks) : undefined;
-}
-
-async function proxyToUpstream(request, response) {
-  const incomingUrl = new URL(request.url ?? "/", `http://${request.headers.host ?? "localhost"}`);
-  const upstreamUrl = new URL(`${incomingUrl.pathname}${incomingUrl.search}`, `${UPSTREAM_API_URL}/`);
-  const headers = new Headers();
-
-  for (const [name, value] of Object.entries(request.headers)) {
-    if (HOP_BY_HOP_HEADERS.has(name) || name === "host" || name === "content-length") continue;
-    headers.set(name, Array.isArray(value) ? value.join(", ") : value ?? "");
-  }
-
-  const body = ["GET", "HEAD"].includes(request.method ?? "GET")
-    ? undefined
-    : await readRawBody(request);
-  const upstreamResponse = await fetch(upstreamUrl, {
-    method: request.method,
-    headers,
-    body,
-    redirect: "manual",
-  });
-
-  const responseHeaders = { ...corsHeaders(request) };
-  for (const [name, value] of upstreamResponse.headers) {
-    if (HOP_BY_HOP_HEADERS.has(name) || name === "set-cookie") continue;
-    responseHeaders[name] = value;
-  }
-  const setCookies = typeof upstreamResponse.headers.getSetCookie === "function"
-    ? upstreamResponse.headers.getSetCookie()
-    : [];
-  if (setCookies.length) responseHeaders["Set-Cookie"] = setCookies;
-
-  response.writeHead(upstreamResponse.status, responseHeaders);
-  response.end(Buffer.from(await upstreamResponse.arrayBuffer()));
 }
 
 async function readJson(request) {
@@ -3171,16 +3120,10 @@ async function route(request, response) {
     if (await serveStatic(request, response, pathname)) return;
   }
 
-  // Development preview traffic may proxy unmigrated API routes. Production
-  // must never fall back to the shared API: unknown /api routes are local 404s.
-  if (!IS_PRODUCTION && UPSTREAM_API_URL && pathname.startsWith("/api/")) {
-    await proxyToUpstream(request, response);
-    return;
-  }
-
   sendJson(response, 404, {
     message: "Customer Portal API route not found.",
     service: "customer-portal-api",
+    code: "CUSTOMER_PORTAL_LOCAL_ENDPOINT_NOT_FOUND",
   });
 }
 
