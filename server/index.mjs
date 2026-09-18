@@ -44,13 +44,20 @@ import {
   handleCapabilities,
   handleEmailOtpRequest,
   handleEmailOtpVerify,
+  handleSignup,
   handleGoogleCallback,
   handleGoogleStart,
   handleWaLogin,
   handleWaOtpRequest,
   handleWaOtpVerify,
+  handleWaRegister,
   handleWaTrustedLogin,
 } from "./auth-providers.mjs";
+import {
+  handleAdminVendorRoutes,
+  handleVendorInvitationRoute,
+  handleVendorPortalRoutes,
+} from "./vendor-portal.mjs";
 
 const PORT = Number(process.env.PORT ?? process.env.CUSTOMER_PORTAL_API_PORT ?? 18444);
 const APP_ENV = process.env.APP_ENV ?? process.env.NODE_ENV ?? "development";
@@ -2455,6 +2462,21 @@ async function route(request, response) {
     await handleCapabilities(response);
     return;
   }
+  if (pathname.startsWith("/api/portal/vendor-invite/")) {
+    const isMultipart = String(request.headers["content-type"] ?? "").startsWith("multipart/form-data");
+    const body = request.method === "POST"
+      ? isMultipart ? await readMultipartForm(request) : await readJson(request)
+      : {};
+    const handled = await handleVendorInvitationRoute({
+      request,
+      response,
+      url,
+      body,
+      sendJson,
+      sendEmpty,
+    });
+    if (handled) return;
+  }
   if (
     pathname === "/api/import-calculator/rates"
     || pathname === "/api/import-calculator/calculate"
@@ -2492,6 +2514,10 @@ async function route(request, response) {
     await handleLogin(request, response);
     return;
   }
+  if (request.method === "POST" && pathname === "/api/portal/auth/signup") {
+    await handleSignup(request, response);
+    return;
+  }
   if (request.method === "POST" && pathname === "/api/portal/auth/otp/request") {
     await handleEmailOtpRequest(request, response);
     return;
@@ -2510,6 +2536,10 @@ async function route(request, response) {
   }
   if (request.method === "POST" && pathname === "/api/portal/auth/wa-login") {
     await handleWaLogin(request, response);
+    return;
+  }
+  if (request.method === "POST" && pathname === "/api/portal/auth/wa-register") {
+    await handleWaRegister(request, response);
     return;
   }
   if (request.method === "POST" && pathname === "/api/portal/auth/wa-trusted-login") {
@@ -2531,6 +2561,40 @@ async function route(request, response) {
   if (request.method === "GET" && pathname === "/api/portal/auth/bootstrap") {
     await handleBootstrap(request, response, url);
     return;
+  }
+  if (pathname.startsWith("/api/portal/admin/vendor-invitations")
+      || pathname === "/api/portal/admin/suppliers"
+      || pathname.startsWith("/api/portal/admin/suppliers/")) {
+    const user = await requireAdmin(request, response);
+    if (user) {
+      const body = ["POST", "PUT", "PATCH"].includes(request.method ?? "") ? await readJson(request) : {};
+      const handled = await handleAdminVendorRoutes({
+        request,
+        response,
+        url,
+        body,
+        user,
+        sendJson,
+        sendError,
+        sendEmpty,
+      });
+      if (handled) return;
+    }
+  }
+  if (pathname.startsWith("/api/portal/vendor/")) {
+    const user = await requireUser(request, response);
+    if (user) {
+      const handled = await handleVendorPortalRoutes({
+        request,
+        response,
+        url,
+        user,
+        sendJson,
+        sendError,
+        sendEmpty,
+      });
+      if (handled) return;
+    }
   }
   if (
     pathname === "/api/service-packages"

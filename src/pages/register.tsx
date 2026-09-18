@@ -276,6 +276,7 @@ export default function Register() {
       const res = await fetch(`${BASE}/api/portal/auth/wa-otp/send`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
+        credentials: "include",
         body: JSON.stringify({ phone }),
       });
       const json = await res.json();
@@ -304,6 +305,7 @@ export default function Register() {
       const res = await fetch(`${BASE}/api/portal/auth/wa-otp/verify`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
+        credentials: "include",
         body: JSON.stringify({ phone: normalizedPhone, code: otp }),
       });
       const json = await res.json();
@@ -318,6 +320,7 @@ export default function Register() {
       const loginRes = await fetch(`${BASE}/api/portal/auth/wa-login`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
+        credentials: "include",
         body: JSON.stringify({ verifyToken: json.verifyToken }),
       });
       const loginJson = await loginRes.json();

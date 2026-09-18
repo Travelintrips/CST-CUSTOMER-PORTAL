@@ -104,6 +104,8 @@ function normalizePhone(value) {
   return digits;
 }
 
+export { normalizedEmail, normalizePhone };
+
 function validPhone(phone) {
   return /^62\d{8,13}$/.test(phone);
 }
@@ -241,6 +243,59 @@ async function loginUser(row) {
     throw errorWithStatus(403, "Akun tidak aktif dan tidak dapat digunakan.");
   }
   return loginResponse(row, createSession(row));
+}
+
+export async function handleSignup(request, response) {
+  const body = await readJson(request);
+  const name = typeof body.name === "string" ? body.name.trim() : "";
+  const email = normalizedEmail(body.email);
+  const phone = normalizePhone(body.phone);
+  const password = typeof body.password === "string" ? body.password : "";
+  const role = body.role === "vendor" ? "vendor" : "customer";
+  const customerType = role === "customer" && ["individual", "company"].includes(body.customerType)
+    ? body.customerType
+    : role === "customer"
+      ? "individual"
+      : null;
+  const company = typeof body.company === "string" ? body.company.trim() : "";
+
+  if (name.length < 3) throw errorWithStatus(400, "Nama minimal 3 karakter.");
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    throw errorWithStatus(400, "Format email tidak valid.");
+  }
+  if (!validPhone(phone)) throw errorWithStatus(400, "Nomor HP tidak valid.");
+  if (password.length < 8) throw errorWithStatus(400, "Password minimal 8 karakter.");
+  if (role === "vendor" && !company) throw errorWithStatus(400, "Nama perusahaan wajib diisi untuk vendor.");
+
+  const [emailUser, phoneUsers] = await Promise.all([
+    findUserByEmail(email),
+    findUserByPhone(phone),
+  ]);
+  if (emailUser || phoneUsers.length) {
+    throw errorWithStatus(409, "Email atau nomor HP sudah terdaftar. Gunakan login untuk melanjutkan.");
+  }
+
+  const passwordHash = await bcrypt.hash(password, 12);
+  let created;
+  try {
+    created = await query(
+      `insert into public.portal_customers
+        (name, email, password_hash, phone, company, role, customer_type, account_status)
+       values ($1, $2, $3, $4, $5, $6, $7, 'active')
+       returning id, name, email, phone, company, role, customer_type, account_status`,
+      [name, email, passwordHash, phone, company || null, role, customerType],
+    );
+  } catch (error) {
+    if (error?.code === "23505") {
+      throw errorWithStatus(409, "Email atau nomor HP sudah terdaftar. Gunakan login untuk melanjutkan.");
+    }
+    throw error;
+  }
+  const user = created.rows[0];
+  if (!user) throw errorWithStatus(500, "Akun portal gagal disiapkan.");
+  await linkIdentity(user.id, "email", email);
+  const result = await loginUser(user);
+  json(response, 201, result, { "Set-Cookie": sessionCookies(result.token) });
 }
 
 function smtpConfig() {
@@ -618,6 +673,83 @@ export async function handleWaLogin(request, response) {
     );
   }
   json(response, 200, { ...result, deviceToken }, { "Set-Cookie": sessionCookies(result.token) });
+}
+
+export async function handleWaRegister(request, response) {
+  const body = await readJson(request);
+  const verifyToken = typeof body.verifyToken === "string" ? body.verifyToken : "";
+  const name = typeof body.name === "string" ? body.name.trim() : "";
+  const role = body.role === "vendor" ? "vendor" : "customer";
+  const customerType = role === "customer" && ["individual", "company"].includes(body.customerType)
+    ? body.customerType
+    : role === "customer"
+      ? "individual"
+      : null;
+  const company = typeof body.company === "string" ? body.company.trim() : "";
+  const email = normalizedEmail(body.email);
+  if (!verifyToken || name.length < 3) {
+    throw errorWithStatus(400, "Token verifikasi dan nama wajib diisi.");
+  }
+  if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    throw errorWithStatus(400, "Format email tidak valid.");
+  }
+  if (role === "vendor" && !company) throw errorWithStatus(400, "Nama perusahaan wajib diisi untuk vendor.");
+
+  const tokenHash = hashToken(verifyToken);
+  const claimed = await query(
+    `update public.wa_otp_codes
+        set verify_token = null, verify_token_hash = null, expires_at = now()
+      where verify_token_hash = $1
+        and verified = true
+        and purpose = 'login'
+        and expires_at > now()
+      returning phone`,
+    [tokenHash],
+  );
+  const challenge = claimed.rows[0];
+  if (!challenge) throw errorWithStatus(400, "Token verifikasi tidak valid, kadaluarsa, atau sudah digunakan.");
+
+  const phone = normalizePhone(challenge.phone);
+  const [phoneUsers, emailUser] = await Promise.all([
+    findUserByPhone(phone),
+    email ? findUserByEmail(email) : Promise.resolve(null),
+  ]);
+  if (phoneUsers.length || emailUser) {
+    throw errorWithStatus(409, "Nomor HP atau email sudah terdaftar. Gunakan login untuk melanjutkan.");
+  }
+
+  const accountEmail = email || `${phone}@wa.local`;
+  let created;
+  try {
+    created = await query(
+      `insert into public.portal_customers
+        (name, email, password_hash, phone, company, role, customer_type, account_status)
+       values ($1, $2, '', $3, $4, $5, $6, 'active')
+       returning id, name, email, phone, company, role, customer_type, account_status`,
+      [name, accountEmail, phone, company || null, role, customerType],
+    );
+  } catch (error) {
+    if (error?.code === "23505") {
+      throw errorWithStatus(409, "Akun dengan email atau nomor HP tersebut sudah terdaftar.");
+    }
+    throw error;
+  }
+  const user = created.rows[0];
+  await linkIdentity(user.id, "whatsapp", phone);
+  if (email) await linkIdentity(user.id, "email", email);
+  const result = await loginUser(user);
+  let deviceToken;
+  const rememberDays = Number(body.rememberDays);
+  if (Number.isFinite(rememberDays) && rememberDays > 0 && rememberDays <= 90) {
+    deviceToken = crypto.randomBytes(32).toString("hex");
+    const deviceHash = hashToken(deviceToken);
+    await query(
+      `insert into public.trusted_devices (phone, device_token, device_token_hash, expires_at)
+       values ($1, $2, $2, now() + ($3 * interval '1 day'))`,
+      [phone, deviceHash, rememberDays],
+    );
+  }
+  json(response, 201, { ...result, deviceToken }, { "Set-Cookie": sessionCookies(result.token) });
 }
 
 export async function handleWaTrustedLogin(request, response) {

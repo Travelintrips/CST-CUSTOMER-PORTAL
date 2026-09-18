@@ -3,9 +3,13 @@ import { createClient } from "@supabase/supabase-js";
 import WebSocket from "ws";
 
 const MAX_FILE_BYTES = 5 * 1024 * 1024;
+const MAX_VENDOR_ASSET_BYTES = 50 * 1024 * 1024;
 const SIGNED_URL_TTL_SECONDS = 5 * 60;
 const ALLOWED_DOCUMENT_TYPES = new Set(["ktp", "legalitas", "sim", "stnk"]);
 const ALLOWED_MIME_TYPES = new Set(["image/jpeg", "image/png", "application/pdf"]);
+const ALLOWED_VENDOR_ASSET_TYPES = new Set([
+  "image/jpeg", "image/png", "image/webp", "video/mp4", "video/quicktime", "application/pdf",
+]);
 const bucketChecks = new Map();
 
 function isValidBucketName(value) {
@@ -250,6 +254,65 @@ export async function signedDocumentUrl(path) {
   return data.signedUrl;
 }
 
+function vendorInvitePrefix(token) {
+  return `vendor-invitations/${crypto.createHash("sha256").update(String(token)).digest("hex")}`;
+}
+
+export async function uploadVendorInvitationAsset({ token, file }) {
+  if (!file || typeof file.arrayBuffer !== "function") {
+    const error = new Error("File vendor wajib diunggah.");
+    error.statusCode = 400;
+    throw error;
+  }
+  const mimeType = String(file.type || "").toLowerCase();
+  const size = Number(file.size);
+  if (!ALLOWED_VENDOR_ASSET_TYPES.has(mimeType)) {
+    const error = new Error("Tipe file vendor tidak didukung.");
+    error.statusCode = 415;
+    throw error;
+  }
+  if (!Number.isFinite(size) || size <= 0 || size > MAX_VENDOR_ASSET_BYTES) {
+    const error = new Error("Ukuran file vendor harus lebih dari 0 dan maksimal 50 MB.");
+    error.statusCode = 413;
+    throw error;
+  }
+  const storage = client();
+  await ensurePrivateBucket(storage);
+  const path = `${vendorInvitePrefix(token)}/${crypto.randomUUID()}-${safeFileName(file.name || "asset")}`;
+  const { error } = await storage.supabase.storage.from(storage.bucket).upload(
+    path,
+    Buffer.from(await file.arrayBuffer()),
+    { contentType: mimeType, cacheControl: "0", upsert: false },
+  );
+  if (error) {
+    const failure = new Error("Upload aset vendor ke private storage gagal.");
+    failure.statusCode = 502;
+    throw failure;
+  }
+  return { path, fileName: safeFileName(file.name), mimeType, size };
+}
+
+export async function signedVendorInvitationAssetUrl({ token, path }) {
+  const normalizedPath = String(path || "");
+  const prefix = vendorInvitePrefix(token);
+  if (!normalizedPath.startsWith(`${prefix}/`)) {
+    const error = new Error("Object path vendor tidak valid.");
+    error.statusCode = 404;
+    throw error;
+  }
+  const storage = client();
+  await ensurePrivateBucket(storage);
+  const { data, error } = await storage.supabase.storage
+    .from(storage.bucket)
+    .createSignedUrl(normalizedPath, 15 * 60);
+  if (error || !data?.signedUrl) {
+    const failure = new Error("Signed URL aset vendor tidak tersedia.");
+    failure.statusCode = 502;
+    throw failure;
+  }
+  return data.signedUrl;
+}
+
 export async function ocrKtp(file) {
   validateDocumentFile(file, { ocr: true });
   let tesseract;
@@ -270,4 +333,4 @@ export async function ocrKtp(file) {
   }
 }
 
-export { MAX_FILE_BYTES, ALLOWED_MIME_TYPES };
+export { MAX_FILE_BYTES, ALLOWED_MIME_TYPES, MAX_VENDOR_ASSET_BYTES, ALLOWED_VENDOR_ASSET_TYPES };
