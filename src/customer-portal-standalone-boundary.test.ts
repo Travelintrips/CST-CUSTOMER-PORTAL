@@ -26,6 +26,13 @@ describe("standalone Customer Portal API boundary", () => {
     expect(replitSource).toContain('VITE_API_SERVER_URL_DEV = "http://127.0.0.1:18444"');
   });
 
+  it("keeps vendor PO confirmation on the standalone marketplace API", () => {
+    const vendorPoSource = readFileSync(join(process.cwd(), "src/pages/vendor-po-accept.tsx"), "utf8");
+    expect(vendorPoSource).toContain("/mkt/vendor-po/");
+    expect(vendorPoSource).toContain("/accept");
+    expect(vendorPoSource).not.toContain("/purchase/vendor-accept/");
+  });
+
   it("keeps unknown API routes fail-closed in every environment", () => {
     expect(serverSource).not.toContain("Development preview traffic may proxy");
     expect(serverSource).toContain('"Customer Portal API route not found."');
