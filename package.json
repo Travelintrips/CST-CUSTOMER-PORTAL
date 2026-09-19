@@ -17,6 +17,7 @@
     "test:chatbot:e2e": "node scripts/chatbot-e2e.mjs",
     "test:portal:notification-lifecycle:e2e": "node scripts/portal-notification-lifecycle-e2e.mjs",
     "test:portal:storage-e2e": "node scripts/portal-storage-e2e.mjs",
+    "test:portal:admin-regression": "node server/load-secrets.mjs node scripts/portal-admin-regression-e2e.mjs",
     "test:portal:production-smoke": "node scripts/portal-production-smoke.mjs"
   },
   "devDependencies": {
