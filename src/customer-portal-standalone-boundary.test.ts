@@ -117,6 +117,16 @@ describe("standalone Customer Portal API boundary", () => {
     expect(vendor).toContain("status = 'withdrawn'");
   });
 
+  it("keeps featured payment proofs private and pending admin verification", () => {
+    const vendor = readFileSync(join(process.cwd(), "server/vendor-portal.mjs"), "utf8");
+    const storage = readFileSync(join(process.cwd(), "server/storage.mjs"), "utf8");
+    expect(vendor).toContain("featured-requests\\/(\\d+)\\/payment-proof");
+    expect(vendor).toContain("payment_status = 'pending_verification'");
+    expect(vendor).toContain("payment_status === \"verified\"");
+    expect(storage).toContain("vendor-featured-payment-proofs/vendor-");
+    expect(storage).toContain("ensurePrivateBucket(storage)");
+  });
+
   it("keeps unknown API routes fail-closed in every environment", () => {
     expect(serverSource).not.toContain("Development preview traffic may proxy");
     expect(serverSource).toContain('"Customer Portal API route not found."');
