@@ -281,7 +281,10 @@ export function ImageUploader({
       });
       if (!res.ok) throw new Error(await res.text());
       const { url } = await res.json() as { url: string };
-      setPreview(url);
+      // Upload responses from older deployments may still contain the legacy
+      // portal-object path. Normalize it the same way as a saved CMS value so
+      // the preview works immediately and after a reload.
+      setPreview(resolveImageUrl(url) ?? url);
       onUpload(url);
       toast({ title: "Gambar berhasil diunggah" });
     } catch (err) {

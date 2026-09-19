@@ -38,6 +38,7 @@ interface FeaturedMarketplaceProduct {
   vendorId: number;
   vendorName: string | null;
   name: string;
+  imageUrl: string | null;
   isFeatured: true;
 }
 
@@ -950,7 +951,7 @@ function FeaturedProductsShowcase({
   const { t } = useLanguage();
   const tiles = featuredProducts.slice(0, 6).map((featured) => {
     const catalogItem = items.find((item) => item.id === featured.id);
-    const rawImage = catalogItem?.primaryImageUrl ?? null;
+    const rawImage = featured.imageUrl ?? catalogItem?.primaryImageUrl ?? null;
     return {
       id: featured.id,
       label: featured.name,
@@ -1131,7 +1132,12 @@ export default function MarketplacePage() {
         if (!r.ok) throw new Error("featured-products error");
         return r.json();
       }),
-    staleTime: 2 * 60_000,
+    // Featured status can be changed from the admin portal while this SPA is
+    // still mounted. Keep this small hero panel fresh instead of serving an
+    // empty cached result after activation.
+    staleTime: 0,
+    refetchOnMount: true,
+    refetchOnWindowFocus: true,
     retry: 1,
   });
 

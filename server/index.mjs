@@ -2299,7 +2299,8 @@ function mapCatalogItem(row) {
   };
 }
 
-async function getPublishedCatalogItems() {
+async function getPublishedCatalogItems({ requirePublishedStatus = true } = {}) {
+  const statusClause = requirePublishedStatus ? "and status = 'published'" : "";
   const result = await query(
     `select id, vendor_id, vendor_name, type, name, description, unit, kategori, subcategory,
             template_kind, category_key, service_type, template_id, template_snapshot,
@@ -2310,7 +2311,7 @@ async function getPublishedCatalogItems() {
       where type = 'product'
         and is_active = true
         and is_published = true
-        and status = 'published'
+        ${statusClause}
       order by sort_order asc, published_at desc nulls last, id desc`,
   );
   return result.rows;
@@ -2366,17 +2367,24 @@ async function handleMarketplace(response, url) {
 
 async function handleMarketplaceFeatured(response, url) {
   const limit = Math.min(Math.max(Number(url.searchParams.get("limit") ?? 6), 1), 24);
-  const rows = await getPublishedCatalogItems();
+  // Admin activation uses the same public visibility flags as the catalog
+  // manager. Do not add a second status gate here: legacy rows can be
+  // published through is_published while their denormalized status is stale.
+  const rows = await getPublishedCatalogItems({ requirePublishedStatus: false });
   const items = rows
     .filter((row) => row.is_featured)
     .slice(0, limit)
-    .map((row) => ({
-      id: row.id,
-      vendorId: Number(row.vendor_id ?? 0),
-      vendorName: row.vendor_name ?? null,
-      name: row.name,
-      isFeatured: true,
-    }));
+    .map((row) => {
+      const media = mediaFromRow(row);
+      return {
+        id: row.id,
+        vendorId: Number(row.vendor_id ?? 0),
+        vendorName: row.vendor_name ?? null,
+        name: row.name,
+        imageUrl: media.primaryImageUrl,
+        isFeatured: true,
+      };
+    });
   sendJson(response, 200, items);
 }
 

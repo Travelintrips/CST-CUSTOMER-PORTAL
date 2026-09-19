@@ -195,7 +195,8 @@ export function ServicesTab() {
 
   const fetchServices = async () => {
     try {
-      const data = await apiGet<Service[] | { items?: Service[] }>("/api/portal/services");
+      const data = await apiGet<Service[] | { items?: Service[] }>("/api/portal/admin/services");
+      // The admin catalog endpoint is the source of truth for this screen.
       // Accept the old envelope while deployments roll forward, but always
       // keep component state as an array before rendering with .map().
       const items = Array.isArray(data) ? data : Array.isArray(data.items) ? data.items : [];
