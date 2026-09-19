@@ -16,7 +16,7 @@ import {
   Store, Package, Users,
   UserCheck, MessageCircle, UserPlus, Layers, Link2, ShoppingCart,
   CreditCard, DollarSign, Inbox,
-  PackageCheck, Image as ImageIcon, X, Menu,
+  PackageCheck, Image as ImageIcon, X, Menu, Wifi,
 } from "lucide-react";
 import { useLanguage } from "@/i18n/LanguageContext";
 
@@ -35,6 +35,7 @@ import { MasterPriceManagement }                         from "@/pages/admin/Mas
 import { ServiceOperationsTab }                           from "@/pages/admin/ServiceOperationsTab";
 import { MarketplaceOperationsTab }                       from "@/pages/admin/MarketplaceOperations";
 import { CustomerBillingTab }                             from "@/pages/admin/CustomerBillingTab";
+import { FonnteStatusTab }                                 from "@/pages/admin/FonnteStatusTab";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 // ── AdminPage ─────────────────────────────────────────────────────────────────
@@ -220,6 +221,7 @@ export default function AdminPage() {
                   { value: "approvals", icon: UserCheck,     label: t("adminPage.nav.approvals", "Approvals") },
                   { value: "customers", icon: Users,         label: t("adminPage.nav.customers", "Pelanggan") },
                   { value: "wa-logs",   icon: MessageCircle, label: t("adminPage.nav.whatsapp", "WhatsApp") },
+                  { value: "fonnte-status", icon: Wifi, label: "Status Koneksi Fonnte" },
                 ].map(({ value, icon: Icon, label }) => (
                   <button key={value} type="button" aria-current={activeTab === value ? "page" : undefined}
                     onClick={() => { setActiveTab(value); setMobileNavOpen(false); }}
@@ -517,6 +519,10 @@ export default function AdminPage() {
                       </CardHeader>
                       <CardContent><WaLogsTab /></CardContent>
                     </Card>
+                  </TabsContent>
+
+                  <TabsContent value="fonnte-status">
+                    <FonnteStatusTab />
                   </TabsContent>
 
                   <TabsContent value="paylabs-setting">
