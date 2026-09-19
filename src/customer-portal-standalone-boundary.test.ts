@@ -151,6 +151,14 @@ describe("standalone Customer Portal API boundary", () => {
     expect(server).toContain("selectedServiceId || null");
   });
 
+  it("binds service requests to the logged-in identity and makes submit idempotent", () => {
+    const server = readFileSync(join(process.cwd(), "server/index.mjs"), "utf8");
+    expect(server).toContain("Email service request harus menggunakan email akun");
+    expect(server).toContain('serviceRequest.status === "submitted"');
+    expect(server).toContain("alreadyProcessed: true");
+    expect(server).toContain("where id = $1 and status in ('draft','revision_requested')");
+  });
+
   it("keeps unknown API routes fail-closed in every environment", () => {
     expect(serverSource).not.toContain("Development preview traffic may proxy");
     expect(serverSource).toContain('"Customer Portal API route not found."');
