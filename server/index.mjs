@@ -2160,6 +2160,7 @@ async function handleLogisticCustomerRoutes(request, response, url, user, body =
       }
       return true;
     }
+    const isAuthenticatedOwner = Boolean(sessionRow);
     const [items, updates, progress, invoice] = await Promise.all([
       getLogisticItems(row.id),
       query(
@@ -2205,11 +2206,11 @@ async function handleLogisticCustomerRoutes(request, response, url, user, body =
         notes: item.notes ?? null,
         updatedBy: item.updated_by,
         createdAt: item.created_at,
-        photoUrl: item.photo_url ?? null,
+        photoUrl: isAuthenticatedOwner ? (item.photo_url ?? null) : null,
       })),
       podSubmissions: [],
       invoiceLinks: invoice.rows.map((item) => ({
-        token: item.payment_proof_token,
+        token: isAuthenticatedOwner ? item.payment_proof_token : null,
         invoiceNumber: item.invoice_number ?? null,
         grandTotal: item.grand_total == null ? null : Number(item.grand_total),
         dueDate: item.due_date ?? null,
