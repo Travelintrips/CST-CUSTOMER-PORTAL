@@ -1,4 +1,5 @@
 import { pool, query } from "./db.mjs";
+import { signedPaymentProofUrl } from "./storage.mjs";
 import {
   bestEffortNotificationWrite,
   notifyAdmins,
@@ -207,7 +208,8 @@ async function notifyInvoiceAdmins(db, invoice, {
 const INVOICE_COLUMNS = `
   id, doc_number, kind, status, invoice_status, payment_status, amount_paid,
   customer_id, customer_name, total_amount, grand_total, company_id, due_date,
-  invoice_number, invoice_date, created_at, updated_at, notes
+  invoice_number, invoice_date, created_at, updated_at, notes,
+  proof_url, payment_proof_token, proof_uploaded_at, proof_remarks
 `;
 
 async function loadInvoice(id, user, { db = query, admin = false, forUpdate = false } = {}) {
@@ -309,11 +311,12 @@ async function linesForInvoice(id, db = query) {
   }));
 }
 
-function paymentProofForInvoice(row) {
+async function paymentProofForInvoice(row) {
+  const token = row.payment_proof_token ?? null;
   return {
-    uploaded: Boolean(row.proof_url || row.payment_proof_token || row.proof_uploaded_at),
-    url: row.proof_url ?? null,
-    token: row.payment_proof_token ?? null,
+    uploaded: Boolean(row.proof_url || row.proof_uploaded_at),
+    url: row.proof_url && token ? await signedPaymentProofUrl({ token, path: row.proof_url }) : null,
+    token,
     uploadedAt: row.proof_uploaded_at ?? null,
     remarks: row.proof_remarks ?? null,
   };
@@ -329,7 +332,7 @@ export async function handleCustomerInvoices({ request, response, user, sendJson
       const row = await loadInvoice(invoiceId, user);
       sendJson(response, 200, {
         ...mapInvoice(row),
-        paymentProof: paymentProofForInvoice(row),
+        paymentProof: await paymentProofForInvoice(row),
         payments: await paymentsForInvoice(row.id),
         lines: await linesForInvoice(row.id),
       });
@@ -437,7 +440,7 @@ export async function handleAdminInvoices({ request, response, user, sendJson, s
     const row = await loadInvoice(invoiceId, user, { admin: true });
     sendJson(response, 200, {
       ...mapInvoice(row),
-      paymentProof: paymentProofForInvoice(row),
+      paymentProof: await paymentProofForInvoice(row),
       payments: await paymentsForInvoice(row.id),
       lines: await linesForInvoice(row.id),
     });
