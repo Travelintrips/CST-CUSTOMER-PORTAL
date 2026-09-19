@@ -1785,6 +1785,63 @@ async function getOwnedLogisticOrder(user, orderNumber) {
   return result.rows[0] ?? null;
 }
 
+const TRUCKING_VEHICLE_RATE_KEYS = {
+  mobil: "pickup",
+  "mobil-xl": "pickup",
+  van: "blindVan",
+  "pickup-kecil": "pickup",
+  "box-kecil": "CDE",
+  engkel: "CDE",
+  "double-engkel": "CDD",
+  "cdd-long": "CDD",
+  fuso: "Fuso",
+  tronton: "Wingbox",
+  "truk-trailer": "Trailer 40FT",
+};
+
+async function handleTruckingEstimate(request, response, body) {
+  if (request.method !== "POST") { sendError(response, 405, "Method tidak didukung."); return; }
+  const vehicleType = String(body.vehicle_type ?? "").trim();
+  const canonicalVehicle = TRUCKING_VEHICLE_RATE_KEYS[vehicleType];
+  if (!canonicalVehicle) {
+    sendError(response, 422, "Tarif canonical untuk jenis kendaraan ini belum dikonfigurasi.");
+    return;
+  }
+  const result = await query(
+    `select rs.rate_key, rs.value_amount
+       from public.logistics_rate_cards rc
+       join public.logistics_service_rates rs on rs.rate_card_id = rc.id
+      where rc.is_active = true
+        and rc.service_type::text = 'trucking'
+        and (rc.valid_from is null or rc.valid_from <= now())
+        and (rc.valid_to is null or rc.valid_to >= now())
+        and (
+          (rs.rate_key in ('vehicleRate','ratePerVehicle') and lower(regexp_replace(coalesce(rs.vehicle_type,''), '[^a-z0-9]', '', 'g')) = lower(regexp_replace($1, '[^a-z0-9]', '', 'g')))
+          or rs.rate_key in ('loadingFee','unloadingFee','overnightFee')
+        )
+      order by rc.updated_at desc nulls last, rc.id desc, rs.id desc`,
+    [canonicalVehicle],
+  );
+  const rates = new Map(result.rows.map((row) => [row.rate_key, Number(row.value_amount)]));
+  const base = rates.get("vehicleRate") ?? rates.get("ratePerVehicle");
+  if (!Number.isFinite(base)) {
+    sendError(response, 503, "Tarif canonical trucking belum dikonfigurasi.");
+    return;
+  }
+  const loading = body.with_loading_helper ? Number(rates.get("loadingFee") ?? 0) : 0;
+  const unloading = body.with_unloading_helper ? Number(rates.get("unloadingFee") ?? 0) : 0;
+  const overnight = Math.max(0, Number(body.overnight_nights) || 0) * Number(rates.get("overnightFee") ?? 0);
+  const total = base + loading + unloading + overnight;
+  const estimate = {
+    vehicle_type: vehicleType, distance_km: 0, distance_source: "unknown",
+    price_per_km: 0, minimum_charge: base, base_price: base, base_after_minimum: base,
+    surcharge_breakdown: { out_of_city: 0, inter_province: 0, inter_island: 0, total: 0 },
+    extras_breakdown: { loading_helper: loading, unloading_helper: unloading, toll: 0, ferry: 0, waiting: 0, multidrop: 0, overnight, urgent: 0, insurance: 0, total: loading + unloading + overnight },
+    total_estimate: total,
+  };
+  sendJson(response, 200, { has_data: true, cheapest: { vendor_id: 0, vendor_name: "CST Canonical Rate", pricing_id: 0, estimate }, candidates: [] });
+}
+
 async function handleTruckingBooking(request, response, user, body) {
   if (request.method !== "POST") { sendError(response, 405, "Method tidak didukung."); return; }
   const required = ["vehicleType","vehicleName","areaPickup","alamatPickup","picPickup","hpPickup","areaDelivery","alamatDelivery","picPenerima","hpPenerima"];
@@ -2980,6 +3037,11 @@ async function route(request, response) {
     const user = await requireUser(request, response);
     if (!user) return;
     await handleServiceProfile(request, response, url, user);
+    return;
+  }
+  if (pathname === "/api/portal/trucking/estimate") {
+    const body = request.method === "POST" ? await readJson(request) : {};
+    await handleTruckingEstimate(request, response, body);
     return;
   }
   if (pathname === "/api/portal/trucking/bookings") {
