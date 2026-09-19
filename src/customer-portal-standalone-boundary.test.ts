@@ -159,6 +159,13 @@ describe("standalone Customer Portal API boundary", () => {
     expect(server).toContain("where id = $1 and status in ('draft','revision_requested')");
   });
 
+  it("persists the onboarding account type as the portal role", () => {
+    const adminPortal = readFileSync(join(process.cwd(), "server/admin-portal.mjs"), "utf8");
+    expect(adminPortal).toContain("set name = $1, phone = $2, role = $3");
+    expect(adminPortal).toContain("case when $3 = 'customer' then $4 else null end");
+    expect(adminPortal).toContain("[fullName, phone, accountType, customerType, profileCompanyName, ctx.user.id]");
+  });
+
   it("keeps unknown API routes fail-closed in every environment", () => {
     expect(serverSource).not.toContain("Development preview traffic may proxy");
     expect(serverSource).toContain('"Customer Portal API route not found."');
