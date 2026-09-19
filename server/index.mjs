@@ -843,7 +843,10 @@ async function handleCreateProductOrder(request, response) {
     return { product, qty, unitPrice, subtotal: unitPrice * qty };
   });
   const subtotal = canonicalItems.reduce((sum, item) => sum + item.subtotal, 0);
-  const serviceCost = Math.max(0, Number(body.selectedService?.estimatedCost ?? 0) || 0);
+  const selectedServiceId = String(body.selectedService?.serviceId ?? "").trim();
+  // Product checkout must never persist a client-supplied logistics price. Until a
+  // canonical server quote is linked to the order, service cost remains pending.
+  const serviceCost = 0;
   const taxRate = 11;
   const taxAmount = Math.round((subtotal + serviceCost) * taxRate / 100);
   const grandTotal = subtotal + serviceCost + taxAmount;
@@ -896,7 +899,7 @@ async function handleCreateProductOrder(request, response) {
           order.rows[0].id, item.product.id, item.product.name, null, item.product.unit,
           item.unitPrice, item.qty, item.subtotal, item.product.weight_kg, item.product.length_cm,
           item.product.width_cm, item.product.height_cm, item.product.goods_type,
-          body.selectedService?.serviceId ?? null,
+          selectedServiceId || null,
         ],
       );
     }
