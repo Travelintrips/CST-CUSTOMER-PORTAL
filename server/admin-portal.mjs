@@ -967,10 +967,11 @@ async function handleOnboardingComplete(ctx) {
 
   await query(
     `update public.portal_customers
-        set name = $1, phone = $2, customer_type = coalesce($3, customer_type),
-            company = coalesce($4, company)
-      where id = $5`,
-    [fullName, phone, customerType, profileCompanyName, ctx.user.id],
+        set name = $1, phone = $2, role = $3,
+            customer_type = case when $3 = 'customer' then $4 else null end,
+            company = case when $3 = 'customer' then coalesce($5, company) else $5 end
+      where id = $6`,
+    [fullName, phone, accountType, customerType, profileCompanyName, ctx.user.id],
   );
   const profileValues = [
     profileCompanyName,
