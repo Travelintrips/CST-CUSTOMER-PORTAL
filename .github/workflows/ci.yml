@@ -24,5 +24,8 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm test
+        env:
+          SUPABASE_DATABASE_URL_DEV: postgresql://ci:ci@127.0.0.1:5432/ci
+          SESSION_SECRET: customer-portal-ci-session-secret
       - run: pnpm typecheck
       - run: pnpm build
