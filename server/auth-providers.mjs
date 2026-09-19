@@ -463,7 +463,6 @@ async function sendEmailOtp(email, code) {
     port: config.port,
     secure: config.secure,
     auth: { user: config.user, pass: config.pass },
-    tls: { rejectUnauthorized: false },
   });
   await transporter.sendMail({
     from: config.from,
