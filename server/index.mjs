@@ -2046,7 +2046,7 @@ async function handleLogisticCustomerRoutes(request, response, url, user, body =
         ],
       );
     }
-    sendJson(response, 201, await logisticOrderResponse(row, await getLogisticItems(row.id)));
+    sendJson(response, 201, await await logisticOrderResponse(row, await getLogisticItems(row.id)));
     return true;
   }
 
@@ -2056,7 +2056,7 @@ async function handleLogisticCustomerRoutes(request, response, url, user, body =
       sendError(response, 404, "Order logistik tidak ditemukan.");
       return true;
     }
-    sendJson(response, 200, await logisticOrderResponse(row, await getLogisticItems(row.id)));
+    sendJson(response, 200, await await logisticOrderResponse(row, await getLogisticItems(row.id)));
     return true;
   }
 
@@ -2080,7 +2080,7 @@ async function handleLogisticCustomerRoutes(request, response, url, user, body =
         returning *`,
       [proofUrl, row.id],
     );
-    sendJson(response, 200, await logisticOrderResponse(updated.rows[0], await getLogisticItems(row.id)));
+    sendJson(response, 200, await await logisticOrderResponse(updated.rows[0], await getLogisticItems(row.id)));
     return true;
   }
 
