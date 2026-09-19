@@ -84,6 +84,12 @@ describe("standalone Customer Portal API boundary", () => {
     expect(server).toContain("isPublicVehicleRead ? null : await requireAdmin");
   });
 
+  it("preserves payment-proof remarks from multipart uploads", () => {
+    const server = readFileSync(join(process.cwd(), "server/index.mjs"), "utf8");
+    expect(server).toContain('remarks: form.get("remarks")');
+    expect(server).toContain('String(form.remarks ?? "").trim().slice(0, 500)');
+  });
+
   it("keeps unknown API routes fail-closed in every environment", () => {
     expect(serverSource).not.toContain("Development preview traffic may proxy");
     expect(serverSource).toContain('"Customer Portal API route not found."');
