@@ -249,7 +249,8 @@ describe("standalone Customer Portal API boundary", () => {
     const server = readFileSync(join(process.cwd(), "server/index.mjs"), "utf8");
     const admin = readFileSync(join(process.cwd(), "src/pages/admin/FonnteStatusTab.tsx"), "utf8");
     expect(server).toContain('/api/portal/admin/fonnte/status');
-    expect(server).toContain('process.env.FONNTE_TOKEN');
+    expect(server).toContain('process.env.CUSTOMER_PORTAL_FONNTE_TOKEN');
+    expect(server).not.toContain('process.env.FONNTE_TOKEN');
     expect(server).toContain('https://api.fonnte.com/device');
     expect(admin).not.toContain('FONNTE_TOKEN');
   });
@@ -265,5 +266,11 @@ describe("standalone Customer Portal API boundary", () => {
     expect(panel).toContain("Total Pesan Diminta");
     expect(panel).not.toContain('["Total Pesan",');
     expect(admin).toContain('TabsTrigger value="fonnte-status"');
+  });
+
+  it("uses a Customer Portal-owned Secret Manager bundle by default", () => {
+    const loader = readFileSync(join(process.cwd(), "server/load-secrets.mjs"), "utf8");
+    expect(loader).toContain('DEFAULT_BUNDLE_PREFIX = "cst-customer-portal"');
+    expect(loader).not.toContain('DEFAULT_BUNDLE_PREFIX = "cst-super-app"');
   });
 });
