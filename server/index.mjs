@@ -326,6 +326,16 @@ async function requireUser(request, response) {
     sendError(response, 401, "Session is no longer valid.");
     return null;
   }
+  // Authorization claims in the signed token are only hints. Always require
+  // the current database identity to match so email/role changes invalidate
+  // older bearer tokens instead of preserving stale privileges for 7 days.
+  if (
+    String(session.email ?? "").trim().toLowerCase() !== String(user.email ?? "").trim().toLowerCase()
+    || String(session.role ?? "") !== String(user.role ?? "")
+  ) {
+    sendError(response, 401, "Session is no longer valid.");
+    return null;
+  }
   return user;
 }
 
