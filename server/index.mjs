@@ -438,11 +438,11 @@ async function handleAdminChatbot(request, response) {
 }
 
 async function handleAdminFonnteStatus(response) {
-  const token = String(process.env.FONNTE_TOKEN ?? "").trim();
+  const token = String(process.env.CUSTOMER_PORTAL_FONNTE_TOKEN ?? "").trim();
   if (!token) {
     sendJson(response, 200, {
       configured: false, connected: false, device: null, name: null, package: null,
-      quota: null, messages: null, expired: null, reason: "FONNTE_TOKEN belum dikonfigurasi.",
+      quota: null, messages: null, expired: null, reason: "CUSTOMER_PORTAL_FONNTE_TOKEN belum dikonfigurasi.",
       checkedAt: new Date().toISOString(),
     });
     return;
