@@ -378,10 +378,10 @@ async function createOceanOrder(body, user = null) {
 
 async function airTracking(orderNumberValue, sendJson, response) {
   const result = await query(
-    `select id, order_number, customer_name, origin_airport, destination_airport,
+    `select id, order_number, origin_airport, destination_airport,
             commodity, chargeable_weight, airline, flight_number, status,
             tracking_status, etd, eta, booking_number, mawb, hawb, awb_number,
-            transit_days, tracking_notes, grand_total
+            transit_days
        from public.air_freight_orders
       where order_number = $1
       limit 1`,
@@ -390,7 +390,7 @@ async function airTracking(orderNumberValue, sendJson, response) {
   const row = result.rows[0];
   if (!row) fail(404, "Order air freight tidak ditemukan.");
   const events = await query(
-    `select id, event_type, note, created_by, created_at
+    `select id, event_type, created_at
        from public.air_freight_tracking_events
       where order_id = $1
       order by created_at desc, id desc`,
@@ -401,10 +401,10 @@ async function airTracking(orderNumberValue, sendJson, response) {
 
 async function oceanTracking(orderNumberValue, sendJson, response) {
   const result = await query(
-    `select id, order_number, customer_name, origin_port, destination_port,
+    `select id, order_number, origin_port, destination_port,
             shipment_type, container_type, container_qty, total_cbm, status,
-            tracking_status, tracking_notes, carrier, vessel_name, voyage,
-            etd, eta, booking_number, bl_number, grand_total
+            tracking_status, carrier, vessel_name, voyage,
+            etd, eta, booking_number, bl_number
        from public.ocean_freight_orders
       where order_number = $1
       limit 1`,
@@ -415,7 +415,6 @@ async function oceanTracking(orderNumberValue, sendJson, response) {
   sendJson(response, 200, {
     ...row,
     id: Number(row.id),
-    grand_total: number(row.grand_total, 0),
     total_cbm: number(row.total_cbm, 0),
     container_qty: Number(row.container_qty ?? 0),
   });
