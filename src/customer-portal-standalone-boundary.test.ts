@@ -19,9 +19,13 @@ describe("standalone Customer Portal API boundary", () => {
   it("pins the development browser proxy to the standalone Customer Portal API", () => {
     const viteSource = readFileSync(join(process.cwd(), "vite.config.ts"), "utf8");
     const replitSource = readFileSync(join(process.cwd(), ".replit"), "utf8");
-    expect(viteSource).toContain("VITE_API_SERVER_URL_DEV");
+    const launcherSource = readFileSync(join(process.cwd(), "start-dev.sh"), "utf8");
     expect(viteSource).toContain("CUSTOMER_PORTAL_API_URL_DEV");
-    expect(viteSource).not.toContain("process.env.VITE_API_SERVER_URL ??");
+    expect(viteSource).toContain("127.0.0.1");
+    expect(viteSource).not.toContain("process.env.VITE_API_SERVER_URL_DEV");
+    expect(viteSource).not.toContain("process.env.API_SERVER_URL_DEV");
+    expect(launcherSource).toContain("unset CUSTOMER_PORTAL_API_UPSTREAM_URL");
+    expect(launcherSource).toContain('CUSTOMER_PORTAL_API_URL_DEV="http://127.0.0.1:18444"');
     expect(replitSource).not.toContain('VITE_API_SERVER_URL = "https://cstlogistic.co.id"');
     expect(replitSource).not.toContain("VITE_API_SERVER_URL");
     expect(replitSource).toContain("localPort = 18444");
