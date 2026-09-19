@@ -73,7 +73,7 @@ export default function VendorPoAcceptPage() {
           <p className="text-gray-600 mb-4">
             Terima kasih. <strong>{po.supplier_name ?? po.vendorName}</strong> telah mengkonfirmasi penerimaan Purchase Order <strong>{po.doc_number ?? po.poNumber}</strong>.
           </p>
-          {(po.vendor_accept_notes ?? po.revisionNotes || notes) && (
+          {(po.vendor_accept_notes ?? po.revisionNotes ?? notes) && (
             <div className="bg-gray-50 rounded-lg p-3 text-sm text-left text-gray-600 mb-4">
               <strong>Catatan:</strong> {po.vendor_accept_notes ?? po.revisionNotes ?? notes}
             </div>
