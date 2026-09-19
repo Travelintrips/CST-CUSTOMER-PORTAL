@@ -51,7 +51,7 @@ const statusLabel: Record<string, string> = {
   cancelled: "Dibatalkan",
 };
 
-export function CustomerBillingTab() {
+export function CustomerBillingTab({ initialView = "all" }: { initialView?: "all" | "payments" }) {
   const [invoices, setInvoices] = useState<Invoice[]>([]);
   const [payments, setPayments] = useState<Payment[]>([]);
   const [loading, setLoading] = useState(true);
@@ -136,7 +136,7 @@ export function CustomerBillingTab() {
         <div className="flex items-center gap-2 py-12 text-sm text-slate-500"><Loader2 className="h-4 w-4 animate-spin" /> Memuat data finance…</div>
       ) : (
         <>
-          <section className="rounded-xl border bg-white overflow-hidden">
+          {initialView === "all" && <section className="rounded-xl border bg-white overflow-hidden">
             <div className="border-b px-5 py-4">
               <h3 className="font-semibold text-slate-900">Invoice</h3>
             </div>
@@ -163,7 +163,7 @@ export function CustomerBillingTab() {
                 </div>
               ))}
             </div>
-          </section>
+          </section>}
           <section className="rounded-xl border bg-white overflow-hidden">
             <div className="border-b px-5 py-4">
               <h3 className="font-semibold text-slate-900">Payment masuk</h3>
