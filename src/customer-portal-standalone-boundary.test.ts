@@ -136,6 +136,14 @@ describe("standalone Customer Portal API boundary", () => {
     expect(server).toContain("Number(body.selectedVendorId) > 0");
   });
 
+  it("recomputes trucking booking price from canonical server rates", () => {
+    const server = readFileSync(join(process.cwd(), "server/index.mjs"), "utf8");
+    expect(server).toContain("async function calculateCanonicalTruckingEstimate");
+    expect(server).toContain("const canonicalPricing = await calculateCanonicalTruckingEstimate");
+    expect(server).toContain("canonicalEstimate.total_estimate");
+    expect(server).not.toContain("Math.max(0, Number(body.estimasiTotal) || 0)");
+  });
+
   it("keeps unknown API routes fail-closed in every environment", () => {
     expect(serverSource).not.toContain("Development preview traffic may proxy");
     expect(serverSource).toContain('"Customer Portal API route not found."');
