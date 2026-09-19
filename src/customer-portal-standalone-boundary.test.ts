@@ -166,6 +166,15 @@ describe("standalone Customer Portal API boundary", () => {
     expect(adminPortal).toContain("[fullName, phone, accountType, customerType, profileCompanyName, ctx.user.id]");
   });
 
+  it("keeps uploaded payment proofs private and returns token-scoped signed URLs", () => {
+    const server = readFileSync(join(process.cwd(), "server/index.mjs"), "utf8");
+    const storage = readFileSync(join(process.cwd(), "server/storage.mjs"), "utf8");
+    expect(server).toContain("signedPaymentProofUrl({ token, path: invoice.proof_url })");
+    expect(storage).toContain("export async function signedPaymentProofUrl");
+    expect(storage).toContain("payment-proofs/${tokenHash}/");
+    expect(storage).toContain("createSignedUrl(normalizedPath, SIGNED_URL_TTL_SECONDS)");
+  });
+
   it("keeps unknown API routes fail-closed in every environment", () => {
     expect(serverSource).not.toContain("Development preview traffic may proxy");
     expect(serverSource).toContain('"Customer Portal API route not found."');
