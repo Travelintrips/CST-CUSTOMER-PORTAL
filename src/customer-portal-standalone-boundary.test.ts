@@ -68,6 +68,15 @@ describe("standalone Customer Portal API boundary", () => {
     expect(server).toContain("trucking_booking_requests");
   });
 
+  it("uses canonical standalone trucking estimates without legacy vendor pricing", () => {
+    const page = readFileSync(join(process.cwd(), "src/pages/trucking.tsx"), "utf8");
+    const server = readFileSync(join(process.cwd(), "server/index.mjs"), "utf8");
+    expect(page).toContain("/api/portal/trucking/estimate");
+    expect(page).not.toContain("/api/vendor-trucking-pricing/public-estimate");
+    expect(server).toContain("TRUCKING_VEHICLE_RATE_KEYS");
+    expect(server).toContain("logistics_rate_cards");
+  });
+
   it("keeps unknown API routes fail-closed in every environment", () => {
     expect(serverSource).not.toContain("Development preview traffic may proxy");
     expect(serverSource).toContain('"Customer Portal API route not found."');
