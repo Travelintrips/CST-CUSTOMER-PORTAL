@@ -14,8 +14,8 @@ export default function VendorPoAcceptPage() {
   const [accepted, setAccepted] = useState(false);
 
   const { data: po, isLoading, isError } = useQuery({
-    queryKey: ["/api/purchase/vendor-accept", token],
-    queryFn: () => apiFetch(`/purchase/vendor-accept/${token}`).then((r) => {
+    queryKey: ["/api/mkt/vendor-po", token],
+    queryFn: () => apiFetch(`/mkt/vendor-po/${token}`).then((r) => {
       if (!r.ok) throw new Error("not_found");
       return r.json();
     }),
@@ -25,7 +25,7 @@ export default function VendorPoAcceptPage() {
 
   const acceptMut = useMutation({
     mutationFn: () =>
-      apiFetch(`/purchase/vendor-accept/${token}`, {
+      apiFetch(`/mkt/vendor-po/${token}/accept`, {
         method: "POST",
         body: JSON.stringify({ notes }),
       }).then(async (r) => {
@@ -59,10 +59,10 @@ export default function VendorPoAcceptPage() {
     );
   }
 
-  const alreadyAccepted = !!po.vendor_accepted_at;
-  const grandTotal = Number(po.grand_total ?? 0);
-  const subtotal = Number(po.total_amount ?? 0);
-  const taxAmount = Number(po.tax_amount ?? 0);
+  const alreadyAccepted = po.status === "vendor_accepted" || !!po.vendor_accepted_at || !!po.confirmedAt;
+  const grandTotal = Number(po.grand_total ?? po.grandTotal ?? 0);
+  const subtotal = Number(po.total_amount ?? po.totalAmount ?? 0);
+  const taxAmount = Number(po.tax_amount ?? po.taxAmount ?? 0);
 
   if (accepted || alreadyAccepted) {
     return (
@@ -71,11 +71,11 @@ export default function VendorPoAcceptPage() {
           <div className="text-6xl mb-4">✅</div>
           <h1 className="text-2xl font-bold text-green-700 mb-2">PO Telah Dikonfirmasi!</h1>
           <p className="text-gray-600 mb-4">
-            Terima kasih. <strong>{po.supplier_name}</strong> telah mengkonfirmasi penerimaan Purchase Order <strong>{po.doc_number}</strong>.
+            Terima kasih. <strong>{po.supplier_name ?? po.vendorName}</strong> telah mengkonfirmasi penerimaan Purchase Order <strong>{po.doc_number ?? po.poNumber}</strong>.
           </p>
-          {(po.vendor_accept_notes || notes) && (
+          {(po.vendor_accept_notes ?? po.revisionNotes || notes) && (
             <div className="bg-gray-50 rounded-lg p-3 text-sm text-left text-gray-600 mb-4">
-              <strong>Catatan:</strong> {po.vendor_accept_notes ?? notes}
+              <strong>Catatan:</strong> {po.vendor_accept_notes ?? po.revisionNotes ?? notes}
             </div>
           )}
           <p className="text-sm text-gray-400">Tim kami akan segera menindaklanjuti. Terima kasih atas kerjasamanya.</p>
@@ -93,14 +93,14 @@ export default function VendorPoAcceptPage() {
             <div className="w-10 h-10 bg-blue-100 rounded-xl flex items-center justify-center text-blue-600 text-xl">📋</div>
             <div>
               <h1 className="text-xl font-bold text-gray-800">Konfirmasi Purchase Order</h1>
-              <p className="text-sm text-gray-500">Nomor PO: <span className="font-semibold text-gray-700">{po.doc_number}</span></p>
+              <p className="text-sm text-gray-500">Nomor PO: <span className="font-semibold text-gray-700">{po.doc_number ?? po.poNumber}</span></p>
             </div>
           </div>
 
           <div className="bg-blue-50 rounded-xl p-4 space-y-2 text-sm">
             <div className="flex justify-between">
               <span className="text-gray-600">Vendor</span>
-              <span className="font-semibold text-gray-800">{po.supplier_name}</span>
+              <span className="font-semibold text-gray-800">{po.supplier_name ?? po.vendorName}</span>
             </div>
             {po.expected_date && (
               <div className="flex justify-between">
@@ -162,7 +162,7 @@ export default function VendorPoAcceptPage() {
         <div className="bg-white rounded-2xl shadow-sm p-6">
           <h2 className="font-semibold text-gray-800 mb-2">Konfirmasi Penerimaan PO</h2>
           <p className="text-sm text-gray-600 mb-4">
-            Dengan menekan tombol di bawah, <strong>{po.supplier_name}</strong> menyatakan telah menerima dan menyetujui Purchase Order <strong>{po.doc_number}</strong> dan akan mempersiapkan pengiriman/penyerahan layanan sesuai spesifikasi.
+            Dengan menekan tombol di bawah, <strong>{po.supplier_name ?? po.vendorName}</strong> menyatakan telah menerima dan menyetujui Purchase Order <strong>{po.doc_number ?? po.poNumber}</strong> dan akan mempersiapkan pengiriman/penyerahan layanan sesuai spesifikasi.
           </p>
 
           <div className="mb-4">
