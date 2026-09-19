@@ -5,6 +5,7 @@ import { normalizePhone, normalizedEmail } from "./auth-providers.mjs";
 import {
   signedVendorInvitationAssetUrl,
   uploadVendorInvitationAsset,
+  uploadVendorFeaturedPaymentProof,
 } from "./storage.mjs";
 
 const REQUIRED_INVITATION_DOCUMENTS = new Set(["npwp", "siup_nib", "ktp_pic"]);
@@ -995,6 +996,75 @@ export async function handleVendorPortalRoutes({ request, response, url, user, b
       );
       await client.query("commit");
       return sendJson(response, 200, { id: Number(updated.rows[0].id), status: updated.rows[0].status, cancelledAt: updated.rows[0].cancelled_at });
+    } catch (error) {
+      await client.query("rollback").catch(() => {});
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+  const featuredProofMatch = url.pathname.match(/^\\/api\\/portal\\/vendor\\/featured-requests\\/(\\d+)\\/payment-proof$/);
+  if (featuredProofMatch && request.method === "POST") {
+    if (!vendor?.supplier_id) return sendError(response, 403, "Supplier vendor belum terhubung.");
+    if (!body.file || typeof body.file.arrayBuffer !== "function") {
+      return sendError(response, 400, "File bukti pembayaran wajib diunggah.");
+    }
+    const requestId = Number(featuredProofMatch[1]);
+    const current = await query(
+      `select id, vendor_id, status, payment_status, payment_proof_url
+         from public.mkt_featured_product_requests
+        where id = $1 and vendor_id = $2
+        limit 1`,
+      [requestId, vendor.supplier_id],
+    );
+    const requestRow = current.rows[0];
+    if (!requestRow) return sendError(response, 404, "Pengajuan featured tidak ditemukan.");
+    if (!["pending", "approved"].includes(requestRow.status)) {
+      return sendError(response, 409, "Bukti pembayaran tidak dapat diunggah pada status pengajuan ini.");
+    }
+    if (requestRow.payment_status === "verified") {
+      return sendJson(response, 200, { id: requestId, paymentStatus: "verified", alreadyProcessed: true });
+    }
+    const uploaded = await uploadVendorFeaturedPaymentProof({
+      vendorId: vendor.supplier_id,
+      requestId,
+      file: body.file,
+    });
+    const client = await pool.connect();
+    try {
+      await client.query("begin");
+      const locked = await client.query(
+        `select id, status, payment_status, payment_proof_url
+           from public.mkt_featured_product_requests
+          where id = $1 and vendor_id = $2
+          for update`,
+        [requestId, vendor.supplier_id],
+      );
+      const row = locked.rows[0];
+      if (!row) {
+        const error = new Error("Pengajuan featured tidak ditemukan.");
+        error.statusCode = 404;
+        throw error;
+      }
+      if (!["pending", "approved"].includes(row.status) || row.payment_status === "verified") {
+        const error = new Error("Status pengajuan berubah; bukti pembayaran tidak disimpan.");
+        error.statusCode = 409;
+        throw error;
+      }
+      const paymentReference = String(body.paymentReference ?? "").trim().slice(0, 200) || null;
+      const updated = await client.query(
+        `update public.mkt_featured_product_requests
+            set payment_proof_url = $1, payment_reference = $2,
+                payment_status = 'pending_verification', updated_at = now()
+          where id = $3 and vendor_id = $4
+          returning id, payment_status, payment_reference, payment_proof_url`,
+        [uploaded.path, paymentReference, requestId, vendor.supplier_id],
+      );
+      await client.query("commit");
+      return sendJson(response, 200, {
+        id: Number(updated.rows[0].id), paymentStatus: updated.rows[0].payment_status,
+        paymentReference: updated.rows[0].payment_reference, proofUploaded: true,
+      });
     } catch (error) {
       await client.query("rollback").catch(() => {});
       throw error;

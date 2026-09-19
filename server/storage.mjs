@@ -230,6 +230,24 @@ export async function uploadDocument({ customerId, companyId, documentType: type
   return { path, fileName: safeFileName(file.name), mimeType, size };
 }
 
+export async function uploadVendorFeaturedPaymentProof({ vendorId, requestId, file }) {
+  const { mimeType, size } = validateDocumentFile(file);
+  const storage = client();
+  await ensurePrivateBucket(storage);
+  const path = `vendor-featured-payment-proofs/vendor-${Number(vendorId)}/request-${Number(requestId)}/${crypto.randomUUID()}-${safeFileName(file.name || `proof.${extensionForMime(mimeType)}`)}`;
+  const { error } = await storage.supabase.storage.from(storage.bucket).upload(
+    path,
+    Buffer.from(await file.arrayBuffer()),
+    { contentType: mimeType, cacheControl: "0", upsert: false },
+  );
+  if (error) {
+    const failure = new Error("Upload bukti pembayaran featured gagal.");
+    failure.statusCode = 502;
+    throw failure;
+  }
+  return { path, fileName: safeFileName(file.name), mimeType, size };
+}
+
 export async function uploadPaymentProof({ token, file }) {
   const { mimeType, size } = validateDocumentFile(file);
   const storage = client();
