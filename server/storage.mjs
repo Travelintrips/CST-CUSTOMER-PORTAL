@@ -248,6 +248,27 @@ export async function uploadVendorFeaturedPaymentProof({ vendorId, requestId, fi
   return { path, fileName: safeFileName(file.name), mimeType, size };
 }
 
+export async function signedVendorFeaturedPaymentProofUrl({ vendorId, requestId, path }) {
+  const normalizedPath = String(path || "");
+  const prefix = `vendor-featured-payment-proofs/vendor-${Number(vendorId)}/request-${Number(requestId)}/`;
+  if (!normalizedPath.startsWith(prefix)) {
+    const error = new Error("Object path bukti pembayaran featured tidak valid.");
+    error.statusCode = 404;
+    throw error;
+  }
+  const storage = client();
+  await ensurePrivateBucket(storage);
+  const { data, error } = await storage.supabase.storage
+    .from(storage.bucket)
+    .createSignedUrl(normalizedPath, SIGNED_URL_TTL_SECONDS);
+  if (error || !data?.signedUrl) {
+    const failure = new Error("Signed URL bukti pembayaran featured tidak tersedia.");
+    failure.statusCode = 502;
+    throw failure;
+  }
+  return data.signedUrl;
+}
+
 export async function uploadPaymentProof({ token, file }) {
   const { mimeType, size } = validateDocumentFile(file);
   const storage = client();
