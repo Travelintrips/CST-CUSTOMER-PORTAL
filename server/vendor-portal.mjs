@@ -898,6 +898,82 @@ export async function handleVendorPortalRoutes({ request, response, url, user, b
     sendJson(response, 200, { success: true, id: Number(result.rows[0].id), updatedAt: result.rows[0].updated_at });
     return true;
   }
+  if (url.pathname === "/api/portal/vendor/quotes" && request.method === "POST") {
+    if (!vendor?.supplier_id) return sendError(response, 403, "Supplier vendor belum terhubung.");
+    const rfqId = Number(body?.rfqId);
+    const vendorPrice = Number(body?.vendorPrice);
+    const estimatedDays = body?.estimatedDays == null || body?.estimatedDays === "" ? null : Number(body.estimatedDays);
+    if (!Number.isInteger(rfqId) || rfqId <= 0 || !Number.isFinite(vendorPrice) || vendorPrice <= 0) {
+      return sendError(response, 400, "RFQ dan harga vendor wajib valid.");
+    }
+    if (estimatedDays != null && (!Number.isInteger(estimatedDays) || estimatedDays < 0 || estimatedDays > 3650)) {
+      return sendError(response, 400, "Estimasi hari tidak valid.");
+    }
+    const clean = (value, max) => value == null ? null : String(value).trim().slice(0, max) || null;
+    const client = await pool.connect();
+    try {
+      await client.query("begin");
+      await client.query("select pg_advisory_xact_lock($1, $2)", [rfqId, Number(vendor.supplier_id)]);
+      const rfqResult = await client.query(
+        `select id, order_id, status, vendor_ids
+           from public.logistic_order_rfqs
+          where id = $1 and $2 = any(coalesce(vendor_ids, '{}'::int[]))
+          for update`,
+        [rfqId, Number(vendor.supplier_id)],
+      );
+      const rfq = rfqResult.rows[0];
+      if (!rfq) {
+        const error = new Error("RFQ tidak ditemukan atau tidak ditujukan kepada vendor ini.");
+        error.statusCode = 404;
+        throw error;
+      }
+      if (!["open", "sent", "pending", "quoted"].includes(String(rfq.status ?? "").toLowerCase())) {
+        const error = new Error("RFQ sudah tidak menerima quotation.");
+        error.statusCode = 409;
+        throw error;
+      }
+      const existing = await client.query(
+        `select id, quote_status from public.logistic_order_quotes
+          where rfq_id = $1 and vendor_id = $2 for update`,
+        [rfqId, Number(vendor.supplier_id)],
+      );
+      if (existing.rows[0] && ["approved", "accepted", "selected"].includes(String(existing.rows[0].quote_status ?? "").toLowerCase())) {
+        const error = new Error("Quotation yang sudah dipilih tidak dapat diubah.");
+        error.statusCode = 409;
+        throw error;
+      }
+      const result = await client.query(
+        `insert into public.logistic_order_quotes
+          (rfq_id, order_id, vendor_id, vendor_price, estimated_pickup, estimated_delivery,
+           estimated_days, vendor_notes, quote_status, reply_source, reply_timestamp, currency)
+         values ($1,$2,$3,$4,$5,$6,$7,$8,'pending','customer_portal',now(),'IDR')
+         on conflict (rfq_id, vendor_id) do update
+           set vendor_price = excluded.vendor_price,
+               estimated_pickup = excluded.estimated_pickup,
+               estimated_delivery = excluded.estimated_delivery,
+               estimated_days = excluded.estimated_days,
+               vendor_notes = excluded.vendor_notes,
+               reply_source = excluded.reply_source,
+               reply_timestamp = now()
+         returning id, rfq_id, order_id, vendor_price, quote_status`,
+        [rfqId, Number(rfq.order_id), Number(vendor.supplier_id), vendorPrice,
+         clean(body?.estimatedPickup, 120), clean(body?.estimatedDelivery, 120),
+         estimatedDays, clean(body?.vendorNotes, 2000)],
+      );
+      await client.query("commit");
+      return sendJson(response, existing.rows[0] ? 200 : 201, {
+        success: true, action: existing.rows[0] ? "updated" : "created",
+        quote: { id: Number(result.rows[0].id), rfqId: Number(result.rows[0].rfq_id),
+          orderId: Number(result.rows[0].order_id), vendorPrice: Number(result.rows[0].vendor_price),
+          quoteStatus: result.rows[0].quote_status },
+      });
+    } catch (error) {
+      await client.query("rollback").catch(() => {});
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
   const marketplaceDeclineMatch = url.pathname.match(/^\\/api\\/portal\\/vendor\\/marketplace-quotes\\/(\\d+)\\/decline$/);
   if (marketplaceDeclineMatch && request.method === "POST") {
     if (!vendor?.supplier_id) return sendError(response, 403, "Supplier vendor belum terhubung.");
