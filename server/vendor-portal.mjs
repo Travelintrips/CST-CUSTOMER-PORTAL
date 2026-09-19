@@ -698,7 +698,7 @@ export async function handleAdminVendorRoutes({ request, response, url, body, us
   return false;
 }
 
-export async function handleVendorPortalRoutes({ request, response, url, user, sendJson, sendError, sendEmpty }) {
+export async function handleVendorPortalRoutes({ request, response, url, user, body = {}, sendJson, sendError, sendEmpty }) {
   if (user.role !== "vendor") return false;
   const profile = await query(
     `select vp.*, s.id as supplier_id, s.name as supplier_name, s.status as supplier_status,
@@ -813,6 +813,119 @@ export async function handleVendorPortalRoutes({ request, response, url, user, s
       categoryId: row.category_id == null ? null : Number(row.category_id),
     })));
     return true;
+  }
+  if (url.pathname === "/api/portal/vendor/featured-requests" && request.method === "POST") {
+    if (!vendor?.supplier_id) return sendError(response, 403, "Supplier vendor belum terhubung.");
+    const catalogItemId = Number(body.catalogItemId);
+    const packageId = Number(body.packageId);
+    if (!Number.isInteger(catalogItemId) || !Number.isInteger(packageId)) {
+      return sendError(response, 400, "Catalog item dan paket featured wajib valid.");
+    }
+    const client = await pool.connect();
+    try {
+      await client.query("begin");
+      await client.query("select pg_advisory_xact_lock($1)", [catalogItemId]);
+      const item = await client.query(
+        `select id from public.vendor_catalog_items
+          where id = $1 and vendor_id = $2 and is_active = true and is_published = true
+          for update`,
+        [catalogItemId, vendor.supplier_id],
+      );
+      if (!item.rows[0]) {
+        const error = new Error("Catalog item tidak tersedia atau bukan milik vendor.");
+        error.statusCode = 404;
+        throw error;
+      }
+      const pkg = await client.query(
+        `select id, duration_days, price, currency from public.mkt_featured_packages
+          where id = $1 and is_active = true and internal_only = false
+          for share`,
+        [packageId],
+      );
+      if (!pkg.rows[0]) {
+        const error = new Error("Paket featured tidak tersedia.");
+        error.statusCode = 404;
+        throw error;
+      }
+      const existing = await client.query(
+        `select id, status from public.mkt_featured_product_requests
+          where catalog_item_id = $1 and status in ('pending','approved','active')
+          order by id desc limit 1 for update`,
+        [catalogItemId],
+      );
+      if (existing.rows[0]) {
+        await client.query("commit");
+        return sendJson(response, 200, { id: Number(existing.rows[0].id), status: existing.rows[0].status, alreadyProcessed: true });
+      }
+      const requestedStartAt = new Date(body.requestedStartAt ?? Date.now());
+      if (Number.isNaN(requestedStartAt.getTime())) {
+        const error = new Error("Tanggal mulai featured tidak valid.");
+        error.statusCode = 400;
+        throw error;
+      }
+      const requestedEndAt = new Date(requestedStartAt.getTime() + Number(pkg.rows[0].duration_days) * 86400000);
+      const inserted = await client.query(
+        `insert into public.mkt_featured_product_requests
+          (vendor_id, catalog_item_id, package_id, status, requested_start_at, requested_end_at,
+           price, currency, payment_status, company_id)
+         values ($1,$2,$3,'pending',$4,$5,$6,$7,'unpaid',null)
+         returning id, status, requested_start_at, requested_end_at, price, currency, payment_status`,
+        [vendor.supplier_id, catalogItemId, packageId, requestedStartAt, requestedEndAt, pkg.rows[0].price, pkg.rows[0].currency],
+      );
+      await client.query("commit");
+      return sendJson(response, 201, {
+        id: Number(inserted.rows[0].id), status: inserted.rows[0].status,
+        requestedStartAt: inserted.rows[0].requested_start_at, requestedEndAt: inserted.rows[0].requested_end_at,
+        price: Number(inserted.rows[0].price), currency: inserted.rows[0].currency,
+        paymentStatus: inserted.rows[0].payment_status,
+      });
+    } catch (error) {
+      await client.query("rollback").catch(() => {});
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+  const featuredCancelMatch = url.pathname.match(/^\\/api\\/portal\\/vendor\\/featured-requests\\/(\\d+)\\/cancel$/);
+  if (featuredCancelMatch && request.method === "POST") {
+    if (!vendor?.supplier_id) return sendError(response, 403, "Supplier vendor belum terhubung.");
+    const client = await pool.connect();
+    try {
+      await client.query("begin");
+      const locked = await client.query(
+        `select id, status from public.mkt_featured_product_requests
+          where id = $1 and vendor_id = $2 for update`,
+        [Number(featuredCancelMatch[1]), vendor.supplier_id],
+      );
+      if (!locked.rows[0]) {
+        const error = new Error("Pengajuan featured tidak ditemukan.");
+        error.statusCode = 404;
+        throw error;
+      }
+      if (locked.rows[0].status === "cancelled") {
+        await client.query("commit");
+        return sendJson(response, 200, { id: Number(locked.rows[0].id), status: "cancelled", alreadyProcessed: true });
+      }
+      if (locked.rows[0].status !== "pending") {
+        const error = new Error("Hanya pengajuan featured berstatus pending yang dapat dibatalkan.");
+        error.statusCode = 409;
+        throw error;
+      }
+      const updated = await client.query(
+        `update public.mkt_featured_product_requests
+            set status = 'cancelled', cancelled_at = now(), updated_at = now()
+          where id = $1 and vendor_id = $2 and status = 'pending'
+          returning id, status, cancelled_at`,
+        [Number(featuredCancelMatch[1]), vendor.supplier_id],
+      );
+      await client.query("commit");
+      return sendJson(response, 200, { id: Number(updated.rows[0].id), status: updated.rows[0].status, cancelledAt: updated.rows[0].cancelled_at });
+    } catch (error) {
+      await client.query("rollback").catch(() => {});
+      throw error;
+    } finally {
+      client.release();
+    }
   }
   if (url.pathname === "/api/portal/vendor/featured-requests" && request.method === "GET") {
     if (!vendor?.supplier_id) return sendJson(response, 200, []);
