@@ -779,6 +779,81 @@ export async function handleVendorPortalRoutes({ request, response, url, user, b
     });
     return true;
   }
+  const marketplaceDeclineMatch = url.pathname.match(/^\\/api\\/portal\\/vendor\\/marketplace-quotes\\/(\\d+)\\/decline$/);
+  if (marketplaceDeclineMatch && request.method === "POST") {
+    if (!vendor?.supplier_id) return sendError(response, 403, "Supplier vendor belum terhubung.");
+    const quoteId = Number(marketplaceDeclineMatch[1]);
+    const client = await pool.connect();
+    try {
+      await client.query("begin");
+      const quoteResult = await client.query(
+        `select q.id, q.rfq_id, q.vendor_id, q.status, r.status as rfq_status, r.rfq_number
+           from public.mkt_vendor_quotes q
+           join public.mkt_rfqs r on r.id = q.rfq_id
+          where q.id = $1 and q.vendor_id = $2
+          for update of q`,
+        [quoteId, vendor.supplier_id],
+      );
+      const quote = quoteResult.rows[0];
+      if (!quote) {
+        const error = new Error("Quotation marketplace tidak ditemukan.");
+        error.statusCode = 404;
+        throw error;
+      }
+      if (quote.status === "withdrawn") {
+        await client.query("commit");
+        return sendJson(response, 200, { id: Number(quote.id), status: "withdrawn", alreadyProcessed: true });
+      }
+      if (!["invited", "opened", "requote_requested"].includes(quote.status)) {
+        const error = new Error("Quotation tidak dapat ditolak pada status saat ini.");
+        error.statusCode = 409;
+        throw error;
+      }
+      if (["awarded", "cancelled", "expired"].includes(quote.rfq_status)) {
+        const error = new Error("RFQ sudah tidak aktif.");
+        error.statusCode = 409;
+        throw error;
+      }
+      const updated = await client.query(
+        `update public.mkt_vendor_quotes
+            set status = 'withdrawn', updated_at = now()
+          where id = $1 and vendor_id = $2 and status in ('invited','opened','requote_requested')
+          returning id, rfq_id, status`,
+        [quoteId, vendor.supplier_id],
+      );
+      await client.query(
+        `insert into public.activity_logs
+          (rfq_id, actor_type, actor_id, actor_name, action, old_value, new_value,
+           description, mkt_rfq_id, mkt_vendor_quote_id, deduplication_key)
+         values ($1,'vendor',$2,$3,'vendor_declined_quote',$4::jsonb,$5::jsonb,
+                 'Vendor menolak undangan quotation',$1,$6,$7)
+         on conflict (deduplication_key) where deduplication_key is not null do nothing`,
+        [
+          Number(updated.rows[0].rfq_id), String(user.id), user.name ?? user.email ?? "vendor",
+          JSON.stringify({ status: quote.status }), JSON.stringify({ status: "withdrawn" }),
+          quoteId, `rfq:${Number(updated.rows[0].rfq_id)}:vendor-decline:${quoteId}`,
+        ],
+      );
+      await client.query(
+        `insert into public.rfq_activity_logs
+          (rfq_id, actor_type, actor_id, actor_name, action, description)
+         select $1,'vendor',$2,$3,'vendor_declined_quote','Vendor menolak undangan quotation'
+          where not exists (
+            select 1 from public.rfq_activity_logs
+             where rfq_id=$1 and actor_type='vendor' and actor_id=$2
+               and action='vendor_declined_quote' and description='Vendor menolak undangan quotation'
+          )`,
+        [Number(updated.rows[0].rfq_id), String(user.id), user.name ?? user.email ?? "vendor"],
+      );
+      await client.query("commit");
+      return sendJson(response, 200, { id: Number(updated.rows[0].id), status: updated.rows[0].status });
+    } catch (error) {
+      await client.query("rollback").catch(() => {});
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
   if (url.pathname === "/api/portal/vendor/catalog-submissions" && request.method === "GET") {
     if (!vendor?.supplier_id) return sendJson(response, 200, { submissions: [] });
     const result = await query(
