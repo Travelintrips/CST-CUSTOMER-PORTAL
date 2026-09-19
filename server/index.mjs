@@ -1286,6 +1286,10 @@ async function handleCustomerServiceRoutes(request, response, url, user, body = 
       sendError(response, 400, "Order mode tidak valid.");
       return true;
     }
+    if (customerEmail !== String(user.email ?? "").trim().toLowerCase()) {
+      sendError(response, 403, "Email service request harus menggunakan email akun yang sedang login.");
+      return true;
+    }
     const companyIds = await getAccessibleCompanyIds(user);
     const result = await query(
       `insert into public.customer_service_requests (
@@ -1441,17 +1445,26 @@ async function handleCustomerServiceRoutes(request, response, url, user, body = 
       sendError(response, 400, "Tambahkan minimal satu item layanan.");
       return true;
     }
+    if (serviceRequest.status === "submitted") {
+      sendJson(response, 200, { ok: true, requestNumber: serviceRequest.request_number, alreadyProcessed: true });
+      return true;
+    }
     if (!["draft", "revision_requested"].includes(serviceRequest.status)) {
       sendError(response, 409, "Service request sudah dikirim.");
       return true;
     }
-    await query(
+    const submitted = await query(
       `update public.customer_service_requests
-          set status = 'submitted', submitted_at = now(), updated_at = now()
-        where id = $1`,
+          set status = 'submitted', submitted_at = coalesce(submitted_at, now()), updated_at = now()
+        where id = $1 and status in ('draft','revision_requested')
+        returning request_number`,
       [requestId],
     );
-    sendJson(response, 200, { ok: true, requestNumber: serviceRequest.request_number });
+    if (!submitted.rows[0]) {
+      sendError(response, 409, "Status service request berubah. Muat ulang sebelum mencoba lagi.");
+      return true;
+    }
+    sendJson(response, 200, { ok: true, requestNumber: submitted.rows[0].request_number });
     return true;
   }
 
