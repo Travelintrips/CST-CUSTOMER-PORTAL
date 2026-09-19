@@ -803,7 +803,8 @@ export async function handleVendorPortalRoutes({ request, response, url, user, b
         postalCode: vendor.postal_code ?? null,
         bankName: vendor.bank_name ?? null,
         bankAccountNumber: null,
-        bankAccountName: null,
+        bankAccountNumberMasked: vendor.bank_account_number ? `••••${String(vendor.bank_account_number).slice(-4)}` : null,
+        bankAccountName: vendor.bank_account_name ?? null,
         verificationStatus: vendor.verification_status ?? "pending",
         supplierId: vendor.supplier_id == null ? null : Number(vendor.supplier_id),
         approvedAt: vendor.approved_at ?? null,
@@ -811,6 +812,57 @@ export async function handleVendorPortalRoutes({ request, response, url, user, b
       } : null,
       submissionLink: null,
     });
+    return true;
+  }
+  if (url.pathname === "/api/portal/vendor/profile" && request.method === "PATCH") {
+    if (!vendor) return sendError(response, 404, "Profil vendor tidak ditemukan.");
+    const expectedUpdatedAt = body?.expectedUpdatedAt ? new Date(body.expectedUpdatedAt) : null;
+    if (expectedUpdatedAt && Number.isNaN(expectedUpdatedAt.getTime())) {
+      return sendError(response, 400, "Versi profil tidak valid.");
+    }
+    const clean = (value, max) => {
+      if (value === undefined) return undefined;
+      if (value === null) return null;
+      const normalized = String(value).trim();
+      return normalized ? normalized.slice(0, max) : null;
+    };
+    const values = {
+      picName: clean(body?.picName, 160),
+      phone: clean(body?.phone, 50),
+      email: clean(body?.email, 254),
+      fullAddress: clean(body?.fullAddress, 1000),
+      province: clean(body?.province, 160),
+      city: clean(body?.city, 160),
+      postalCode: clean(body?.postalCode, 20),
+      bankName: clean(body?.bankName, 160),
+      bankAccountName: clean(body?.bankAccountName, 200),
+      bankAccountNumber: clean(body?.bankAccountNumber, 100),
+    };
+    if (values.email && !/^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/.test(values.email)) {
+      return sendError(response, 400, "Email PIC tidak valid.");
+    }
+    const result = await query(
+      `update public.vendor_profiles
+          set pic_name = coalesce($1, pic_name),
+              phone = coalesce($2, phone),
+              email = coalesce($3, email),
+              full_address = coalesce($4, full_address),
+              province = coalesce($5, province),
+              city = coalesce($6, city),
+              postal_code = coalesce($7, postal_code),
+              bank_name = coalesce($8, bank_name),
+              bank_account_name = coalesce($9, bank_account_name),
+              bank_account_number = coalesce($10, bank_account_number),
+              updated_at = now()
+        where id = $11 and customer_id = $12
+          and ($13::timestamptz is null or updated_at = $13::timestamptz)
+        returning id, updated_at`,
+      [values.picName, values.phone, values.email, values.fullAddress, values.province, values.city,
+       values.postalCode, values.bankName, values.bankAccountName, values.bankAccountNumber,
+       vendor.id, user.id, expectedUpdatedAt?.toISOString() ?? null],
+    );
+    if (!result.rows[0]) return sendError(response, 409, "Profil telah berubah. Muat ulang sebelum menyimpan.");
+    sendJson(response, 200, { success: true, id: Number(result.rows[0].id), updatedAt: result.rows[0].updated_at });
     return true;
   }
   const marketplaceDeclineMatch = url.pathname.match(/^\\/api\\/portal\\/vendor\\/marketplace-quotes\\/(\\d+)\\/decline$/);
