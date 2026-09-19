@@ -275,6 +275,7 @@ async function readMultipartForm(request) {
     return {
       file: form.get("file"),
       docType: form.get("docType") ?? form.get("documentType"),
+      remarks: form.get("remarks"),
     };
   } catch {
     const error = new Error("Multipart document request tidak valid.");
