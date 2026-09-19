@@ -9,12 +9,10 @@ expertMode = true
 [userenv]
 
 [userenv.shared]
-VITE_API_SERVER_URL = "https://cstlogistic.co.id"
 VITE_SUPABASE_URL = "https://xssrfshdrtdfupgqwfdw.supabase.co"
 
 [userenv.development]
 APP_ENV = "development"
-VITE_API_SERVER_URL_DEV = "http://127.0.0.1:18444"
 VITE_SUPABASE_URL_DEV = "https://xssrfshdrtdfupgqwfdw.supabase.co"
 SUPABASE_STORAGE_BUCKET_DEV = "customer-documents-dev"
 
