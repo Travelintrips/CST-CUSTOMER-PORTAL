@@ -258,4 +258,12 @@ describe("standalone Customer Portal API boundary", () => {
     expect(serverSource).not.toContain("Development preview traffic may proxy");
     expect(serverSource).toContain('"Customer Portal API route not found."');
   });
+
+  it("labels Fonnte messages as requested total and exposes the status tab in desktop admin", () => {
+    const panel = readFileSync(join(process.cwd(), "src/pages/admin/FonnteStatusTab.tsx"), "utf8");
+    const admin = readFileSync(join(process.cwd(), "src/pages/admin.tsx"), "utf8");
+    expect(panel).toContain("Total Pesan Diminta");
+    expect(panel).not.toContain('["Total Pesan",');
+    expect(admin).toContain('TabsTrigger value="fonnte-status"');
+  });
 });
