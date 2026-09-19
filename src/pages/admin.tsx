@@ -175,6 +175,12 @@ export default function AdminPage() {
                   <CreditCard className="h-4 w-4 shrink-0" strokeWidth={2} />
                   <span className="flex-1">Invoice & Payment</span>
                 </button>
+                <button type="button" aria-current={activeTab === "payment-history" ? "page" : undefined}
+                  onClick={() => { setActiveTab("payment-history"); setMobileNavOpen(false); }}
+                  className={sidebarBtnCls("payment-history")}>
+                  <History className="h-4 w-4 shrink-0" strokeWidth={2} />
+                  <span className="flex-1">Riwayat Pembayaran</span>
+                </button>
                 <p className="px-3 pt-4 pb-1.5 text-[10px] font-semibold tracking-widest text-slate-600 uppercase select-none">{t("adminPage.nav.sectionWebsite", "Website & Konten")}</p>
                 {[
                   { value: "content",         icon: FileText,   label: t("adminPage.nav.websiteContent", "Konten Website") },
@@ -223,6 +229,7 @@ export default function AdminPage() {
                   { value: "customers", icon: Users,         label: t("adminPage.nav.customers", "Pelanggan") },
                   { value: "wa-logs",   icon: MessageCircle, label: t("adminPage.nav.whatsapp", "WhatsApp") },
                   { value: "fonnte-status", icon: Wifi, label: "Status Koneksi Fonnte" },
+                  { value: "chatbot-admin", icon: Bot, label: "Kelola Chatbot" },
                 ].map(({ value, icon: Icon, label }) => (
                   <button key={value} type="button" aria-current={activeTab === value ? "page" : undefined}
                     onClick={() => { setActiveTab(value); setMobileNavOpen(false); }}
