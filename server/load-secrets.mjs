@@ -1,5 +1,5 @@
 /**
- * Canonical CST-SUPER-APP Secret Manager bootstrap for the standalone API.
+ * Canonical CST Customer Portal Secret Manager bootstrap for the standalone API.
  *
  * Only GCP_SECRET_MANAGER_BOOTSTRAP_JSON belongs in Replit Secrets. The
  * application bundle is loaded before the child API process is initialized.
@@ -10,7 +10,7 @@ import { SecretManagerServiceClient } from "@google-cloud/secret-manager";
 import { spawn } from "node:child_process";
 
 const ALLOWED_ENVIRONMENTS = new Set(["development", "production"]);
-const DEFAULT_BUNDLE_PREFIX = "cst-customer-portal";
+const DEFAULT_BUNDLE_PREFIX = "cst-super-app";
 const REQUIRED_SECRETS = [
   ["SESSION_SECRET", 32],
   ["SUPABASE_DATABASE_URL", 10],
