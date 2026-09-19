@@ -588,7 +588,7 @@ export default function TruckingPage() {
     setSubmitError(null);
     try {
       const cheapest = estimasiData?.cheapest ?? null;
-      const res = await fetch("/api/trucking/bookings", {
+      const res = await fetch("/api/portal/trucking/bookings", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         credentials: "include",
