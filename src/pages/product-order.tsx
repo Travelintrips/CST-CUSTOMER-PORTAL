@@ -113,7 +113,7 @@ const EMPTY_FORM: DynamicFormValues = {
 async function fetchProducts(search?: string): Promise<PortalProduct[]> {
   const params = new URLSearchParams();
   if (search) params.set("search", search);
-  const res = await fetch(`${BASE}/api/portal-product/products?${params}`);
+  const res = await fetch(`${BASE}/api/portal/products?${params}`);
   if (!res.ok) throw new Error("Gagal memuat produk");
   return res.json();
 }
@@ -226,7 +226,7 @@ export default function ProductOrderPage() {
   const [companyOrigin, setCompanyOrigin] = useState<{ name: string; address: string; originCity: string; originAirport: string; originPort: string } | null>(null);
 
   useEffect(() => {
-    fetch(`${BASE}/api/trucking-rates`)
+    fetch(`${BASE}/api/portal/calculator-rates-v2`)
       .then(r => r.ok ? r.json() : null)
       .then(d => { if (Array.isArray(d) && d.length > 0) setApiRates(d); })
       .catch(() => {});
@@ -256,7 +256,7 @@ export default function ProductOrderPage() {
   }, [companyOrigin]);
 
   useEffect(() => {
-    fetch(`${BASE}/api/portal-product/templates`)
+    Promise.resolve({ ok: true, json: async () => [] } as Response)
       .then(r => r.ok ? r.json() : Promise.reject())
       .then((t: ProductTemplate[]) => setAllTemplates(t.length > 0 ? t : getAllLocalTemplates()))
       .catch(() => setAllTemplates(getAllLocalTemplates()))

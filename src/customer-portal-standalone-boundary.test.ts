@@ -40,6 +40,15 @@ describe("standalone Customer Portal API boundary", () => {
     expect(serverSource).toContain("payment_proof_token");
   });
 
+  it("keeps product ordering reads on standalone catalog and canonical rates", () => {
+    const productOrderSource = readFileSync(join(process.cwd(), "src/pages/product-order.tsx"), "utf8");
+    expect(productOrderSource).toContain("/api/portal/products");
+    expect(productOrderSource).toContain("/api/portal/calculator-rates-v2");
+    expect(productOrderSource).not.toContain("/api/portal-product/products");
+    expect(productOrderSource).not.toContain("/api/trucking-rates");
+    expect(productOrderSource).not.toContain("/api/portal-product/templates");
+  });
+
   it("keeps unknown API routes fail-closed in every environment", () => {
     expect(serverSource).not.toContain("Development preview traffic may proxy");
     expect(serverSource).toContain('"Customer Portal API route not found."');
