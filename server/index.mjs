@@ -2941,8 +2941,10 @@ async function route(request, response) {
     || pathname === "/api/settings/vehicle-images/upload"
     || pathname === "/api/settings/vehicle-order"
   ) {
-    const user = await requireAdmin(request, response);
-    if (user) {
+    const isPublicVehicleRead = request.method === "GET"
+      && (pathname === "/api/settings/vehicle-images" || pathname === "/api/settings/vehicle-order");
+    const user = isPublicVehicleRead ? null : await requireAdmin(request, response);
+    if (isPublicVehicleRead || user) {
       const isMultipart = String(request.headers["content-type"] ?? "").startsWith("multipart/form-data");
       const body = request.method === "POST" && isMultipart
         ? await readMultipartForm(request)

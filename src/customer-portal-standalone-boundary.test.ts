@@ -77,6 +77,13 @@ describe("standalone Customer Portal API boundary", () => {
     expect(server).toContain("logistics_rate_cards");
   });
 
+  it("keeps vehicle display settings public read-only while mutations stay admin-only", () => {
+    const server = readFileSync(join(process.cwd(), "server/index.mjs"), "utf8");
+    expect(server).toContain("isPublicVehicleRead");
+    expect(server).toContain('request.method === "GET"');
+    expect(server).toContain("isPublicVehicleRead ? null : await requireAdmin");
+  });
+
   it("keeps unknown API routes fail-closed in every environment", () => {
     expect(serverSource).not.toContain("Development preview traffic may proxy");
     expect(serverSource).toContain('"Customer Portal API route not found."');
