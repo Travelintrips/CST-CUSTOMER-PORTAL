@@ -194,6 +194,17 @@ describe("standalone Customer Portal API boundary", () => {
     expect(server).not.toContain("paymentProofUrl: row.payment_proof_url ?? null");
   });
 
+  it("does not persist browser-calculated logistic-order totals", () => {
+    const server = readFileSync(join(process.cwd(), "server/index.mjs"), "utf8");
+    expect(server).toContain("const authoritativeSubtotal = 0");
+    expect(server).toContain("const authoritativeTax = 0");
+    expect(server).toContain("const authoritativeGrandTotal = 0");
+    expect(server).toContain("Email order harus menggunakan email akun");
+    expect(server).not.toContain("body.subtotal ?? 0");
+    expect(server).not.toContain("body.grandTotal ?? 0");
+    expect(server).not.toContain("await await logisticOrderResponse");
+  });
+
   it("keeps unknown API routes fail-closed in every environment", () => {
     expect(serverSource).not.toContain("Development preview traffic may proxy");
     expect(serverSource).toContain('"Customer Portal API route not found."');
