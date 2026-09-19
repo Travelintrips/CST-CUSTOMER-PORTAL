@@ -378,6 +378,28 @@ export async function signedDocumentUrl(path) {
   return data.signedUrl;
 }
 
+export async function signedPaymentProofUrl({ token, path }) {
+  const normalizedPath = String(path || "");
+  const tokenHash = crypto.createHash("sha256").update(String(token)).digest("hex");
+  const prefix = `payment-proofs/${tokenHash}/`;
+  if (!normalizedPath.startsWith(prefix)) {
+    const error = new Error("Object path bukti pembayaran tidak valid.");
+    error.statusCode = 404;
+    throw error;
+  }
+  const storage = client();
+  await ensurePrivateBucket(storage);
+  const { data, error } = await storage.supabase.storage
+    .from(storage.bucket)
+    .createSignedUrl(normalizedPath, SIGNED_URL_TTL_SECONDS);
+  if (error || !data?.signedUrl) {
+    const failure = new Error("Signed URL bukti pembayaran tidak tersedia.");
+    failure.statusCode = 502;
+    throw failure;
+  }
+  return data.signedUrl;
+}
+
 function vendorInvitePrefix(token) {
   return `vendor-invitations/${crypto.createHash("sha256").update(String(token)).digest("hex")}`;
 }
