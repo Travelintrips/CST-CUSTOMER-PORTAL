@@ -90,6 +90,15 @@ describe("standalone Customer Portal API boundary", () => {
     expect(server).toContain('String(form.remarks ?? "").trim().slice(0, 500)');
   });
 
+  it("serves vendor dashboard read models from canonical standalone tables", () => {
+    const vendor = readFileSync(join(process.cwd(), "server/vendor-portal.mjs"), "utf8");
+    expect(vendor).toContain("/api/portal/vendor/catalog-submissions");
+    expect(vendor).toContain("/api/portal/vendor/featured-packages");
+    expect(vendor).toContain("/api/portal/vendor/featured-requests");
+    expect(vendor).toContain("vendor_catalog_submissions");
+    expect(vendor).toContain("mkt_featured_product_requests");
+  });
+
   it("keeps unknown API routes fail-closed in every environment", () => {
     expect(serverSource).not.toContain("Development preview traffic may proxy");
     expect(serverSource).toContain('"Customer Portal API route not found."');

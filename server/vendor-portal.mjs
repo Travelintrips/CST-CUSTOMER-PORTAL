@@ -779,6 +779,64 @@ export async function handleVendorPortalRoutes({ request, response, url, user, s
     });
     return true;
   }
+  if (url.pathname === "/api/portal/vendor/catalog-submissions" && request.method === "GET") {
+    if (!vendor?.supplier_id) return sendJson(response, 200, { submissions: [] });
+    const result = await query(
+      `select id, name, category_key, service_type, template_kind, price_base, currency,
+              stock_status, stock_qty, status, catalog_item_id, review_notes, submitted_at, updated_at
+         from public.vendor_catalog_submissions
+        where supplier_id = $1
+        order by submitted_at desc, id desc
+        limit 100`,
+      [vendor.supplier_id],
+    );
+    sendJson(response, 200, { submissions: result.rows.map((row) => ({
+      id: Number(row.id), name: row.name, categoryKey: row.category_key, serviceType: row.service_type,
+      templateKind: row.template_kind, priceBase: Number(row.price_base ?? 0), currency: row.currency,
+      stockStatus: row.stock_status, stockQty: row.stock_qty == null ? null : Number(row.stock_qty),
+      status: row.status, catalogItemId: row.catalog_item_id == null ? null : Number(row.catalog_item_id),
+      reviewNotes: row.review_notes, submittedAt: row.submitted_at, updatedAt: row.updated_at,
+    })) });
+    return true;
+  }
+  if (url.pathname === "/api/portal/vendor/featured-packages" && request.method === "GET") {
+    const result = await query(
+      `select id, code, name, description, duration_days, price, currency, placement_type, priority_weight, category_id
+         from public.mkt_featured_packages
+        where is_active = true and internal_only = false
+        order by priority_weight desc, id asc`,
+    );
+    sendJson(response, 200, result.rows.map((row) => ({
+      id: Number(row.id), code: row.code, name: row.name, description: row.description,
+      durationDays: Number(row.duration_days), price: Number(row.price), currency: row.currency,
+      placementType: row.placement_type, priorityWeight: Number(row.priority_weight),
+      categoryId: row.category_id == null ? null : Number(row.category_id),
+    })));
+    return true;
+  }
+  if (url.pathname === "/api/portal/vendor/featured-requests" && request.method === "GET") {
+    if (!vendor?.supplier_id) return sendJson(response, 200, []);
+    const result = await query(
+      `select r.*, p.name as package_name, i.name as catalog_item_name
+         from public.mkt_featured_product_requests r
+         join public.mkt_featured_packages p on p.id = r.package_id
+         join public.vendor_catalog_items i on i.id = r.catalog_item_id
+        where r.vendor_id = $1
+        order by r.created_at desc, r.id desc
+        limit 100`,
+      [vendor.supplier_id],
+    );
+    sendJson(response, 200, result.rows.map((row) => ({
+      id: Number(row.id), catalogItemId: Number(row.catalog_item_id), catalogItemName: row.catalog_item_name,
+      packageId: Number(row.package_id), packageName: row.package_name, status: row.status,
+      requestedStartAt: row.requested_start_at, requestedEndAt: row.requested_end_at,
+      approvedStartAt: row.approved_start_at, approvedEndAt: row.approved_end_at,
+      price: Number(row.price ?? 0), currency: row.currency, paymentStatus: row.payment_status,
+      paymentReference: row.payment_reference, paymentProofUrl: row.payment_proof_url,
+      rejectionReason: row.rejection_reason, createdAt: row.created_at, updatedAt: row.updated_at,
+    })));
+    return true;
+  }
   if (url.pathname === "/api/portal/vendor/catalog" && request.method === "GET") {
     if (!vendor?.supplier_id) return sendJson(response, 200, { supplierId: null, supplierName: "", items: [] });
     const result = await query(
