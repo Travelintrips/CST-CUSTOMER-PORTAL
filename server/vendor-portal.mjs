@@ -730,6 +730,28 @@ export async function handleVendorPortalRoutes({ request, response, url, user, b
     return true;
   }
   if (url.pathname === "/api/portal/vendor/profile" && request.method === "GET") {
+    const legacyRfqs = vendor?.supplier_id ? await query(
+      `select r.id, r.rfq_number, r.order_id, r.status, r.created_at,
+              o.order_number, o.origin, o.destination, o.shipment_type, o.commodity
+         from public.logistic_order_rfqs r
+         join public.logistic_orders o on o.id = r.order_id
+        where $1 = any(coalesce(r.vendor_ids, '{}'::int[]))
+        order by r.created_at desc, r.id desc
+        limit 100`,
+      [vendor.supplier_id],
+    ) : { rows: [] };
+    const legacyQuotes = vendor?.supplier_id ? await query(
+      `select q.id, q.rfq_id, q.order_id, q.vendor_price, q.selling_price,
+              q.estimated_pickup, q.estimated_delivery, q.vendor_notes, q.quote_status,
+              q.reply_source, q.created_at, r.rfq_number, o.order_number
+         from public.logistic_order_quotes q
+         join public.logistic_order_rfqs r on r.id = q.rfq_id
+         join public.logistic_orders o on o.id = q.order_id
+        where q.vendor_id = $1
+        order by q.created_at desc, q.id desc
+        limit 100`,
+      [vendor.supplier_id],
+    ) : { rows: [] };
     const marketplaceRfqs = vendor?.supplier_id ? await query(
       `select q.id as quote_id, q.rfq_id, q.status as quote_status, q.valid_until, q.submitted_at,
               r.rfq_number, r.status as rfq_status, r.buyer_name, r.buyer_company,
@@ -768,8 +790,19 @@ export async function handleVendorPortalRoutes({ request, response, url, user, b
         serviceType: vendor.service_type ?? null,
         isActive: Boolean(vendor.is_active),
       } : null,
-      rfqs: [],
-      quotes: [],
+      rfqs: legacyRfqs.rows.map((row) => ({
+        id: Number(row.id), rfqNumber: row.rfq_number, orderId: Number(row.order_id), status: row.status,
+        orderNumber: row.order_number, origin: row.origin, destination: row.destination,
+        shipmentType: row.shipment_type, commodity: row.commodity, createdAt: row.created_at,
+      })),
+      quotes: legacyQuotes.rows.map((row) => ({
+        id: Number(row.id), rfqId: Number(row.rfq_id), orderId: Number(row.order_id),
+        orderNumber: row.order_number, rfqNumber: row.rfq_number, vendorPrice: Number(row.vendor_price ?? 0),
+        sellingPrice: row.selling_price == null ? null : Number(row.selling_price),
+        estimatedPickup: row.estimated_pickup, estimatedDelivery: row.estimated_delivery,
+        vendorNotes: row.vendor_notes, quoteStatus: row.quote_status, replySource: row.reply_source,
+        createdAt: row.created_at,
+      })),
       marketplaceRfqs: marketplaceRfqs.rows.map((row) => ({
         id: Number(row.rfq_id), rfqNumber: row.rfq_number, rfqStatus: row.rfq_status,
         quoteId: Number(row.quote_id), quoteStatus: row.quote_status, quoteUrl: "",
