@@ -23,7 +23,8 @@ describe("standalone Customer Portal API boundary", () => {
     expect(viteSource).toContain("CUSTOMER_PORTAL_API_URL_DEV");
     expect(viteSource).not.toContain("process.env.VITE_API_SERVER_URL ??");
     expect(replitSource).not.toContain('VITE_API_SERVER_URL = "https://cstlogistic.co.id"');
-    expect(replitSource).toContain('VITE_API_SERVER_URL_DEV = "http://127.0.0.1:18444"');
+    expect(replitSource).not.toContain("VITE_API_SERVER_URL");
+    expect(replitSource).toContain("localPort = 18444");
   });
 
   it("keeps vendor PO confirmation on the standalone marketplace API", () => {
@@ -35,7 +36,7 @@ describe("standalone Customer Portal API boundary", () => {
 
   it("serves payment proof links from the standalone Customer Portal API", () => {
     const serverSource = readFileSync(join(process.cwd(), "server/index.mjs"), "utf8");
-    expect(serverSource).toContain("/api\\/payment-proof");
+    expect(serverSource).toContain('pathname.match(/^\\/api\\/payment-proof\\/([^/]+)$/)');
     expect(serverSource).toContain("uploadPaymentProof");
     expect(serverSource).toContain("payment_proof_token");
   });
@@ -104,13 +105,13 @@ describe("standalone Customer Portal API boundary", () => {
     expect(vendor).toContain("pg_advisory_xact_lock");
     expect(vendor).toContain("is_published = true");
     expect(vendor).toContain("status in ('pending','approved','active')");
-    expect(vendor).toContain("featured-requests\\/(\\d+)\\/cancel");
+    expect(vendor).toContain("featured-requests\\\\/(\\\\d+)\\\\/cancel");
     expect(vendor).toContain("status !== \"pending\"");
   });
 
   it("guards vendor marketplace decline by supplier ownership and quote state", () => {
     const vendor = readFileSync(join(process.cwd(), "server/vendor-portal.mjs"), "utf8");
-    expect(vendor).toContain("marketplace-quotes\\/(\\d+)\\/decline");
+    expect(vendor).toContain("marketplace-quotes\\\\/(\\\\d+)\\\\/decline");
     expect(vendor).toContain("q.id = $1 and q.vendor_id = $2");
     expect(vendor).toContain("requote_requested");
     expect(vendor).toContain("vendor_declined_quote");
@@ -120,7 +121,7 @@ describe("standalone Customer Portal API boundary", () => {
   it("keeps featured payment proofs private and pending admin verification", () => {
     const vendor = readFileSync(join(process.cwd(), "server/vendor-portal.mjs"), "utf8");
     const storage = readFileSync(join(process.cwd(), "server/storage.mjs"), "utf8");
-    expect(vendor).toContain("featured-requests\\/(\\d+)\\/payment-proof");
+    expect(vendor).toContain("featured-requests\\\\/(\\\\d+)\\\\/payment-proof");
     expect(vendor).toContain("payment_status = 'pending_verification'");
     expect(vendor).toContain("payment_status === \"verified\"");
     expect(storage).toContain("vendor-featured-payment-proofs/vendor-");
