@@ -565,6 +565,7 @@ export default function TruckingPage() {
           overnight_nights:      addons.overnight ? 1 : 0,
           is_urgent:             addons.urgentDelivery,
           cargo_value:           0,
+          jumlah_trip:           jumlahTrip,
         }),
       });
       const data = await res.json() as EstimasiApiResult | { error: string };
