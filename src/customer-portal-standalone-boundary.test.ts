@@ -232,6 +232,13 @@ describe("standalone Customer Portal API boundary", () => {
     expect(storage).not.toContain("writeFileSync(");
   });
 
+  it("does not expose sensitive tracking links to public phone verification", () => {
+    const server = readFileSync(join(process.cwd(), "server/index.mjs"), "utf8");
+    expect(server).toContain("const isAuthenticatedOwner = Boolean(sessionRow);");
+    expect(server).toContain("photoUrl: isAuthenticatedOwner ? (item.photo_url ?? null) : null");
+    expect(server).toContain("token: isAuthenticatedOwner ? item.payment_proof_token : null");
+  });
+
   it("keeps unknown API routes fail-closed in every environment", () => {
     expect(serverSource).not.toContain("Development preview traffic may proxy");
     expect(serverSource).toContain('"Customer Portal API route not found."');
