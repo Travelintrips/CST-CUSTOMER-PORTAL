@@ -33,6 +33,13 @@ describe("standalone Customer Portal API boundary", () => {
     expect(vendorPoSource).not.toContain("/purchase/vendor-accept/");
   });
 
+  it("serves payment proof links from the standalone Customer Portal API", () => {
+    const serverSource = readFileSync(join(process.cwd(), "server/index.mjs"), "utf8");
+    expect(serverSource).toContain("/api\\/payment-proof");
+    expect(serverSource).toContain("uploadPaymentProof");
+    expect(serverSource).toContain("payment_proof_token");
+  });
+
   it("keeps unknown API routes fail-closed in every environment", () => {
     expect(serverSource).not.toContain("Development preview traffic may proxy");
     expect(serverSource).toContain('"Customer Portal API route not found."');
