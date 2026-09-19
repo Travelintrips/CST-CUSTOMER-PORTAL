@@ -281,6 +281,7 @@ async function handleInternal({ request, response, url, body, user, sendJson, se
       `select id, name, description, currency, price_sell, is_featured
          from public.vendor_catalog_items
         where vendor_id=$1 and is_active=true and is_published=true
+          and type='product'
           and coalesce(is_featured,false)=false
         order by name, id`,
       [vendorId],
@@ -309,7 +310,8 @@ async function handleInternal({ request, response, url, body, user, sendJson, se
       await client.query("begin");
       const item = await client.query(
         `select id from public.vendor_catalog_items
-          where id=$1 and vendor_id=$2 and is_active=true and coalesce(is_featured,false)=false
+          where id=$1 and vendor_id=$2 and type='product'
+            and is_active=true and coalesce(is_featured,false)=false
           for update`,
         [catalogItemId, vendorId],
       );

@@ -155,7 +155,7 @@ async function cleanupFeaturedActivation({
         originalItem.is_featured,
         originalItem.featured_start_at,
         originalItem.featured_until,
-        originalItem.featured_priority,
+        originalItem.featured_priority ?? 0,
         catalogItemId,
         vendorId,
       ],
@@ -216,19 +216,28 @@ async function testInitialCourierConfiguration(admin) {
 async function testInternalFeaturedActivation(admin) {
   const vendors = await admin.request("/api/portal/admin/internal-featured/vendors");
   const packages = await admin.request("/api/portal/admin/featured-packages");
-  const vendor = vendors.find((item) => Number(item.id) > 0);
   const featuredPackage = packages.find((item) => item.isActive && item.internalOnly);
-  assert(vendor, "no internal vendor is available for the disposable activation.");
   assert(featuredPackage, "no active internal featured package is available.");
 
-  const catalog = await admin.request(
-    `/api/portal/admin/internal-featured/vendors/${vendor.id}/catalog`,
-  );
+  let vendor = null;
+  let catalog = [];
+  for (const candidate of vendors) {
+    const candidateCatalog = await admin.request(
+      `/api/portal/admin/internal-featured/vendors/${candidate.id}/catalog`,
+    );
+    if (candidateCatalog.some((item) => !item.isFeatured)) {
+      vendor = candidate;
+      catalog = candidateCatalog;
+      break;
+    }
+  }
+  assert(vendor, "no internal vendor with a non-featured Marketplace product is available.");
   const item = catalog.find((candidate) => !candidate.isFeatured);
-  assert(item, "no non-featured published catalog item is available.");
+  assert(item, "no non-featured published Marketplace product is available.");
 
   const originalResult = await query(
-    `select is_featured, featured_start_at, featured_until, featured_priority
+    `select is_featured, featured_start_at, featured_until,
+            coalesce(featured_priority, 0)::int as featured_priority
        from public.vendor_catalog_items
       where id=$1 and vendor_id=$2`,
     [item.id, vendor.id],
