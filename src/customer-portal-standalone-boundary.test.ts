@@ -268,9 +268,9 @@ describe("standalone Customer Portal API boundary", () => {
     expect(admin).toContain('TabsTrigger value="fonnte-status"');
   });
 
-  it("uses a Customer Portal-owned Secret Manager bundle by default", () => {
+  it("keeps the existing Secret Manager bundle bootstrap while isolating the Fonnte key", () => {
     const loader = readFileSync(join(process.cwd(), "server/load-secrets.mjs"), "utf8");
-    expect(loader).toContain('DEFAULT_BUNDLE_PREFIX = "cst-customer-portal"');
-    expect(loader).not.toContain('DEFAULT_BUNDLE_PREFIX = "cst-super-app"');
+    expect(loader).toContain('DEFAULT_BUNDLE_PREFIX = "cst-super-app"');
+    expect(loader).not.toContain('CUSTOMER_PORTAL_FONNTE_TOKEN = process.env.FONNTE_TOKEN');
   });
 });
