@@ -175,6 +175,16 @@ describe("standalone Customer Portal API boundary", () => {
     expect(storage).toContain("createSignedUrl(normalizedPath, SIGNED_URL_TTL_SECONDS)");
   });
 
+  it("preserves vendor featured payment references and signs private proof paths", () => {
+    const server = readFileSync(join(process.cwd(), "server/index.mjs"), "utf8");
+    const vendorPortal = readFileSync(join(process.cwd(), "server/vendor-portal.mjs"), "utf8");
+    const storage = readFileSync(join(process.cwd(), "server/storage.mjs"), "utf8");
+    expect(server).toContain('paymentReference: form.get("paymentReference")');
+    expect(vendorPortal).toContain("signedVendorFeaturedPaymentProofUrl");
+    expect(storage).toContain("vendor-featured-payment-proofs/vendor-");
+    expect(storage).toContain("request-");
+  });
+
   it("keeps unknown API routes fail-closed in every environment", () => {
     expect(serverSource).not.toContain("Development preview traffic may proxy");
     expect(serverSource).toContain('"Customer Portal API route not found."');
