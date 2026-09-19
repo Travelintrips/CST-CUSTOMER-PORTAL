@@ -185,6 +185,15 @@ describe("standalone Customer Portal API boundary", () => {
     expect(storage).toContain("request-");
   });
 
+  it("scopes logistic-order payment proof paths to their portal customer", () => {
+    const server = readFileSync(join(process.cwd(), "server/index.mjs"), "utf8");
+    expect(server).toContain("async function logisticOrderResponse");
+    expect(server).toContain("customers/${Number(row.portal_customer_id)}/");
+    expect(server).toContain("customers/${Number(user.id)}/");
+    expect(server).toContain("paymentProofUrl = await signedDocumentUrl(row.payment_proof_url)");
+    expect(server).not.toContain("paymentProofUrl: row.payment_proof_url ?? null");
+  });
+
   it("keeps unknown API routes fail-closed in every environment", () => {
     expect(serverSource).not.toContain("Development preview traffic may proxy");
     expect(serverSource).toContain('"Customer Portal API route not found."');
