@@ -30,7 +30,7 @@ import {
   handleServiceOperations,
   handleVerification,
 } from "./admin-portal.mjs";
-import { checkStorageReadiness, uploadPaymentProof } from "./storage.mjs";
+import { checkStorageReadiness, signedPaymentProofUrl, uploadPaymentProof } from "./storage.mjs";
 import { handleMarketplaceRoute } from "./marketplace-service.mjs";
 import {
   handleAdminInvoices,
@@ -3255,7 +3255,7 @@ async function route(request, response) {
         customerName: invoice.customer_name,
         grandTotal: Number(invoice.grand_total ?? 0),
         paymentStatus: invoice.payment_status,
-        proofUrl: invoice.proof_url,
+        proofUrl: invoice.proof_url ? await signedPaymentProofUrl({ token, path: invoice.proof_url }) : null,
         proofRemarks: invoice.proof_remarks,
         proofUploadedAt: invoice.proof_uploaded_at,
         dueDate: invoice.due_date,
