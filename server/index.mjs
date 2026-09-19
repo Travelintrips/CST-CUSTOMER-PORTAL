@@ -30,7 +30,7 @@ import {
   handleServiceOperations,
   handleVerification,
 } from "./admin-portal.mjs";
-import { checkStorageReadiness } from "./storage.mjs";
+import { checkStorageReadiness, uploadPaymentProof } from "./storage.mjs";
 import { handleMarketplaceRoute } from "./marketplace-service.mjs";
 import {
   handleAdminInvoices,
@@ -2979,6 +2979,62 @@ async function route(request, response) {
     });
     return;
   }
+  const paymentProofMatch = pathname.match(/^\\/api\\/payment-proof\\/([^/]+)(?:\\/(upload))?$/);
+  if (paymentProofMatch) {
+    const token = decodeURIComponent(paymentProofMatch[1]);
+    const invoiceResult = await query(
+      `select id, doc_number, invoice_number, customer_name, grand_total, payment_status,
+              proof_url, proof_remarks, proof_uploaded_at, due_date
+         from public.sales_documents
+        where payment_proof_token = $1
+          and invoice_status = 'invoiced'
+        limit 1`,
+      [token],
+    );
+    const invoice = invoiceResult.rows[0];
+    if (!invoice) {
+      sendJson(response, 404, { ok: false, error: "Link pembayaran tidak valid." });
+      return;
+    }
+    if (request.method === "GET" && !paymentProofMatch[2]) {
+      sendJson(response, 200, { ok: true, invoice: {
+        docNumber: invoice.doc_number,
+        invoiceNumber: invoice.invoice_number,
+        customerName: invoice.customer_name,
+        grandTotal: Number(invoice.grand_total ?? 0),
+        paymentStatus: invoice.payment_status,
+        proofUrl: invoice.proof_url,
+        proofRemarks: invoice.proof_remarks,
+        proofUploadedAt: invoice.proof_uploaded_at,
+        dueDate: invoice.due_date,
+      }});
+      return;
+    }
+    if (request.method === "POST" && paymentProofMatch[2] === "upload") {
+      if (invoice.proof_url || invoice.proof_uploaded_at) {
+        sendJson(response, 200, { ok: true, alreadyUploaded: true });
+        return;
+      }
+      const form = await readMultipartForm(request);
+      const file = form.file;
+      if (!file) { sendJson(response, 400, { ok: false, error: "File bukti pembayaran wajib diunggah." }); return; }
+      const uploaded = await uploadPaymentProof({ token, file });
+      const updated = await query(
+        `update public.sales_documents
+            set proof_url = $1, proof_remarks = $2, proof_uploaded_at = now(),
+                payment_status = case when payment_status = 'paid' then payment_status else 'proof_submitted' end,
+                updated_at = now()
+          where id = $3 and proof_url is null
+          returning id`,
+        [uploaded.path, String(form.remarks ?? "").trim().slice(0, 500) || null, invoice.id],
+      );
+      sendJson(response, 200, { ok: true, alreadyUploaded: !updated.rowCount });
+      return;
+    }
+    sendJson(response, 405, { ok: false, error: "Method tidak didukung." });
+    return;
+  }
+
   if (request.method === "GET" && pathname === "/api/portal/me/invoices") {
     const user = await requireUser(request, response);
     if (user) await handleCustomerInvoices({ request, response, user, sendJson, sendError });
