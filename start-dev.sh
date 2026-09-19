@@ -3,14 +3,11 @@ set -euo pipefail
 cd "$(dirname "$0")"
 export NODE_ENV="${NODE_ENV:-development}"
 export PORT="${PORT:-5000}"
-# Keep only the non-production CST API as the upstream for routes that are not
-# implemented by the standalone portal API. Never fall back to the production
-# shared API from the development portal.
-export CUSTOMER_PORTAL_API_UPSTREAM_URL="${CUSTOMER_PORTAL_API_UPSTREAM_URL:-${VITE_API_SERVER_URL_DEV:-${API_SERVER_URL_DEV:-}}}"
-# The standalone portal uses the development API when one is configured.
-# Keep VITE_API_SERVER_URL as the production/shared fallback so published
-# builds are not accidentally pointed at a dev API.
-export VITE_API_SERVER_URL="${VITE_API_SERVER_URL_DEV:-${VITE_API_SERVER_URL:-${API_SERVER_URL:-http://127.0.0.1:18444}}}"
+# Development always talks to this repository's standalone Customer Portal API.
+# Do not inherit shared CST-SUPER-APP API targets from legacy environment values.
+unset CUSTOMER_PORTAL_API_UPSTREAM_URL API_SERVER_URL API_SERVER_URL_DEV VITE_API_SERVER_URL_DEV
+export CUSTOMER_PORTAL_API_URL_DEV="http://127.0.0.1:18444"
+export VITE_API_SERVER_URL="$CUSTOMER_PORTAL_API_URL_DEV"
 # Replit exposes the customer portal API on external port 3000. The preview
 # page itself is served on external port 80, where /api is not routed through
 # Vite by the Replit edge proxy.

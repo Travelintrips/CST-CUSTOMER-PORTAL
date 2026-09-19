@@ -7,10 +7,16 @@ import runtimeErrorOverlay from "@replit/vite-plugin-runtime-error-modal";
 const port = Number(process.env.PORT ?? "3000");
 
 const basePath = process.env.BASE_PATH ?? "/";
-const apiServerUrl =
-  process.env.VITE_API_SERVER_URL_DEV ??
-  process.env.CUSTOMER_PORTAL_API_URL_DEV ??
-  "http://127.0.0.1:18444";
+const STANDALONE_API_URL = "http://127.0.0.1:18444";
+const configuredApiUrl =
+  process.env.CUSTOMER_PORTAL_API_URL_DEV ?? STANDALONE_API_URL;
+const parsedApiUrl = new URL(configuredApiUrl);
+if (!["127.0.0.1", "localhost", "::1"].includes(parsedApiUrl.hostname)) {
+  throw new Error(
+    "CUSTOMER_PORTAL_API_URL_DEV must target the local standalone Customer Portal API.",
+  );
+}
+const apiServerUrl = parsedApiUrl.origin;
 // Development must keep browser requests relative so Vite proxies them to the
 // local Customer Portal API. A public API origin is only meaningful for a
 // production bundle served without the local proxy.
