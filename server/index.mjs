@@ -1637,6 +1637,11 @@ async function handleServiceProfile(request, response, url, user, body = {}) {
       sendJson(response, 200, {});
       return;
     }
+    const profileDocumentUrl = async (path) => {
+      if (!path) return "";
+      const expectedPrefix = `customers/${Number(user.id)}/`;
+      return String(path).startsWith(expectedPrefix) ? await signedDocumentUrl(path) : "";
+    };
     sendJson(response, 200, {
       companyName: row.company_name ?? "",
       npwp: row.npwp ?? "",
@@ -1645,10 +1650,10 @@ async function handleServiceProfile(request, response, url, user, body = {}) {
       picName: row.pic_name ?? "",
       picWhatsapp: row.pic_whatsapp ?? "",
       picEmail: row.pic_email ?? email,
-      legalDocUrl: row.legal_doc_url ?? "",
-      ktpPicUrl: row.ktp_pic_url ?? "",
-      suratKuasaUrl: row.surat_kuasa_url ?? "",
-      apiNikIzinUrl: row.api_nik_izin_url ?? "",
+      legalDocUrl: await profileDocumentUrl(row.legal_doc_url),
+      ktpPicUrl: await profileDocumentUrl(row.ktp_pic_url),
+      suratKuasaUrl: await profileDocumentUrl(row.surat_kuasa_url),
+      apiNikIzinUrl: await profileDocumentUrl(row.api_nik_izin_url),
       additionalNotes: row.additional_notes ?? "",
       profileStatus: row.profile_status ?? "draft",
       isVerified: Boolean(row.is_verified),
@@ -1656,6 +1661,14 @@ async function handleServiceProfile(request, response, url, user, body = {}) {
     return;
   }
   if (request.method === "PUT") {
+    const expectedDocumentPrefix = `customers/${Number(user.id)}/`;
+    for (const field of ["legalDocUrl", "ktpPicUrl", "suratKuasaUrl", "apiNikIzinUrl"]) {
+      const value = String(body[field] ?? "").trim();
+      if (value && !value.startsWith(expectedDocumentPrefix)) {
+        sendError(response, 400, "Object path dokumen profil tidak valid.");
+        return;
+      }
+    }
     const values = [
       body.companyName ?? null, body.npwp ?? null, body.nib ?? null,
       body.companyAddress ?? null, body.picName ?? null, body.picWhatsapp ?? null,

@@ -205,6 +205,15 @@ describe("standalone Customer Portal API boundary", () => {
     expect(server).not.toContain("await await logisticOrderResponse");
   });
 
+  it("scopes and signs private customer profile documents", () => {
+    const server = readFileSync(join(process.cwd(), "server/index.mjs"), "utf8");
+    expect(server).toContain("const profileDocumentUrl = async (path)");
+    expect(server).toContain("customers/${Number(user.id)}/");
+    expect(server).toContain("legalDocUrl: await profileDocumentUrl(row.legal_doc_url)");
+    expect(server).toContain('for (const field of ["legalDocUrl", "ktpPicUrl", "suratKuasaUrl", "apiNikIzinUrl"])');
+    expect(server).toContain("Object path dokumen profil tidak valid.");
+  });
+
   it("keeps unknown API routes fail-closed in every environment", () => {
     expect(serverSource).not.toContain("Development preview traffic may proxy");
     expect(serverSource).toContain('"Customer Portal API route not found."');
