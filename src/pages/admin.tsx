@@ -98,11 +98,11 @@ export default function AdminPage() {
   ].join(" ");
 
   const TABS_TRIGGER_CLS =
-    "justify-start gap-3 px-3 py-2.5 rounded-lg text-slate-400 " +
+    "justify-start gap-2 px-2.5 py-1.5 rounded-md text-slate-400 " +
     "data-[state=active]:bg-amber-500/15 data-[state=active]:text-amber-400 data-[state=active]:font-semibold " +
     "data-[state=active]:ring-1 data-[state=active]:ring-inset data-[state=active]:ring-amber-500/30 " +
     "hover:bg-slate-800 hover:text-slate-200 transition-all focus-visible:outline-none " +
-    "focus-visible:ring-2 focus-visible:ring-amber-400/50 text-sm font-medium w-full text-left";
+    "focus-visible:ring-2 focus-visible:ring-amber-400/50 text-xs lg:text-[13px] font-medium w-full text-left min-h-8";
 
   return (
     <div className="min-h-screen bg-slate-50 pb-12 selection:bg-amber-200 selection:text-amber-900">
@@ -158,7 +158,7 @@ export default function AdminPage() {
           <nav className="flex-1 overflow-y-auto p-2 flex flex-col gap-0.5 [&::-webkit-scrollbar]:w-1 [&::-webkit-scrollbar-thumb]:bg-slate-700">
             {isAdmin && (
               <>
-                <p className="px-3 pt-4 pb-1.5 text-[10px] font-semibold tracking-widest text-slate-600 uppercase select-none">Operations</p>
+                <p className="px-2.5 pt-2.5 pb-1 text-[9px] font-semibold tracking-widest text-slate-600 uppercase select-none">Operations</p>
                 <button type="button" aria-current={activeTab === "service-operations" ? "page" : undefined}
                   onClick={() => { setActiveTab("service-operations"); setMobileNavOpen(false); }}
                   className={sidebarBtnCls("service-operations")}>
@@ -180,7 +180,7 @@ export default function AdminPage() {
                   <History className="h-4 w-4 shrink-0" strokeWidth={2} />
                   <span className="flex-1">Riwayat Pembayaran</span>
                 </button>
-                <p className="px-3 pt-4 pb-1.5 text-[10px] font-semibold tracking-widest text-slate-600 uppercase select-none">{t("adminPage.nav.sectionWebsite", "Website & Konten")}</p>
+                <p className="px-2.5 pt-2.5 pb-1 text-[9px] font-semibold tracking-widest text-slate-600 uppercase select-none">{t("adminPage.nav.sectionWebsite", "Website & Konten")}</p>
                 {[
                   { value: "content",         icon: FileText,   label: t("adminPage.nav.websiteContent", "Konten Website") },
                   { value: "services",        icon: Settings,   label: t("adminPage.nav.manageServices", "Kelola Layanan") },
@@ -196,7 +196,7 @@ export default function AdminPage() {
                   </button>
                 ))}
 
-                <p className="px-3 pt-4 pb-1.5 text-[10px] font-semibold tracking-widest text-slate-600 uppercase select-none">{t("adminPage.nav.sectionMarketplace", "Marketplace")}</p>
+                <p className="px-2.5 pt-2.5 pb-1 text-[9px] font-semibold tracking-widest text-slate-600 uppercase select-none">{t("adminPage.nav.sectionMarketplace", "Marketplace")}</p>
                 {[
                   { value: "vendor-catalog",    icon: Package,      label: t("adminPage.nav.vendorCatalog", "Katalog Vendor") },
                   { value: "marketplace-operations", icon: PackageCheck, label: "Marketplace Operations" },
@@ -213,7 +213,7 @@ export default function AdminPage() {
                   </button>
                 ))}
 
-                <p className="px-3 pt-4 pb-1.5 text-[10px] font-semibold tracking-widest text-slate-600 uppercase select-none">{t("adminPage.nav.sectionVendorUsers", "Vendor & Pengguna")}</p>
+                <p className="px-2.5 pt-2.5 pb-1 text-[9px] font-semibold tracking-widest text-slate-600 uppercase select-none">{t("adminPage.nav.sectionVendorUsers", "Vendor & Pengguna")}</p>
                 <button type="button" aria-current={activeTab === "vendor-invitations" ? "page" : undefined}
                   onClick={() => { setActiveTab("vendor-invitations"); setMobileNavOpen(false); }}
                   className={sidebarBtnCls("vendor-invitations")}>
@@ -236,7 +236,7 @@ export default function AdminPage() {
                   </button>
                 ))}
 
-                <p className="px-3 pt-4 pb-1.5 text-[10px] font-semibold tracking-widest text-slate-600 uppercase select-none">{t("adminPage.nav.sectionSystem", "Sistem")}</p>
+                <p className="px-2.5 pt-2.5 pb-1 text-[9px] font-semibold tracking-widest text-slate-600 uppercase select-none">{t("adminPage.nav.sectionSystem", "Sistem")}</p>
                 {[
                   { value: "paylabs-setting", icon: CreditCard, label: t("adminPage.nav.paylabsSetting", "Paylabs Setting") },
                   { value: "utilities",       icon: Wrench,     label: t("adminPage.nav.utilities", "Utilitas") },
@@ -265,15 +265,15 @@ export default function AdminPage() {
         <Tabs value={activeTab} onValueChange={(v) => { setActiveTab(v); setMobileNavOpen(false); }} orientation="vertical" className="flex w-full">
 
           {/* ── Desktop sidebar ────────────────────────────────────────────── */}
-          <div className="hidden md:flex md:flex-col w-56 lg:w-60 shrink-0 bg-slate-900 border-r border-slate-800 sticky top-0 h-screen overflow-y-auto [&::-webkit-scrollbar]:w-1 [&::-webkit-scrollbar-thumb]:bg-slate-700 [&::-webkit-scrollbar-track]:bg-transparent">
-            <div className="px-4 pt-5 pb-3 border-b border-slate-800/80">
+          <div className="hidden md:flex md:flex-col w-52 lg:w-56 shrink-0 bg-slate-900 border-r border-slate-800 sticky top-0 h-[calc(100vh-88px)] overflow-y-auto overscroll-contain [&::-webkit-scrollbar]:w-1 [&::-webkit-scrollbar-thumb]:bg-slate-700 [&::-webkit-scrollbar-track]:bg-transparent">
+            <div className="px-3 pt-3 pb-2 border-b border-slate-800/80">
               <p className="text-[10px] font-semibold tracking-widest text-slate-500 uppercase">{t("adminPage.nav.commandCenter", "Command Center")}</p>
             </div>
 
-            <TabsList className="flex flex-col h-auto bg-transparent p-2 gap-0.5 items-stretch flex-1">
+            <TabsList className="flex flex-col h-auto bg-transparent p-1.5 gap-0 items-stretch flex-1">
               {isAdmin && (
                 <>
-                  <p className="px-3 pt-4 pb-1.5 text-[10px] font-semibold tracking-widest text-slate-600 uppercase select-none">Operations</p>
+                  <p className="px-2.5 pt-2.5 pb-1 text-[9px] font-semibold tracking-widest text-slate-600 uppercase select-none">Operations</p>
                   <TabsTrigger value="service-operations" className={TABS_TRIGGER_CLS}>
                     <Inbox className="h-4 w-4 shrink-0" strokeWidth={2} />
                     <span className="flex-1 text-left">Semua Layanan</span>
@@ -283,7 +283,7 @@ export default function AdminPage() {
                   </TabsTrigger>
                   <TabsTrigger value="customer-billing" className={TABS_TRIGGER_CLS}><CreditCard className="h-4 w-4 shrink-0" strokeWidth={2} />Invoice & Payment</TabsTrigger>
                   <TabsTrigger value="payment-history" className={TABS_TRIGGER_CLS}><History className="h-4 w-4 shrink-0" strokeWidth={2} />Riwayat Pembayaran</TabsTrigger>
-                  <p className="px-3 pt-4 pb-1.5 text-[10px] font-semibold tracking-widest text-slate-600 uppercase select-none">{t("adminPage.nav.sectionWebsite", "Website & Konten")}</p>
+                  <p className="px-2.5 pt-2.5 pb-1 text-[9px] font-semibold tracking-widest text-slate-600 uppercase select-none">{t("adminPage.nav.sectionWebsite", "Website & Konten")}</p>
                   <TabsTrigger value="content"          className={TABS_TRIGGER_CLS}><FileText  className="h-4 w-4 shrink-0" strokeWidth={2} />{t("adminPage.nav.websiteContent", "Konten Website")}</TabsTrigger>
                   <TabsTrigger value="services"         className={TABS_TRIGGER_CLS}><Settings  className="h-4 w-4 shrink-0" strokeWidth={2} />{t("adminPage.nav.manageServices", "Kelola Layanan")}</TabsTrigger>
                   <TabsTrigger value="products"         className={TABS_TRIGGER_CLS}><Box       className="h-4 w-4 shrink-0" strokeWidth={2} />{t("adminPage.nav.manageProducts", "Kelola Produk")}</TabsTrigger>
@@ -291,7 +291,7 @@ export default function AdminPage() {
                   <TabsTrigger value="pricing"          className={TABS_TRIGGER_CLS}><Tag       className="h-4 w-4 shrink-0" strokeWidth={2} />{t("adminPage.nav.managePricing", "Kelola Harga")}</TabsTrigger>
                   <TabsTrigger value="armada-trucking"  className={TABS_TRIGGER_CLS}><ImageIcon className="h-4 w-4 shrink-0" strokeWidth={2} />{t("adminPage.nav.truckingFleet", "Armada Trucking")}</TabsTrigger>
 
-                  <p className="px-3 pt-4 pb-1.5 text-[10px] font-semibold tracking-widest text-slate-600 uppercase select-none">{t("adminPage.nav.sectionMarketplace", "Marketplace")}</p>
+                  <p className="px-2.5 pt-2.5 pb-1 text-[9px] font-semibold tracking-widest text-slate-600 uppercase select-none">{t("adminPage.nav.sectionMarketplace", "Marketplace")}</p>
                   <TabsTrigger value="vendor-catalog"     className={TABS_TRIGGER_CLS}><Package      className="h-4 w-4 shrink-0" strokeWidth={2} />{t("adminPage.nav.vendorCatalog", "Katalog Vendor")}</TabsTrigger>
                   <TabsTrigger value="marketplace-operations" className={TABS_TRIGGER_CLS}><PackageCheck className="h-4 w-4 shrink-0" strokeWidth={2} />Marketplace Operations</TabsTrigger>
                   <TabsTrigger value="produk-unggulan"    className={TABS_TRIGGER_CLS}><Store        className="h-4 w-4 shrink-0" strokeWidth={2} />{t("adminPage.nav.featuredProducts", "Produk Unggulan")}</TabsTrigger>
@@ -300,7 +300,7 @@ export default function AdminPage() {
                   <TabsTrigger value="vendor-marketplace" className={TABS_TRIGGER_CLS}><ShoppingCart className="h-4 w-4 shrink-0" strokeWidth={2} />{t("adminPage.nav.vendorMarketplace", "Vendor Marketplace")}</TabsTrigger>
                   <TabsTrigger value="master-price"       className={TABS_TRIGGER_CLS}><DollarSign   className="h-4 w-4 shrink-0" strokeWidth={2} />{t("adminPage.nav.masterPrice", "Master Price")}</TabsTrigger>
 
-                  <p className="px-3 pt-4 pb-1.5 text-[10px] font-semibold tracking-widest text-slate-600 uppercase select-none">{t("adminPage.nav.sectionVendorUsers", "Vendor & Pengguna")}</p>
+                  <p className="px-2.5 pt-2.5 pb-1 text-[9px] font-semibold tracking-widest text-slate-600 uppercase select-none">{t("adminPage.nav.sectionVendorUsers", "Vendor & Pengguna")}</p>
                   <TabsTrigger value="vendor-invitations" className={TABS_TRIGGER_CLS}>
                     <UserPlus className="h-4 w-4 shrink-0" strokeWidth={2} />
                     <span className="flex-1">{t("adminPage.nav.inviteVendor", "Undang Vendor")}</span>
@@ -310,10 +310,11 @@ export default function AdminPage() {
                   </TabsTrigger>
                   <TabsTrigger value="approvals" className={TABS_TRIGGER_CLS}><UserCheck     className="h-4 w-4 shrink-0" strokeWidth={2} />{t("adminPage.nav.approvals", "Approvals")}</TabsTrigger>
                   <TabsTrigger value="customers" className={TABS_TRIGGER_CLS}><Users         className="h-4 w-4 shrink-0" strokeWidth={2} />{t("adminPage.nav.customers", "Pelanggan")}</TabsTrigger>
-                  <TabsTrigger value="wa-logs" className={TABS_TRIGGER_CLS}><MessageCircle className="h-4 w-4 shrink-0" strokeWidth={2} />{t("adminPage.nav.whatsapp", "WhatsApp")}</TabsTrigger>\n                  <TabsTrigger value="fonnte-status" className={TABS_TRIGGER_CLS}><Wifi className="h-4 w-4 shrink-0" strokeWidth={2} />Status Koneksi Fonnte</TabsTrigger>
+                  <TabsTrigger value="wa-logs" className={TABS_TRIGGER_CLS}><MessageCircle className="h-4 w-4 shrink-0" strokeWidth={2} />{t("adminPage.nav.whatsapp", "WhatsApp")}</TabsTrigger>
+                  <TabsTrigger value="fonnte-status" className={TABS_TRIGGER_CLS}><Wifi className="h-4 w-4 shrink-0" strokeWidth={2} />Status Koneksi Fonnte</TabsTrigger>
                   <TabsTrigger value="chatbot-admin" className={TABS_TRIGGER_CLS}><Bot className="h-4 w-4 shrink-0" strokeWidth={2} />Kelola Chatbot</TabsTrigger>
 
-                  <p className="px-3 pt-4 pb-1.5 text-[10px] font-semibold tracking-widest text-slate-600 uppercase select-none">{t("adminPage.nav.sectionSystem", "Sistem")}</p>
+                  <p className="px-2.5 pt-2.5 pb-1 text-[9px] font-semibold tracking-widest text-slate-600 uppercase select-none">{t("adminPage.nav.sectionSystem", "Sistem")}</p>
                   <TabsTrigger value="paylabs-setting" className={TABS_TRIGGER_CLS}><CreditCard className="h-4 w-4 shrink-0" strokeWidth={2} />{t("adminPage.nav.paylabsSetting", "Paylabs Setting")}</TabsTrigger>
                   <TabsTrigger value="utilities"       className={TABS_TRIGGER_CLS}><Wrench     className="h-4 w-4 shrink-0" strokeWidth={2} />{t("adminPage.nav.utilities", "Utilitas")}</TabsTrigger>
                 </>
