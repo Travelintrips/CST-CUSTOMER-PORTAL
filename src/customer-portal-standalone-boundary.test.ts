@@ -108,6 +108,15 @@ describe("standalone Customer Portal API boundary", () => {
     expect(vendor).toContain("status !== \"pending\"");
   });
 
+  it("guards vendor marketplace decline by supplier ownership and quote state", () => {
+    const vendor = readFileSync(join(process.cwd(), "server/vendor-portal.mjs"), "utf8");
+    expect(vendor).toContain("marketplace-quotes\\/(\\d+)\\/decline");
+    expect(vendor).toContain("q.id = $1 and q.vendor_id = $2");
+    expect(vendor).toContain("requote_requested");
+    expect(vendor).toContain("vendor_declined_quote");
+    expect(vendor).toContain("status = 'withdrawn'");
+  });
+
   it("keeps unknown API routes fail-closed in every environment", () => {
     expect(serverSource).not.toContain("Development preview traffic may proxy");
     expect(serverSource).toContain('"Customer Portal API route not found."');
