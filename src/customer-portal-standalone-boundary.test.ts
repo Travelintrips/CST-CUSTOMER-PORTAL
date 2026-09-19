@@ -23,7 +23,8 @@ describe("standalone Customer Portal API boundary", () => {
     expect(viteSource).toContain("CUSTOMER_PORTAL_API_URL_DEV");
     expect(viteSource).not.toContain("process.env.VITE_API_SERVER_URL ??");
     expect(replitSource).not.toContain('VITE_API_SERVER_URL = "https://cstlogistic.co.id"');
-    expect(replitSource).toContain('VITE_API_SERVER_URL_DEV = "http://127.0.0.1:18444"');
+    expect(replitSource).not.toContain("VITE_API_SERVER_URL");
+    expect(replitSource).toContain("localPort = 18444");
   });
 
   it("keeps vendor PO confirmation on the standalone marketplace API", () => {
@@ -35,7 +36,8 @@ describe("standalone Customer Portal API boundary", () => {
 
   it("serves payment proof links from the standalone Customer Portal API", () => {
     const serverSource = readFileSync(join(process.cwd(), "server/index.mjs"), "utf8");
-    expect(serverSource).toContain("/api\\/payment-proof");
+    expect(serverSource).toContain("paymentProofMatch");
+    expect(serverSource).toContain("payment_proof_token = $1");
     expect(serverSource).toContain("uploadPaymentProof");
     expect(serverSource).toContain("payment_proof_token");
   });

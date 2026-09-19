@@ -1002,7 +1002,7 @@ export async function handleVendorPortalRoutes({ request, response, url, user, b
       client.release();
     }
   }
-  const marketplaceDeclineMatch = url.pathname.match(/^\\/api\\/portal\\/vendor\\/marketplace-quotes\\/(\\d+)\\/decline$/);
+  const marketplaceDeclineMatch = url.pathname.match(/^\/api\\/portal\\/vendor\\/marketplace-quotes\/(\d+)\/decline$/);
   if (marketplaceDeclineMatch && request.method === "POST") {
     if (!vendor?.supplier_id) return sendError(response, 403, "Supplier vendor belum terhubung.");
     const quoteId = Number(marketplaceDeclineMatch[1]);
@@ -1184,7 +1184,7 @@ export async function handleVendorPortalRoutes({ request, response, url, user, b
       client.release();
     }
   }
-  const featuredCancelMatch = url.pathname.match(/^\\/api\\/portal\\/vendor\\/featured-requests\\/(\\d+)\\/cancel$/);
+  const featuredCancelMatch = url.pathname.match(/^\/api\\/portal\\/vendor\\/featured-requests\/(\d+)\/cancel$/);
   if (featuredCancelMatch && request.method === "POST") {
     if (!vendor?.supplier_id) return sendError(response, 403, "Supplier vendor belum terhubung.");
     const client = await pool.connect();
@@ -1225,7 +1225,7 @@ export async function handleVendorPortalRoutes({ request, response, url, user, b
       client.release();
     }
   }
-  const featuredProofMatch = url.pathname.match(/^\\/api\\/portal\\/vendor\\/featured-requests\\/(\\d+)\\/payment-proof$/);
+  const featuredProofMatch = url.pathname.match(/^\/api\\/portal\\/vendor\\/featured-requests\/(\d+)\/payment-proof$/);
   if (featuredProofMatch && request.method === "POST") {
     if (!vendor?.supplier_id) return sendError(response, 403, "Supplier vendor belum terhubung.");
     if (!body.file || typeof body.file.arrayBuffer !== "function") {
