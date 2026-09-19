@@ -7,7 +7,10 @@ import runtimeErrorOverlay from "@replit/vite-plugin-runtime-error-modal";
 const port = Number(process.env.PORT ?? "3000");
 
 const basePath = process.env.BASE_PATH ?? "/";
-const apiServerUrl = process.env.VITE_API_SERVER_URL ?? process.env.API_SERVER_URL ?? "http://127.0.0.1:18444";
+const apiServerUrl =
+  process.env.VITE_API_SERVER_URL_DEV ??
+  process.env.CUSTOMER_PORTAL_API_URL_DEV ??
+  "http://127.0.0.1:18444";
 // Development must keep browser requests relative so Vite proxies them to the
 // local Customer Portal API. A public API origin is only meaningful for a
 // production bundle served without the local proxy.
