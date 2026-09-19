@@ -127,6 +127,15 @@ describe("standalone Customer Portal API boundary", () => {
     expect(storage).toContain("ensurePrivateBucket(storage)");
   });
 
+  it("prices trucking trip count server-side and never persists synthetic vendor zero", () => {
+    const page = readFileSync(join(process.cwd(), "src/pages/trucking.tsx"), "utf8");
+    const server = readFileSync(join(process.cwd(), "server/index.mjs"), "utf8");
+    expect(page).toContain("jumlah_trip:           jumlahTrip");
+    expect(server).toContain("const total = perTrip * tripCount");
+    expect(server).toContain("vendor_id: null");
+    expect(server).toContain("Number(body.selectedVendorId) > 0");
+  });
+
   it("keeps unknown API routes fail-closed in every environment", () => {
     expect(serverSource).not.toContain("Development preview traffic may proxy");
     expect(serverSource).toContain('"Customer Portal API route not found."');

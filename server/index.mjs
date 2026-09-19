@@ -1829,18 +1829,21 @@ async function handleTruckingEstimate(request, response, body) {
     sendError(response, 503, "Tarif canonical trucking belum dikonfigurasi.");
     return;
   }
+  const tripCount = Math.max(1, Math.min(100, Math.trunc(Number(body.jumlah_trip) || 1)));
   const loading = body.with_loading_helper ? Number(rates.get("loadingFee") ?? 0) : 0;
   const unloading = body.with_unloading_helper ? Number(rates.get("unloadingFee") ?? 0) : 0;
   const overnight = Math.max(0, Number(body.overnight_nights) || 0) * Number(rates.get("overnightFee") ?? 0);
-  const total = base + loading + unloading + overnight;
+  const perTrip = base + loading + unloading + overnight;
+  const total = perTrip * tripCount;
   const estimate = {
     vehicle_type: vehicleType, distance_km: 0, distance_source: "unknown",
     price_per_km: 0, minimum_charge: base, base_price: base, base_after_minimum: base,
     surcharge_breakdown: { out_of_city: 0, inter_province: 0, inter_island: 0, total: 0 },
-    extras_breakdown: { loading_helper: loading, unloading_helper: unloading, toll: 0, ferry: 0, waiting: 0, multidrop: 0, overnight, urgent: 0, insurance: 0, total: loading + unloading + overnight },
+    extras_breakdown: { loading_helper: loading, unloading_helper: unloading, toll: 0, ferry: 0, waiting: 0, multidrop: 0, overnight, urgent: 0, insurance: 0, total: (loading + unloading + overnight) * tripCount },
+    trip_count: tripCount, per_trip_estimate: perTrip,
     total_estimate: total,
   };
-  sendJson(response, 200, { has_data: true, cheapest: { vendor_id: 0, vendor_name: "CST Canonical Rate", pricing_id: 0, estimate }, candidates: [] });
+  sendJson(response, 200, { has_data: true, cheapest: { vendor_id: null, vendor_name: "CST Canonical Rate", pricing_id: null, estimate }, candidates: [] });
 }
 
 async function handleTruckingBooking(request, response, user, body) {
@@ -1874,7 +1877,7 @@ async function handleTruckingBooking(request, response, user, body) {
       JSON.stringify(body.addons ?? {}), Math.max(0, Number(body.estimasiTotal) || 0),
       body.estimatedDistanceKm ?? null, body.estimatedPrice ?? null,
       JSON.stringify(body.pricingBreakdown ?? null), JSON.stringify(body.candidateVendorIds ?? null),
-      Number.isInteger(Number(body.selectedVendorId)) ? Number(body.selectedVendorId) : null,
+      Number.isInteger(Number(body.selectedVendorId)) && Number(body.selectedVendorId) > 0 ? Number(body.selectedVendorId) : null,
     ],
   );
   sendJson(response, 201, { bookingNumber: result.rows[0].booking_number, status: result.rows[0].status });
