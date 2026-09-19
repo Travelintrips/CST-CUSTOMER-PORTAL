@@ -1785,6 +1785,43 @@ async function getOwnedLogisticOrder(user, orderNumber) {
   return result.rows[0] ?? null;
 }
 
+async function handleTruckingBooking(request, response, user, body) {
+  if (request.method !== "POST") { sendError(response, 405, "Method tidak didukung."); return; }
+  const required = ["vehicleType","vehicleName","areaPickup","alamatPickup","picPickup","hpPickup","areaDelivery","alamatDelivery","picPenerima","hpPenerima"];
+  if (required.some((key) => !String(body[key] ?? "").trim())) {
+    sendError(response, 400, "Data booking trucking belum lengkap.");
+    return;
+  }
+  const companyIds = await getAccessibleCompanyIds(user);
+  const bookingNumber = `TRK-${new Date().toISOString().slice(2,10).replaceAll("-", "")}-${crypto.randomBytes(4).toString("hex").toUpperCase()}`;
+  const result = await query(
+    `insert into public.trucking_booking_requests (
+       booking_number, customer_id, portal_customer_id, company_id, vehicle_type, vehicle_name,
+       area_pickup, alamat_pickup, pic_pickup, hp_pickup, area_delivery, alamat_delivery,
+       pic_penerima, hp_penerima, jadwal_type, tanggal_pickup, jam_pickup, jenis_barang,
+       berat_kg, jumlah_koli, volume_m3, catatan, jumlah_trip, addons, estimasi_total,
+       estimated_distance_km, estimated_price, pricing_breakdown, candidate_vendor_ids,
+       selected_vendor_id, source, status
+     ) values (
+       $1,$2,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,
+       $22,$23::jsonb,$24,$25,$26,$27::jsonb,$28::jsonb,$29,'customer_portal','pending_review'
+     ) returning booking_number, status`,
+    [
+      bookingNumber, user.id, companyIds[0] ?? null, String(body.vehicleType), String(body.vehicleName),
+      String(body.areaPickup), String(body.alamatPickup), String(body.picPickup), String(body.hpPickup),
+      String(body.areaDelivery), String(body.alamatDelivery), String(body.picPenerima), String(body.hpPenerima),
+      body.jadwalType === "nanti" ? "nanti" : "sekarang", body.tanggalPickup ?? null, body.jamPickup ?? null,
+      body.jenisBarang ?? null, body.beratKg ?? null, body.jumlahKoli ?? null, body.volumeM3 ?? null,
+      body.catatan ?? null, Math.max(1, Math.min(100, Number(body.jumlahTrip) || 1)),
+      JSON.stringify(body.addons ?? {}), Math.max(0, Number(body.estimasiTotal) || 0),
+      body.estimatedDistanceKm ?? null, body.estimatedPrice ?? null,
+      JSON.stringify(body.pricingBreakdown ?? null), JSON.stringify(body.candidateVendorIds ?? null),
+      Number.isInteger(Number(body.selectedVendorId)) ? Number(body.selectedVendorId) : null,
+    ],
+  );
+  sendJson(response, 201, { bookingNumber: result.rows[0].booking_number, status: result.rows[0].status });
+}
+
 async function handleCompanyPickupAddress(request, response, user) {
   if (request.method !== "GET") {
     sendError(response, 405, "Method tidak didukung.");
@@ -2943,6 +2980,13 @@ async function route(request, response) {
     const user = await requireUser(request, response);
     if (!user) return;
     await handleServiceProfile(request, response, url, user);
+    return;
+  }
+  if (pathname === "/api/portal/trucking/bookings") {
+    const user = await requireUser(request, response);
+    if (!user) return;
+    const body = request.method === "POST" ? await readJson(request) : {};
+    await handleTruckingBooking(request, response, user, body);
     return;
   }
   if (pathname === "/api/settings/company-pickup-address") {

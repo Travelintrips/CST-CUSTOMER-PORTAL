@@ -59,6 +59,15 @@ describe("standalone Customer Portal API boundary", () => {
     expect(server).toContain("idempotency_key");
   });
 
+  it("keeps trucking booking writes on the standalone Customer Portal API", () => {
+    const page = readFileSync(join(process.cwd(), "src/pages/trucking.tsx"), "utf8");
+    const server = readFileSync(join(process.cwd(), "server/index.mjs"), "utf8");
+    expect(page).toContain("/api/portal/trucking/bookings");
+    expect(page).not.toContain('fetch("/api/trucking/bookings"');
+    expect(server).toContain("handleTruckingBooking");
+    expect(server).toContain("trucking_booking_requests");
+  });
+
   it("keeps unknown API routes fail-closed in every environment", () => {
     expect(serverSource).not.toContain("Development preview traffic may proxy");
     expect(serverSource).toContain('"Customer Portal API route not found."');
