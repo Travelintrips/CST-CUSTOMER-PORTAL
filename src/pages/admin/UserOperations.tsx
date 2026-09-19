@@ -7,6 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
+import { FonnteStatusTab } from "@/pages/admin/FonnteStatusTab";
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter,
 } from "@/components/ui/dialog";
@@ -818,7 +819,14 @@ export function WaLogsTab() {
   };
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-6">
+      <FonnteStatusTab />
+
+      <div className="rounded-xl border bg-white p-5 space-y-4">
+        <div>
+          <h3 className="font-semibold text-slate-900">Log Notifikasi WhatsApp</h3>
+          <p className="text-sm text-muted-foreground">Pantau status pengiriman, filter log, dan kirim ulang pesan yang gagal dari halaman yang sama dengan status koneksi Fonnte.</p>
+        </div>
       {stats && (
         <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
           <div className="rounded-xl border p-4 text-green-700 bg-green-50 border-green-200">
@@ -898,6 +906,7 @@ export function WaLogsTab() {
           ))}
         </div>
       )}
+      </div>
     </div>
   );
 }
