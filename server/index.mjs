@@ -398,6 +398,53 @@ function bootstrapResponse(user, requestedReturnTo, customerContext) {
   };
 }
 
+async function handleAdminFonnteStatus(response) {
+  const token = String(process.env.FONNTE_TOKEN ?? "").trim();
+  if (!token) {
+    sendJson(response, 200, {
+      configured: false, connected: false, device: null, name: null, package: null,
+      quota: null, messages: null, expired: null, reason: "FONNTE_TOKEN belum dikonfigurasi.",
+      checkedAt: new Date().toISOString(),
+    });
+    return;
+  }
+  try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 8000);
+    let upstream;
+    try {
+      upstream = await fetch("https://api.fonnte.com/device", {
+        method: "POST",
+        headers: { Authorization: token, Accept: "application/json" },
+        signal: controller.signal,
+      });
+    } finally {
+      clearTimeout(timeout);
+    }
+    const payload = await upstream.json().catch(() => ({}));
+    const ok = upstream.ok && payload?.status === true;
+    sendJson(response, ok ? 200 : 502, {
+      configured: true,
+      connected: ok && String(payload.device_status ?? "").toLowerCase() === "connect",
+      device: ok ? payload.device ?? null : null,
+      name: ok ? payload.name ?? null : null,
+      package: ok ? payload.package ?? null : null,
+      quota: ok ? payload.quota ?? null : null,
+      messages: ok && Number.isFinite(Number(payload.messages)) ? Number(payload.messages) : null,
+      expired: ok ? payload.expired ?? null : null,
+      reason: ok ? null : String(payload?.reason ?? "Fonnte tidak dapat dihubungi."),
+      checkedAt: new Date().toISOString(),
+    });
+  } catch (error) {
+    sendJson(response, 502, {
+      configured: true, connected: false, device: null, name: null, package: null,
+      quota: null, messages: null, expired: null,
+      reason: error?.name === "AbortError" ? "Permintaan ke Fonnte timeout." : "Fonnte tidak dapat dihubungi.",
+      checkedAt: new Date().toISOString(),
+    });
+  }
+}
+
 async function handleHealth(response) {
   try {
     await checkDatabase();
@@ -2937,6 +2984,11 @@ async function route(request, response) {
       sendJson,
       sendError,
     });
+    return;
+  }
+  if (request.method === "GET" && pathname === "/api/portal/admin/fonnte/status") {
+    const user = await requireAdmin(request, response);
+    if (user) await handleAdminFonnteStatus(response);
     return;
   }
   if (pathname.startsWith("/api/portal/admin/vendor-invitations")
