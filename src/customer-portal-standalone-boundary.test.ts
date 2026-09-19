@@ -266,4 +266,11 @@ describe("standalone Customer Portal API boundary", () => {
     expect(panel).not.toContain('["Total Pesan",');
     expect(admin).toContain('TabsTrigger value="fonnte-status"');
   });
+
+  it("keeps the desktop admin menu compact and independently scrollable", () => {
+    const admin = readFileSync(join(process.cwd(), "src/pages/admin.tsx"), "utf8");
+    expect(admin).toContain("h-[calc(100vh-88px)] overflow-y-auto overscroll-contain");
+    expect(admin).toContain("text-xs lg:text-[13px]");
+    expect(admin).toContain("py-1.5 rounded-md");
+  });
 });
