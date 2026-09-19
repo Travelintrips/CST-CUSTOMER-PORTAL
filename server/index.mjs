@@ -1521,27 +1521,38 @@ async function handleCustomerServiceRoutes(request, response, url, user, body = 
       return true;
     }
     if (request.method === "DELETE") {
-      await query(
+      const deleted = await query(
         `delete from public.customer_service_request_items
-          where id = $1 and request_id = $2 and is_required = false`,
+          where id = $1 and request_id = $2 and is_required = false
+          returning id`,
         [itemId, requestId],
       );
+      if (!deleted.rows[0]) {
+        sendError(response, 409, "Item wajib tidak dapat dihapus atau item layanan tidak ditemukan.");
+        return true;
+      }
       sendEmpty(response, 204);
       return true;
     }
     if (request.method === "PUT") {
+      const itemType = String(body.itemType ?? "").trim();
+      const title = String(body.title ?? "").trim();
+      if (!itemType || !title) {
+        sendError(response, 400, "Jenis dan judul item wajib diisi.");
+        return true;
+      }
       const result = await query(
         `update public.customer_service_request_items
             set item_type = $1, title = $2, description = $3,
                 form_data = $4::jsonb, required_documents = $5::jsonb,
                 updated_at = now()
-          where id = $6 and request_id = $7
+          where id = $6 and request_id = $7 and is_required = false
           returning id, item_type, service_category, sequence_no, title, description,
                     form_data, required_documents, is_required, status,
                     estimated_price, quoted_price`,
         [
-          String(body.itemType ?? "").trim(),
-          String(body.title ?? "").trim(),
+          itemType,
+          title,
           body.description ? String(body.description) : null,
           JSON.stringify(body.formData ?? {}),
           JSON.stringify(body.requiredDocuments ?? []),

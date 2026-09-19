@@ -214,6 +214,14 @@ describe("standalone Customer Portal API boundary", () => {
     expect(server).toContain("Object path dokumen profil tidak valid.");
   });
 
+  it("protects required service-request items from customer mutation", () => {
+    const server = readFileSync(join(process.cwd(), "server/index.mjs"), "utf8");
+    expect(server).toContain("request_id = $2 and is_required = false");
+    expect(server).toContain("request_id = $7 and is_required = false");
+    expect(server).toContain("Item wajib tidak dapat dihapus");
+    expect(server).toContain("Jenis dan judul item wajib diisi.");
+  });
+
   it("keeps unknown API routes fail-closed in every environment", () => {
     expect(serverSource).not.toContain("Development preview traffic may proxy");
     expect(serverSource).toContain('"Customer Portal API route not found."');
