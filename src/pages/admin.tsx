@@ -16,7 +16,7 @@ import {
   Store, Package, Users,
   UserCheck, MessageCircle, UserPlus, Layers, Link2, ShoppingCart,
   CreditCard, DollarSign, Inbox,
-  PackageCheck, Image as ImageIcon, X, Menu, Bot, History,
+  PackageCheck, Image as ImageIcon, X, Menu, Bot, History, Wifi,
 } from "lucide-react";
 import { useLanguage } from "@/i18n/LanguageContext";
 
