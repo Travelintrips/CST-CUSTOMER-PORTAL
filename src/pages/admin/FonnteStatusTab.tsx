@@ -68,7 +68,8 @@ export function FonnteStatusTab() {
                 ["Sisa Kuota", data.quota ?? "—"], ["Total Pesan Diminta", data.messages ?? "—"], ["Aktif s/d", data.expired || "—"],
               ].map(([label, value]) => <div key={String(label)} className="rounded-lg border bg-white p-3"><p className="text-xs text-muted-foreground">{label}</p><p className="mt-1 font-medium">{String(value)}</p></div>)}
             </div>
-            <p className="text-xs text-muted-foreground">Menurut API Fonnte, “Total Pesan Diminta” adalah total message request, bukan jumlah antrean/pending. Status antrean harus dibaca dari Message History/status Fonnte.</p>\n            <p className="text-xs text-muted-foreground">Pemeriksaan terakhir: {new Date(data.checkedAt).toLocaleString("id-ID")}</p>
+            <p className="text-xs text-muted-foreground">Menurut API Fonnte, “Total Pesan Diminta” adalah total message request, bukan jumlah antrean/pending. Status antrean harus dibaca dari Message History/status Fonnte.</p>
+            <p className="text-xs text-muted-foreground">Pemeriksaan terakhir: {new Date(data.checkedAt).toLocaleString("id-ID")}</p>
           </>
         )}
       </CardContent>
