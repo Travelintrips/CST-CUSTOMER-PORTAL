@@ -2999,11 +2999,16 @@ async function route(request, response) {
   if (pathname.startsWith("/api/portal/vendor/")) {
     const user = await requireUser(request, response);
     if (user) {
+      const isMultipart = String(request.headers["content-type"] ?? "").startsWith("multipart/form-data");
+      const body = ["POST", "PUT", "PATCH"].includes(request.method ?? "")
+        ? isMultipart ? await readMultipartForm(request) : await readJson(request)
+        : {};
       const handled = await handleVendorPortalRoutes({
         request,
         response,
         url,
         user,
+        body,
         sendJson,
         sendError,
         sendEmpty,
