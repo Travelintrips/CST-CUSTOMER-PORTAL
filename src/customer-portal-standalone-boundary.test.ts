@@ -49,6 +49,16 @@ describe("standalone Customer Portal API boundary", () => {
     expect(productOrderSource).not.toContain("/api/portal-product/templates");
   });
 
+  it("keeps product order writes local and idempotent", () => {
+    const page = readFileSync(join(process.cwd(), "src/pages/product-order.tsx"), "utf8");
+    const server = readFileSync(join(process.cwd(), "server/index.mjs"), "utf8");
+    expect(page).toContain("/api/portal/product-orders");
+    expect(page).not.toContain("/api/portal-product/orders");
+    expect(server).toContain("handleCreateProductOrder");
+    expect(server).toContain("pg_advisory_xact_lock");
+    expect(server).toContain("idempotency_key");
+  });
+
   it("keeps unknown API routes fail-closed in every environment", () => {
     expect(serverSource).not.toContain("Development preview traffic may proxy");
     expect(serverSource).toContain('"Customer Portal API route not found."');

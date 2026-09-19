@@ -806,6 +806,109 @@ function mapPortalServiceOrder(row) {
   };
 }
 
+async function handleCreateProductOrder(request, response) {
+  const user = await requireUser(request, response);
+  if (!user) return;
+  const body = await readJson(request);
+  const items = Array.isArray(body.items) ? body.items : [];
+  const customerName = String(body.customerName ?? "").trim();
+  const phone = String(body.phone ?? "").trim();
+  const shippingAddress = String(body.shippingAddress ?? "").trim();
+  const idempotencyKey = String(body.idempotencyKey ?? "").trim();
+  if (!customerName || !phone || items.length === 0 || !idempotencyKey) {
+    sendError(response, 400, "Data pesanan produk belum lengkap.");
+    return;
+  }
+  const productIds = [...new Set(items.map((item) => Number(item?.productId)).filter(Number.isInteger))];
+  if (productIds.length !== items.length) {
+    sendError(response, 400, "Item produk tidak valid.");
+    return;
+  }
+  const products = await query(
+    `select id, name, price, unit, weight_kg, length_cm, width_cm, height_cm, goods_type
+       from public.products where is_active = true and id = any($1::int[])`,
+    [productIds],
+  );
+  const productMap = new Map(products.rows.map((row) => [Number(row.id), row]));
+  if (productMap.size !== productIds.length) {
+    sendError(response, 400, "Satu atau lebih produk tidak tersedia.");
+    return;
+  }
+  const canonicalItems = items.map((item) => {
+    const product = productMap.get(Number(item.productId));
+    const qty = Number(item.qty);
+    if (!Number.isInteger(qty) || qty <= 0 || qty > 100000) throw Object.assign(new Error("Jumlah produk tidak valid."), { statusCode: 400 });
+    const unitPrice = Number(product.price ?? 0);
+    return { product, qty, unitPrice, subtotal: unitPrice * qty };
+  });
+  const subtotal = canonicalItems.reduce((sum, item) => sum + item.subtotal, 0);
+  const serviceCost = Math.max(0, Number(body.selectedService?.estimatedCost ?? 0) || 0);
+  const taxRate = 11;
+  const taxAmount = Math.round((subtotal + serviceCost) * taxRate / 100);
+  const grandTotal = subtotal + serviceCost + taxAmount;
+  const companyIds = await getAccessibleCompanyIds(user);
+  const client = await pool.connect();
+  try {
+    await client.query("begin");
+    await client.query("select pg_advisory_xact_lock(hashtext($1))", [idempotencyKey]);
+    const replay = await client.query(
+      `select order_number from public.portal_product_orders
+        where idempotency_key = $1 and portal_customer_id = $2 limit 1`,
+      [idempotencyKey, user.id],
+    );
+    if (replay.rows[0]) {
+      await client.query("commit");
+      sendJson(response, 200, { orderNumber: replay.rows[0].order_number, alreadyProcessed: true });
+      return;
+    }
+    const orderNumber = `CPO-${new Date().toISOString().slice(2,10).replaceAll("-", "")}-${crypto.randomBytes(4).toString("hex").toUpperCase()}`;
+    const order = await client.query(
+      `insert into public.portal_product_orders (
+         order_number, customer_name, email, phone, shipping_address, notes,
+         subtotal, tax_amount, tax_rate, tax_treatment, grand_total, status,
+         product_category, template_id, template_version, custom_field_values,
+         uploaded_documents, checklist_status, packaging_notes, conditional_flags,
+         shipping_method, order_type, shipment_cost, product_price,
+         portal_customer_id, company_id, idempotency_key
+       ) values (
+         $1,$2,$3,$4,$5,$6,$7,$8,$9,'exclusive',$10,'New Order',
+         $11,$12,$13,$14::jsonb,$15::jsonb,$16::jsonb,$17,$18::jsonb,
+         $19,$20,$21,$22,$23,$24,$25
+       ) returning id, order_number`,
+      [
+        orderNumber, customerName, user.email, phone, shippingAddress, body.notes ? String(body.notes) : null,
+        subtotal, taxAmount, taxRate, grandTotal,
+        body.productCategory ?? null, body.templateId ?? null, body.templateVersion ?? null,
+        JSON.stringify(body.customFieldValues ?? {}), JSON.stringify(body.uploadedDocuments ?? []),
+        JSON.stringify(body.checklistStatus ?? {}), body.packagingNotes ?? null,
+        JSON.stringify(body.conditionalFlags ?? {}), body.shippingMethod ?? null, body.orderType ?? "standard",
+        serviceCost, subtotal, user.id, companyIds[0] ?? null, idempotencyKey,
+      ],
+    );
+    for (const item of canonicalItems) {
+      await client.query(
+        `insert into public.portal_product_order_items (
+           order_id, product_id, product_name, product_sku, unit, unit_price, qty, subtotal,
+           weight_kg, length_cm, width_cm, height_cm, goods_type, product_scope, service_scope
+         ) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,'customer_portal',$14)`,
+        [
+          order.rows[0].id, item.product.id, item.product.name, null, item.product.unit,
+          item.unitPrice, item.qty, item.subtotal, item.product.weight_kg, item.product.length_cm,
+          item.product.width_cm, item.product.height_cm, item.product.goods_type,
+          body.selectedService?.serviceId ?? null,
+        ],
+      );
+    }
+    await client.query("commit");
+    sendJson(response, 201, { orderNumber: order.rows[0].order_number });
+  } catch (error) {
+    await client.query("rollback");
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
 async function handlePortalCompatOrders(request, response, kind) {
   const user = await requireUser(request, response);
   if (!user) return;
@@ -3171,8 +3274,9 @@ async function route(request, response) {
     await handlePortalCompatOrders(request, response, "logistic-orders");
     return;
   }
-  if (request.method === "GET" && pathname === "/api/portal/product-orders") {
-    await handlePortalCompatOrders(request, response, "product-orders");
+  if (pathname === "/api/portal/product-orders") {
+    if (request.method === "POST") await handleCreateProductOrder(request, response);
+    else await handlePortalCompatOrders(request, response, "product-orders");
     return;
   }
   if (request.method === "GET" && pathname === "/api/portal/service-orders") {

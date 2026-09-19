@@ -119,7 +119,7 @@ async function fetchProducts(search?: string): Promise<PortalProduct[]> {
 }
 
 async function submitOrder(body: unknown): Promise<{ orderNumber: string }> {
-  const res = await fetch(`${BASE}/api/portal-product/orders`, {
+  const res = await fetch(`${BASE}/api/portal/product-orders`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     credentials: "include",
