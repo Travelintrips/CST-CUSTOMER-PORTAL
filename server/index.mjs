@@ -398,6 +398,45 @@ function bootstrapResponse(user, requestedReturnTo, customerContext) {
   };
 }
 
+async function handleAdminChatbot(request, response) {
+  if (request.method === "GET") {
+    const [setting, sessions, messages, knowledge] = await Promise.all([
+      query("select value from public.ai_agent_settings where key = 'system_prompt' limit 1"),
+      query("select count(*)::int as count from public.ai_chat_sessions"),
+      query("select count(*)::int as count from public.ai_chat_messages"),
+      query("select count(*)::int as count from public.chatbot_knowledge_base where is_active = true"),
+    ]);
+    sendJson(response, 200, {
+      systemPrompt: setting.rows[0]?.value ?? "",
+      stats: {
+        providerConfigured: Boolean(process.env.OPENAI_API_KEY),
+        model: process.env.OPENAI_MODEL || "gpt-4o-mini",
+        sessions: sessions.rows[0]?.count ?? 0,
+        messages: messages.rows[0]?.count ?? 0,
+        knowledge: knowledge.rows[0]?.count ?? 0,
+      },
+    });
+    return;
+  }
+  if (request.method === "PATCH") {
+    const body = await readJson(request);
+    const systemPrompt = typeof body.systemPrompt === "string" ? body.systemPrompt.trim() : "";
+    if (!systemPrompt || systemPrompt.length > 12000) {
+      sendError(response, 400, "System prompt wajib diisi dan maksimal 12.000 karakter.");
+      return;
+    }
+    await query(
+      `insert into public.ai_agent_settings (key, value)
+       values ('system_prompt', $1)
+       on conflict (key) do update set value = excluded.value`,
+      [systemPrompt],
+    );
+    sendJson(response, 200, { success: true });
+    return;
+  }
+  sendError(response, 405, "Method not allowed.");
+}
+
 async function handleAdminFonnteStatus(response) {
   const token = String(process.env.FONNTE_TOKEN ?? "").trim();
   if (!token) {
@@ -2984,6 +3023,11 @@ async function route(request, response) {
       sendJson,
       sendError,
     });
+    return;
+  }
+  if (pathname === "/api/portal/admin/chatbot") {
+    const user = await requireAdmin(request, response);
+    if (user) await handleAdminChatbot(request, response);
     return;
   }
   if (request.method === "GET" && pathname === "/api/portal/admin/fonnte/status") {
