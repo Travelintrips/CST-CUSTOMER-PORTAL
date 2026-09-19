@@ -1956,8 +1956,18 @@ async function handleLogisticCustomerRoutes(request, response, url, user, body =
       sendError(response, 400, "Data order logistik belum lengkap.");
       return true;
     }
+    if (String(body.email).trim().toLowerCase() !== String(user.email ?? "").trim().toLowerCase()) {
+      sendError(response, 403, "Email order harus menggunakan email akun yang sedang login.");
+      return true;
+    }
     const companyIds = await getAccessibleCompanyIds(user);
     const items = Array.isArray(body.items) ? body.items : [];
+    // Standalone Customer Portal does not yet have a canonical server quote for
+    // arbitrary manual logistic items. Never persist browser-calculated money as
+    // authoritative totals; commercial totals are populated by the quotation flow.
+    const authoritativeSubtotal = 0;
+    const authoritativeTax = 0;
+    const authoritativeGrandTotal = 0;
     const result = await query(
       `insert into public.logistic_orders (
          id, order_number, company_name, customer_name, email, phone,
@@ -1999,9 +2009,9 @@ async function handleLogisticCustomerRoutes(request, response, url, user, body =
         body.namaPenerima ?? null,
         body.nomorPenerima ?? null,
         body.jamOrder ?? null,
-        body.subtotal ?? 0,
-        body.tax ?? 0,
-        body.grandTotal ?? 0,
+        authoritativeSubtotal,
+        authoritativeTax,
+        authoritativeGrandTotal,
         body.orderType ?? "shipment",
         body.transportMode ?? null,
         body.originDistrict ?? null,
@@ -2036,7 +2046,7 @@ async function handleLogisticCustomerRoutes(request, response, url, user, body =
           String(item.calculatorType ?? "manual"),
           JSON.stringify(item.inputData ?? {}),
           JSON.stringify(item.calculationResult ?? {}),
-          item.subtotal ?? 0,
+          0,
           item.itemSource ?? "manual",
           item.vendorCatalogItemId ?? null,
           item.vendorId ?? null,
@@ -2046,7 +2056,7 @@ async function handleLogisticCustomerRoutes(request, response, url, user, body =
         ],
       );
     }
-    sendJson(response, 201, await await logisticOrderResponse(row, await getLogisticItems(row.id)));
+    sendJson(response, 201, await logisticOrderResponse(row, await getLogisticItems(row.id)));
     return true;
   }
 
@@ -2056,7 +2066,7 @@ async function handleLogisticCustomerRoutes(request, response, url, user, body =
       sendError(response, 404, "Order logistik tidak ditemukan.");
       return true;
     }
-    sendJson(response, 200, await await logisticOrderResponse(row, await getLogisticItems(row.id)));
+    sendJson(response, 200, await logisticOrderResponse(row, await getLogisticItems(row.id)));
     return true;
   }
 
@@ -2080,7 +2090,7 @@ async function handleLogisticCustomerRoutes(request, response, url, user, body =
         returning *`,
       [proofUrl, row.id],
     );
-    sendJson(response, 200, await await logisticOrderResponse(updated.rows[0], await getLogisticItems(row.id)));
+    sendJson(response, 200, await logisticOrderResponse(updated.rows[0], await getLogisticItems(row.id)));
     return true;
   }
 
