@@ -241,6 +241,15 @@ describe("standalone Customer Portal API boundary", () => {
     expect(server).toContain("token: isAuthenticatedOwner ? item.payment_proof_token : null");
   });
 
+  it("keeps Fonnte device status admin-only and server-side", () => {
+    const server = readFileSync(join(process.cwd(), "server/index.mjs"), "utf8");
+    const admin = readFileSync(join(process.cwd(), "src/pages/admin/FonnteStatusTab.tsx"), "utf8");
+    expect(server).toContain('/api/portal/admin/fonnte/status');
+    expect(server).toContain('process.env.FONNTE_TOKEN');
+    expect(server).toContain('https://api.fonnte.com/device');
+    expect(admin).not.toContain('FONNTE_TOKEN');
+  });
+
   it("keeps unknown API routes fail-closed in every environment", () => {
     expect(serverSource).not.toContain("Development preview traffic may proxy");
     expect(serverSource).toContain('"Customer Portal API route not found."');
