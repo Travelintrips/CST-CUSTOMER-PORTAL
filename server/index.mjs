@@ -3285,7 +3285,7 @@ async function route(request, response) {
     });
     return;
   }
-  const paymentProofMatch = pathname.match(/^\\/api\\/payment-proof\\/([^/]+)(?:\\/(upload))?$/);
+  const paymentProofMatch = pathname.match(/^\/api\/payment-proof\/([^/]+)(?:\/(upload))?$/);
   if (paymentProofMatch) {
     const token = decodeURIComponent(paymentProofMatch[1]);
     const invoiceResult = await query(
