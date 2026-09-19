@@ -16,7 +16,7 @@ import {
   Store, Package, Users,
   UserCheck, MessageCircle, UserPlus, Layers, Link2, ShoppingCart,
   CreditCard, DollarSign, Inbox,
-  PackageCheck, Image as ImageIcon, X, Menu, Wifi,
+  PackageCheck, Image as ImageIcon, X, Menu, Wifi, Bot, History,
 } from "lucide-react";
 import { useLanguage } from "@/i18n/LanguageContext";
 
@@ -36,6 +36,7 @@ import { ServiceOperationsTab }                           from "@/pages/admin/Se
 import { MarketplaceOperationsTab }                       from "@/pages/admin/MarketplaceOperations";
 import { CustomerBillingTab }                             from "@/pages/admin/CustomerBillingTab";
 import { FonnteStatusTab }                                 from "@/pages/admin/FonnteStatusTab";
+import { ChatbotAdminTab }                                  from "@/pages/admin/ChatbotAdminTab";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 // ── AdminPage ─────────────────────────────────────────────────────────────────
@@ -275,6 +276,8 @@ export default function AdminPage() {
                       <span className="ml-auto bg-amber-500 text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full min-w-5 text-center">{pendingPortalWorkload}</span>
                     )}
                   </TabsTrigger>
+                  <TabsTrigger value="customer-billing" className={TABS_TRIGGER_CLS}><CreditCard className="h-4 w-4 shrink-0" strokeWidth={2} />Invoice & Payment</TabsTrigger>
+                  <TabsTrigger value="payment-history" className={TABS_TRIGGER_CLS}><History className="h-4 w-4 shrink-0" strokeWidth={2} />Riwayat Pembayaran</TabsTrigger>
                   <p className="px-3 pt-4 pb-1.5 text-[10px] font-semibold tracking-widest text-slate-600 uppercase select-none">{t("adminPage.nav.sectionWebsite", "Website & Konten")}</p>
                   <TabsTrigger value="content"          className={TABS_TRIGGER_CLS}><FileText  className="h-4 w-4 shrink-0" strokeWidth={2} />{t("adminPage.nav.websiteContent", "Konten Website")}</TabsTrigger>
                   <TabsTrigger value="services"         className={TABS_TRIGGER_CLS}><Settings  className="h-4 w-4 shrink-0" strokeWidth={2} />{t("adminPage.nav.manageServices", "Kelola Layanan")}</TabsTrigger>
@@ -302,7 +305,9 @@ export default function AdminPage() {
                   </TabsTrigger>
                   <TabsTrigger value="approvals" className={TABS_TRIGGER_CLS}><UserCheck     className="h-4 w-4 shrink-0" strokeWidth={2} />{t("adminPage.nav.approvals", "Approvals")}</TabsTrigger>
                   <TabsTrigger value="customers" className={TABS_TRIGGER_CLS}><Users         className="h-4 w-4 shrink-0" strokeWidth={2} />{t("adminPage.nav.customers", "Pelanggan")}</TabsTrigger>
-                  <TabsTrigger value="wa-logs"   className={TABS_TRIGGER_CLS}><MessageCircle className="h-4 w-4 shrink-0" strokeWidth={2} />{t("adminPage.nav.whatsapp", "WhatsApp")}</TabsTrigger>\n                  <TabsTrigger value="fonnte-status" className={TABS_TRIGGER_CLS}><Wifi className="h-4 w-4 shrink-0" strokeWidth={2} />Status Koneksi Fonnte</TabsTrigger>
+                  <TabsTrigger value="wa-logs" className={TABS_TRIGGER_CLS}><MessageCircle className="h-4 w-4 shrink-0" strokeWidth={2} />{t("adminPage.nav.whatsapp", "WhatsApp")}</TabsTrigger>
+                  <TabsTrigger value="fonnte-status" className={TABS_TRIGGER_CLS}><Wifi className="h-4 w-4 shrink-0" strokeWidth={2} />Status Koneksi Fonnte</TabsTrigger>
+                  <TabsTrigger value="chatbot-admin" className={TABS_TRIGGER_CLS}><Bot className="h-4 w-4 shrink-0" strokeWidth={2} />Kelola Chatbot</TabsTrigger>
 
                   <p className="px-3 pt-4 pb-1.5 text-[10px] font-semibold tracking-widest text-slate-600 uppercase select-none">{t("adminPage.nav.sectionSystem", "Sistem")}</p>
                   <TabsTrigger value="paylabs-setting" className={TABS_TRIGGER_CLS}><CreditCard className="h-4 w-4 shrink-0" strokeWidth={2} />{t("adminPage.nav.paylabsSetting", "Paylabs Setting")}</TabsTrigger>
@@ -524,6 +529,10 @@ export default function AdminPage() {
                   <TabsContent value="fonnte-status">
                     <FonnteStatusTab />
                   </TabsContent>
+
+                  <TabsContent value="customer-billing"><CustomerBillingTab /></TabsContent>
+                  <TabsContent value="payment-history"><CustomerBillingTab initialView="payments" /></TabsContent>
+                  <TabsContent value="chatbot-admin"><ChatbotAdminTab /></TabsContent>
 
                   <TabsContent value="paylabs-setting">
                     <PayLabsSettingTab />
