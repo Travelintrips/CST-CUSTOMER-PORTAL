@@ -730,6 +730,8 @@ export async function handleVendorPortalRoutes({ request, response, url, user, b
     return true;
   }
   if (url.pathname === "/api/portal/vendor/profile" && request.method === "GET") {
+    const marketplaceRfqs = vendor?.supplier_id ? await query(\n      `select q.id as quote_id, q.rfq_id, q.status as quote_status, q.valid_until, q.submitted_at,\n              r.rfq_number, r.status as rfq_status, r.buyer_name, r.buyer_company,\n              r.required_delivery_date, r.delivery_address, r.notes, r.line_count\n         from public.mkt_vendor_quotes q\n         join public.mkt_rfqs r on r.id = q.rfq_id\n        where q.vendor_id = $1\n        order by q.created_at desc, q.id desc\n        limit 100`,\n      [vendor.supplier_id],\n    ) : { rows: [] };
+    const marketplaceOrders = vendor?.supplier_id ? await query(\n      `select p.id, p.po_number, p.rfq_id, p.quote_id, p.status, p.total_amount, p.tax_amount,\n              p.grand_total, p.confirmed_at, p.created_at, r.rfq_number\n         from public.mkt_purchase_orders p\n         join public.mkt_rfqs r on r.id = p.rfq_id\n        where p.vendor_id = $1\n        order by p.created_at desc, p.id desc\n        limit 100`,\n      [vendor.supplier_id],\n    ) : { rows: [] };
     sendJson(response, 200, {
       portalCustomer: {
         id: user.id,
@@ -749,8 +751,7 @@ export async function handleVendorPortalRoutes({ request, response, url, user, b
       } : null,
       rfqs: [],
       quotes: [],
-      marketplaceRfqs: [],
-      marketplaceOrders: [],
+      marketplaceRfqs: marketplaceRfqs.rows.map((row) => ({\n        id: Number(row.rfq_id), rfqNumber: row.rfq_number, rfqStatus: row.rfq_status,\n        quoteId: Number(row.quote_id), quoteStatus: row.quote_status, quoteUrl: "",\n        validUntil: row.valid_until, submittedAt: row.submitted_at, buyerName: row.buyer_name,\n        buyerCompany: row.buyer_company, requiredDeliveryDate: row.required_delivery_date,\n        deliveryAddress: row.delivery_address, notes: row.notes, lineCount: Number(row.line_count ?? 0),\n      })),\n      marketplaceOrders: marketplaceOrders.rows.map((row) => ({\n        id: Number(row.id), poNumber: row.po_number, rfqId: Number(row.rfq_id),\n        quoteId: Number(row.quote_id), rfqNumber: row.rfq_number, status: row.status,\n        totalAmount: Number(row.total_amount ?? 0), taxAmount: Number(row.tax_amount ?? 0),\n        grandTotal: Number(row.grand_total ?? 0), confirmedAt: row.confirmed_at, createdAt: row.created_at,\n      })),
       vendorProfile: vendor ? {
         id: Number(vendor.id),
         customerId: user.id,
