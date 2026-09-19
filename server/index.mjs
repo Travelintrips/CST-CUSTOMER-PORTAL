@@ -30,7 +30,7 @@ import {
   handleServiceOperations,
   handleVerification,
 } from "./admin-portal.mjs";
-import { checkStorageReadiness, signedPaymentProofUrl, uploadPaymentProof } from "./storage.mjs";
+import { checkStorageReadiness, signedDocumentUrl, signedPaymentProofUrl, uploadPaymentProof } from "./storage.mjs";
 import { handleMarketplaceRoute } from "./marketplace-service.mjs";
 import {
   handleAdminInvoices,
@@ -1732,7 +1732,14 @@ async function getLogisticItems(orderId) {
   return result.rows.map(logisticItemResponse);
 }
 
-function logisticOrderResponse(row, items = []) {
+async function logisticOrderResponse(row, items = []) {
+  let paymentProofUrl = null;
+  if (row.payment_proof_url) {
+    const expectedPrefix = `customers/${Number(row.portal_customer_id)}/`;
+    if (String(row.payment_proof_url).startsWith(expectedPrefix)) {
+      paymentProofUrl = await signedDocumentUrl(row.payment_proof_url);
+    }
+  }
   return {
     id: Number(row.id),
     orderNumber: row.order_number,
@@ -1781,7 +1788,7 @@ function logisticOrderResponse(row, items = []) {
     etd: row.etd ?? null,
     eta: row.eta ?? null,
     paymentStatus: row.payment_status ?? null,
-    paymentProofUrl: row.payment_proof_url ?? null,
+    paymentProofUrl,
     items,
   };
 }
@@ -2039,7 +2046,7 @@ async function handleLogisticCustomerRoutes(request, response, url, user, body =
         ],
       );
     }
-    sendJson(response, 201, logisticOrderResponse(row, await getLogisticItems(row.id)));
+    sendJson(response, 201, await await logisticOrderResponse(row, await getLogisticItems(row.id)));
     return true;
   }
 
@@ -2049,7 +2056,7 @@ async function handleLogisticCustomerRoutes(request, response, url, user, body =
       sendError(response, 404, "Order logistik tidak ditemukan.");
       return true;
     }
-    sendJson(response, 200, logisticOrderResponse(row, await getLogisticItems(row.id)));
+    sendJson(response, 200, await await logisticOrderResponse(row, await getLogisticItems(row.id)));
     return true;
   }
 
@@ -2061,7 +2068,8 @@ async function handleLogisticCustomerRoutes(request, response, url, user, body =
       return true;
     }
     const proofUrl = String(body.proofUrl ?? "").trim();
-    if (!proofUrl || !proofUrl.startsWith("customers/")) {
+    const expectedProofPrefix = `customers/${Number(user.id)}/`;
+    if (!proofUrl || !proofUrl.startsWith(expectedProofPrefix)) {
       sendError(response, 400, "Object path bukti pembayaran tidak valid.");
       return true;
     }
@@ -2072,7 +2080,7 @@ async function handleLogisticCustomerRoutes(request, response, url, user, body =
         returning *`,
       [proofUrl, row.id],
     );
-    sendJson(response, 200, logisticOrderResponse(updated.rows[0], await getLogisticItems(row.id)));
+    sendJson(response, 200, await await logisticOrderResponse(updated.rows[0], await getLogisticItems(row.id)));
     return true;
   }
 
@@ -2145,7 +2153,7 @@ async function handleLogisticCustomerRoutes(request, response, url, user, body =
       ),
     ]);
     sendJson(response, 200, {
-      ...logisticOrderResponse(row, items),
+      ...await logisticOrderResponse(row, items),
       orderNumber: row.order_number,
       driverJob: null,
       rfqQuote: null,
