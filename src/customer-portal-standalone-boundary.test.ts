@@ -144,6 +144,13 @@ describe("standalone Customer Portal API boundary", () => {
     expect(server).not.toContain("Math.max(0, Number(body.estimasiTotal) || 0)");
   });
 
+  it("never persists client-supplied product-order service prices", () => {
+    const server = readFileSync(join(process.cwd(), "server/index.mjs"), "utf8");
+    expect(server).toContain("const serviceCost = 0");
+    expect(server).not.toContain("Number(body.selectedService?.estimatedCost");
+    expect(server).toContain("selectedServiceId || null");
+  });
+
   it("keeps unknown API routes fail-closed in every environment", () => {
     expect(serverSource).not.toContain("Development preview traffic may proxy");
     expect(serverSource).toContain('"Customer Portal API route not found."');
