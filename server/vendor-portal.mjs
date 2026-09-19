@@ -4,6 +4,7 @@ import { createSession, sessionCookies } from "./session.mjs";
 import { normalizePhone, normalizedEmail } from "./auth-providers.mjs";
 import {
   signedVendorInvitationAssetUrl,
+  signedVendorFeaturedPaymentProofUrl,
   uploadVendorInvitationAsset,
   uploadVendorFeaturedPaymentProof,
 } from "./storage.mjs";
@@ -1084,15 +1085,18 @@ export async function handleVendorPortalRoutes({ request, response, url, user, b
         limit 100`,
       [vendor.supplier_id],
     );
-    sendJson(response, 200, result.rows.map((row) => ({
+    sendJson(response, 200, await Promise.all(result.rows.map(async (row) => ({
       id: Number(row.id), catalogItemId: Number(row.catalog_item_id), catalogItemName: row.catalog_item_name,
       packageId: Number(row.package_id), packageName: row.package_name, status: row.status,
       requestedStartAt: row.requested_start_at, requestedEndAt: row.requested_end_at,
       approvedStartAt: row.approved_start_at, approvedEndAt: row.approved_end_at,
       price: Number(row.price ?? 0), currency: row.currency, paymentStatus: row.payment_status,
-      paymentReference: row.payment_reference, paymentProofUrl: row.payment_proof_url,
+      paymentReference: row.payment_reference,
+      paymentProofUrl: row.payment_proof_url ? await signedVendorFeaturedPaymentProofUrl({
+        vendorId: vendor.supplier_id, requestId: row.id, path: row.payment_proof_url,
+      }) : null,
       rejectionReason: row.rejection_reason, createdAt: row.created_at, updatedAt: row.updated_at,
-    })));
+    }))));
     return true;
   }
   if (url.pathname === "/api/portal/vendor/catalog" && request.method === "GET") {
