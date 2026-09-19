@@ -222,6 +222,16 @@ describe("standalone Customer Portal API boundary", () => {
     expect(server).toContain("Jenis dan judul item wajib diisi.");
   });
 
+  it("uses Supabase Storage only for persisted portal uploads", () => {
+    const storage = readFileSync(join(process.cwd(), "server/storage.mjs"), "utf8");
+    expect(storage).toContain('from "@supabase/supabase-js"');
+    expect(storage).toContain(".storage.from(storage.bucket).upload");
+    expect(storage).not.toContain("@replit/object-storage");
+    expect(storage).not.toContain("REPLIT_OBJECT_STORAGE");
+    expect(storage).not.toContain("createWriteStream(");
+    expect(storage).not.toContain("writeFileSync(");
+  });
+
   it("keeps unknown API routes fail-closed in every environment", () => {
     expect(serverSource).not.toContain("Development preview traffic may proxy");
     expect(serverSource).toContain('"Customer Portal API route not found."');
