@@ -16,7 +16,7 @@ import {
   Store, Package, Users,
   UserCheck, MessageCircle, UserPlus, Layers, Link2, ShoppingCart,
   CreditCard, DollarSign, Inbox,
-  PackageCheck, Image as ImageIcon, X, Menu, Wifi, Bot, History,
+  PackageCheck, Image as ImageIcon, X, Menu, Bot, History,
 } from "lucide-react";
 import { useLanguage } from "@/i18n/LanguageContext";
 
@@ -35,7 +35,6 @@ import { MasterPriceManagement }                         from "@/pages/admin/Mas
 import { ServiceOperationsTab }                           from "@/pages/admin/ServiceOperationsTab";
 import { MarketplaceOperationsTab }                       from "@/pages/admin/MarketplaceOperations";
 import { CustomerBillingTab }                             from "@/pages/admin/CustomerBillingTab";
-import { FonnteStatusTab }                                 from "@/pages/admin/FonnteStatusTab";
 import { ChatbotAdminTab }                                  from "@/pages/admin/ChatbotAdminTab";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -228,7 +227,6 @@ export default function AdminPage() {
                   { value: "approvals", icon: UserCheck,     label: t("adminPage.nav.approvals", "Approvals") },
                   { value: "customers", icon: Users,         label: t("adminPage.nav.customers", "Pelanggan") },
                   { value: "wa-logs",   icon: MessageCircle, label: t("adminPage.nav.whatsapp", "WhatsApp") },
-                  { value: "fonnte-status", icon: Wifi, label: "Status Koneksi Fonnte" },
                   { value: "chatbot-admin", icon: Bot, label: "Kelola Chatbot" },
                 ].map(({ value, icon: Icon, label }) => (
                   <button key={value} type="button" aria-current={activeTab === value ? "page" : undefined}
@@ -313,7 +311,6 @@ export default function AdminPage() {
                   <TabsTrigger value="approvals" className={TABS_TRIGGER_CLS}><UserCheck     className="h-4 w-4 shrink-0" strokeWidth={2} />{t("adminPage.nav.approvals", "Approvals")}</TabsTrigger>
                   <TabsTrigger value="customers" className={TABS_TRIGGER_CLS}><Users         className="h-4 w-4 shrink-0" strokeWidth={2} />{t("adminPage.nav.customers", "Pelanggan")}</TabsTrigger>
                   <TabsTrigger value="wa-logs" className={TABS_TRIGGER_CLS}><MessageCircle className="h-4 w-4 shrink-0" strokeWidth={2} />{t("adminPage.nav.whatsapp", "WhatsApp")}</TabsTrigger>
-                  <TabsTrigger value="fonnte-status" className={TABS_TRIGGER_CLS}><Wifi className="h-4 w-4 shrink-0" strokeWidth={2} />Status Koneksi Fonnte</TabsTrigger>
                   <TabsTrigger value="chatbot-admin" className={TABS_TRIGGER_CLS}><Bot className="h-4 w-4 shrink-0" strokeWidth={2} />Kelola Chatbot</TabsTrigger>
 
                   <p className="px-3 pt-4 pb-1.5 text-[10px] font-semibold tracking-widest text-slate-600 uppercase select-none">{t("adminPage.nav.sectionSystem", "Sistem")}</p>
@@ -531,10 +528,6 @@ export default function AdminPage() {
                       </CardHeader>
                       <CardContent><WaLogsTab /></CardContent>
                     </Card>
-                  </TabsContent>
-
-                  <TabsContent value="fonnte-status">
-                    <FonnteStatusTab />
                   </TabsContent>
 
                   <TabsContent value="customer-billing"><CustomerBillingTab /></TabsContent>
