@@ -548,7 +548,7 @@ export default function TruckingPage() {
     setEstimasiData(null);
     setShowEstimasi(true);
     try {
-      const res = await fetch("/api/vendor-trucking-pricing/public-estimate", {
+      const res = await fetch("/api/portal/trucking/estimate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -613,7 +613,7 @@ export default function TruckingPage() {
           catatan:              catatan || undefined,
           jumlahTrip,
           addons,
-          estimasiTotal:        cheapest?.estimate?.total_estimate ?? totalEstimasi,
+          estimasiTotal:        cheapest?.estimate?.total_estimate ?? 0,
           estimatedDistanceKm:  cheapest?.estimate?.distance_km,
           estimatedPrice:       cheapest?.estimate?.total_estimate,
           pricingBreakdown:     cheapest?.estimate ?? undefined,
