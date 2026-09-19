@@ -1800,13 +1800,13 @@ const TRUCKING_VEHICLE_RATE_KEYS = {
   "truk-trailer": "Trailer 40FT",
 };
 
-async function handleTruckingEstimate(request, response, body) {
-  if (request.method !== "POST") { sendError(response, 405, "Method tidak didukung."); return; }
+async function calculateCanonicalTruckingEstimate(body) {
   const vehicleType = String(body.vehicle_type ?? "").trim();
   const canonicalVehicle = TRUCKING_VEHICLE_RATE_KEYS[vehicleType];
   if (!canonicalVehicle) {
-    sendError(response, 422, "Tarif canonical untuk jenis kendaraan ini belum dikonfigurasi.");
-    return;
+    const error = new Error("Tarif canonical untuk jenis kendaraan ini belum dikonfigurasi.");
+    error.statusCode = 422;
+    throw error;
   }
   const result = await query(
     `select rs.rate_key, rs.value_amount
@@ -1826,8 +1826,9 @@ async function handleTruckingEstimate(request, response, body) {
   const rates = new Map(result.rows.map((row) => [row.rate_key, Number(row.value_amount)]));
   const base = rates.get("vehicleRate") ?? rates.get("ratePerVehicle");
   if (!Number.isFinite(base)) {
-    sendError(response, 503, "Tarif canonical trucking belum dikonfigurasi.");
-    return;
+    const error = new Error("Tarif canonical trucking belum dikonfigurasi.");
+    error.statusCode = 503;
+    throw error;
   }
   const tripCount = Math.max(1, Math.min(100, Math.trunc(Number(body.jumlah_trip) || 1)));
   const loading = body.with_loading_helper ? Number(rates.get("loadingFee") ?? 0) : 0;
@@ -1843,9 +1844,14 @@ async function handleTruckingEstimate(request, response, body) {
     trip_count: tripCount, per_trip_estimate: perTrip,
     total_estimate: total,
   };
-  sendJson(response, 200, { has_data: true, cheapest: { vendor_id: null, vendor_name: "CST Canonical Rate", pricing_id: null, estimate }, candidates: [] });
+  return { has_data: true, cheapest: { vendor_id: null, vendor_name: "CST Canonical Rate", pricing_id: null, estimate }, candidates: [] };
 }
 
+
+async function handleTruckingEstimate(request, response, body) {
+  if (request.method !== "POST") { sendError(response, 405, "Method tidak didukung."); return; }
+  sendJson(response, 200, await calculateCanonicalTruckingEstimate(body));
+}
 async function handleTruckingBooking(request, response, user, body) {
   if (request.method !== "POST") { sendError(response, 405, "Method tidak didukung."); return; }
   const required = ["vehicleType","vehicleName","areaPickup","alamatPickup","picPickup","hpPickup","areaDelivery","alamatDelivery","picPenerima","hpPenerima"];
@@ -1853,6 +1859,16 @@ async function handleTruckingBooking(request, response, user, body) {
     sendError(response, 400, "Data booking trucking belum lengkap.");
     return;
   }
+  const tripCount = Math.max(1, Math.min(100, Math.trunc(Number(body.jumlahTrip) || 1)));
+  const addons = body.addons && typeof body.addons === "object" ? body.addons : {};
+  const canonicalPricing = await calculateCanonicalTruckingEstimate({
+    vehicle_type: body.vehicleType,
+    with_loading_helper: Boolean(addons.bantuanMuat),
+    with_unloading_helper: Boolean(addons.bantuanBongkar),
+    overnight_nights: addons.overnight ? 1 : 0,
+    jumlah_trip: tripCount,
+  });
+  const canonicalEstimate = canonicalPricing.cheapest.estimate;
   const companyIds = await getAccessibleCompanyIds(user);
   const bookingNumber = `TRK-${new Date().toISOString().slice(2,10).replaceAll("-", "")}-${crypto.randomBytes(4).toString("hex").toUpperCase()}`;
   const result = await query(
@@ -1873,10 +1889,10 @@ async function handleTruckingBooking(request, response, user, body) {
       String(body.areaDelivery), String(body.alamatDelivery), String(body.picPenerima), String(body.hpPenerima),
       body.jadwalType === "nanti" ? "nanti" : "sekarang", body.tanggalPickup ?? null, body.jamPickup ?? null,
       body.jenisBarang ?? null, body.beratKg ?? null, body.jumlahKoli ?? null, body.volumeM3 ?? null,
-      body.catatan ?? null, Math.max(1, Math.min(100, Number(body.jumlahTrip) || 1)),
-      JSON.stringify(body.addons ?? {}), Math.max(0, Number(body.estimasiTotal) || 0),
-      body.estimatedDistanceKm ?? null, body.estimatedPrice ?? null,
-      JSON.stringify(body.pricingBreakdown ?? null), JSON.stringify(body.candidateVendorIds ?? null),
+      body.catatan ?? null, tripCount,
+      JSON.stringify(addons), canonicalEstimate.total_estimate,
+      canonicalEstimate.distance_km ?? null, canonicalEstimate.total_estimate,
+      JSON.stringify(canonicalEstimate), JSON.stringify(null),
       Number.isInteger(Number(body.selectedVendorId)) && Number(body.selectedVendorId) > 0 ? Number(body.selectedVendorId) : null,
     ],
   );
