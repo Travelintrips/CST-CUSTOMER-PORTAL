@@ -39,6 +39,7 @@ type FeaturedPackage = {
   priorityWeight: number;
   categoryId: number | null;
   isActive: boolean;
+  internalOnly: boolean;
   createdAt: string;
   updatedAt: string;
 };
@@ -985,7 +986,7 @@ function TambahProdukInternalSection({ getAuthHeaders: _getAuthHeaders }: { getA
               disabled={loading}
             >
               <option value="">{loading ? "Memuat paket..." : "Pilih paket"}</option>
-              {packages.filter((pkg) => pkg.isActive).map((pkg) => (
+              {packages.filter((pkg) => pkg.isActive && pkg.internalOnly).map((pkg) => (
                 <option key={pkg.id} value={pkg.id}>{pkg.name} · {pkg.durationDays} hari</option>
               ))}
             </select>

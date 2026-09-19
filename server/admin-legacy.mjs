@@ -12,6 +12,13 @@ const VEHICLE_IDS = [
   "mobil", "mobil-xl", "van", "pickup-kecil", "box-kecil", "engkel",
   "double-engkel", "cdd-long", "fuso", "tronton", "truk-trailer", "truk-reefer",
 ];
+const DEFAULT_DELIVERY_VENDORS = [
+  { name: "JNE", logo: "📦", eta: "2-3 hari", fee: 0, note: "Hubungi untuk penawaran ongkir." },
+  { name: "J&T Express", logo: "🚚", eta: "2-4 hari", fee: 0, note: "Hubungi untuk penawaran ongkir." },
+  { name: "SiCepat", logo: "⚡", eta: "2-4 hari", fee: 0, note: "Hubungi untuk penawaran ongkir." },
+  { name: "AnterAja", logo: "📮", eta: "2-4 hari", fee: 0, note: "Hubungi untuk penawaran ongkir." },
+  { name: "Ninja Xpress", logo: "🥷", eta: "2-5 hari", fee: 0, note: "Hubungi untuk penawaran ongkir." },
+];
 
 function jsonValue(value, fallback) {
   if (value == null) return fallback;
@@ -160,10 +167,24 @@ async function handleContent({ request, response, url, body, user, sendJson, sen
   return false;
 }
 
+async function handleAdminUpload({ request, response, url, body, sendJson }) {
+  if (request.method !== "POST" || url.pathname !== "/api/portal/admin/upload") return false;
+  const uploaded = await uploadPublicAsset({
+    prefix: "portal-assets/admin",
+    file: body?.file,
+  });
+  sendJson(response, 201, uploaded);
+  return true;
+}
+
 async function handleLogistics({ request, response, url, body, sendJson, sendError, sendEmpty }) {
   if (url.pathname === "/api/portal/admin/delivery-vendors") {
-    const current = (await getSetting(DELIVERY_VENDOR_KEY, []));
-    const vendors = Array.isArray(current) ? current.map(mapDeliveryVendor) : [];
+    const current = await getSetting(DELIVERY_VENDOR_KEY, null);
+    const hasConfiguredVendors = Array.isArray(current);
+    const vendors = hasConfiguredVendors
+      ? current.map(mapDeliveryVendor)
+      : DEFAULT_DELIVERY_VENDORS.map(mapDeliveryVendor);
+    if (!hasConfiguredVendors) await setSetting(DELIVERY_VENDOR_KEY, vendors);
     if (request.method === "GET") {
       sendJson(response, 200, vendors);
       return true;
@@ -188,7 +209,7 @@ async function handleLogistics({ request, response, url, body, sendJson, sendErr
   const vendorMatch = url.pathname.match(/^\/api\/portal\/admin\/delivery-vendors\/(\d+)$/);
   if (vendorMatch) {
     const id = Number(vendorMatch[1]);
-    const current = await getSetting(DELIVERY_VENDOR_KEY, []);
+    const current = await getSetting(DELIVERY_VENDOR_KEY, null);
     const vendors = Array.isArray(current) ? current.map(mapDeliveryVendor) : [];
     const index = vendors.findIndex((vendor) => vendor.id === id);
     if (index < 0) {
@@ -763,6 +784,7 @@ export async function handlePortalContent(ctx) {
 }
 
 export async function handleAdminLegacy(ctx) {
+  if (await handleAdminUpload(ctx)) return true;
   if (await handleVehicleSettings(ctx)) return true;
   if (await handleContent(ctx)) return true;
   if (await handleLogistics(ctx)) return true;

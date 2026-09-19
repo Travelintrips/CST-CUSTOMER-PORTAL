@@ -27,6 +27,7 @@ function mapPackage(row) {
     priorityWeight: Number(row.priority_weight ?? 0),
     categoryId: row.category_id == null ? null : Number(row.category_id),
     isActive: Boolean(row.is_active),
+    internalOnly: Boolean(row.internal_only),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -78,7 +79,8 @@ async function handlePackages({ request, response, url, body, sendJson, sendErro
     const includeInactive = url.searchParams.get("includeInactive") === "true";
     const result = await query(
       `select id, code, name, description, duration_days, price, currency,
-              placement_type, priority_weight, category_id, is_active, created_at, updated_at
+              placement_type, priority_weight, category_id, is_active, internal_only,
+              created_at, updated_at
          from public.mkt_featured_packages
         ${includeInactive ? "" : "where is_active = true"}
         order by priority_weight desc, id`,
@@ -94,8 +96,9 @@ async function handlePackages({ request, response, url, body, sendJson, sendErro
       `insert into public.mkt_featured_packages
         (code,name,description,duration_days,price,currency,placement_type,priority_weight,category_id,is_active)
        values ($1,$2,$3,$4,$5,$6,$7,$8,$9,true)
-       returning id, code, name, description, duration_days, price, currency,
-                 placement_type, priority_weight, category_id, is_active, created_at, updated_at`,
+        returning id, code, name, description, duration_days, price, currency,
+                  placement_type, priority_weight, category_id, is_active, internal_only,
+                  created_at, updated_at`,
       [
         code,
         name,
@@ -121,7 +124,8 @@ async function handlePackages({ request, response, url, body, sendJson, sendErro
               updated_at=now()
         where id=$10
         returning id, code, name, description, duration_days, price, currency,
-                  placement_type, priority_weight, category_id, is_active, created_at, updated_at`,
+                  placement_type, priority_weight, category_id, is_active, internal_only,
+                  created_at, updated_at`,
       [
         text(body?.code),
         text(body?.name),
@@ -224,7 +228,7 @@ async function handleRequests({ request, response, url, body, user, sendJson, se
     return true;
   }
   if (current.status !== "approved") return sendError(response, 409, "Pengajuan harus disetujui terlebih dahulu.");
-  if (!["verified", "waived"].includes(current.payment_status)) {
+  if (current.payment_status !== "verified") {
     return sendError(response, 409, "Pembayaran belum diverifikasi.");
   }
   const client = await pool.connect();
@@ -276,7 +280,8 @@ async function handleInternal({ request, response, url, body, user, sendJson, se
     const result = await query(
       `select id, name, description, currency, price_sell, is_featured
          from public.vendor_catalog_items
-        where vendor_id=$1 and is_active=true and coalesce(is_featured,false)=false
+        where vendor_id=$1 and is_active=true and is_published=true
+          and coalesce(is_featured,false)=false
         order by name, id`,
       [vendorId],
     );
@@ -313,7 +318,7 @@ async function handleInternal({ request, response, url, body, user, sendJson, se
         `insert into public.mkt_featured_product_requests
           (company_id,vendor_id,catalog_item_id,package_id,status,requested_start_at,requested_end_at,
            approved_start_at,approved_end_at,price,currency,payment_status,approved_by,approved_at,activated_at)
-         values (null,$1,$2,$3,'active',$4,$5,$4,$5,$6,$7,'waived',$8,now(),now())`,
+          values (null,$1,$2,$3,'active',$4,$5,$4,$5,$6,$7,'verified',$8,now(),now())`,
         [vendorId, catalogItemId, packageId, body.startAt, body.endAt, packageRow.rows[0].price, packageRow.rows[0].currency, String(user.id)],
       );
       await client.query(

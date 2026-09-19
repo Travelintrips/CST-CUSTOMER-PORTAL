@@ -2757,6 +2757,7 @@ async function route(request, response) {
   }
   if (
     pathname === "/api/portal/admin/content"
+    || pathname === "/api/portal/admin/upload"
     || pathname === "/api/portal/admin/delivery-vendors"
     || /^\/api\/portal\/admin\/delivery-vendors\/\d+$/.test(pathname)
     || pathname === "/api/portal/admin/trucking-rates"
