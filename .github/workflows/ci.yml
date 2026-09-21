@@ -23,6 +23,19 @@ jobs:
           node-version: 22
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      - name: Hostinger esbuild executable regression
+        shell: bash
+        run: |
+          set -euo pipefail
+          binary="$(find node_modules/.pnpm -type f -path '*/node_modules/@esbuild/*/bin/esbuild' | head -n 1)"
+          test -n "$binary"
+          chmod a-x "$binary"
+          if test -x "$binary"; then
+            echo "Failed to simulate non-executable esbuild" >&2
+            exit 1
+          fi
+          node scripts/ensure-esbuild-executable.mjs
+          test -x "$binary"
       - run: pnpm test
         env:
           SUPABASE_DATABASE_URL_DEV: postgresql://ci:ci@127.0.0.1:5432/ci
