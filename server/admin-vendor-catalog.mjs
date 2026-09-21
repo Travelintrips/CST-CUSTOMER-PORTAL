@@ -1,5 +1,5 @@
 import { query } from "./db.mjs";
-import { deletePublicAsset, uploadPublicAsset } from "./storage.mjs";
+import { deletePublicAsset, uploadPublicAsset, uploadVendorCatalogAsset } from "./storage.mjs";
 
 function text(value, fallback = null) {
   return typeof value === "string" ? value.trim() || fallback : fallback;
@@ -70,7 +70,7 @@ function mapItem(row) {
 
 const itemSelect = `
   select v.id, v.vendor_id, v.type, v.name, v.description, v.price_base,
-         v.markup_pct, v.is_active, v.kategori, v.template_kind, v.status,
+         v.markup_pct, v.is_active, v.kategori, v.template_kind, v.status, v.is_internal_vendor,
          v.is_published, v.price_sell, v.currency, v.created_at,
          v.media_assets, v.documents,
          s.name as vendor_name, s.service_type as supplier_service_type,
@@ -116,6 +116,26 @@ export async function handleAdminVendorCatalog({
     const result = await query(`${itemSelect} where v.is_active = true order by v.created_at desc, v.id desc`);
     sendJson(response, 200, result.rows.map(mapItem));
     return true;
+  }
+
+  if (request.method === "POST" && pathname === "/api/portal/admin/vendor-catalog-items") {
+    const vendorId=validId(body?.vendor_id), name=text(body?.name), type=text(body?.type,"product");
+    if(!vendorId)return sendError(response,400,"Vendor wajib dipilih.");
+    if(!name)return sendError(response,400,"Nama produk wajib diisi.");
+    if(!["product","service"].includes(type))return sendError(response,400,"Tipe katalog tidak valid.");
+    const supplier=await query("select id,name from public.suppliers where id=$1 and is_active=true limit 1",[vendorId]);
+    if(!supplier.rowCount)return sendError(response,404,"Vendor aktif tidak ditemukan.");
+    const base=body?.price_base==null?0:number(body.price_base), internal=Boolean(body?.is_internal_vendor), markup=internal?0:number(body?.markup_pct);
+    const sell=Math.round(base*(1+markup/100)*100)/100, published=Boolean(body?.is_published);
+    const result=await query(`insert into public.vendor_catalog_items
+      (vendor_id,type,name,description,unit,price_base,markup_pct,price_sell,currency,kategori,category_key,template_kind,
+       moq,lead_time,origin,hs_code,vendor_name,status,is_published,is_active,is_internal_vendor,is_featured,media_assets,documents)
+      values($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$10,$2,$11,$12,$13,$14,$15,$16,$17,true,$18,$19,'[]'::jsonb,'[]'::jsonb)
+      returning id`,
+      [vendorId,type,name,text(body?.description),text(body?.unit,"unit"),base,markup,sell,text(body?.currency,"IDR"),text(body?.kategori),
+       body?.moq==null?null:number(body.moq),text(body?.lead_time),text(body?.origin),text(body?.hs_code),supplier.rows[0].name,
+       published?"published":"draft",published,internal,Boolean(body?.is_featured)]);
+    sendJson(response,201,{id:Number(result.rows[0].id),price_sell:sell,effective_markup:markup,is_internal_vendor:internal}); return true;
   }
 
   const itemMatch = pathname.match(/^\/api\/portal\/admin\/vendor-catalog-items\/(\d+)$/);
@@ -237,6 +257,21 @@ export async function handleAdminVendorCatalog({
       throw error;
     }
     return true;
+  }
+
+  const mediaAssetUploadMatch=pathname.match(/^\/api\/portal\/admin\/vendor-catalog-items\/(\d+)\/media-assets\/upload$/);
+  if(mediaAssetUploadMatch && request.method==="POST"){
+    const itemId=validId(mediaAssetUploadMatch[1]); const item=itemId?await getItem(itemId):null;
+    if(!item)return sendError(response,404,"Item katalog tidak ditemukan.");
+    const uploaded=await uploadVendorCatalogAsset({vendorId:item.vendor_id,catalogItemId:itemId,file:body?.file});
+    sendJson(response,201,{url:uploaded.url,objectPath:uploaded.objectPath,mimeType:uploaded.mimeType,sizeBytes:uploaded.sizeBytes}); return true;
+  }
+  const mediaAssetsMatch=pathname.match(/^\/api\/portal\/admin\/vendor-catalog-items\/(\d+)\/media-assets$/);
+  if(mediaAssetsMatch && request.method==="PATCH"){
+    const itemId=validId(mediaAssetsMatch[1]), assets=Array.isArray(body?.mediaAssets)?body.mediaAssets.slice(0,50):null;
+    if(!itemId||!assets)return sendError(response,400,"Media assets tidak valid.");
+    const result=await query("update public.vendor_catalog_items set media_assets=$1::jsonb,updated_at=now() where id=$2 and is_active=true returning id",[JSON.stringify(assets),itemId]);
+    if(!result.rowCount)return sendError(response,404,"Item katalog tidak ditemukan."); sendJson(response,200,{ok:true,mediaAssets:assets}); return true;
   }
 
   const mediaDeleteMatch = pathname.match(/^\/api\/portal\/admin\/vendor-catalog-items\/media\/(\d+)$/);
