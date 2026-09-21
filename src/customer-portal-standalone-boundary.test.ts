@@ -446,4 +446,24 @@ describe("standalone Customer Portal API boundary", () => {
     expect(page).not.toContain('Number(params.poId)');
   });
 
+  it("keeps marketplace approval notifications and PO pricing visible across roles", () => {
+    const server = readFileSync(join(process.cwd(), "server/index.mjs"), "utf8");
+    const marketplace = readFileSync(join(process.cwd(), "server/marketplace-service.mjs"), "utf8");
+    const vendorApi = readFileSync(join(process.cwd(), "server/vendor-portal.mjs"), "utf8");
+    const navbar = readFileSync(join(process.cwd(), "src/components/layout/Navbar.tsx"), "utf8");
+    const dashboard = readFileSync(join(process.cwd(), "src/pages/dashboard.tsx"), "utf8");
+    const vendorDashboard = readFileSync(join(process.cwd(), "src/pages/vendor-dashboard.tsx"), "utf8");
+
+    expect(server).toContain('user.role === "admin" ? "admin" : "customer"');
+    expect(navbar).toContain('role === "customer" || role === "admin"');
+    expect(marketplace).toContain('"Purchase Order baru"');
+    expect(marketplace).toContain("recipientPhone: vendorContact.phone ?? null");
+    expect(marketplace).toContain("purchase_order_grand_total");
+    expect(dashboard).toContain("Number(o.grandTotal ?? 0)");
+    expect(dashboard).toContain("/marketplace/my-purchase-orders/${o.poId}");
+    expect(vendorApi).toContain("p.currency_snapshot");
+    expect(vendorApi).toContain('currency: row.currency_snapshot || "IDR"');
+    expect(vendorDashboard).toContain('currency: order.currency || "IDR"');
+  });
+
 });

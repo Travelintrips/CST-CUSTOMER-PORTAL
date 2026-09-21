@@ -455,12 +455,20 @@ async function portalRfqs(request, response, url, user, rfqId = null) {
   const limit = Math.min(Math.max(Number(url.searchParams.get("limit") ?? 200), 1), 200);
   const result = await query(
     `select r.*, a.id as pending_approval_id, a.approver_level, a.status as pending_approval_status,
-            a.requested_at, a.response_notes
+            a.requested_at, a.response_notes,
+            po.id as purchase_order_id, po.grand_total as purchase_order_grand_total
        from public.mkt_rfqs r
        left join lateral (
          select id, approver_level, status, requested_at, response_notes
            from public.mkt_rfq_approvals where rfq_id=r.id order by requested_at desc limit 1
        ) a on true
+       left join lateral (
+         select id, grand_total
+           from public.mkt_purchase_orders
+          where rfq_id=r.id
+          order by id desc
+          limit 1
+       ) po on true
       where ${ownerSql("r")} order by r.created_at desc limit $4`,
     [user.id, user.email, companyIds, limit],
   );
@@ -480,6 +488,8 @@ async function portalRfqs(request, response, url, user, rfqId = null) {
       notes: row.notes,
       requiredDeliveryDate: row.required_delivery_date,
       createdAt: row.created_at,
+      poId: row.purchase_order_id == null ? null : Number(row.purchase_order_id),
+      grandTotal: row.purchase_order_grand_total == null ? 0 : Number(row.purchase_order_grand_total),
       pendingApproval: row.pending_approval_id ? {
         id: Number(row.pending_approval_id), approverLevel: row.approver_level,
         status: row.pending_approval_status, requestedAt: row.requested_at, responseNotes: row.response_notes,
@@ -600,8 +610,28 @@ async function customerDecision(user, rfqId, approved, reason = null, idempotenc
       link: `/admin?tab=service-operations`,
       payload: { rfqId: Number(rfq.id), quoteId: Number(quote.id), poId: Number(poId) },
     });
-    await queueEvent(db, { eventType: "po_created", recipientType: "vendor", recipientId: quote.vendor_id, rfqId: rfq.id, quoteId: quote.id, poId, payload: { rfqId: rfq.id, quoteId: quote.id, poId }, key: `po-created:${poId}` });
-    return { status: "awarded", poId, poNumber: (await db("select po_number from public.mkt_purchase_orders where id=$1", [poId])).rows[0].po_number, vendorName: quote.vendor_id };
+    const poRow = (await db("select po_number from public.mkt_purchase_orders where id=$1", [poId])).rows[0];
+    const vendorContact = (await db("select phone from public.suppliers where id=$1", [quote.vendor_id])).rows[0] ?? {};
+    await vendorNotification(
+      db,
+      quote.vendor_id,
+      "purchase_order_created",
+      "Purchase Order baru",
+      `PO ${poRow.po_number} untuk RFQ ${rfq.rfq_number ?? rfq.id} telah dibuat setelah customer menyetujui quotation.`,
+      { rfqId: Number(rfq.id), quoteId: Number(quote.id), poId: Number(poId) },
+    );
+    await queueEvent(db, {
+      eventType: "po_created",
+      recipientType: "vendor",
+      recipientId: quote.vendor_id,
+      recipientPhone: vendorContact.phone ?? null,
+      rfqId: rfq.id,
+      quoteId: quote.id,
+      poId,
+      payload: { rfqId: rfq.id, quoteId: quote.id, poId, poNumber: poRow.po_number },
+      key: `po-created:${poId}`,
+    });
+    return { status: "awarded", poId, poNumber: poRow.po_number, vendorName: quote.vendor_id };
   });
 }
 

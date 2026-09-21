@@ -54,13 +54,14 @@ interface CustomerNotification {
 
 function CustomerNotificationBell() {
   const authStatus = usePortalAuthStatus();
-  const isCustomer = authStatus === "authenticated" && getPortalRole() === "customer";
+  const role = getPortalRole();
+  const canShowNotifications = authStatus === "authenticated" && (role === "customer" || role === "admin");
   const [open, setOpen] = useState(false);
   const [items, setItems] = useState<CustomerNotification[]>([]);
   const [unreadCount, setUnreadCount] = useState(0);
 
   useEffect(() => {
-    if (!isCustomer) return;
+    if (!canShowNotifications) return;
     let disposed = false;
     const load = async () => {
       try {
@@ -79,6 +80,7 @@ function CustomerNotificationBell() {
       }
     };
     void load();
+    const refreshTimer = window.setInterval(() => void load(), 30_000);
 
     const events = new EventSource("/api/portal/notifications/events");
     events.addEventListener("customer_notification", (event) => {
@@ -92,11 +94,12 @@ function CustomerNotificationBell() {
     });
     return () => {
       disposed = true;
+      window.clearInterval(refreshTimer);
       events.close();
     };
-  }, [isCustomer]);
+  }, [canShowNotifications]);
 
-  if (!isCustomer) return null;
+  if (!canShowNotifications) return null;
 
   async function markRead(id: number) {
     const response = await fetch(`/api/portal/notifications/${id}/read`, {

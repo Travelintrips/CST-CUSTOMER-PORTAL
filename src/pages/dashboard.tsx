@@ -114,6 +114,8 @@ export default function Dashboard() {
       rfqStatus: string;
       approvalStatus: string;
       createdAt: string;
+      poId: number | null;
+      grandTotal: number;
     }>;
   }>({
     queryKey: ["mkt-my-rfqs-dashboard"],
@@ -128,6 +130,8 @@ export default function Dashboard() {
           rfqStatus: string;
           approvalStatus: string;
           createdAt: string;
+      poId: number | null;
+      grandTotal: number;
         }>;
       }>;
     },
@@ -228,9 +232,9 @@ export default function Dashboard() {
             cancelled: "bg-red-100 text-red-800",
             expired: "bg-gray-100 text-gray-600",
           } as Record<string, string>)[o.rfqStatus] ?? "bg-gray-100 text-gray-800",
-      grandTotal:    0,
+      grandTotal:    Number(o.grandTotal ?? 0),
       createdAt:     o.createdAt,
-      trackUrl:      `/marketplace/my-rfqs/${o.rfqId}`,
+      trackUrl:      o.poId ? `/marketplace/my-purchase-orders/${o.poId}` : `/marketplace/my-rfqs/${o.rfqId}`,
     })),
   ].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
 

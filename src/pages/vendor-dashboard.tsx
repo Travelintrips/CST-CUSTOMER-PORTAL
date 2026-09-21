@@ -2245,7 +2245,7 @@ export default function VendorDashboard() {
                           <p className="font-semibold text-sm mt-1">
                             {new Intl.NumberFormat("id-ID", {
                               style: "currency",
-                              currency: order.currency,
+                              currency: order.currency || "IDR",
                               maximumFractionDigits: 0,
                             }).format(order.grandTotal)}
                           </p>

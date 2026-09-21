@@ -2490,14 +2490,15 @@ async function handleNotifications(request, response) {
   const user = await requireUser(request, response);
   if (!user) return;
 
+  const notificationAudience = user.role === "admin" ? "admin" : "customer";
   const result = await query(
     `select id, event_key, type, title, message, payload, is_read, created_at
        from public.portal_customer_notifications
       where portal_customer_id = $1
-        and coalesce(payload->>'audience', 'customer') = 'customer'
+        and coalesce(payload->>'audience', 'customer') = $2
       order by created_at desc
       limit 50`,
-    [user.id],
+    [user.id, notificationAudience],
   );
   const items = result.rows.map((row) => ({
     ...(() => {

@@ -796,7 +796,7 @@ export async function handleVendorPortalRoutes({ request, response, url, user, b
     ) : { rows: [] };
     const marketplaceOrders = vendor?.supplier_id ? await query(
       `select p.id, p.po_number, p.rfq_id, p.quote_id, p.status, p.total_amount, p.tax_amount,
-              p.grand_total, p.confirmed_at, p.created_at, r.rfq_number
+              p.grand_total, p.currency_snapshot, p.confirmed_at, p.created_at, r.rfq_number
          from public.mkt_purchase_orders p
          join public.mkt_rfqs r on r.id = p.rfq_id
         where p.vendor_id = $1
@@ -845,7 +845,8 @@ export async function handleVendorPortalRoutes({ request, response, url, user, b
         id: Number(row.id), poNumber: row.po_number, rfqId: Number(row.rfq_id),
         quoteId: Number(row.quote_id), rfqNumber: row.rfq_number, status: row.status,
         totalAmount: Number(row.total_amount ?? 0), taxAmount: Number(row.tax_amount ?? 0),
-        grandTotal: Number(row.grand_total ?? 0), confirmedAt: row.confirmed_at, createdAt: row.created_at,
+        grandTotal: Number(row.grand_total ?? 0), currency: row.currency_snapshot || "IDR",
+        confirmedAt: row.confirmed_at, createdAt: row.created_at,
       })),
       vendorProfile: vendor ? {
         id: Number(vendor.id),
