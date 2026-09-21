@@ -531,3 +531,16 @@ export async function uploadVendorCatalogImage({ vendorId, catalogItemId, file }
   const publicData=storage.supabase.storage.from(storage.publicBucket).getPublicUrl(path);
   return {path,url:publicData.data?.publicUrl??null,fileName:safeFileName(file.name),mimeType,size};
 }
+
+export async function uploadVendorCatalogAsset({ vendorId, catalogItemId, file }) {
+  if (!file || typeof file.arrayBuffer !== "function") { const e=new Error("File media vendor wajib diunggah."); e.statusCode=400; throw e; }
+  const mimeType=String(file.type||"").toLowerCase(), size=Number(file.size);
+  if (!ALLOWED_VENDOR_ASSET_TYPES.has(mimeType)) { const e=new Error("Tipe media vendor tidak didukung."); e.statusCode=415; throw e; }
+  if (!Number.isFinite(size)||size<=0||size>MAX_VENDOR_ASSET_BYTES) { const e=new Error("Ukuran media vendor maksimal 50 MB."); e.statusCode=413; throw e; }
+  const storage=client(); await ensurePublicBucket(storage);
+  const path=`vendor-catalog/vendor-${Number(vendorId)}/item-${Number(catalogItemId)}/${crypto.randomUUID()}-${safeFileName(file.name||"asset")}`;
+  const result=await storage.supabase.storage.from(storage.publicBucket).upload(path,Buffer.from(await file.arrayBuffer()),{contentType:mimeType,cacheControl:"3600",upsert:false});
+  if(result.error){const e=new Error("Upload media vendor gagal.");e.statusCode=502;throw e;}
+  const publicData=storage.supabase.storage.from(storage.publicBucket).getPublicUrl(path);
+  return {objectPath:path,url:publicData.data?.publicUrl??null,fileName:safeFileName(file.name),mimeType,sizeBytes:size};
+}
