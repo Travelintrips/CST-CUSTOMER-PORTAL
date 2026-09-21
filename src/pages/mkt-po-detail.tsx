@@ -874,10 +874,11 @@ function ActivityTab({ poId }: { poId: number }) {
 
 // ── Main page ─────────────────────────────────────────────────────────────────
 
-export default function MktPoDetailPage({ params }: { params: { poId: string } }) {
-  const [, setLocation] = useLocation();
+export default function MktPoDetailPage({ params }: { params?: { poId?: string } } = {}) {
+  const [location, setLocation] = useLocation();
   const authed = isAuthenticated();
-  const poId = Number(params.poId);
+  const routePoId = location.split("/").filter(Boolean).at(-1);
+  const poId = Number(params?.poId ?? routePoId);
   const [activeTab, setActiveTab] = useState<Tab>("overview");
   const [selectedShipmentId, setSelectedShipmentId] = useState<number | null>(null);
 

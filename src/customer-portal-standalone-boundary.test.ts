@@ -437,4 +437,13 @@ describe("standalone Customer Portal API boundary", () => {
     expect(operations).toContain('payload.message ?? payload.error ?? "Action gagal dijalankan"');
   });
 
+  it("does not crash purchase-order detail when ProtectedRoute does not forward params", () => {
+    const page = readFileSync(join(process.cwd(), "src/pages/mkt-po-detail.tsx"), "utf8");
+    expect(page).toContain('params?: { poId?: string }');
+    expect(page).toContain('const [location, setLocation] = useLocation()');
+    expect(page).toContain('location.split("/").filter(Boolean).at(-1)');
+    expect(page).toContain('Number(params?.poId ?? routePoId)');
+    expect(page).not.toContain('Number(params.poId)');
+  });
+
 });
