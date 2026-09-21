@@ -72,9 +72,12 @@ import {
   handleUpload,
 } from "./ai-agent.mjs";
 
-const PORT = Number(process.env.PORT ?? process.env.CUSTOMER_PORTAL_API_PORT ?? 18444);
 const APP_ENV = process.env.APP_ENV ?? process.env.NODE_ENV ?? "development";
 const IS_PRODUCTION = APP_ENV === "production" || process.env.NODE_ENV === "production";
+const PORT = Number(
+  process.env.PORT
+    ?? (IS_PRODUCTION ? "3000" : process.env.CUSTOMER_PORTAL_API_PORT ?? "18444"),
+);
 const MAX_BODY_BYTES = 2 * 1024 * 1024;
 const MAX_MULTIPART_BODY_BYTES = 6 * 1024 * 1024;
 const MUTATION_METHODS = new Set(["POST", "PUT", "PATCH", "DELETE"]);
