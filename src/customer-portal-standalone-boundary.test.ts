@@ -385,4 +385,21 @@ describe("standalone Customer Portal API boundary", () => {
     expect(assignment).toContain("vendorIds: [routing.vendorId]");
     expect(marketplace).toContain('if (rfq.status !== "quoting")');
   });
+  it("serves every public marketplace-detail dependency from the standalone API", () => {
+    const server = readFileSync(join(process.cwd(), "server/index.mjs"), "utf8");
+    expect(server).toContain('pathname === "/api/portal/company"');
+    expect(server).toContain("public-profile$");
+    expect(server).toContain("(related|similar|same-province)");
+    expect(server).toContain("handleMarketplaceRecommendations");
+    expect(server).toContain("handleVendorPublicProfile");
+    expect(server).toContain("handlePortalCompany");
+  });
+
+  it("does not hardcode DEV Supabase branding assets in production HTML", () => {
+    const html = readFileSync(join(process.cwd(), "index.html"), "utf8");
+    expect(html).not.toContain("xssrfshdrtdfupgqwfdw.supabase.co");
+    expect(html).toContain("%VITE_SUPABASE_URL%");
+    expect(html).not.toContain('rel="preload" as="image"');
+  });
+
 });

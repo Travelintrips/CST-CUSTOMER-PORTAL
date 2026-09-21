@@ -2826,6 +2826,140 @@ async function handleMarketplaceFeatured(response, url) {
   sendJson(response, 200, items);
 }
 
+
+async function handlePortalCompany(response) {
+  const result = await query(
+    `select company_name, company_phone, company_address, company_email, logo_url
+       from public.company_settings
+      where company_id = 'default'
+      order by updated_at desc nulls last, id desc
+      limit 1`,
+  );
+  const row = result.rows[0] ?? {};
+  sendJson(response, 200, {
+    name: row.company_name ?? "PT Cahaya Sejati Teknologi",
+    tagline: null,
+    logoUrl: canonicalPublicAssetUrl(row.logo_url) ?? row.logo_url ?? null,
+    address: row.company_address ?? null,
+    email: row.company_email ?? null,
+    phone: row.company_phone ?? null,
+  });
+}
+
+async function handleVendorPublicProfile(response, vendorIdValue) {
+  const vendorId = Number(vendorIdValue);
+  if (!Number.isInteger(vendorId) || vendorId <= 0) {
+    sendError(response, 404, "Vendor tidak ditemukan.");
+    return;
+  }
+
+  const [vendorResult, performanceResult, countResult] = await Promise.all([
+    query(
+      `select id, name, logo, logo_url, address, office_address, factory_address,
+              warehouse_address, service_type, country, created_at
+         from public.suppliers
+        where id = $1
+          and coalesce(is_active, true) = true
+        limit 1`,
+      [vendorId],
+    ),
+    query(
+      `select total_orders, completed_orders,
+              coalesce(ontime_percentage, on_time_rate) as ontime_percentage,
+              average_response_minutes, avg_response_hours, customer_rating,
+              vendor_grade, score, last_calculated_at
+         from public.vendor_performance
+        where vendor_id = $1 or supplier_id = $1
+        order by last_calculated_at desc nulls last, updated_at desc nulls last, id desc
+        limit 1`,
+      [vendorId],
+    ),
+    query(
+      `select
+          count(*) filter (where type = 'product')::int as product_count,
+          count(*) filter (where type <> 'product')::int as service_count
+         from public.vendor_catalog_items
+        where vendor_id = $1
+          and is_active = true
+          and is_published = true`,
+      [vendorId],
+    ),
+  ]);
+
+  const vendor = vendorResult.rows[0];
+  if (!vendor) {
+    sendError(response, 404, "Vendor tidak ditemukan.");
+    return;
+  }
+  const performance = performanceResult.rows[0] ?? null;
+  const counts = countResult.rows[0] ?? {};
+
+  sendJson(response, 200, {
+    vendor: {
+      id: Number(vendor.id),
+      name: vendor.name,
+      logo: canonicalPublicAssetUrl(vendor.logo_url) ?? vendor.logo_url ?? vendor.logo ?? null,
+      location: vendor.office_address ?? vendor.address ?? vendor.factory_address ?? vendor.warehouse_address ?? null,
+      serviceType: vendor.service_type ?? null,
+      country: vendor.country ?? null,
+      createdAt: vendor.created_at ?? null,
+    },
+    performance: performance ? {
+      totalOrders: Number(performance.total_orders ?? 0),
+      completedOrders: Number(performance.completed_orders ?? 0),
+      ontimePercentage: performance.ontime_percentage == null ? null : Number(performance.ontime_percentage),
+      avgResponseHours: performance.avg_response_hours == null ? null : Number(performance.avg_response_hours),
+      averageResponseMinutes: performance.average_response_minutes == null ? null : Number(performance.average_response_minutes),
+      customerRating: performance.customer_rating == null ? null : Number(performance.customer_rating),
+      vendorGrade: performance.vendor_grade ?? null,
+      score: performance.score == null ? null : Number(performance.score),
+      lastCalculatedAt: performance.last_calculated_at ?? null,
+    } : null,
+    productCount: Number(counts.product_count ?? 0),
+    serviceCount: Number(counts.service_count ?? 0),
+  });
+}
+
+function marketplaceProvince(value) {
+  if (typeof value !== "string" || !value.trim()) return "";
+  const parts = value.split(",").map((part) => part.trim()).filter(Boolean);
+  return (parts.at(-1) ?? value).toLowerCase();
+}
+
+async function handleMarketplaceRecommendations(response, itemIdValue, mode) {
+  const itemId = Number(itemIdValue);
+  if (!Number.isInteger(itemId) || itemId <= 0) {
+    sendError(response, 404, "Item tidak ditemukan atau belum dipublikasikan.");
+    return;
+  }
+
+  const rows = await getPublishedCatalogItems();
+  const current = rows.find((row) => Number(row.id) === itemId);
+  if (!current) {
+    sendError(response, 404, "Item tidak ditemukan atau belum dipublikasikan.");
+    return;
+  }
+
+  const currentCategory = catalogCategory(current);
+  const currentProvince = marketplaceProvince(current.location);
+  const items = rows
+    .filter((row) => Number(row.id) !== itemId)
+    .filter((row) => {
+      if (mode === "related") return Number(row.vendor_id) === Number(current.vendor_id);
+      if (mode === "similar") return Boolean(currentCategory) && catalogCategory(row) === currentCategory;
+      if (mode === "same-province") {
+        return Boolean(currentProvince)
+          && marketplaceProvince(row.location) === currentProvince
+          && Number(row.vendor_id) !== Number(current.vendor_id);
+      }
+      return false;
+    })
+    .slice(0, 8)
+    .map(mapCatalogItem);
+
+  sendJson(response, 200, items);
+}
+
 async function handleMarketplaceStats(response) {
   const result = await query(
     `select count(*)::int as item_count,
@@ -3703,8 +3837,26 @@ async function route(request, response) {
     await handlePublicProducts(response);
     return;
   }
+  if (request.method === "GET" && pathname === "/api/portal/company") {
+    await handlePortalCompany(response);
+    return;
+  }
+  const vendorPublicProfileMatch = pathname.match(/^\/api\/portal\/vendors\/(\d+)\/public-profile$/);
+  if (request.method === "GET" && vendorPublicProfileMatch) {
+    await handleVendorPublicProfile(response, vendorPublicProfileMatch[1]);
+    return;
+  }
   if (request.method === "GET" && pathname === "/api/portal/marketplace") {
     await handleMarketplace(response, url);
+    return;
+  }
+  const marketplaceRecommendationMatch = pathname.match(/^\/api\/portal\/marketplace\/(\d+)\/(related|similar|same-province)$/);
+  if (request.method === "GET" && marketplaceRecommendationMatch) {
+    await handleMarketplaceRecommendations(
+      response,
+      marketplaceRecommendationMatch[1],
+      marketplaceRecommendationMatch[2],
+    );
     return;
   }
   const marketplaceItemMatch = pathname.match(/^\/api\/portal\/marketplace\/(\d+)$/);
