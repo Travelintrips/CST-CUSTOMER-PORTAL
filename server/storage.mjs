@@ -501,3 +501,20 @@ export async function ocrKtp(file) {
 }
 
 export { MAX_FILE_BYTES, ALLOWED_MIME_TYPES, MAX_VENDOR_ASSET_BYTES, ALLOWED_VENDOR_ASSET_TYPES };
+export async function uploadAiChatDocument({ file }) {
+  const { mimeType, size } = validateDocumentFile(file);
+  const storage = client();
+  await ensurePrivateBucket(storage);
+  const path = `ai-chat-documents/${new Date().toISOString().slice(0, 10)}/${crypto.randomUUID()}-${safeFileName(file.name || `document.${extensionForMime(mimeType)}`)}`;
+  const { error } = await storage.supabase.storage.from(storage.bucket).upload(
+    path,
+    Buffer.from(await file.arrayBuffer()),
+    { contentType: mimeType, cacheControl: "0", upsert: false },
+  );
+  if (error) {
+    const failure = new Error("Upload dokumen AI chat gagal.");
+    failure.statusCode = 502;
+    throw failure;
+  }
+  return { path, fileName: safeFileName(file.name), mimeType, size };
+}
