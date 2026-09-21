@@ -2659,22 +2659,25 @@ function mediaFromRow(row) {
       url: asset && typeof asset.url === "string" ? canonicalPublicAssetUrl(asset.url) : null,
     }))
     .filter(({ asset, url }) => asset && url)
-    .map(({ asset, url }, index) => ({
-      id: index + 1,
-      vendorCatalogItemId: row.id,
-      vendorId: row.vendor_id ?? null,
-      mediaType: asset.type === "video" ? "video" : "image",
-      fileUrl: url,
-      thumbnailUrl: canonicalPublicAssetUrl(asset.thumbnailUrl),
-      externalUrl: asset.externalUrl ?? null,
-      title: asset.title ?? null,
-      description: asset.description ?? null,
-      sortOrder: Number(asset.sortOrder ?? index),
-      isPrimary: Boolean(asset.isPrimary) || index === 0,
-      isActive: true,
-      visibility: asset.visibility ?? "public",
-      originalFilename: asset.originalFilename ?? null,
-    }));
+    .map(({ asset, url }, index) => {
+      const isInternalVendor = Boolean(row.is_internal_vendor);
+      return {
+        id: index + 1,
+        vendorCatalogItemId: row.id,
+        vendorId: isInternalVendor ? (row.vendor_id ?? null) : null,
+        mediaType: asset.type === "video" ? "video" : "image",
+        fileUrl: url,
+        thumbnailUrl: canonicalPublicAssetUrl(asset.thumbnailUrl),
+        externalUrl: isInternalVendor ? (asset.externalUrl ?? null) : null,
+        title: isInternalVendor ? (asset.title ?? null) : null,
+        description: isInternalVendor ? (asset.description ?? null) : null,
+        sortOrder: Number(asset.sortOrder ?? index),
+        isPrimary: Boolean(asset.isPrimary) || index === 0,
+        isActive: true,
+        visibility: asset.visibility ?? "public",
+        originalFilename: isInternalVendor ? (asset.originalFilename ?? null) : null,
+      };
+    });
   const primary = media.find((asset) => asset.mediaType === "image" && asset.isPrimary)
     ?? media.find((asset) => asset.mediaType === "image")
     ?? null;
@@ -2716,7 +2719,7 @@ function mapCatalogItem(row) {
     origin: row.origin ?? null,
     validityDate: row.validity_date ?? null,
     isFeatured: Boolean(row.is_featured),
-    documents: parseJson(row.documents, []),
+    documents: isInternalVendor ? parseJson(row.documents, []) : [],
     publishedAt: row.published_at ?? null,
     sortOrder: Number(row.sort_order ?? 0),
     media: media.media,

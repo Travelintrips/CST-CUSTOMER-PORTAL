@@ -483,6 +483,10 @@ describe("standalone Customer Portal API boundary", () => {
     expect(server).toContain("PUBLIC_MARKETPLACE_SELLER_NAME");
     expect(server).toContain("isInternalVendor ? Number(row.vendor_id ?? 0) : 0");
     expect(server).toContain("if (!Boolean(vendor.is_internal_vendor))");
+    expect(server).toContain("vendorId: isInternalVendor ? (row.vendor_id ?? null) : null");
+    expect(server).toContain("documents: isInternalVendor ? parseJson(row.documents, []) : []");
+    expect(marketplace).toContain('event.actor_type === "vendor"');
+    expect(marketplace).toContain("result.rows[0].is_internal_vendor ? line.notes : null");
     expect(poPage).toContain("Seluruh komunikasi, pembayaran, dan layanan transaksi ini dilakukan melalui CST.");
     expect(rfqPage).toContain("Seluruh komunikasi dan transaksi melalui CST.");
     expect(detailPage).toContain("external vendor identity stays private");

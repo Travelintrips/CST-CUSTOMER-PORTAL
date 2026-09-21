@@ -1006,7 +1006,12 @@ async function handlePortalPurchaseOrders(request, response, pathname, user) {
   const where = list ? `(${ownerSql("r")})` : `${ownerSql("r")} and ${fromRfq ? "r.id=$4" : "po.id=$4"}`;
   const values = list ? [user.id, user.email, companyIds] : [user.id, user.email, companyIds, integer(targetMatch[1], "PO/RFQ")];
   const result = await query(
-    `select po.id from public.mkt_purchase_orders po join public.mkt_rfqs r on r.id=po.rfq_id where ${where} order by po.created_at desc`,
+    `select po.id, coalesce(s.is_internal_vendor, false) as is_internal_vendor
+       from public.mkt_purchase_orders po
+       join public.mkt_rfqs r on r.id=po.rfq_id
+       left join public.suppliers s on s.id=po.vendor_id
+      where ${where}
+      order by po.created_at desc`,
     values,
   );
   if (!result.rows.length) fail(404, "Purchase Order tidak ditemukan.");
@@ -1026,7 +1031,7 @@ async function handlePortalPurchaseOrders(request, response, pathname, user) {
       unit: line.unit,
       unitPrice: line.unit_price,
       subtotal: line.subtotal,
-      notes: line.notes,
+      notes: result.rows[0].is_internal_vendor ? line.notes : null,
       createdAt: null,
     })) });
     return true;
@@ -1047,7 +1052,9 @@ async function handlePortalPurchaseOrders(request, response, pathname, user) {
       statusTo: event.new_value?.status ?? null,
       message: event.description,
       actorRole: event.actor_type,
-      actorName: event.actor_name,
+      actorName: !result.rows[0].is_internal_vendor && event.actor_type === "vendor"
+        ? CUSTOMER_FACING_SELLER_NAME
+        : event.actor_name,
       createdAt: event.created_at,
     })) });
     return true;
