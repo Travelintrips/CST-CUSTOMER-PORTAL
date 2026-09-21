@@ -361,4 +361,12 @@ describe("standalone Customer Portal API boundary", () => {
     expect(admin).toContain("is_internal_vendor");
     expect(wizard).toContain("is_internal_vendor:");
   });
+
+  it("accepts the vendor media UI limit through the multipart parser", () => {
+    const server = readFileSync(join(process.cwd(), "server/index.mjs"), "utf8");
+    const wizard = readFileSync(join(process.cwd(), "src/components/catalog/AddVendorProductWizard.tsx"), "utf8");
+    expect(wizard).toContain("const MAX_SIZE = 20 * 1024 * 1024");
+    expect(server).toContain("const MAX_MULTIPART_BODY_BYTES = 21 * 1024 * 1024");
+    expect(server).not.toContain("const MAX_MULTIPART_BODY_BYTES = 6 * 1024 * 1024");
+  });
 });
