@@ -545,4 +545,23 @@ describe("standalone Customer Portal API boundary", () => {
     expect(operations).toContain("tracking.display");
   });
 
+  it("lets customers confirm goods receipt and only completes a PO after every shipment is fully received", () => {
+    const operations = readFileSync(join(process.cwd(), "server/marketplace-operations.mjs"), "utf8");
+    const poPage = readFileSync(join(process.cwd(), "src/pages/mkt-po-detail.tsx"), "utf8");
+
+    expect(operations).toContain('request.method === "POST" && goods');
+    expect(operations).toContain("Konfirmasi penerimaan hanya dapat dilakukan setelah POD tersedia.");
+    expect(operations).toContain("Qty goods receipt melebihi sisa qty shipment.");
+    expect(operations).toContain("all_shipments_delivered");
+    expect(operations).toContain("all_shipments_have_pod");
+    expect(operations).toContain("all_shipment_items_accepted");
+    expect(operations).toContain("all_po_qty_allocated");
+    expect(operations).not.toContain("select exists(\n       select 1 from public.mkt_po_shipments s");
+    expect(poPage).toContain("Konfirmasi Barang Diterima");
+    expect(poPage).toContain("Diterima Lengkap");
+    expect(poPage).toContain("Diterima Sebagian");
+    expect(poPage).toContain("Ada Masalah / Ditolak");
+    expect(poPage).not.toContain("Backend GAP:");
+  });
+
 });

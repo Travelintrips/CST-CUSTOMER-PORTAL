@@ -81,6 +81,20 @@ interface Shipment {
   updatedAt: string;
 }
 
+interface ShipmentItem {
+  id: number;
+  shipmentId: number;
+  poLineId: number;
+  lineNumber: number;
+  qty: string | number;
+  uom: string | null;
+  itemName: string;
+}
+
+interface ShipmentDetail extends Shipment {
+  items: ShipmentItem[];
+}
+
 interface TimelineEvent {
   id: number;
   shipmentId: number;
@@ -100,6 +114,18 @@ interface PodView {
   note: string | null;
 }
 
+interface GoodsReceiptItem {
+  id: number;
+  shipmentItemId: number;
+  lineNumber: number;
+  poLineId: number;
+  receivedQty: string | number;
+  acceptedQty: string | number;
+  rejectedQty: string | number;
+  condition: string | null;
+  notes: string | null;
+}
+
 interface GoodsReceipt {
   id: number;
   shipmentId: number;
@@ -110,6 +136,7 @@ interface GoodsReceipt {
   receivedAt: string | null;
   notes: string | null;
   createdAt: string;
+  items: GoodsReceiptItem[];
 }
 
 interface ActivityEvent {
@@ -154,8 +181,10 @@ const SHIPMENT_STATUS: Record<string, { label: string; color: string }> = {
   customs:       { label: "Bea Cukai",      color: "bg-purple-100 text-purple-700" },
   warehouse:     { label: "Di Gudang",      color: "bg-orange-100 text-orange-700" },
   arrived:       { label: "Tiba",           color: "bg-teal-100 text-teal-700" },
-  delivered:     { label: "Terkirim",       color: "bg-green-100 text-green-700" },
-  cancelled:     { label: "Dibatalkan",     color: "bg-red-100 text-red-700" },
+  delivered:           { label: "Terkirim",          color: "bg-green-100 text-green-700" },
+  partially_delivered: { label: "Diterima Sebagian", color: "bg-amber-100 text-amber-700" },
+  rejected_goods:      { label: "Barang Ditolak",    color: "bg-red-100 text-red-800" },
+  cancelled:           { label: "Dibatalkan",        color: "bg-red-100 text-red-700" },
 };
 
 const SHIPMENT_OPTIONS = [
@@ -586,7 +615,13 @@ function ShipmentTab({
   );
 }
 
-function GoodsReceiptTab({ shipmentId }: { shipmentId: number | null }) {
+function GoodsReceiptTab({ shipmentId, poId }: { shipmentId: number | null; poId: number }) {
+  const queryClient = useQueryClient();
+  const [receiptMode, setReceiptMode] = useState<"full" | "partial" | "rejected">("full");
+  const [partialQty, setPartialQty] = useState<Record<number, string>>({});
+  const [receiptNotes, setReceiptNotes] = useState("");
+  const [submitError, setSubmitError] = useState("");
+
   const { data, isLoading, isError, refetch } = useQuery<{ ok: boolean; data: GoodsReceipt[] }>({
     queryKey: ["mkt-shipment-goods-receipts", shipmentId],
     queryFn: async () => {
@@ -597,6 +632,135 @@ function GoodsReceiptTab({ shipmentId }: { shipmentId: number | null }) {
       return res.json();
     },
     enabled: shipmentId != null,
+  });
+
+  const { data: shipmentData } = useQuery<{ ok: boolean; data: ShipmentDetail }>({
+    queryKey: ["mkt-shipment-detail", shipmentId],
+    queryFn: async () => {
+      const res = await fetch(`/api/mkt/portal/shipments/${shipmentId!}`, {
+        credentials: "include",
+      });
+      if (!res.ok) throw new Error("Gagal memuat detail shipment");
+      return res.json();
+    },
+    enabled: shipmentId != null,
+  });
+
+  const { data: podData } = useQuery<{ ok: boolean; data: PodView }>({
+    queryKey: ["mkt-shipment-pod", shipmentId],
+    queryFn: async () => {
+      const res = await fetch(`/api/mkt/portal/shipments/${shipmentId!}/pod`, {
+        credentials: "include",
+      });
+      if (res.status === 404) return { ok: false, data: undefined as never };
+      if (!res.ok) throw new Error("Gagal memuat POD");
+      return res.json();
+    },
+    enabled: shipmentId != null,
+  });
+
+  const receipts = data?.data ?? [];
+  const shipment = shipmentData?.data;
+  const podAvailable = Boolean(podData?.ok);
+  const receivedByItem = new Map<number, number>();
+  for (const receipt of receipts) {
+    for (const item of receipt.items ?? []) {
+      receivedByItem.set(
+        item.shipmentItemId,
+        (receivedByItem.get(item.shipmentItemId) ?? 0) + Number(item.receivedQty ?? 0),
+      );
+    }
+  }
+  const remainingItems = (shipment?.items ?? []).map((item) => ({
+    ...item,
+    remainingQty: Math.max(0, Number(item.qty) - (receivedByItem.get(item.id) ?? 0)),
+  }));
+  const remainingTotal = remainingItems.reduce((sum, item) => sum + item.remainingQty, 0);
+  const canConfirm = Boolean(
+    shipment
+    && podAvailable
+    && ["arrived", "delivered", "partially_delivered"].includes(shipment.shipmentStatus)
+    && remainingTotal > 0,
+  );
+
+  const confirmReceipt = useMutation({
+    mutationFn: async () => {
+      if (!shipmentId || !shipment) throw new Error("Shipment belum dipilih.");
+      setSubmitError("");
+
+      const items = remainingItems
+        .map((item) => {
+          const remaining = item.remainingQty;
+          if (remaining <= 0) return null;
+          if (receiptMode === "full") {
+            return {
+              shipmentItemId: item.id,
+              receivedQty: remaining,
+              acceptedQty: remaining,
+              rejectedQty: 0,
+              condition: "GOOD",
+            };
+          }
+          if (receiptMode === "rejected") {
+            return {
+              shipmentItemId: item.id,
+              receivedQty: remaining,
+              acceptedQty: 0,
+              rejectedQty: remaining,
+              condition: "REJECTED",
+            };
+          }
+          const accepted = Math.max(0, Math.min(remaining, Number(partialQty[item.id] ?? 0)));
+          return accepted > 0 ? {
+            shipmentItemId: item.id,
+            receivedQty: accepted,
+            acceptedQty: accepted,
+            rejectedQty: 0,
+            condition: "GOOD",
+          } : null;
+        })
+        .filter(Boolean);
+
+      if (!items.length) throw new Error("Masukkan qty yang benar-benar diterima.");
+      if (
+        receiptMode === "partial"
+        && items.reduce((sum, item: any) => sum + Number(item.acceptedQty ?? 0), 0) >= remainingTotal
+      ) {
+        throw new Error("Jika seluruh sisa qty diterima, pilih Diterima Lengkap.");
+      }
+
+      const idempotencyKey = `customer-receipt:${shipmentId}:${receiptMode}:${Date.now()}`;
+      const res = await fetch(`/api/mkt/portal/shipments/${shipmentId}/goods-receipts`, {
+        method: "POST",
+        credentials: "include",
+        headers: {
+          "Content-Type": "application/json",
+          "Idempotency-Key": idempotencyKey,
+        },
+        body: JSON.stringify({
+          receiptType: receiptMode,
+          notes: receiptNotes.trim() || null,
+          items,
+        }),
+      });
+      const payload = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(payload.message ?? payload.error ?? "Gagal mengonfirmasi penerimaan barang.");
+      return payload;
+    },
+    onSuccess: async () => {
+      setReceiptNotes("");
+      setPartialQty({});
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["mkt-shipment-goods-receipts", shipmentId] }),
+        queryClient.invalidateQueries({ queryKey: ["mkt-shipment-detail", shipmentId] }),
+        queryClient.invalidateQueries({ queryKey: ["mkt-po-shipments", poId] }),
+        queryClient.invalidateQueries({ queryKey: ["mkt-po-detail", poId] }),
+        queryClient.invalidateQueries({ queryKey: ["mkt-po-activity", poId] }),
+      ]);
+    },
+    onError: (error) => {
+      setSubmitError(error instanceof Error ? error.message : "Gagal mengonfirmasi penerimaan barang.");
+    },
   });
 
   if (!shipmentId) return (
@@ -620,18 +784,102 @@ function GoodsReceiptTab({ shipmentId }: { shipmentId: number | null }) {
     </Card>
   );
 
-  const receipts = data?.data ?? [];
-
   return (
     <div className="space-y-4">
-      {/* GAP notice for creation */}
-      <Card className="border-blue-200 bg-blue-50">
-        <CardContent className="p-4 flex gap-2">
-          <Info className="w-4 h-4 text-blue-500 shrink-0 mt-0.5" />
-          <p className="text-sm text-blue-700">
-            <strong>Backend GAP:</strong> Buyer goods receipt creation (Receive Full / Partial / Reject)
-            belum tersedia sebagai endpoint portal. Goods receipt saat ini dibuat oleh admin.
-          </p>
+      <Card className={canConfirm ? "border-emerald-200 bg-emerald-50" : "border-blue-200 bg-blue-50"}>
+        <CardContent className="p-4 space-y-4">
+          <div className="flex gap-2">
+            <ClipboardCheck className={`w-4 h-4 shrink-0 mt-0.5 ${canConfirm ? "text-emerald-600" : "text-blue-500"}`} />
+            <div>
+              <p className={`text-sm font-semibold ${canConfirm ? "text-emerald-800" : "text-blue-800"}`}>
+                Konfirmasi penerimaan barang
+              </p>
+              <p className={`text-xs mt-1 ${canConfirm ? "text-emerald-700" : "text-blue-700"}`}>
+                {!shipment
+                  ? "Memuat detail shipment…"
+                  : !["arrived", "delivered", "partially_delivered"].includes(shipment.shipmentStatus)
+                    ? "Konfirmasi tersedia setelah shipment tiba."
+                    : !podAvailable
+                      ? "Menunggu Proof of Delivery (POD) dari proses pengiriman."
+                      : remainingTotal <= 0
+                        ? "Seluruh qty shipment sudah dikonfirmasi."
+                        : "Periksa barang lalu pilih hasil penerimaan di bawah."}
+              </p>
+            </div>
+          </div>
+
+          {canConfirm && (
+            <>
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                {([
+                  ["full", "Diterima Lengkap"],
+                  ["partial", "Diterima Sebagian"],
+                  ["rejected", "Ada Masalah / Ditolak"],
+                ] as const).map(([value, label]) => (
+                  <button
+                    key={value}
+                    type="button"
+                    onClick={() => setReceiptMode(value)}
+                    className={`rounded-lg border px-3 py-2 text-sm font-medium transition-colors ${
+                      receiptMode === value
+                        ? "border-orange-400 bg-orange-50 text-orange-700"
+                        : "border-gray-200 bg-white text-gray-600 hover:border-gray-300"
+                    }`}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+
+              <div className="space-y-2">
+                {remainingItems.filter((item) => item.remainingQty > 0).map((item) => (
+                  <div key={item.id} className="rounded-lg border bg-white p-3 text-sm">
+                    <div className="flex items-center justify-between gap-3">
+                      <div>
+                        <p className="font-medium text-gray-800">{item.itemName}</p>
+                        <p className="text-xs text-gray-500">
+                          Sisa: {item.remainingQty} {item.uom ?? ""}
+                        </p>
+                      </div>
+                      {receiptMode === "partial" && (
+                        <input
+                          type="number"
+                          min="0"
+                          max={item.remainingQty}
+                          step="any"
+                          value={partialQty[item.id] ?? ""}
+                          onChange={(event) => setPartialQty((current) => ({
+                            ...current,
+                            [item.id]: event.target.value,
+                          }))}
+                          placeholder="Qty diterima"
+                          className="w-32 rounded-md border border-gray-300 px-3 py-2 text-right text-sm"
+                        />
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              <textarea
+                value={receiptNotes}
+                onChange={(event) => setReceiptNotes(event.target.value)}
+                placeholder="Catatan penerimaan (opsional)"
+                className="min-h-20 w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm"
+              />
+
+              {submitError && <p className="text-sm text-red-600">{submitError}</p>}
+
+              <Button
+                onClick={() => confirmReceipt.mutate()}
+                disabled={confirmReceipt.isPending}
+                className="w-full sm:w-auto"
+              >
+                <ClipboardCheck className="w-4 h-4 mr-1.5" />
+                {confirmReceipt.isPending ? "Menyimpan…" : "Konfirmasi Barang Diterima"}
+              </Button>
+            </>
+          )}
         </CardContent>
       </Card>
 
@@ -639,7 +887,7 @@ function GoodsReceiptTab({ shipmentId }: { shipmentId: number | null }) {
         <Card className="border-dashed">
           <CardContent className="p-10 text-center">
             <ClipboardCheck className="w-10 h-10 text-gray-300 mx-auto mb-3" />
-            <p className="text-gray-500 text-sm">Belum ada goods receipt untuk shipment ini.</p>
+            <p className="text-gray-500 text-sm">Belum ada konfirmasi penerimaan untuk shipment ini.</p>
           </CardContent>
         </Card>
       ) : (
@@ -1001,7 +1249,7 @@ export default function MktPoDetailPage({ params }: { params?: { poId?: string }
                   Pilih shipment di tab <button className="underline font-medium" onClick={() => setActiveTab("shipment")}>Shipment</button> terlebih dahulu.
                 </div>
               )}
-              <GoodsReceiptTab shipmentId={selectedShipmentId} />
+              <GoodsReceiptTab shipmentId={selectedShipmentId} poId={po.id} />
             </div>
           )}
           {activeTab === "timeline"      && (

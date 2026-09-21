@@ -24,7 +24,7 @@ const SHIPMENT_TRANSITIONS = {
   in_transit: new Set(["customs", "warehouse", "arrived", "cancelled"]),
   customs: new Set(["warehouse", "arrived", "cancelled"]),
   warehouse: new Set(["arrived", "cancelled"]),
-  arrived: new Set(["delivered", "cancelled"]),
+  arrived: new Set(["delivered", "partially_delivered", "rejected_goods", "cancelled"]),
   delivered: new Set(),
   partially_delivered: new Set(["delivered"]),
   rejected_goods: new Set(["delivered"]),
@@ -747,22 +747,82 @@ async function createGoodsReceipt({ shipmentId, body, request, user, isAdmin }) 
     if (!["arrived", "delivered", "partially_delivered"].includes(shipment.shipment_status)) {
       fail(409, "Goods receipt hanya dapat dibuat setelah shipment tiba.");
     }
+    if (!isAdmin) {
+      const podExists = (await db(
+        `select exists(
+           select 1
+             from public.mkt_po_shipment_events
+            where shipment_id=$1
+              and event_type='pod_submitted'
+         ) as available`,
+        [shipment.id],
+      )).rows[0]?.available;
+      if (!podExists) fail(409, "Konfirmasi penerimaan hanya dapat dilakukan setelah POD tersedia.");
+    }
+
     const validItems = (await db(
       `select si.*, pol.item_name from public.mkt_po_shipment_items si
          join public.mkt_purchase_order_lines pol on pol.id=si.po_line_id
         where si.shipment_id=$1`,
       [shipment.id],
     )).rows;
+    const previous = (await db(
+      `select gri.shipment_item_id,
+              coalesce(sum(gri.received_qty),0) as received_qty,
+              coalesce(sum(gri.accepted_qty),0) as accepted_qty,
+              coalesce(sum(gri.rejected_qty),0) as rejected_qty
+         from public.mkt_po_goods_receipt_items gri
+         join public.mkt_po_goods_receipts gr on gr.id=gri.goods_receipt_id
+        where gr.shipment_id=$1
+        group by gri.shipment_item_id`,
+      [shipment.id],
+    )).rows;
+    const previousMap = new Map(previous.map((item) => [Number(item.shipment_item_id), item]));
     const itemMap = new Map(validItems.map((item) => [Number(item.id), item]));
+    const requestedMap = new Map();
+
     for (const item of items) {
-      const shipmentItem = itemMap.get(integer(item.shipmentItemId, "Shipment item"));
+      const shipmentItemId = integer(item.shipmentItemId, "Shipment item");
+      const shipmentItem = itemMap.get(shipmentItemId);
       if (!shipmentItem) fail(404, "Shipment item bukan bagian dari shipment ini.");
       const receivedQty = decimal(item.receivedQty, "Received qty");
       const acceptedQty = decimal(item.acceptedQty ?? receivedQty, "Accepted qty");
       const rejectedQty = decimal(item.rejectedQty ?? 0, "Rejected qty");
-      if (acceptedQty + rejectedQty > receivedQty || receivedQty > Number(shipmentItem.qty)) {
-        fail(409, "Qty goods receipt tidak valid terhadap qty shipment.");
+      const prior = previousMap.get(shipmentItemId) ?? { received_qty: 0, accepted_qty: 0, rejected_qty: 0 };
+      const remainingQty = Math.max(0, Number(shipmentItem.qty) - Number(prior.received_qty ?? 0));
+      if (acceptedQty + rejectedQty > receivedQty || receivedQty > remainingQty) {
+        fail(409, "Qty goods receipt melebihi sisa qty shipment.");
       }
+      requestedMap.set(shipmentItemId, { receivedQty, acceptedQty, rejectedQty });
+    }
+
+    const projected = validItems.map((shipmentItem) => {
+      const shipmentItemId = Number(shipmentItem.id);
+      const prior = previousMap.get(shipmentItemId) ?? { received_qty: 0, accepted_qty: 0, rejected_qty: 0 };
+      const current = requestedMap.get(shipmentItemId) ?? { receivedQty: 0, acceptedQty: 0, rejectedQty: 0 };
+      return {
+        qty: Number(shipmentItem.qty),
+        received: Number(prior.received_qty ?? 0) + current.receivedQty,
+        accepted: Number(prior.accepted_qty ?? 0) + current.acceptedQty,
+        rejected: Number(prior.rejected_qty ?? 0) + current.rejectedQty,
+      };
+    });
+    const anyReceived = projected.some((item, index) => {
+      const shipmentItem = validItems[index];
+      const current = requestedMap.get(Number(shipmentItem.id));
+      return Number(current?.receivedQty ?? 0) > 0;
+    });
+    const allAccepted = projected.every((item) => item.accepted >= item.qty && item.rejected === 0);
+    const anyRejected = projected.some((item) => item.rejected > 0);
+    if (!anyReceived) fail(400, "Minimal satu qty penerimaan harus diisi.");
+    if (receiptType === "full" && !allAccepted) {
+      fail(409, "Penerimaan penuh harus menerima seluruh sisa qty shipment tanpa penolakan.");
+    }
+    if (receiptType === "partial" && allAccepted) {
+      fail(409, "Gunakan penerimaan penuh jika seluruh qty shipment diterima.");
+    }
+    if (receiptType === "rejected" && !anyRejected) {
+      fail(409, "Penerimaan ditolak harus memiliki qty yang ditolak.");
     }
     const receiptNumber = `GR-${shipment.id}-${key.replace(/[^a-zA-Z0-9]/g, "").slice(0, 32) || Date.now()}`;
     const inserted = await db(
@@ -842,15 +902,61 @@ async function createGoodsReceipt({ shipmentId, body, request, user, isAdmin }) 
 
 async function maybeCompletePo(db, poId, user, isAdmin) {
   const po = await loadPo(poId, user, { client: db, forUpdate: true, isAdmin });
-  const gate = (await db(
-    `select exists(
-       select 1 from public.mkt_po_shipments s
-        where s.po_id=$1 and s.shipment_status='delivered'
-          and exists (select 1 from public.mkt_po_shipment_events e where e.shipment_id=s.id and e.event_type='pod_submitted')
-          and exists (select 1 from public.mkt_po_goods_receipts gr where gr.shipment_id=s.id and gr.receipt_type='full')
-     ) as ready`,
+  const completion = (await db(
+    `with active_shipments as (
+         select id, shipment_status
+           from public.mkt_po_shipments
+          where po_id=$1 and shipment_status <> 'cancelled'
+       ),
+       accepted_by_item as (
+         select gri.shipment_item_id, coalesce(sum(gri.accepted_qty),0) as accepted_qty
+           from public.mkt_po_goods_receipt_items gri
+           join public.mkt_po_goods_receipts gr on gr.id=gri.goods_receipt_id
+           join active_shipments s on s.id=gr.shipment_id
+          group by gri.shipment_item_id
+       ),
+       shipped_by_line as (
+         select si.po_line_id, coalesce(sum(si.qty),0) as shipped_qty
+           from public.mkt_po_shipment_items si
+           join active_shipments s on s.id=si.shipment_id
+          group by si.po_line_id
+       )
+       select
+         exists(select 1 from active_shipments) as has_shipments,
+         not exists(
+           select 1 from active_shipments where shipment_status <> 'delivered'
+         ) as all_shipments_delivered,
+         not exists(
+           select 1
+             from active_shipments s
+            where not exists (
+              select 1 from public.mkt_po_shipment_events e
+               where e.shipment_id=s.id and e.event_type='pod_submitted'
+            )
+         ) as all_shipments_have_pod,
+         not exists(
+           select 1
+             from public.mkt_po_shipment_items si
+             join active_shipments s on s.id=si.shipment_id
+             left join accepted_by_item a on a.shipment_item_id=si.id
+            where coalesce(a.accepted_qty,0) < si.qty
+         ) as all_shipment_items_accepted,
+         not exists(
+           select 1
+             from public.mkt_purchase_order_lines pol
+             left join shipped_by_line sh on sh.po_line_id=pol.id
+            where pol.po_id=$1
+              and coalesce(sh.shipped_qty,0) <> pol.qty
+         ) as all_po_qty_allocated`,
     [po.id],
-  )).rows[0]?.ready;
+  )).rows[0] ?? {};
+  const gate = Boolean(
+    completion.has_shipments
+    && completion.all_shipments_delivered
+    && completion.all_shipments_have_pod
+    && completion.all_shipment_items_accepted
+    && completion.all_po_qty_allocated
+  );
   if (!gate || ["completed", "closed", "cancelled"].includes(po.status)) return false;
   const updated = await db(
     `update public.mkt_purchase_orders
@@ -866,7 +972,7 @@ async function maybeCompletePo(db, poId, user, isAdmin) {
     action: "po_completed",
     oldValue: { status: po.status },
     newValue: { status: "completed" },
-    description: "PO completed setelah POD dan goods receipt full.",
+    description: "PO completed setelah seluruh shipment delivered, seluruh POD tersedia, dan seluruh qty PO diterima penuh.",
     key: `po:${po.id}:completed`,
   });
   await queueNotification(db, {
@@ -945,9 +1051,25 @@ async function handlePortalOperations({ request, response, pathname, body, user,
     sendJson(response, 200, { ok: true, data: await createShipment({ poId: selection[1], body, request, user, isAdmin: false }) });
     return true;
   }
+  const shipmentDetailMatch = pathname.match(/^\/api\/mkt\/portal\/shipments\/(\d+)$/);
+  if (request.method === "GET" && shipmentDetailMatch) {
+    const shipment = await loadShipment(shipmentDetailMatch[1], user, { isAdmin: false });
+    sendJson(response, 200, { ok: true, data: await shipmentDetail(query, shipment) });
+    return true;
+  }
   const goods = pathname.match(/^\/api\/mkt\/portal\/shipments\/(\d+)\/goods-receipts$/);
   if (request.method === "GET" && goods) {
     sendJson(response, 200, { ok: true, data: await goodsReceipts(goods[1], user, false) });
+    return true;
+  }
+  if (request.method === "POST" && goods) {
+    sendJson(response, 200, { ok: true, data: await createGoodsReceipt({
+      shipmentId: goods[1],
+      body,
+      request,
+      user,
+      isAdmin: false,
+    }) });
     return true;
   }
   const timeline = pathname.match(/^\/api\/mkt\/portal\/shipments\/(\d+)\/timeline$/);
