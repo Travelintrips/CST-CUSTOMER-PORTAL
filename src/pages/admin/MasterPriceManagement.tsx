@@ -637,7 +637,7 @@ export function MasterPriceManagement() {
                 {importing ? <Loader2 className="h-3.5 w-3.5 animate-spin mr-1" /> : <Upload className="h-3.5 w-3.5 mr-1" />}
                 Import Price
               </Button>
-              <input ref={fileInputRef} type="file" accept=".xlsx,.xls,.csv" className="hidden" onChange={handleImport} />
+              <input ref={fileInputRef} type="file" accept=".csv,text/csv" className="hidden" onChange={handleImport} />
 
               <Button size="sm" variant="outline" className="h-8 text-xs" onClick={() => handleExport("xlsx")}>
                 <Download className="h-3.5 w-3.5 mr-1" />Excel
