@@ -56,21 +56,65 @@ export function MarketplaceDealPriceEditor({ rfqId, rfqStatus }: { rfqId: number
     setError("");
     setNotice("");
     try {
-      const response = await fetch(`/api/portal/admin/service-operations/marketplace/${rfqId}/deal-price`, {
+      const response = await fetch(`/api/mkt/admin/rfqs/${rfqId}/vendor-quotes`, {
         headers: getAuthHeaders(),
         credentials: "include",
         cache: "no-store",
       });
       const payload = await response.json();
-      if (!response.ok) throw new Error(payload.error ?? "Gagal memuat harga deal");
-      const nextQuotes = (payload.data?.quotes ?? []) as DealQuote[];
+      if (!response.ok) throw new Error(payload.message ?? payload.error ?? "Gagal memuat harga deal");
+
+      const summaries = Array.isArray(payload.data) ? payload.data : [];
+      const nextQuotes = (await Promise.all(
+        summaries.map(async (summary: { quoteId?: number; id?: number }) => {
+          const quoteId = Number(summary.quoteId ?? summary.id);
+          if (!Number.isInteger(quoteId) || quoteId <= 0) return null;
+          const detailResponse = await fetch(
+            `/api/mkt/admin/rfqs/${rfqId}/quotes/${quoteId}/deal-price`,
+            {
+              headers: getAuthHeaders(),
+              credentials: "include",
+              cache: "no-store",
+            },
+          );
+          const detailPayload = await detailResponse.json();
+          if (!detailResponse.ok) {
+            throw new Error(detailPayload.message ?? detailPayload.error ?? "Gagal memuat detail harga deal");
+          }
+          const detail = detailPayload.data;
+          return {
+            quote_id: Number(detail.quoteId ?? detail.id ?? quoteId),
+            quote_status: String(detail.status ?? ""),
+            updated_at: String(detail.updatedAt ?? ""),
+            vendor_name: String(detail.vendorName ?? "Vendor"),
+            dealTotal: detail.grandTotal == null ? null : Number(detail.grandTotal),
+            lines: (Array.isArray(detail.lines) ? detail.lines : []).map((line: any) => ({
+              rfqLineId: Number(line.rfqLineId),
+              itemName: String(line.itemName ?? ""),
+              unit: line.unit ?? null,
+              offeredQty: String(line.offeredQty ?? 0),
+              vendorUnitPrice: String(line.vendorUnitPrice ?? line.offeredUnitPrice ?? 0),
+              vendorSubtotal: String(line.subtotal ?? 0),
+              dealUnitPrice: line.dealUnitPrice == null ? null : String(line.dealUnitPrice),
+              dealSubtotal: line.dealSubtotal == null ? null : String(line.dealSubtotal),
+            })),
+          } satisfies DealQuote;
+        }),
+      )).filter((quote): quote is DealQuote => quote !== null);
+
       setQuotes(nextQuotes);
       const initial = nextQuotes[0];
       if (initial) {
         setSelectedQuoteId(initial.quote_id);
         setPrices(Object.fromEntries(initial.lines.map((line) => [line.rfqLineId, line.dealUnitPrice ?? ""])));
+      } else {
+        setSelectedQuoteId(null);
+        setPrices({});
       }
     } catch (cause) {
+      setQuotes([]);
+      setSelectedQuoteId(null);
+      setPrices({});
       setError(cause instanceof Error ? cause.message : "Gagal memuat harga deal");
     } finally {
       setLoading(false);
@@ -94,7 +138,7 @@ export function MarketplaceDealPriceEditor({ rfqId, rfqStatus }: { rfqId: number
     setError("");
     setNotice("");
     try {
-      const response = await fetch(`/api/portal/admin/service-operations/marketplace/${rfqId}/deal-price/${selectedQuote.quote_id}`, {
+      const response = await fetch(`/api/mkt/admin/rfqs/${rfqId}/quotes/${selectedQuote.quote_id}/deal-price`, {
         method: "PUT",
         headers: { ...getAuthHeaders(), "Content-Type": "application/json" },
         credentials: "include",

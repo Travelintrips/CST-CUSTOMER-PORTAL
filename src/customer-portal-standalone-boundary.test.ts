@@ -416,4 +416,15 @@ describe("standalone Customer Portal API boundary", () => {
     expect(adminPortal).toContain("loadMarketplaceVendorRouting");
   });
 
+  it("uses canonical marketplace admin endpoints for deal pricing", () => {
+    const editor = readFileSync(join(process.cwd(), "src/components/admin/MarketplaceDealPriceEditor.tsx"), "utf8");
+    const marketplace = readFileSync(join(process.cwd(), "server/marketplace-service.mjs"), "utf8");
+    expect(editor).toContain("/api/mkt/admin/rfqs/${rfqId}/vendor-quotes");
+    expect(editor).toContain("/api/mkt/admin/rfqs/${rfqId}/quotes/${quoteId}/deal-price");
+    expect(editor).toContain("/api/mkt/admin/rfqs/${rfqId}/quotes/${selectedQuote.quote_id}/deal-price");
+    expect(editor).not.toContain("/api/portal/admin/service-operations/marketplace/${rfqId}/deal-price");
+    expect(marketplace).toContain("vendor-quotes$");
+    expect(marketplace).toContain("quotes\\/(\\d+)\\/deal-price$");
+  });
+
 });
