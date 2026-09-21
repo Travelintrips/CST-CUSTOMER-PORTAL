@@ -2685,12 +2685,16 @@ function mediaFromRow(row) {
   };
 }
 
+const PUBLIC_MARKETPLACE_SELLER_NAME = process.env.PORTAL_PUBLIC_SELLER_NAME?.trim() || "PT. Cahaya Sejati Teknologi";
+
 function mapCatalogItem(row) {
   const media = mediaFromRow(row);
+  const isInternalVendor = Boolean(row.is_internal_vendor);
   return {
     id: row.id,
-    vendorId: Number(row.vendor_id ?? 0),
-    vendorName: row.vendor_name ?? null,
+    vendorId: isInternalVendor ? Number(row.vendor_id ?? 0) : 0,
+    vendorName: isInternalVendor ? (row.vendor_name ?? null) : PUBLIC_MARKETPLACE_SELLER_NAME,
+    isInternalVendor,
     templateKind: row.template_kind ?? row.type ?? null,
     categoryKey: catalogCategory(row),
     serviceType: row.service_type ?? null,
@@ -2708,7 +2712,7 @@ function mapCatalogItem(row) {
     stockStatus: row.stock_status ?? null,
     stockQty: row.stock_qty == null ? null : Number(row.stock_qty),
     leadTime: row.lead_time ?? null,
-    location: row.location ?? null,
+    location: isInternalVendor ? (row.location ?? null) : null,
     origin: row.origin ?? null,
     validityDate: row.validity_date ?? null,
     isFeatured: Boolean(row.is_featured),
@@ -2728,7 +2732,7 @@ async function getPublishedCatalogItems({ requirePublishedStatus = true } = {}) 
             template_kind, category_key, service_type, template_id, template_snapshot,
             spec_values, price_sell, currency, stock_status, stock_qty, moq, lead_time,
             validity_date, location, origin, documents, published_at, sort_order,
-            media_assets, is_featured, featured_until
+            media_assets, is_featured, featured_until, is_internal_vendor
        from public.vendor_catalog_items
       where type = 'product'
         and is_active = true
@@ -2814,13 +2818,14 @@ async function handleMarketplaceFeatured(response, url) {
     .filter((row) => row.is_featured)
     .slice(0, limit)
     .map((row) => {
-      const media = mediaFromRow(row);
+      const item = mapCatalogItem(row);
       return {
-        id: row.id,
-        vendorId: Number(row.vendor_id ?? 0),
-        vendorName: row.vendor_name ?? null,
-        name: row.name,
-        imageUrl: media.primaryImageUrl,
+        id: item.id,
+        vendorId: item.vendorId,
+        vendorName: item.vendorName,
+        isInternalVendor: item.isInternalVendor,
+        name: item.name,
+        imageUrl: item.primaryImageUrl,
         isFeatured: true,
       };
     });
@@ -2859,7 +2864,8 @@ async function handleVendorPublicProfile(response, vendorIdValue) {
   const [vendorResult, performanceResult, countResult] = await Promise.all([
     query(
       `select id, name, logo, logo_url, address, office_address, factory_address,
-              warehouse_address, service_type, country, created_at
+              warehouse_address, service_type, country, created_at,
+              coalesce(is_internal_vendor, false) as is_internal_vendor
          from public.suppliers
         where id = $1
           and coalesce(is_active, true) = true
@@ -2894,6 +2900,32 @@ async function handleVendorPublicProfile(response, vendorIdValue) {
     sendError(response, 404, "Vendor tidak ditemukan.");
     return;
   }
+  if (!Boolean(vendor.is_internal_vendor)) {
+    const company = (await query(
+      `select company_address, logo_url
+         from public.company_settings
+        where company_id = 'default'
+        order by updated_at desc nulls last, id desc
+        limit 1`,
+    )).rows[0] ?? {};
+    sendJson(response, 200, {
+      vendor: {
+        id: 0,
+        name: PUBLIC_MARKETPLACE_SELLER_NAME,
+        logo: canonicalPublicAssetUrl(company.logo_url) ?? company.logo_url ?? null,
+        location: company.company_address ?? null,
+        serviceType: "marketplace",
+        country: "Indonesia",
+        createdAt: null,
+      },
+      performance: null,
+      productCount: 0,
+      serviceCount: 0,
+      isInternalVendor: false,
+    });
+    return;
+  }
+
   const performance = performanceResult.rows[0] ?? null;
   const counts = countResult.rows[0] ?? {};
 
@@ -2920,6 +2952,7 @@ async function handleVendorPublicProfile(response, vendorIdValue) {
     } : null,
     productCount: Number(counts.product_count ?? 0),
     serviceCount: Number(counts.service_count ?? 0),
+    isInternalVendor: true,
   });
 }
 

@@ -23,6 +23,7 @@ import {
 } from "lucide-react";
 import type { ProductMediaItem, MarketplaceItem } from "@/lib/catalogFilters";
 import { resolveImageUrl } from "@/lib/utils";
+import { COMPANY_CONFIG } from "@/config/company";
 import { GooglePlacesAutocomplete, type SelectedGooglePlace } from "@/components/ui/google-places-autocomplete";
 import { getAuthHeaders, isAuthenticated } from "@/lib/auth";
 import {
@@ -36,6 +37,7 @@ interface CatalogItemSummary {
   id: number;
   vendorId: number;
   vendorName: string | null;
+  isInternalVendor?: boolean;
   templateKind: string | null;
   categoryKey: string | null;
   serviceType: string | null;
@@ -1460,9 +1462,9 @@ function RelatedItemsSection({ itemId, onNavigate }: { itemId: number; onNavigat
         <div>
           <p className="text-[15px] font-extrabold text-slate-800 flex items-center gap-2">
             <Building2 className="h-4 w-4 text-sky-500" />
-            Item Lain dari Vendor Ini
+            Produk Terkait
           </p>
-          <p className="text-[12px] text-slate-400 mt-0.5">{items.length} item dari vendor yang sama</p>
+          <p className="text-[12px] text-slate-400 mt-0.5">{items.length} item terkait</p>
         </div>
       </div>
       <div className="px-5 py-4 overflow-x-auto">
@@ -1863,8 +1865,21 @@ export default function MarketplaceDetailPage() {
               </div>
             </div>
 
-            {/* Vendor Profile Card */}
-            <VendorProfileCard vendorId={item.vendorId} itemLocation={item.location} />
+            {/* Seller profile: external vendor identity stays private. */}
+            {item.isInternalVendor ? (
+              <VendorProfileCard vendorId={item.vendorId} itemLocation={item.location} />
+            ) : (
+              <div className="border border-slate-200 rounded-2xl bg-white p-4">
+                <p className="text-[10px] font-semibold text-slate-500 uppercase tracking-wider mb-2">Penyedia</p>
+                <div className="flex items-center gap-2">
+                  <Building2 className="h-5 w-5 text-sky-600" />
+                  <p className="text-[14px] font-bold text-slate-900">{COMPANY_CONFIG.legalName}</p>
+                </div>
+                <p className="text-[11px] text-slate-500 mt-2">
+                  Pemesanan, pembayaran, komunikasi, dan layanan transaksi dilakukan melalui CST.
+                </p>
+              </div>
+            )}
 
             {/* Item ID for reference */}
             <p className="text-center text-[10px] text-slate-300 font-mono">ID: {item.id}</p>

@@ -50,6 +50,7 @@ interface Quotation {
   submittedAt: string | null;
   vendorName: string | null;
   vendorPhone: string | null;
+  isInternalVendor: boolean;
   grandTotal: number;
   lines: Array<{
     rfqLineId: number;
@@ -436,8 +437,11 @@ export default function MktRfqDetailPage() {
                 <div className="space-y-4">
                   <div className="grid grid-cols-2 gap-3 text-sm">
                     <div>
-                      <p className="text-xs text-muted-foreground">Vendor</p>
+                      <p className="text-xs text-muted-foreground">{quotation.isInternalVendor ? "Vendor Internal" : "Penyedia"}</p>
                       <p className="font-semibold">{quotation.vendorName ?? "—"}</p>
+                      {!quotation.isInternalVendor && (
+                        <p className="text-[11px] text-muted-foreground mt-0.5">Seluruh komunikasi dan transaksi melalui CST.</p>
+                      )}
                     </div>
                     <div>
                       <p className="text-xs text-muted-foreground">Total Penawaran</p>
@@ -463,7 +467,7 @@ export default function MktRfqDetailPage() {
                     )}
                     {quotation.quotationNumber && (
                       <div className="col-span-2">
-                        <p className="text-xs text-muted-foreground">No. Quotation Vendor</p>
+                        <p className="text-xs text-muted-foreground">No. Quotation</p>
                         <p className="font-mono text-xs">{quotation.quotationNumber}</p>
                       </div>
                     )}
@@ -493,7 +497,7 @@ export default function MktRfqDetailPage() {
 
                   {quotation.notes && (
                     <div className="p-3 bg-blue-50 rounded-lg text-sm">
-                      <p className="text-xs font-semibold text-blue-600 mb-1">Catatan Vendor:</p>
+                      <p className="text-xs font-semibold text-blue-600 mb-1">Catatan Penawaran:</p>
                       <p className="text-blue-800">{quotation.notes}</p>
                     </div>
                   )}

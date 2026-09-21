@@ -170,6 +170,7 @@ export interface MarketplaceItem {
   id: number;
   vendorId: number;
   vendorName: string | null;
+  isInternalVendor?: boolean;
   templateKind: string | null;
   categoryKey: string | null;
   serviceType: string | null;

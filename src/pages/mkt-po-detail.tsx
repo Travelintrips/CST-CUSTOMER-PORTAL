@@ -55,6 +55,7 @@ interface PoDetail {
   vendorName: string | null;
   vendorPhone: string | null;
   vendorEmail: string | null;
+  isInternalVendor: boolean;
 }
 
 interface Shipment {
@@ -243,20 +244,25 @@ function OverviewTab({ po }: { po: PoDetail }) {
         </CardContent>
       </Card>
 
-      {/* Vendor */}
+      {/* Provider identity: external vendor details are never exposed to customers. */}
       <Card>
         <CardHeader className="pb-2">
           <CardTitle className="text-base flex items-center gap-2">
-            <Building2 className="w-4 h-4 text-orange-500" /> Vendor
+            <Building2 className="w-4 h-4 text-orange-500" /> {po.isInternalVendor ? "Vendor Internal" : "Penyedia"}
           </CardTitle>
         </CardHeader>
         <CardContent className="space-y-2">
-          <InfoRow label="Nama Vendor" value={po.vendorName ?? po.vendorNameSnapshot} />
-          {po.vendorAddressSnapshot && (
+          <InfoRow label={po.isInternalVendor ? "Nama Vendor" : "Dikelola oleh"} value={po.vendorName ?? po.vendorNameSnapshot} />
+          {po.isInternalVendor && po.vendorAddressSnapshot && (
             <InfoRow label="Alamat" value={po.vendorAddressSnapshot} />
           )}
-          {po.vendorPhone && <InfoRow label="Telepon" value={po.vendorPhone} />}
-          {po.vendorEmail && <InfoRow label="Email" value={po.vendorEmail} />}
+          {po.isInternalVendor && po.vendorPhone && <InfoRow label="Telepon" value={po.vendorPhone} />}
+          {po.isInternalVendor && po.vendorEmail && <InfoRow label="Email" value={po.vendorEmail} />}
+          {!po.isInternalVendor && (
+            <p className="text-xs text-slate-500 pt-1">
+              Seluruh komunikasi, pembayaran, dan layanan transaksi ini dilakukan melalui CST.
+            </p>
+          )}
         </CardContent>
       </Card>
 
@@ -281,8 +287,8 @@ function OverviewTab({ po }: { po: PoDetail }) {
         </CardHeader>
         <CardContent className="space-y-2">
           <InfoRow label="PO Number" value={<span className="font-mono">{po.poNumber}</span>} />
-          <InfoRow label="No. Quotasi" value={po.quotationNumberSnapshot} />
-          <InfoRow label="Tanggal Quotasi" value={fmtDate(po.quotationDateSnapshot)} />
+          {po.quotationNumberSnapshot && <InfoRow label="No. Quotasi" value={po.quotationNumberSnapshot} />}
+          {po.quotationDateSnapshot && <InfoRow label="Tanggal Quotasi" value={fmtDate(po.quotationDateSnapshot)} />}
           <InfoRow label="Incoterm" value={po.incotermSnapshot} />
           <InfoRow label="Payment Terms" value={po.paymentTermsSnapshot} />
           <InfoRow label="Mata Uang" value={po.currencySnapshot} />

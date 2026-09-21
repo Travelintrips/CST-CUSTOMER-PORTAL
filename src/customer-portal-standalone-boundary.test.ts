@@ -466,4 +466,25 @@ describe("standalone Customer Portal API boundary", () => {
     expect(vendorDashboard).toContain('currency: order.currency || "IDR"');
   });
 
+  it("redacts external vendor identity from every customer-facing marketplace projection", () => {
+    const marketplace = readFileSync(join(process.cwd(), "server/marketplace-service.mjs"), "utf8");
+    const server = readFileSync(join(process.cwd(), "server/index.mjs"), "utf8");
+    const poPage = readFileSync(join(process.cwd(), "src/pages/mkt-po-detail.tsx"), "utf8");
+    const rfqPage = readFileSync(join(process.cwd(), "src/pages/mkt-rfq-detail.tsx"), "utf8");
+    const detailPage = readFileSync(join(process.cwd(), "src/pages/marketplace-detail.tsx"), "utf8");
+
+    expect(marketplace).toContain("CUSTOMER_FACING_SELLER_NAME");
+    expect(marketplace).toContain("customerView: true");
+    expect(marketplace).toContain("redactVendor ? null : row.vendor_phone");
+    expect(marketplace).toContain("vendorId: null");
+    expect(marketplace).toContain("vendorUnitPrice").toBeTruthy();
+    expect(server).toContain("PUBLIC_MARKETPLACE_SELLER_NAME");
+    expect(server).toContain("isInternalVendor ? Number(row.vendor_id ?? 0) : 0");
+    expect(server).toContain("if (!Boolean(vendor.is_internal_vendor))");
+    expect(poPage).toContain("Seluruh komunikasi, pembayaran, dan layanan transaksi ini dilakukan melalui CST.");
+    expect(rfqPage).toContain("Seluruh komunikasi dan transaksi melalui CST.");
+    expect(detailPage).toContain("external vendor identity stays private");
+    expect(detailPage).toContain("COMPANY_CONFIG.legalName");
+  });
+
 });

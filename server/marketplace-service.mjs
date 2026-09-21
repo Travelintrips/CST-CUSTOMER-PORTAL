@@ -10,6 +10,7 @@ import { handleAdminOperations, handlePortalOperations } from "./marketplace-ope
 const RFQ_TERMINAL = new Set(["awarded", "cancelled", "expired"]);
 const QUOTE_TERMINAL = new Set(["selected", "rejected", "expired", "withdrawn"]);
 const PO_TERMINAL = new Set(["completed", "closed", "cancelled", "vendor_rejected"]);
+const CUSTOMER_FACING_SELLER_NAME = process.env.PORTAL_PUBLIC_SELLER_NAME?.trim() || "PT. Cahaya Sejati Teknologi";
 
 function fail(statusCode, message) {
   const error = new Error(message);
@@ -250,7 +251,8 @@ async function rfqLines(db, rfqId) {
 
 async function quoteDetail(db, quoteId) {
   const result = await db(
-    `select q.*, s.name as vendor_name, s.phone as vendor_phone, s.contact_email as vendor_email
+    `select q.*, s.name as vendor_name, s.phone as vendor_phone, s.contact_email as vendor_email,
+            coalesce(s.is_internal_vendor, false) as is_internal_vendor
        from public.mkt_vendor_quotes q
        left join public.suppliers s on s.id = q.vendor_id
       where q.id = $1`,
@@ -289,6 +291,7 @@ async function quoteDetail(db, quoteId) {
     vendorName: quote.vendor_name,
     vendorPhone: quote.vendor_phone,
     vendorEmail: quote.vendor_email,
+    isInternalVendor: Boolean(quote.is_internal_vendor),
     status: quote.status,
     validUntil: quote.valid_until,
     openedAt: quote.opened_at,
@@ -308,11 +311,12 @@ async function quoteDetail(db, quoteId) {
   };
 }
 
-async function poDetail(db, poId) {
+async function poDetail(db, poId, { customerView = false } = {}) {
   const result = await db(
     `select po.*, r.rfq_number, r.status as rfq_status, r.buyer_name, r.buyer_email,
             r.buyer_company, r.notes as rfq_notes, s.name as vendor_name,
-            s.phone as vendor_phone, s.contact_email as vendor_email
+            s.phone as vendor_phone, s.contact_email as vendor_email,
+            coalesce(s.is_internal_vendor, false) as is_internal_vendor
        from public.mkt_purchase_orders po
        join public.mkt_rfqs r on r.id = po.rfq_id
        left join public.suppliers s on s.id = po.vendor_id
@@ -326,6 +330,8 @@ async function poDetail(db, poId) {
        from public.mkt_purchase_order_lines where po_id = $1 order by id`,
     [poId],
   );
+  const isInternalVendor = Boolean(row.is_internal_vendor);
+  const redactVendor = customerView && !isInternalVendor;
   return {
     id: Number(row.id),
     poNumber: row.po_number,
@@ -340,27 +346,28 @@ async function poDetail(db, poId) {
     cancelledAt: row.cancelled_at,
     cancelReason: row.cancel_reason,
     updatedAt: row.updated_at,
-    vendorNameSnapshot: row.vendor_name_snapshot,
-    vendorAddressSnapshot: row.vendor_address_snapshot,
+    vendorNameSnapshot: redactVendor ? CUSTOMER_FACING_SELLER_NAME : row.vendor_name_snapshot,
+    vendorAddressSnapshot: redactVendor ? null : row.vendor_address_snapshot,
     paymentTermsSnapshot: row.payment_terms_snapshot,
     incotermSnapshot: row.incoterm_snapshot,
-    quotationNumberSnapshot: row.quotation_number_snapshot,
-    quotationDateSnapshot: row.quotation_date_snapshot,
+    quotationNumberSnapshot: redactVendor ? null : row.quotation_number_snapshot,
+    quotationDateSnapshot: redactVendor ? null : row.quotation_date_snapshot,
     currencySnapshot: row.currency_snapshot,
     leadTimeDaysSnapshot: row.lead_time_days_snapshot,
     expectedCompletionDate: row.expected_completion_date,
     actualCompletionDate: row.actual_completion_date,
-    vendorTokenExpiresAt: row.vendor_token_expires_at,
-    revisionNotes: row.revision_notes,
+    vendorTokenExpiresAt: redactVendor ? null : row.vendor_token_expires_at,
+    revisionNotes: redactVendor ? null : row.revision_notes,
     rfqNumber: row.rfq_number,
     rfqStatus: row.rfq_status,
     buyerName: row.buyer_name,
     buyerEmail: row.buyer_email,
     buyerCompany: row.buyer_company,
     rfqNotes: row.rfq_notes,
-    vendorName: row.vendor_name,
-    vendorPhone: row.vendor_phone,
-    vendorEmail: row.vendor_email,
+    vendorName: redactVendor ? CUSTOMER_FACING_SELLER_NAME : row.vendor_name,
+    vendorPhone: redactVendor ? null : row.vendor_phone,
+    vendorEmail: redactVendor ? null : row.vendor_email,
+    isInternalVendor,
     lines: lines.rows.map((line, index) => ({
       id: Number(line.id),
       lineNumber: index + 1,
@@ -369,7 +376,7 @@ async function poDetail(db, poId) {
       unit: line.unit,
       unitPrice: line.unit_price,
       subtotal: line.subtotal,
-      notes: line.notes,
+      notes: redactVendor ? null : line.notes,
     })),
   };
 }
@@ -506,7 +513,47 @@ async function portalQuotation(request, response, user, rfqId) {
   if (!quoteId) fail(404, "Quotation RFQ belum tersedia.");
   const details = await quoteDetail(query, quoteId);
   if (!details || details.rfqId !== Number(rfq.id)) fail(404, "Quotation RFQ tidak ditemukan.");
-  response._sendJson(200, { ok: true, data: details });
+  if (details.isInternalVendor) {
+    response._sendJson(200, { ok: true, data: details });
+    return;
+  }
+  response._sendJson(200, {
+    ok: true,
+    data: {
+      id: details.id,
+      rfqId: details.rfqId,
+      vendorId: null,
+      vendorName: CUSTOMER_FACING_SELLER_NAME,
+      vendorPhone: null,
+      vendorEmail: null,
+      isInternalVendor: false,
+      status: details.status,
+      validUntil: details.validUntil,
+      openedAt: details.openedAt,
+      submittedAt: details.submittedAt,
+      quotationNumber: null,
+      quotationDate: null,
+      paymentTerms: details.paymentTerms,
+      incoterm: details.incoterm,
+      deliveryLocation: details.deliveryLocation,
+      notes: null,
+      updatedAt: details.updatedAt,
+      grandTotal: details.grandTotal,
+      lines: details.lines.map((line) => ({
+        rfqLineId: line.rfqLineId,
+        itemName: line.itemName,
+        requestedQty: line.requestedQty,
+        offeredQty: line.offeredQty,
+        dealUnitPrice: line.dealUnitPrice,
+        dealSubtotal: line.dealSubtotal,
+        currency: line.currency,
+        leadTimeDays: line.leadTimeDays,
+        stockStatus: line.stockStatus,
+        unit: line.unit,
+        notes: null,
+      })),
+    },
+  });
   return true;
 }
 
@@ -1007,10 +1054,10 @@ async function handlePortalPurchaseOrders(request, response, pathname, user) {
   }
   if (list) {
     const data = [];
-    for (const row of result.rows) data.push(await poDetail(query, row.id));
+    for (const row of result.rows) data.push(await poDetail(query, row.id, { customerView: true }));
     response._sendJson(200, { ok: true, data });
   } else {
-    response._sendJson(200, { ok: true, data: await poDetail(query, result.rows[0].id) });
+    response._sendJson(200, { ok: true, data: await poDetail(query, result.rows[0].id, { customerView: true }) });
   }
   return true;
 }
