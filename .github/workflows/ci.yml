@@ -29,3 +29,45 @@ jobs:
           SESSION_SECRET: customer-portal-ci-session-secret
       - run: pnpm typecheck
       - run: pnpm build
+      - name: Hostinger bundle contract
+        run: |
+          test -f index.js
+          test -f dist/index.js
+          test -f dist/package.json
+          test -f dist/server/index.mjs
+          test -f dist/server/load-secrets.mjs
+          test -f dist/public/index.html
+      - name: Production runtime smoke
+        shell: bash
+        env:
+          NODE_ENV: production
+          APP_ENV: production
+          PORT: "3000"
+          SESSION_SECRET: customer-portal-ci-session-secret-32chars
+          SUPABASE_DATABASE_URL: postgresql://ci:ci@127.0.0.1:65432/ci
+          SUPABASE_URL: https://example.supabase.co
+          SUPABASE_SERVICE_ROLE_KEY: ci-service-role-key
+          SUPABASE_STORAGE_BUCKET: customer-portal-ci
+          CUSTOMER_PORTAL_PUBLIC_DIR: ${{ github.workspace }}/dist/public
+        run: |
+          set -euo pipefail
+          node ./dist/server/index.mjs > /tmp/customer-portal-runtime.log 2>&1 &
+          pid=$!
+          trap 'kill "$pid" 2>/dev/null || true' EXIT
+          ready=0
+          for _ in $(seq 1 30); do
+            if ! kill -0 "$pid" 2>/dev/null; then
+              cat /tmp/customer-portal-runtime.log
+              exit 1
+            fi
+            if curl -fsS http://127.0.0.1:3000/ >/dev/null; then
+              ready=1
+              break
+            fi
+            sleep 1
+          done
+          if [ "$ready" -ne 1 ]; then
+            cat /tmp/customer-portal-runtime.log
+            exit 1
+          fi
+          cat /tmp/customer-portal-runtime.log
