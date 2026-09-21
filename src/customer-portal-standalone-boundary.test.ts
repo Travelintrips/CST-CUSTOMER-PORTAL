@@ -522,4 +522,27 @@ describe("standalone Customer Portal API boundary", () => {
     expect(operations).toContain("setDealNotes(result.negotiatedNotes ?? result.notes ??");
   });
 
+  it("fills generic admin service detail with canonical marketplace customer and fulfillment data", () => {
+    const admin = readFileSync(join(process.cwd(), "server/admin-portal.mjs"), "utf8");
+    const operations = readFileSync(join(process.cwd(), "src/pages/admin/ServiceOperationsTab.tsx"), "utf8");
+
+    expect(admin).toContain("coalesce(r.buyer_phone, c.phone) as buyer_phone");
+    expect(admin).toContain("coalesce(r.buyer_company, p.company_name, c.company) as buyer_company");
+    expect(admin).toContain("c.customer_type");
+    expect(admin).toContain("from public.rfq_activity_logs");
+    expect(admin).toContain("from public.mkt_purchase_orders");
+    expect(admin).toContain("from public.mkt_po_shipments");
+    expect(admin).toContain("from public.mkt_po_shipment_events");
+    expect(admin).toContain("from public.mkt_po_goods_receipts");
+    expect(admin).toContain('display: po ?');
+    expect(admin).toContain('"Belum ada shipment"');
+
+    expect(operations).toContain('selected.record["buyer_phone"]');
+    expect(operations).toContain('"Personal / Individual"');
+    expect(operations).toContain('["Email"');
+    expect(operations).toContain('selected.record["rfq_number"]');
+    expect(operations).toContain("fulfillment.display");
+    expect(operations).toContain("tracking.display");
+  });
+
 });

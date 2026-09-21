@@ -103,12 +103,14 @@ type Detail = {
         links: number;
         submissions: number;
         latestSubmissionAt: string | null;
+        display?: string | null;
       };
       tracking: {
         status: "available" | "not_applicable";
         source: string | null;
         currentStatus: string | null;
         events: Array<Record<string, unknown>>;
+        display?: string | null;
       };
       pod: {
         status: "available" | "not_applicable";
@@ -476,17 +478,18 @@ export function ServiceOperationsTab() {
             <div className="sticky top-0 z-10 flex items-start justify-between border-b bg-white px-5 py-4">
               <div>
                 <p className="text-xs font-semibold uppercase tracking-wide text-amber-600">{SERVICE_LABELS[selected.service] ?? selected.service}</p>
-                <h3 className="mt-1 text-lg font-bold text-slate-900">{String(selected.record["request_number"] ?? selected.record["booking_number"] ?? selected.record["order_number"] ?? selected.record["doc_number"] ?? `#${selected.id}`)}</h3>
+                <h3 className="mt-1 text-lg font-bold text-slate-900">{String(selected.record["rfq_number"] ?? selected.record["request_number"] ?? selected.record["booking_number"] ?? selected.record["order_number"] ?? selected.record["doc_number"] ?? `#${selected.id}`)}</h3>
                 <p className="text-xs text-slate-500 mt-1">Canonical record dan history dari sumber transaksi.</p>
               </div>
               <button type="button" onClick={() => setSelected(null)} className="rounded-lg p-2 text-slate-400 hover:bg-slate-100 hover:text-slate-700" aria-label="Tutup detail"><X className="h-5 w-5" /></button>
             </div>
             <div className="p-5 space-y-5">
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+              <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
                 {[
                   ["Customer", selected.record["customer_name"] ?? selected.record["buyer_name"]],
-                  ["Perusahaan", selected.record["customer_company"] ?? selected.record["buyer_company"]],
-                   ["Telepon", selected.record["customer_phone"] ?? selected.record["phone"] ?? selected.record["whatsapp"]],
+                  ["Perusahaan / Tipe", selected.record["customer_company"] ?? selected.record["buyer_company"] ?? (selected.record["customer_type"] === "individual" ? "Personal / Individual" : null)],
+                  ["Email", selected.record["customer_email"] ?? selected.record["buyer_email"] ?? selected.record["email"]],
+                  ["Telepon", selected.record["customer_phone"] ?? selected.record["buyer_phone"] ?? selected.record["phone"] ?? selected.record["whatsapp"]],
                   ["Status", selected.record["status"]],
                   ["Dibuat", formatDate(String(selected.record["created_at"] ?? ""))],
                 ].map(([label, value]) => (
@@ -580,10 +583,12 @@ export function ServiceOperationsTab() {
                   <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
                     {[
                       ["Fulfillment", selected.projection.operations.fulfillment.status === "available"
-                        ? `${selected.projection.operations.fulfillment.submissions}/${selected.projection.operations.fulfillment.links} submission`
+                        ? (selected.projection.operations.fulfillment.display
+                          ?? `${selected.projection.operations.fulfillment.submissions}/${selected.projection.operations.fulfillment.links} submission`)
                         : "N/A"],
                       ["Tracking", selected.projection.operations.tracking.status === "available"
-                        ? statusLabel(selected.projection.operations.tracking.currentStatus ?? "available")
+                        ? (selected.projection.operations.tracking.display
+                          ?? statusLabel(selected.projection.operations.tracking.currentStatus ?? "available"))
                         : "N/A"],
                       ["POD", selected.projection.operations.pod.status === "available"
                         ? (selected.projection.operations.pod.available ? "Tersedia" : "Belum ada")

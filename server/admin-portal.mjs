@@ -1074,11 +1074,16 @@ async function handleOnboardingStatus(ctx) {
 }
 
 function customerFields(row) {
+  const name = row.customer_name ?? row.buyer_name ?? row.name ?? "Guest";
+  const email = row.customer_email ?? row.buyer_email ?? row.email ?? null;
+  const phone = row.customer_phone ?? row.buyer_phone ?? row.phone ?? null;
+  const company = row.customer_company ?? row.buyer_company ?? row.company ?? null;
   return {
-    name: row.customer_name ?? row.buyer_name ?? row.name ?? "Guest",
-    email: row.customer_email ?? row.buyer_email ?? row.email ?? null,
-    phone: row.customer_phone ?? row.buyer_phone ?? row.phone ?? null,
-    company: row.customer_company ?? row.buyer_company ?? row.company ?? null,
+    name, email, phone, company,
+    customer_name: name,
+    customer_email: email,
+    customer_phone: phone,
+    customer_company: company,
   };
 }
 
@@ -1097,9 +1102,25 @@ function actionList(row) {
 async function loadServiceRows() {
   const [rfqs, logistic, products, serviceRequests, quickQuotes] = await Promise.all([
     query(
-      `select id, rfq_number, status, approval_status, buyer_name, buyer_email, buyer_phone,
-              buyer_company, company_id, portal_customer_id, created_at, updated_at, notes
-         from public.mkt_rfqs order by created_at desc limit 500`,
+      `select r.id, r.rfq_number, r.status, r.approval_status,
+              coalesce(r.buyer_name, c.name) as buyer_name,
+              coalesce(r.buyer_email, c.email) as buyer_email,
+              coalesce(r.buyer_phone, c.phone) as buyer_phone,
+              coalesce(r.buyer_company, p.company_name, c.company) as buyer_company,
+              c.customer_type, c.role as customer_role,
+              r.delivery_address, r.required_delivery_date,
+              r.company_id, r.portal_customer_id, r.created_at, r.updated_at, r.notes
+         from public.mkt_rfqs r
+         left join public.portal_customers c on c.id = r.portal_customer_id
+         left join lateral (
+           select company_name
+             from public.portal_customer_profiles p
+            where p.customer_id = c.id
+            order by p.updated_at desc nulls last, p.id desc
+            limit 1
+         ) p on true
+        order by r.created_at desc
+        limit 500`,
     ),
     query(
       `select id, order_number, status, operational_status, admin_approval_status,
@@ -1126,7 +1147,7 @@ async function loadServiceRows() {
     ),
   ]);
   const mapped = [
-    ...rfqs.rows.map((row) => ({ service_key: "marketplace", service_label: SERVICE_LABELS.marketplace, id: Number(row.id), reference: row.rfq_number ?? `RFQ-${row.id}`, status: row.approval_status ?? row.status ?? "submitted", status_known: Boolean(row.approval_status ?? row.status), company_id: row.company_id, portal_customer_id: row.portal_customer_id, created_at: row.created_at, updated_at: row.updated_at ?? row.created_at, summary: row.notes ?? "", management_path: `/admin?tab=service-operations`, available_actions: actionList(row), record: row, ...customerFields(row) })),
+    ...rfqs.rows.map((row) => ({ service_key: "marketplace", service_label: SERVICE_LABELS.marketplace, id: Number(row.id), reference: row.rfq_number ?? `RFQ-${row.id}`, status: row.status ?? row.approval_status ?? "submitted", status_known: Boolean(row.status ?? row.approval_status), company_id: row.company_id, portal_customer_id: row.portal_customer_id, created_at: row.created_at, updated_at: row.updated_at ?? row.created_at, summary: row.delivery_address ?? row.notes ?? "", management_path: `/admin?tab=service-operations`, available_actions: actionList(row), record: row, ...customerFields(row) })),
     ...logistic.rows.map((row) => ({ service_key: "logistic-order", service_label: SERVICE_LABELS["logistic-order"], id: Number(row.id), reference: row.order_number ?? `ORDER-${row.id}`, status: row.operational_status ?? row.admin_approval_status ?? row.status ?? "submitted", status_known: true, company_id: row.company_id, portal_customer_id: row.portal_customer_id, created_at: row.created_at, updated_at: row.updated_at ?? row.created_at, summary: `${row.origin ?? ""} → ${row.destination ?? ""}`.trim(), management_path: `/admin?tab=service-operations`, available_actions: actionList({ ...row, status: row.operational_status ?? row.admin_approval_status ?? row.status }), record: row, ...customerFields(row) })),
     ...products.rows.map((row) => ({ service_key: "product-order", service_label: SERVICE_LABELS["product-order"], id: Number(row.id), reference: row.order_number ?? `PRODUCT-${row.id}`, status: row.status ?? "submitted", status_known: true, company_id: row.company_id, portal_customer_id: row.portal_customer_id, created_at: row.created_at, updated_at: row.updated_at ?? row.created_at, summary: row.shipping_address ?? "", management_path: `/admin?tab=service-operations`, available_actions: actionList(row), record: row, ...customerFields(row) })),
     ...serviceRequests.rows.map((row) => ({ service_key: "service-request", service_label: SERVICE_LABELS["service-request"], id: Number(row.id), reference: row.request_number ?? `CSR-${row.id}`, status: row.status ?? "submitted", status_known: true, company_id: row.company_id, portal_customer_id: row.portal_customer_id, created_at: row.created_at, updated_at: row.updated_at ?? row.created_at, summary: row.notes ?? row.request_type ?? "", management_path: `/admin?tab=service-operations`, available_actions: actionList(row), record: row, ...customerFields(row) })),
@@ -1287,7 +1308,8 @@ async function handleServiceOperations(ctx) {
     const rows = await loadServiceRows();
     const row = rows.find((item) => item.service_key === detailMatch[1] && item.id === Number(detailMatch[2]));
     if (!row) return adminError(ctx, 404, "Transaksi canonical tidak ditemukan.");
-    let projection = { timeline: { source: `public.${detailMatch[1]}`, currentStatus: row.status, events: [] }, operations: { fulfillment: { status: "not_applicable", links: 0, submissions: 0, latestSubmissionAt: null }, tracking: { status: "not_applicable", source: null, currentStatus: null, events: [] }, pod: { status: "not_applicable", available: false, items: [] }, receipts: { status: "not_applicable", count: 0 }, completion: { status: TERMINAL_STATUSES.has(String(row.status).toLowerCase()) ? "completed" : "in_progress", currentStatus: row.status, source: `public.${detailMatch[1]}` } } };
+    let history = [];
+    let projection = { timeline: { source: `public.${detailMatch[1]}`, currentStatus: row.status, events: [] }, operations: { fulfillment: { status: "not_applicable", links: 0, submissions: 0, latestSubmissionAt: null, display: null }, tracking: { status: "not_applicable", source: null, currentStatus: null, events: [], display: null }, pod: { status: "not_applicable", available: false, items: [] }, receipts: { status: "not_applicable", count: 0 }, completion: { status: TERMINAL_STATUSES.has(String(row.status).toLowerCase()) ? "completed" : "in_progress", currentStatus: row.status, source: `public.${detailMatch[1]}` } } };
     if (row.service_key === "service-request") {
       const items = await query(
         `select id, item_type, service_category, title, description, status, estimated_price, quoted_price, required_documents
@@ -1297,14 +1319,131 @@ async function handleServiceOperations(ctx) {
       projection = { ...projection, items: items.rows };
     }
     if (row.service_key === "marketplace") {
-      const approvals = await query(
-        `select id, approver_level, status, requested_at, responded_at, response_notes
-           from public.mkt_rfq_approvals where rfq_id = $1 order by requested_at desc`,
-        [row.id],
-      );
-      projection = { ...projection, approvals: approvals.rows };
+      const [approvals, activity, poResult] = await Promise.all([
+        query(
+          `select id, approver_level, status, requested_at, responded_at, response_notes
+             from public.mkt_rfq_approvals where rfq_id = $1 order by requested_at desc`,
+          [row.id],
+        ),
+        query(
+          `select id, actor_type, actor_name, action, description, created_at
+             from public.rfq_activity_logs
+            where rfq_id = $1
+            order by created_at, id`,
+          [row.id],
+        ),
+        query(
+          `select id, po_number, status, grand_total, currency_snapshot,
+                  confirmed_at, created_at, updated_at
+             from public.mkt_purchase_orders
+            where rfq_id = $1
+            order by id desc
+            limit 1`,
+          [row.id],
+        ),
+      ]);
+
+      history = activity.rows;
+      const po = poResult.rows[0] ?? null;
+      let shipments = { rows: [] };
+      let shipmentEvents = { rows: [] };
+      let receipts = { rows: [] };
+      if (po) {
+        [shipments, shipmentEvents, receipts] = await Promise.all([
+          query(
+            `select id, shipment_number, shipment_status, shipment_type,
+                    carrier_name, tracking_number, created_at, updated_at
+               from public.mkt_po_shipments
+              where po_id = $1
+              order by id`,
+            [po.id],
+          ),
+          query(
+            `select e.id, e.shipment_id, e.event_type, e.note, e.location,
+                    e.attachment_object_path, e.actor_type, e.created_at
+               from public.mkt_po_shipment_events e
+               join public.mkt_po_shipments s on s.id = e.shipment_id
+              where s.po_id = $1
+              order by e.created_at, e.id`,
+            [po.id],
+          ),
+          query(
+            `select gr.id, gr.shipment_id, gr.receipt_number, gr.receipt_type,
+                    gr.inspection_status, gr.received_at, gr.created_at
+               from public.mkt_po_goods_receipts gr
+               join public.mkt_po_shipments s on s.id = gr.shipment_id
+              where s.po_id = $1
+              order by gr.created_at, gr.id`,
+            [po.id],
+          ),
+        ]);
+      }
+
+      const latestShipment = shipments.rows.length ? shipments.rows[shipments.rows.length - 1] : null;
+      const podItems = shipmentEvents.rows.filter((event) => event.event_type === "pod_submitted");
+      const timelineEvents = activity.rows.map((event) => ({
+        id: event.id,
+        event_type: event.action,
+        notes: event.description,
+        actor_type: event.actor_type,
+        actor_name: event.actor_name,
+        created_at: event.created_at,
+      }));
+
+      projection = {
+        ...projection,
+        approvals: approvals.rows,
+        purchaseOrder: po ? {
+          id: Number(po.id),
+          poNumber: po.po_number,
+          status: po.status,
+          grandTotal: Number(po.grand_total ?? 0),
+          currency: po.currency_snapshot || "IDR",
+          createdAt: po.created_at,
+        } : null,
+        timeline: {
+          source: "public.rfq_activity_logs",
+          currentStatus: row.record.status ?? row.status,
+          events: timelineEvents,
+        },
+        operations: {
+          fulfillment: {
+            status: "available",
+            links: po ? 1 : 0,
+            submissions: po ? 1 : 0,
+            latestSubmissionAt: po?.created_at ?? null,
+            display: po ? `${po.po_number} · ${String(po.status).replaceAll("_", " ")}` : "Belum ada PO",
+          },
+          tracking: {
+            status: "available",
+            source: "public.mkt_po_shipments",
+            currentStatus: latestShipment?.shipment_status ?? null,
+            events: shipmentEvents.rows,
+            display: latestShipment
+              ? `${latestShipment.shipment_number} · ${String(latestShipment.shipment_status).replaceAll("_", " ")}`
+              : "Belum ada shipment",
+          },
+          pod: {
+            status: "available",
+            available: podItems.length > 0,
+            items: podItems,
+          },
+          receipts: {
+            status: "available",
+            count: receipts.rowCount ?? receipts.rows.length,
+          },
+          completion: {
+            status: po
+              ? (["completed", "closed"].includes(String(po.status)) ? "completed"
+                : String(po.status) === "cancelled" ? "cancelled" : "in_progress")
+              : "in_progress",
+            currentStatus: po?.status ?? row.record.status ?? row.status,
+            source: po ? "public.mkt_purchase_orders" : "public.mkt_rfqs",
+          },
+        },
+      };
     }
-    ctx.sendJson(response, 200, { service: row.service_key, id: row.id, record: row.record, history: [], projection });
+    ctx.sendJson(response, 200, { service: row.service_key, id: row.id, record: row.record, history, projection });
     return;
   }
   if (request.method === "POST" && actionMatch) {
