@@ -7,7 +7,7 @@
     "dev": "bash start-dev.sh",
     "api:dev": "node server/load-secrets.mjs node server/index.mjs",
     "start:prod": "bash start-production.sh",
-    "build": "node scripts/validate-translations.mjs && node scripts/build-vite.mjs && node scripts/prerender.mjs",
+    "build": "sh -c 'case \"$npm_config_user_agent\" in npm/*) npx --yes pnpm@10.33.0 install --frozen-lockfile && npx --yes pnpm@10.33.0 run build:workspace ;; *) pnpm run build:workspace ;; esac'",
     "serve": "vite preview --config vite.config.ts --host 0.0.0.0",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "validate:i18n": "node scripts/validate-translations.mjs",
@@ -18,7 +18,11 @@
     "test:portal:notification-lifecycle:e2e": "node scripts/portal-notification-lifecycle-e2e.mjs",
     "test:portal:storage-e2e": "node scripts/portal-storage-e2e.mjs",
     "test:portal:admin-regression": "node server/load-secrets.mjs node scripts/portal-admin-regression-e2e.mjs",
-    "test:portal:production-smoke": "node scripts/portal-production-smoke.mjs"
+    "test:portal:production-smoke": "node scripts/portal-production-smoke.mjs",
+    "preinstall": "sh -c 'rm -f package-lock.json yarn.lock; case \"$npm_config_user_agent\" in pnpm/*|npm/*) ;; *) echo \"Use pnpm, or npm only as the Hostinger bootstrap package manager\" >&2; exit 1 ;; esac'",
+    "build:workspace": "node scripts/validate-translations.mjs && node scripts/build-vite.mjs && node scripts/prerender.mjs && node scripts/prepare-hostinger.mjs",
+    "start": "node ./index.js",
+    "hostinger:build": "npm run build"
   },
   "devDependencies": {
     "@hookform/resolvers": "^5.2.2",
@@ -102,5 +106,8 @@
     "pg": "^8.23.0",
     "react-helmet-async": "^3.0.0",
     "ws": "^8.21.3"
+  },
+  "engines": {
+    "node": "22.x"
   }
 }

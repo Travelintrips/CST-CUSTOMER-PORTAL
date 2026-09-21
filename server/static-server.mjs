@@ -3,10 +3,10 @@ import { stat } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-const PUBLIC_DIR = path.resolve(
-  path.dirname(fileURLToPath(import.meta.url)),
-  "../dist/public",
-);
+const SERVER_DIR = path.dirname(fileURLToPath(import.meta.url));
+const PUBLIC_DIR = process.env.CUSTOMER_PORTAL_PUBLIC_DIR
+  ? path.resolve(process.env.CUSTOMER_PORTAL_PUBLIC_DIR)
+  : path.resolve(SERVER_DIR, "../dist/public");
 
 const CONTENT_TYPES = {
   ".css": "text/css; charset=utf-8",
