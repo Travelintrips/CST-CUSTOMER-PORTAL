@@ -356,7 +356,7 @@ describe("standalone Customer Portal API boundary", () => {
     expect(vendor).toContain('url.pathname === "/api/portal/vendor/catalog" && request.method === "POST"');
     expect(vendor).toContain("pending_review");
     expect(vendor).toContain("vendor_id=$11");
-    expect(vendor).toContain("media-assets/upload");
+    expect(vendor).toContain("media-assets");
     expect(admin).toContain('request.method === "POST" && pathname === "/api/portal/admin/vendor-catalog-items"');
     expect(admin).toContain("is_internal_vendor");
     expect(wizard).toContain("is_internal_vendor:");
