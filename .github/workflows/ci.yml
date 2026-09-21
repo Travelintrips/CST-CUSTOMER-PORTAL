@@ -50,12 +50,11 @@ jobs:
           test -f dist/server/index.mjs
           test -f dist/server/load-secrets.mjs
           test -f dist/public/index.html
-      - name: Production runtime smoke
+      - name: Production runtime smoke (defaults to Hostinger port 3000)
         shell: bash
         env:
           NODE_ENV: production
           APP_ENV: production
-          PORT: "3000"
           SESSION_SECRET: customer-portal-ci-session-secret-32chars
           SUPABASE_DATABASE_URL: postgresql://ci:ci@127.0.0.1:65432/ci
           SUPABASE_URL: https://example.supabase.co
