@@ -1,3 +1,4 @@
+import { uploadAiChatDocument } from "./storage.mjs";
 import { randomUUID } from "node:crypto";
 import { query } from "./db.mjs";
 
@@ -439,11 +440,18 @@ export async function handleUpload(response, file, docType) {
     json(response, 400, { success: false, error: "File upload tidak ditemukan." });
     return;
   }
-  // The standalone API does not have a local private object-storage adapter.
-  // Refusing the upload is safer than silently sending a document to production.
-  json(response, 503, {
-    success: false,
-    error: "Upload dokumen belum tersedia pada Customer Portal API lokal.",
-    docType: text(docType, null),
-  });
+  try {
+    const uploaded = await uploadAiChatDocument({ file });
+    json(response, 201, {
+      success: true,
+      document: uploaded,
+      docType: text(docType, null),
+    });
+  } catch (error) {
+    json(response, Number(error?.statusCode) || 500, {
+      success: false,
+      error: error?.message || "Upload dokumen gagal.",
+      docType: text(docType, null),
+    });
+  }
 }
