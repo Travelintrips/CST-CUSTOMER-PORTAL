@@ -348,4 +348,17 @@ describe("standalone Customer Portal API boundary", () => {
     expect(storage).toContain("vendor-catalog/vendor-");
     expect(storage).toContain("image/webp");
   });
+
+  it("supports standalone vendor product CRUD for external and internal vendors", () => {
+    const vendor = readFileSync(join(process.cwd(), "server/vendor-portal.mjs"), "utf8");
+    const admin = readFileSync(join(process.cwd(), "server/admin-vendor-catalog.mjs"), "utf8");
+    const wizard = readFileSync(join(process.cwd(), "src/components/catalog/AddVendorProductWizard.tsx"), "utf8");
+    expect(vendor).toContain('url.pathname === "/api/portal/vendor/catalog" && request.method === "POST"');
+    expect(vendor).toContain("pending_review");
+    expect(vendor).toContain("vendor_id=$11");
+    expect(vendor).toContain("media-assets/upload");
+    expect(admin).toContain('request.method === "POST" && pathname === "/api/portal/admin/vendor-catalog-items"');
+    expect(admin).toContain("is_internal_vendor");
+    expect(wizard).toContain("is_internal_vendor:");
+  });
 });
