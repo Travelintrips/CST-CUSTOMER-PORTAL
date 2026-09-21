@@ -80,7 +80,7 @@ const PORT = Number(
     ?? (IS_PRODUCTION ? "3000" : process.env.CUSTOMER_PORTAL_API_PORT ?? "18444"),
 );
 const MAX_BODY_BYTES = 2 * 1024 * 1024;
-const MAX_MULTIPART_BODY_BYTES = 6 * 1024 * 1024;
+const MAX_MULTIPART_BODY_BYTES = 21 * 1024 * 1024; // 20 MiB upload + multipart envelope
 const MUTATION_METHODS = new Set(["POST", "PUT", "PATCH", "DELETE"]);
 const DEFAULT_PUBLIC_ASSET_ORIGIN = "https://xssrfshdrtdfupgqwfdw.supabase.co";
 const PUBLIC_ASSET_URL_PREFIX = "/storage/v1/object/public/public-assets/";
