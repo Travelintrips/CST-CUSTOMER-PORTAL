@@ -158,14 +158,16 @@ async function queueEvent(db, {
   eventType, recipientType, recipientId = null, recipientPhone = null,
   rfqId = null, quoteId = null, poId = null, payload = {}, key,
 }) {
-  await bestEffortNotificationWrite(db, () => db(
-    `insert into public.mkt_notification_queue
-       (event_type, channel, recipient_type, recipient_id, recipient_phone,
-        rfq_id, vendor_quote_id, purchase_order_id, payload_json, deduplication_key)
-     values ($1,'internal',$2,$3,$4,$5,$6,$7,$8::jsonb,$9)
-     on conflict do nothing`,
-    [eventType, recipientType, recipientId, recipientPhone, rfqId, quoteId, poId, JSON.stringify(payload), key],
-  ));
+  for (const channel of ["internal", "whatsapp"]) {
+    await bestEffortNotificationWrite(db, () => db(
+      `insert into public.mkt_notification_queue
+         (event_type, channel, recipient_type, recipient_id, recipient_phone,
+          rfq_id, vendor_quote_id, purchase_order_id, payload_json, deduplication_key)
+       values ($1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb,$10)
+       on conflict do nothing`,
+      [eventType, channel, recipientType, recipientId, recipientPhone, rfqId, quoteId, poId, JSON.stringify(payload), `${key}:${channel}`],
+    ));
+  }
 }
 
 async function customerNotification(db, rfq, eventKey, type, title, message, payload = {}) {
