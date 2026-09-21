@@ -8,6 +8,7 @@ import {
   uploadVendorInvitationAsset,
   uploadVendorFeaturedPaymentProof,
   uploadVendorCatalogImage,
+  uploadVendorCatalogAsset,
 } from "./storage.mjs";
 
 const REQUIRED_INVITATION_DOCUMENTS = new Set(["npwp", "siup_nib", "ktp_pic"]);
@@ -1321,6 +1322,66 @@ export async function handleVendorPortalRoutes({ request, response, url, user, b
     }))));
     return true;
   }
+  if (url.pathname === "/api/portal/vendor/catalog" && request.method === "POST") {
+    if (!vendor?.supplier_id) return sendError(response, 403, "Supplier vendor belum terhubung.");
+    const name = text(body?.name);
+    const kind = text(body?.templateKind, "product");
+    if (!name) return sendError(response, 400, "Nama produk wajib diisi.");
+    if (!["product","service"].includes(kind)) return sendError(response, 400, "Tipe katalog tidak valid.");
+    const price = body?.priceSell == null || body.priceSell === "" ? null : Number(body.priceSell);
+    if (price != null && (!Number.isFinite(price) || price < 0)) return sendError(response, 400, "Harga tidak valid.");
+    const result = await query(
+      `insert into public.vendor_catalog_items
+       (vendor_id,type,name,description,unit,price_base,price_sell,currency,kategori,category_key,
+        template_kind,moq,origin,hs_code,vendor_name,status,is_published,is_active,media_assets,documents)
+       values ($1,$2,$3,$4,$5,$6,$6,'IDR',$7,$7,$2,$8,$9,$10,$11,'draft',false,true,'[]'::jsonb,'[]'::jsonb)
+       returning id`,
+      [vendor.supplier_id,kind,name,text(body?.description),text(body?.unit,"unit"),price,text(body?.kategori),
+       body?.moq == null || body.moq === "" ? null : Number(body.moq),text(body?.origin),text(body?.hsCode),vendor.supplier_name ?? vendor.company_name ?? user.company ?? null],
+    );
+    sendJson(response, 201, { id:Number(result.rows[0].id), status:"draft", isPublished:false });
+    return true;
+  }
+
+  const catalogItemMatch = url.pathname.match(/^\/api\/portal\/vendor\/catalog\/(\d+)$/);
+  if (catalogItemMatch && request.method === "PUT") {
+    if (!vendor?.supplier_id) return sendError(response,403,"Supplier vendor belum terhubung.");
+    const id=Number(catalogItemMatch[1]), name=text(body?.name), kind=text(body?.templateKind,"product");
+    if(!name || !["product","service"].includes(kind)) return sendError(response,400,"Data produk tidak valid.");
+    const price=body?.priceSell==null||body.priceSell===""?null:Number(body.priceSell);
+    const result=await query(`update public.vendor_catalog_items set name=$1,type=$2,template_kind=$2,description=$3,kategori=$4,category_key=$4,
+      price_base=coalesce($5,price_base),price_sell=coalesce($5,price_sell),unit=$6,moq=$7,origin=$8,hs_code=$9,updated_at=now()
+      where id=$10 and vendor_id=$11 and is_active=true returning id`,
+      [name,kind,text(body?.description),text(body?.kategori),price,text(body?.unit,"unit"),body?.moq==null||body.moq===""?null:Number(body.moq),text(body?.origin),text(body?.hsCode),id,vendor.supplier_id]);
+    if(!result.rowCount)return sendError(response,404,"Produk vendor tidak ditemukan."); sendJson(response,200,{ok:true,id}); return true;
+  }
+
+  const catalogMediaUploadMatch=url.pathname.match(/^\/api\/portal\/vendor\/catalog\/(\d+)\/media-assets\/upload$/);
+  if(catalogMediaUploadMatch && request.method==="POST"){
+    if(!vendor?.supplier_id)return sendError(response,403,"Supplier vendor belum terhubung.");
+    const id=Number(catalogMediaUploadMatch[1]); const owned=await query("select id from public.vendor_catalog_items where id=$1 and vendor_id=$2 and is_active=true",[id,vendor.supplier_id]);
+    if(!owned.rowCount)return sendError(response,404,"Produk vendor tidak ditemukan.");
+    const uploaded=await uploadVendorCatalogAsset({vendorId:vendor.supplier_id,catalogItemId:id,file:body?.file});
+    sendJson(response,201,uploaded); return true;
+  }
+
+  const catalogMediaMatch=url.pathname.match(/^\/api\/portal\/vendor\/catalog\/(\d+)\/media-assets$/);
+  if(catalogMediaMatch && request.method==="PATCH"){
+    if(!vendor?.supplier_id)return sendError(response,403,"Supplier vendor belum terhubung.");
+    const assets=Array.isArray(body?.mediaAssets)?body.mediaAssets.slice(0,50):null;
+    if(!assets)return sendError(response,400,"Media assets tidak valid.");
+    const result=await query("update public.vendor_catalog_items set media_assets=$1::jsonb,updated_at=now() where id=$2 and vendor_id=$3 and is_active=true returning id",[JSON.stringify(assets),Number(catalogMediaMatch[1]),vendor.supplier_id]);
+    if(!result.rowCount)return sendError(response,404,"Produk vendor tidak ditemukan."); sendJson(response,200,{ok:true,mediaAssets:assets}); return true;
+  }
+
+  const catalogActionMatch=url.pathname.match(/^\/api\/portal\/vendor\/catalog\/(\d+)\/(publish|unpublish|archive)$/);
+  if(catalogActionMatch && request.method==="POST"){
+    if(!vendor?.supplier_id)return sendError(response,403,"Supplier vendor belum terhubung.");
+    const action=catalogActionMatch[2], published=action==="publish", active=action!=="archive", status=action==="archive"?"archived":published?"published":"draft";
+    const result=await query("update public.vendor_catalog_items set is_published=$1,is_active=$2,status=$3,updated_at=now() where id=$4 and vendor_id=$5 returning id",[published,active,status,Number(catalogActionMatch[1]),vendor.supplier_id]);
+    if(!result.rowCount)return sendError(response,404,"Produk vendor tidak ditemukan."); sendJson(response,200,{ok:true,status}); return true;
+  }
+
   const catalogImageMatch = url.pathname.match(/^\/api\/portal\/vendor\/catalog\/(\d+)\/(?:image|images|upload)$/);
   if (catalogImageMatch && request.method === "POST") {
     if (!vendor?.supplier_id) return sendError(response, 403, "Supplier vendor belum terhubung.");
