@@ -367,7 +367,12 @@ function authResponse(user, token) {
   };
 }
 
-function bootstrapResponse(user, requestedReturnTo, customerContext) {
+async function bootstrapResponse(user, requestedReturnTo, customerContext) {
+  let vendorApprovalStatus = null;
+  if (user.role === "vendor") {
+    const vendorStatus = await query(`select verification_status from public.vendor_profiles where customer_id = $1 order by updated_at desc nulls last, id desc limit 1`, [user.id]);
+    vendorApprovalStatus = vendorStatus.rows[0]?.verification_status ?? "pending";
+  }
   const onboardingStatus = user.account_status ?? "active";
   const onboardingComplete = onboardingStatus === "active";
   const organizationBlocked = ["company_pending", "company_unresolved", "legacy_unresolved"]
@@ -395,7 +400,7 @@ function bootstrapResponse(user, requestedReturnTo, customerContext) {
       activeMemberships: [],
       pendingRequest: null,
     },
-    vendorApprovalStatus: user.role === "vendor" ? "pending" : null,
+    vendorApprovalStatus,
     allowedDestination,
     safeReturnTo: safeReturnTo(requestedReturnTo),
   };
@@ -655,7 +660,7 @@ async function handleBootstrap(request, response, url) {
   const user = await requireUser(request, response);
   if (!user) return;
   const customerContext = await getPortalOrganizationContext(user);
-  sendJson(response, 200, bootstrapResponse(user, url.searchParams.get("returnTo"), customerContext));
+  sendJson(response, 200, await bootstrapResponse(user, url.searchParams.get("returnTo"), customerContext));
 }
 
 async function getAccessibleCompanyIds(user) {
@@ -1671,7 +1676,31 @@ async function handleCustomerServiceRoutes(request, response, url, user, body = 
   return false;
 }
 
+const publicQuoteAttempts = new Map();
+function allowPublicQuote(request) {
+  const now = Date.now();
+  const key = String(request.socket?.remoteAddress ?? "unknown");
+  const windowMs = 15 * 60 * 1000;
+  const recent = (publicQuoteAttempts.get(key) ?? []).filter((at) => now - at < windowMs);
+  if (recent.length >= 20) {
+    publicQuoteAttempts.set(key, recent);
+    return false;
+  }
+  recent.push(now);
+  publicQuoteAttempts.set(key, recent);
+  if (publicQuoteAttempts.size > 5000) {
+    for (const [candidate, attempts] of publicQuoteAttempts) {
+      if (!attempts.some((at) => now - at < windowMs)) publicQuoteAttempts.delete(candidate);
+    }
+  }
+  return true;
+}
+
 async function handlePublicCalculatorQuote(request, response, body = {}) {
+  if (!allowPublicQuote(request)) {
+    sendError(response, 429, "Terlalu banyak permintaan quotation. Silakan coba lagi beberapa saat.");
+    return;
+  }
   const customerName = String(body.customerName ?? body.name ?? "").trim();
   const customerEmail = String(body.customerEmail ?? body.email ?? "").trim().toLowerCase();
   const customerPhone = String(body.customerPhone ?? body.whatsapp ?? "").trim() || null;
@@ -2286,8 +2315,23 @@ async function handleLogisticCustomerRoutes(request, response, url, user, body =
         [row.id],
       ),
     ]);
+    const trackingBase = isAuthenticatedOwner
+      ? await logisticOrderResponse(row, items)
+      : {
+          id: Number(row.id),
+          orderNumber: row.order_number,
+          shipmentType: row.shipment_type ?? null,
+          transportMode: row.transport_mode ?? null,
+          status: row.status,
+          requiredDate: row.required_date ?? null,
+          pickupDate: row.pickup_date ?? null,
+          etd: row.etd ?? null,
+          eta: row.eta ?? null,
+          createdAt: row.created_at,
+          updatedAt: row.updated_at ?? row.created_at,
+        };
     sendJson(response, 200, {
-      ...await logisticOrderResponse(row, items),
+      ...trackingBase,
       orderNumber: row.order_number,
       driverJob: null,
       rfqQuote: null,
@@ -2311,7 +2355,7 @@ async function handleLogisticCustomerRoutes(request, response, url, user, body =
       invoiceLinks: invoice.rows.map((item) => ({
         token: isAuthenticatedOwner ? item.payment_proof_token : null,
         invoiceNumber: item.invoice_number ?? null,
-        grandTotal: item.grand_total == null ? null : Number(item.grand_total),
+        grandTotal: isAuthenticatedOwner && item.grand_total != null ? Number(item.grand_total) : null,
         dueDate: item.due_date ?? null,
         paymentStatus: item.payment_status,
         status: item.status ?? null,
