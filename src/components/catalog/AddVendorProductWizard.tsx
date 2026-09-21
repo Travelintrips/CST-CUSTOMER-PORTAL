@@ -41,6 +41,7 @@ interface Supplier {
   marketplace_status: string | null;
   published_items: number;
   total_items: number;
+  is_internal_vendor?: boolean;
 }
 
 interface MasterItem {
@@ -282,6 +283,7 @@ export function AddVendorProductWizard({
           unit:           form.unit.trim() || null,
           is_published:   form.is_published,
           is_featured:    form.is_featured,
+          is_internal_vendor: vendors.find(v => v.id === form.vendor_id)?.is_internal_vendor === true,
         }),
       });
       if (!r.ok) {
