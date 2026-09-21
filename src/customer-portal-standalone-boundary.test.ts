@@ -402,4 +402,10 @@ describe("standalone Customer Portal API boundary", () => {
     expect(html).not.toContain('rel="preload" as="image"');
   });
 
+  it("keeps public portal branding independent from internal company_settings name", () => {
+    const server = readFileSync(join(process.cwd(), "server/index.mjs"), "utf8");
+    expect(server).toContain('process.env.PORTAL_PUBLIC_COMPANY_NAME?.trim() || "B2B Marketplace and Logistic"');
+    expect(server).not.toContain('name: row.company_name ?? "PT Cahaya Sejati Teknologi"');
+  });
+
 });

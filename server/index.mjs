@@ -2837,7 +2837,9 @@ async function handlePortalCompany(response) {
   );
   const row = result.rows[0] ?? {};
   sendJson(response, 200, {
-    name: row.company_name ?? "PT Cahaya Sejati Teknologi",
+    // Public portal branding is intentionally independent from the internal
+    // company_settings short name (for example "PT CST").
+    name: process.env.PORTAL_PUBLIC_COMPANY_NAME?.trim() || "B2B Marketplace and Logistic",
     tagline: null,
     logoUrl: canonicalPublicAssetUrl(row.logo_url) ?? row.logo_url ?? null,
     address: row.company_address ?? null,
