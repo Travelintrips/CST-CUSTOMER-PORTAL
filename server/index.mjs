@@ -3729,7 +3729,7 @@ const server = http.createServer(async (request, response) => {
 let whatsappTimer = null;
 server.listen(PORT, "0.0.0.0", () => {
   console.log(`[customer-portal-api] listening on :${PORT} (${APP_ENV})`);
-  if (process.env.CUSTOMER_PORTAL_WA_WORKER_ENABLED === "true") {
+  if (IS_PRODUCTION && process.env.CUSTOMER_PORTAL_WA_WORKER_ENABLED !== "false") {
     const run = () => processMarketplaceWhatsAppQueue().catch((error) => {
       console.error("[customer-portal-api] WhatsApp worker failed", error?.message ?? error);
     });
