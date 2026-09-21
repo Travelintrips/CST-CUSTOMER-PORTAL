@@ -336,6 +336,6 @@ describe("standalone Customer Portal API boundary", () => {
     expect(whatsapp).toContain("where channel='whatsapp'");
     expect(whatsapp).toContain("created_at >= $1");
     expect(whatsapp).not.toContain("where q.channel = 'internal'");
-    expect(server).toContain('CUSTOMER_PORTAL_WA_WORKER_ENABLED === "true"');
+    expect(server).toContain('IS_PRODUCTION && process.env.CUSTOMER_PORTAL_WA_WORKER_ENABLED !== "false"');
   });
 });
