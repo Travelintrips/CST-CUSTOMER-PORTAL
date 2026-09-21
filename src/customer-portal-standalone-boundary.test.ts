@@ -477,7 +477,9 @@ describe("standalone Customer Portal API boundary", () => {
     expect(marketplace).toContain("customerView: true");
     expect(marketplace).toContain("redactVendor ? null : row.vendor_phone");
     expect(marketplace).toContain("vendorId: null");
-    expect(marketplace).toContain("vendorUnitPrice").toBeTruthy();
+    expect(marketplace).toContain("vendorPhone: null");
+    expect(marketplace).toContain("vendorEmail: null");
+    expect(marketplace).toContain("quotationNumber: null");
     expect(server).toContain("PUBLIC_MARKETPLACE_SELLER_NAME");
     expect(server).toContain("isInternalVendor ? Number(row.vendor_id ?? 0) : 0");
     expect(server).toContain("if (!Boolean(vendor.is_internal_vendor))");
