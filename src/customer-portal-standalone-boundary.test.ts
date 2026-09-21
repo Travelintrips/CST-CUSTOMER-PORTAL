@@ -323,4 +323,19 @@ describe("standalone Customer Portal API boundary", () => {
     expect(storage).toContain("ai-chat-documents/");
     expect(storage).toContain("ensurePrivateBucket(storage)");
   });
+
+  it("queues marketplace notifications for internal UI and WhatsApp with channel-scoped deduplication", () => {
+    const marketplace = readFileSync(join(process.cwd(), "server/marketplace-service.mjs"), "utf8");
+    expect(marketplace).toContain('for (const channel of ["internal", "whatsapp"])');
+    expect(marketplace).toContain('${key}:${channel}');
+  });
+
+  it("only processes fresh opt-in WhatsApp queue rows and never drains historical internal notifications", () => {
+    const whatsapp = readFileSync(join(process.cwd(), "server/whatsapp-service.mjs"), "utf8");
+    const server = readFileSync(join(process.cwd(), "server/index.mjs"), "utf8");
+    expect(whatsapp).toContain("where channel='whatsapp'");
+    expect(whatsapp).toContain("created_at >= $1");
+    expect(whatsapp).not.toContain("where q.channel = 'internal'");
+    expect(server).toContain('CUSTOMER_PORTAL_WA_WORKER_ENABLED === "true"');
+  });
 });
