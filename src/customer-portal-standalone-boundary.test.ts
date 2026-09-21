@@ -307,4 +307,20 @@ describe("standalone Customer Portal API boundary", () => {
     expect(server).toContain("allowPublicQuote(request)");
     expect(server).toContain('sendError(response, 429, "Terlalu banyak permintaan quotation.');
   });
+
+  it("implements standalone master price CSV import", () => {
+    const legacy = readFileSync(join(process.cwd(), "server/admin-legacy.mjs"), "utf8");
+    expect(legacy).not.toContain("Import master price belum tersedia pada API standalone.");
+    expect(legacy).toContain("CSV import");
+    expect(legacy).toContain("pendingApproval");
+  });
+
+  it("stores AI chat uploads in private Supabase document storage", () => {
+    const ai = readFileSync(join(process.cwd(), "server/ai-agent.mjs"), "utf8");
+    const storage = readFileSync(join(process.cwd(), "server/storage.mjs"), "utf8");
+    expect(ai).toContain("uploadAiChatDocument");
+    expect(ai).not.toContain("Upload dokumen belum tersedia pada Customer Portal API lokal.");
+    expect(storage).toContain("ai-chat-documents/");
+    expect(storage).toContain("ensurePrivateBucket(storage)");
+  });
 });
