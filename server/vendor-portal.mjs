@@ -654,7 +654,8 @@ export async function handleAdminVendorRoutes({ request, response, url, body, us
               s.status, s.is_active, s.is_verified, coalesce(s.marketplace_status, 'draft') as marketplace_status,
               coalesce(s.is_premium, false) as is_premium, s.created_at,
               count(v.id) filter (where v.status = 'published' and v.is_published) as published_items,
-              count(v.id) as total_items
+              count(v.id) as total_items,
+               coalesce(bool_or(v.is_internal_vendor), false) as is_internal_vendor
          from public.suppliers s
          left join public.vendor_catalog_items v on v.vendor_id = s.id and v.type = 'product'
         group by s.id
@@ -1377,7 +1378,7 @@ export async function handleVendorPortalRoutes({ request, response, url, user, b
   const catalogActionMatch=url.pathname.match(/^\/api\/portal\/vendor\/catalog\/(\d+)\/(publish|unpublish|archive)$/);
   if(catalogActionMatch && request.method==="POST"){
     if(!vendor?.supplier_id)return sendError(response,403,"Supplier vendor belum terhubung.");
-    const action=catalogActionMatch[2], published=action==="publish", active=action!=="archive", status=action==="archive"?"archived":published?"published":"draft";
+    const action=catalogActionMatch[2], published=false, active=action!=="archive", status=action==="archive"?"archived":action==="publish"?"pending_review":"draft";
     const result=await query("update public.vendor_catalog_items set is_published=$1,is_active=$2,status=$3,updated_at=now() where id=$4 and vendor_id=$5 returning id",[published,active,status,Number(catalogActionMatch[1]),vendor.supplier_id]);
     if(!result.rowCount)return sendError(response,404,"Produk vendor tidak ditemukan."); sendJson(response,200,{ok:true,status}); return true;
   }
