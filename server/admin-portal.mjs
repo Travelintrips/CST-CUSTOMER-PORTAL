@@ -1152,10 +1152,137 @@ function publicServiceRow(row) {
   return publicRow;
 }
 
+async function loadMarketplaceVendorRouting(rfqId) {
+  const rfq = await query("select id from public.mkt_rfqs where id = $1 limit 1", [rfqId]);
+  if (!rfq.rows[0]) return null;
+
+  const quoteResult = await query(
+    `select q.id as quote_id, q.vendor_id, q.status::text as quote_status,
+            s.name as vendor_name, s.is_active as vendor_active
+       from public.mkt_vendor_quotes q
+       left join public.suppliers s on s.id = q.vendor_id
+      where q.rfq_id = $1
+      order by
+        case q.status::text
+          when 'selected' then 0
+          when 'submitted' then 1
+          when 'invited' then 2
+          else 3
+        end,
+        q.updated_at desc,
+        q.id desc
+      limit 1`,
+    [rfqId],
+  );
+
+  const quote = quoteResult.rows[0] ?? null;
+  let vendorId = quote?.vendor_id == null ? null : Number(quote.vendor_id);
+  let vendorName = quote?.vendor_name ?? null;
+  let vendorActive = quote?.vendor_active == null ? null : Boolean(quote.vendor_active);
+  let catalogItemId = null;
+  let catalogItemName = null;
+  let source = quote ? "vendor_quote" : null;
+
+  if (vendorId != null) {
+    const directCatalog = await query(
+      `select vci.id, vci.name, 'quote_line'::text as source
+         from public.mkt_vendor_quote_lines ql
+         join public.mkt_vendor_quotes q on q.id = ql.quote_id
+         join public.vendor_catalog_items vci on vci.id = ql.vendor_catalog_item_id
+        where q.rfq_id = $1
+          and q.vendor_id = $2
+          and ql.vendor_catalog_item_id is not null
+        union all
+       select vci.id, vci.name, 'rfq_line'::text as source
+         from public.mkt_rfq_lines rl
+         join public.vendor_catalog_items vci on vci.id = rl.vendor_catalog_item_id
+        where rl.rfq_id = $1
+          and vci.vendor_id = $2
+        limit 1`,
+      [rfqId, vendorId],
+    );
+    const direct = directCatalog.rows[0] ?? null;
+    if (direct) {
+      catalogItemId = Number(direct.id);
+      catalogItemName = direct.name;
+      source = direct.source;
+    } else {
+      const historicalMatch = await query(
+        `select distinct vci.id, vci.name
+           from public.mkt_rfq_lines rl
+           join public.vendor_catalog_items vci
+             on vci.vendor_id = $2
+            and vci.is_active = true
+            and lower(trim(vci.name)) = lower(trim(rl.item_name))
+          where rl.rfq_id = $1
+          order by vci.id
+          limit 2`,
+        [rfqId, vendorId],
+      );
+      if (historicalMatch.rowCount === 1) {
+        catalogItemId = Number(historicalMatch.rows[0].id);
+        catalogItemName = historicalMatch.rows[0].name;
+        source = "historical_name_match";
+      }
+    }
+  } else {
+    const catalogVendor = await query(
+      `select distinct vci.vendor_id, s.name as vendor_name, s.is_active as vendor_active
+         from public.mkt_rfq_lines rl
+         join public.vendor_catalog_items vci on vci.id = rl.vendor_catalog_item_id
+         left join public.suppliers s on s.id = vci.vendor_id
+        where rl.rfq_id = $1
+          and vci.vendor_id is not null
+        limit 2`,
+      [rfqId],
+    );
+    if (catalogVendor.rowCount === 1) {
+      const resolved = catalogVendor.rows[0];
+      vendorId = Number(resolved.vendor_id);
+      vendorName = resolved.vendor_name ?? null;
+      vendorActive = resolved.vendor_active == null ? null : Boolean(resolved.vendor_active);
+      source = "rfq_catalog";
+      const catalogItem = await query(
+        `select vci.id, vci.name
+           from public.mkt_rfq_lines rl
+           join public.vendor_catalog_items vci on vci.id = rl.vendor_catalog_item_id
+          where rl.rfq_id = $1
+            and vci.vendor_id = $2
+          order by rl.sort_order, rl.id
+          limit 1`,
+        [rfqId, vendorId],
+      );
+      if (catalogItem.rows[0]) {
+        catalogItemId = Number(catalogItem.rows[0].id);
+        catalogItemName = catalogItem.rows[0].name;
+      }
+    }
+  }
+
+  return {
+    hasVendor: vendorId != null,
+    vendorId,
+    vendorName,
+    vendorActive,
+    quoteId: quote?.quote_id == null ? null : Number(quote.quote_id),
+    quoteStatus: quote?.quote_status ?? null,
+    catalogItemId,
+    catalogItemName,
+    source,
+  };
+}
+
 async function handleServiceOperations(ctx) {
   const { request, response, url } = ctx;
+  const vendorRoutingMatch = url.pathname.match(/^\/api\/portal\/admin\/service-operations\/marketplace\/(\d+)\/vendor-routing$/);
   const detailMatch = url.pathname.match(/^\/api\/portal\/admin\/service-operations\/([^/]+)\/(\d+)$/);
   const actionMatch = url.pathname.match(/^\/api\/portal\/admin\/service-operations\/([^/]+)\/(\d+)\/actions$/);
+  if (request.method === "GET" && vendorRoutingMatch) {
+    const routing = await loadMarketplaceVendorRouting(Number(vendorRoutingMatch[1]));
+    if (!routing) return adminError(ctx, 404, "RFQ canonical tidak ditemukan.");
+    ctx.sendJson(response, 200, { data: routing });
+    return;
+  }
   if (request.method === "GET" && detailMatch) {
     const rows = await loadServiceRows();
     const row = rows.find((item) => item.service_key === detailMatch[1] && item.id === Number(detailMatch[2]));

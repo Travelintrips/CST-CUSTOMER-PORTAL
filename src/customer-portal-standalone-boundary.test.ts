@@ -369,4 +369,17 @@ describe("standalone Customer Portal API boundary", () => {
     expect(server).toContain("const MAX_MULTIPART_BODY_BYTES = 21 * 1024 * 1024");
     expect(server).not.toContain("const MAX_MULTIPART_BODY_BYTES = 6 * 1024 * 1024");
   });
+
+  it("resolves historical marketplace vendor routing from canonical quote and RFQ data", () => {
+    const adminPortal = readFileSync(join(process.cwd(), "server/admin-portal.mjs"), "utf8");
+    const marketplace = readFileSync(join(process.cwd(), "server/marketplace-service.mjs"), "utf8");
+    const assignment = readFileSync(join(process.cwd(), "src/components/admin/MarketplaceVendorAssignment.tsx"), "utf8");
+    expect(adminPortal).toContain("/vendor-routing$");
+    expect(adminPortal).toContain("from public.mkt_vendor_quotes q");
+    expect(adminPortal).toContain("join public.vendor_catalog_items vci on vci.id = rl.vendor_catalog_item_id");
+    expect(adminPortal).toContain("historical_name_match");
+    expect(assignment).toContain("/api/mkt/admin/rfqs/${rfqId}/approve-and-invite");
+    expect(assignment).toContain("vendorIds: [routing.vendorId]");
+    expect(marketplace).toContain('if (rfq.status !== "quoting")');
+  });
 });

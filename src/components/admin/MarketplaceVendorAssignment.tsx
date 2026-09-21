@@ -10,6 +10,9 @@ type VendorRouting = {
   vendorActive: boolean | null;
   quoteId: number | null;
   quoteStatus: string | null;
+  catalogItemId: number | null;
+  catalogItemName: string | null;
+  source: string | null;
 };
 
 export function MarketplaceVendorAssignment({ rfqId }: { rfqId: number }) {
@@ -48,11 +51,11 @@ export function MarketplaceVendorAssignment({ rfqId }: { rfqId: number }) {
     setError("");
     setNotice("");
     try {
-      const response = await fetch(`/api/portal/admin/service-operations/marketplace/${rfqId}/vendor-routing/invite`, {
+      const response = await fetch(`/api/mkt/admin/rfqs/${rfqId}/approve-and-invite`, {
         method: "POST",
         headers: { ...getAuthHeaders(), "Content-Type": "application/json" },
         credentials: "include",
-        body: JSON.stringify({ vendorId: routing.vendorId }),
+        body: JSON.stringify({ vendorIds: [routing.vendorId] }),
       });
       const payload = await response.json();
       if (!response.ok) throw new Error(payload.error ?? "Gagal mengirim RFQ ke vendor");
@@ -86,6 +89,12 @@ export function MarketplaceVendorAssignment({ rfqId }: { rfqId: number }) {
               {routing.vendorActive === false ? " · Tidak aktif" : ""}
             </p>
           )}
+          {routing?.catalogItemName && (
+            <p className="text-[11px] text-slate-500">
+              Produk: {routing.catalogItemName}
+              {routing.catalogItemId ? ` · #${routing.catalogItemId}` : ""}
+            </p>
+          )}
         </div>
       </div>
 
@@ -105,11 +114,11 @@ export function MarketplaceVendorAssignment({ rfqId }: { rfqId: number }) {
           {sending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Send className="h-3.5 w-3.5" />}
           Kirim RFQ ke Vendor Produk
         </Button>
-      ) : (
+      ) : !error ? (
         <p className="mt-2 text-xs text-amber-700">
-          RFQ ini tidak membawa referensi vendor katalog.
+          RFQ ini belum memiliki vendor produk yang dapat ditentukan dengan aman.
         </p>
-      )}
+      ) : null}
 
       {error && <p className="mt-2 text-xs text-rose-700">{error}</p>}
       {notice && <p className="mt-2 text-xs text-emerald-700">{notice}</p>}

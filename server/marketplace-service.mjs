@@ -863,11 +863,10 @@ async function handleAdminMarketplace(request, response, pathname, body, user) {
     if (!vendorIds.length) fail(400, "Minimal satu vendor wajib dipilih.");
     await withTransaction(async (db) => {
       const rfq = await loadAdminRfq(rfqId, { client: db, forUpdate: true });
-        if (rfq.status === "quoting") {
-          return;
-        }
       if (RFQ_TERMINAL.has(rfq.status)) fail(409, "RFQ sudah terminal.");
-      await transitionRfq(db, rfq, "quoting", user, "RFQ diarahkan ke vendor");
+      if (rfq.status !== "quoting") {
+        await transitionRfq(db, rfq, "quoting", user, "RFQ diarahkan ke vendor");
+      }
       for (const vendorId of vendorIds) {
         const vendor = (await db("select id, name, phone, is_active from public.suppliers where id=$1", [vendorId])).rows[0];
         if (!vendor || vendor.is_active === false) continue;
