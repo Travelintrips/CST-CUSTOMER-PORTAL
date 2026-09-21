@@ -49,7 +49,12 @@ jobs:
           test -f dist/package.json
           test -f dist/server/index.mjs
           test -f dist/server/load-secrets.mjs
+          test -f dist/server/secret-bootstrap.mjs
           test -f dist/public/index.html
+          grep -q 'loadSecrets' dist/index.js
+          grep -q 'server/index.mjs' dist/index.js
+          ! grep -q 'node:child_process' dist/index.js
+          ! grep -q 'spawn(' dist/index.js
       - name: Production runtime smoke (defaults to Hostinger port 3000)
         shell: bash
         env:
