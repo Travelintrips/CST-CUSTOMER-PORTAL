@@ -287,4 +287,24 @@ describe("standalone Customer Portal API boundary", () => {
     const admin = readFileSync(join(process.cwd(), "src/pages/admin.tsx"), "utf8");
     expect(admin).not.toContain('</TabsTrigger>\\\\n                  <TabsTrigger value="fonnte-status"');
   });
+
+  it("minimizes unauthenticated generic logistics tracking", () => {
+    const server = readFileSync(join(process.cwd(), "server/index.mjs"), "utf8");
+    expect(server).toContain("const trackingBase = isAuthenticatedOwner");
+    expect(server).toContain("grandTotal: isAuthenticatedOwner");
+    expect(server).toContain("paymentProofUrl");
+  });
+
+  it("uses canonical vendor verification status during bootstrap", () => {
+    const server = readFileSync(join(process.cwd(), "server/index.mjs"), "utf8");
+    expect(server).toContain("select verification_status from public.vendor_profiles");
+    expect(server).toContain("vendorApprovalStatus,");
+    expect(server).not.toContain('vendorApprovalStatus: user.role === "vendor" ? "pending" : null');
+  });
+
+  it("rate limits anonymous public quote creation", () => {
+    const server = readFileSync(join(process.cwd(), "server/index.mjs"), "utf8");
+    expect(server).toContain("allowPublicQuote(request)");
+    expect(server).toContain('sendError(response, 429, "Terlalu banyak permintaan quotation.');
+  });
 });
