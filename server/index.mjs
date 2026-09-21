@@ -32,6 +32,7 @@ import {
 } from "./admin-portal.mjs";
 import { checkStorageReadiness, signedDocumentUrl, signedPaymentProofUrl, uploadPaymentProof } from "./storage.mjs";
 import { handleMarketplaceRoute } from "./marketplace-service.mjs";
+import { processMarketplaceWhatsAppQueue } from "./whatsapp-service.mjs";
 import {
   handleAdminInvoices,
   handleAdminPayments,
@@ -3725,12 +3726,22 @@ const server = http.createServer(async (request, response) => {
   }
 });
 
+let whatsappTimer = null;
 server.listen(PORT, "0.0.0.0", () => {
   console.log(`[customer-portal-api] listening on :${PORT} (${APP_ENV})`);
+  if (process.env.CUSTOMER_PORTAL_WA_WORKER_ENABLED === "true") {
+    const run = () => processMarketplaceWhatsAppQueue().catch((error) => {
+      console.error("[customer-portal-api] WhatsApp worker failed", error?.message ?? error);
+    });
+    whatsappTimer = setInterval(run, 60_000);
+    whatsappTimer.unref?.();
+    setTimeout(run, 5_000).unref?.();
+  }
 });
 
 async function shutdown(signal) {
   console.log(`[customer-portal-api] ${signal}, shutting down`);
+  if (whatsappTimer) clearInterval(whatsappTimer);
   server.close();
   await closeDatabase();
   process.exit(0);
