@@ -295,7 +295,7 @@ export function ServiceOperationsTab() {
         body: JSON.stringify({ action, reason }),
       });
       const payload = await response.json();
-      if (!response.ok) throw new Error(payload.error ?? "Action gagal dijalankan");
+      if (!response.ok) throw new Error(payload.message ?? payload.error ?? "Action gagal dijalankan");
       if (action === "contact" && payload.contactUrl) {
         window.open(payload.contactUrl, "_blank", "noopener,noreferrer");
       } else {

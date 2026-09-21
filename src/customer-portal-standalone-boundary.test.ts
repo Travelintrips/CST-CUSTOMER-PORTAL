@@ -427,4 +427,14 @@ describe("standalone Customer Portal API boundary", () => {
     expect(marketplace).toContain("quotes\\/(\\d+)\\/deal-price$");
   });
 
+  it("uses projected customer phone for contact action and normalizes Indonesian WhatsApp numbers", () => {
+    const adminPortal = readFileSync(join(process.cwd(), "server/admin-portal.mjs"), "utf8");
+    const operations = readFileSync(join(process.cwd(), "src/pages/admin/ServiceOperationsTab.tsx"), "utf8");
+    expect(adminPortal).toContain('row.phone ?? row.customer_phone ?? row.buyer_phone');
+    expect(adminPortal).toContain('if (phone.startsWith("0")) phone = `62${phone.slice(1)}`');
+    expect(adminPortal).toContain('else if (phone.startsWith("8")) phone = `62${phone}`');
+    expect(adminPortal).toContain('contactUrl: `https://wa.me/${phone}`');
+    expect(operations).toContain('payload.message ?? payload.error ?? "Action gagal dijalankan"');
+  });
+
 });

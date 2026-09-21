@@ -1315,7 +1315,10 @@ async function handleServiceOperations(ctx) {
     const reason = text((ctx.body ?? {}).reason) || null;
     if (!["approve", "request_revision", "reject", "contact"].includes(action)) return adminError(ctx, 400, "Action tidak valid.");
     if (action === "contact") {
-      const phone = String(row.customer_phone ?? "").replace(/\D/g, "");
+      const rawPhone = String(row.phone ?? row.customer_phone ?? row.buyer_phone ?? "").trim();
+      let phone = rawPhone.replace(/\D/g, "");
+      if (phone.startsWith("0")) phone = `62${phone.slice(1)}`;
+      else if (phone.startsWith("8")) phone = `62${phone}`;
       if (!phone) return adminError(ctx, 400, "Nomor customer tidak tersedia.");
       ctx.sendJson(response, 200, { contactUrl: `https://wa.me/${phone}` });
       return;
