@@ -1321,7 +1321,7 @@ export async function handleVendorPortalRoutes({ request, response, url, user, b
     }))));
     return true;
   }
-  const catalogImageMatch = url.pathname.match(/^\\/api\\/portal\\/vendor\\/catalog\\/(\\d+)\\/(?:image|images|upload)$/);
+  const catalogImageMatch = url.pathname.match(/^\/api\/portal\/vendor\/catalog\/(\d+)\/(?:image|images|upload)$/);
   if (catalogImageMatch && request.method === "POST") {
     if (!vendor?.supplier_id) return sendError(response, 403, "Supplier vendor belum terhubung.");
     const itemId = Number(catalogImageMatch[1]);
