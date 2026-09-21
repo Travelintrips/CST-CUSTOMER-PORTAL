@@ -1,3 +1,4 @@
+import { retryWhatsAppLog } from "./whatsapp-service.mjs";
 import crypto from "node:crypto";
 import { query } from "./db.mjs";
 import { uploadPublicAsset } from "./storage.mjs";
@@ -773,7 +774,16 @@ async function handleWaLogs({ request, response, url, sendJson, sendError }) {
   }
   const retry = url.pathname.match(/^\/api\/portal\/admin\/wa-logs\/(\d+)\/retry$/);
   if (retry && request.method === "POST") {
-    sendError(response, 501, "Retry WhatsApp belum tersedia pada API standalone.");
+    const result = await retryWhatsAppLog(Number(retry[1]));
+    if (!result.found) {
+      sendError(response, 404, "Log WhatsApp tidak ditemukan.");
+    } else if (!result.retryable) {
+      sendError(response, 409, "Hanya log WhatsApp berstatus gagal yang dapat dikirim ulang.");
+    } else if (!result.sent) {
+      sendError(response, 502, result.error || "Fonnte gagal mengirim ulang pesan.");
+    } else {
+      sendJson(response, 200, { ok: true, status: "sent" });
+    }
     return true;
   }
   return false;

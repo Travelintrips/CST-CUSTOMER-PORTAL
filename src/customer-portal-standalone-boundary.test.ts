@@ -273,4 +273,18 @@ describe("standalone Customer Portal API boundary", () => {
     expect(admin).toContain("text-xs lg:text-[13px]");
     expect(admin).toContain("py-1.5 rounded-md");
   });
+
+  it("implements standalone Fonnte retry instead of returning 501", () => {
+    const legacy = readFileSync(join(process.cwd(), "server/admin-legacy.mjs"), "utf8");
+    const whatsapp = readFileSync(join(process.cwd(), "server/whatsapp-service.mjs"), "utf8");
+    expect(legacy).toContain("retryWhatsAppLog");
+    expect(legacy).not.toContain("Retry WhatsApp belum tersedia pada API standalone.");
+    expect(whatsapp).toContain("https://api.fonnte.com/send");
+    expect(whatsapp).toContain("FONNTE_TOKEN");
+  });
+
+  it("does not render a literal newline escape in the desktop Fonnte navigation", () => {
+    const admin = readFileSync(join(process.cwd(), "src/pages/admin.tsx"), "utf8");
+    expect(admin).not.toContain('</TabsTrigger>\\\\n                  <TabsTrigger value="fonnte-status"');
+  });
 });
