@@ -703,7 +703,86 @@ async function handleMasterPrice({ request, response, url, body, user, sendJson,
   }
 
   if (request.method === "POST" && url.pathname === `${base}/import`) {
-    sendError(response, 501, "Import master price belum tersedia pada API standalone.");
+    const file = body?.file;
+    if (!file || typeof file.text !== "function" || !file.size) {
+      sendError(response, 400, "File CSV master price wajib diunggah.");
+      return true;
+    }
+    const name = String(file.name ?? "").toLowerCase();
+    const mime = String(file.type ?? "").toLowerCase();
+    if (!name.endsWith(".csv") && !["text/csv", "application/csv", "text/plain"].includes(mime)) {
+      sendError(response, 415, "Import standalone mendukung CSV. Gunakan template CSV yang tersedia.");
+      return true;
+    }
+    if (Number(file.size) > 2 * 1024 * 1024) {
+      sendError(response, 413, "File CSV maksimal 2 MB.");
+      return true;
+    }
+    const raw = await file.text();
+    const parseCsvLine = (line) => {
+      const cells = []; let current = ""; let quoted = false;
+      for (let i = 0; i < line.length; i += 1) {
+        const ch = line[i];
+        if (ch === '"') {
+          if (quoted && line[i + 1] === '"') { current += '"'; i += 1; }
+          else quoted = !quoted;
+        } else if (ch === "," && !quoted) { cells.push(current.trim()); current = ""; }
+        else current += ch;
+      }
+      cells.push(current.trim());
+      return cells;
+    };
+    const lines = raw.replace(/^\uFEFF/, "").split(/\r?\n/).filter((line) => line.trim());
+    if (lines.length < 2 || lines.length > 5001) {
+      sendError(response, 400, "CSV harus memiliki header dan maksimal 5.000 baris data.");
+      return true;
+    }
+    const headers = parseCsvLine(lines[0]).map((value) => value.toLowerCase());
+    const idIndex = headers.findIndex((value) => ["id", "sku"].includes(value));
+    const priceIndex = headers.indexOf("price_base");
+    const markupIndex = headers.indexOf("markup");
+    if (idIndex < 0 || priceIndex < 0) {
+      sendError(response, 400, "Header CSV wajib memuat id/sku dan price_base.");
+      return true;
+    }
+    const config = await query("select value from public.marketplace_price_config where key = $1 limit 1", [MASTER_PRICE_APPROVAL_KEY]);
+    const requireApproval = config.rows[0]?.value === "true";
+    const results = [];
+    for (let rowNo = 1; rowNo < lines.length; rowNo += 1) {
+      const cells = parseCsvLine(lines[rowNo]);
+      const id = integer(cells[idIndex]);
+      const priceBase = Number(cells[priceIndex]);
+      const requestedMarkup = markupIndex >= 0 && cells[markupIndex] !== "" ? Number(cells[markupIndex]) : null;
+      try {
+        if (!id || !Number.isFinite(priceBase) || priceBase < 0 || (requestedMarkup != null && (!Number.isFinite(requestedMarkup) || requestedMarkup < 0 || requestedMarkup > 1000))) {
+          throw new Error("ID, price_base, atau markup tidak valid.");
+        }
+        const current = await query("select * from public.vendor_catalog_items where id=$1 and is_active=true limit 1", [id]);
+        const item = current.rows[0];
+        if (!item) throw new Error("Item katalog tidak ditemukan.");
+        const external = item.vendor_id != null && Number(item.vendor_id) !== 0;
+        const markup = external ? (requestedMarkup ?? number(item.markup_pct)) : 0;
+        const priceSell = external ? Math.ceil(priceBase * (1 + markup / 100)) : priceBase;
+        const pendingApproval = requireApproval && external;
+        const history = await query(
+          `insert into public.marketplace_price_history
+             (catalog_item_id, item_name, vendor_id, vendor_name, vendor_type,
+              price_base_old, price_base_new, markup_old, markup_new,
+              price_sell_old, price_sell_new, currency, reason, changed_by,
+              approval_status, effective_at)
+           values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,'CSV import',$13,$14,null)
+           returning id`,
+          [id,item.name,item.vendor_id,item.vendor_name,external?"external":"internal",item.price_base,priceBase,item.markup_pct,markup,item.price_sell,priceSell,item.currency??"IDR",user?.email??"admin",pendingApproval?"pending":"auto_approved"],
+        );
+        if (!pendingApproval) {
+          await query("update public.vendor_catalog_items set price_base=$1, markup_pct=$2, price_sell=$3, updated_at=now() where id=$4", [priceBase,markup,priceSell,id]);
+        }
+        results.push({ row: rowNo + 1, id, ok: true, pendingApproval, historyId: Number(history.rows[0]?.id) });
+      } catch (error) {
+        results.push({ row: rowNo + 1, id: id || null, ok: false, message: error.message });
+      }
+    }
+    sendJson(response, 200, { total: results.length, ok: results.filter((item) => item.ok).length, failed: results.filter((item) => !item.ok).length, results });
     return true;
   }
 
