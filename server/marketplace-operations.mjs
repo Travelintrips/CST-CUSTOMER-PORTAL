@@ -493,6 +493,75 @@ async function createShipment({ poId, body, request, user, isAdmin }) {
   });
 }
 
+async function syncPoStatusFromShipments(db, poId, user, isAdmin) {
+  const po = await loadPo(poId, user, { client: db, forUpdate: true, isAdmin });
+  if (["completed", "closed", "cancelled"].includes(po.status)) return po.status;
+
+  const aggregate = (await db(
+    `select
+       count(*) filter (where shipment_status <> 'cancelled')::int as total,
+       count(*) filter (where shipment_status = 'delivered')::int as delivered,
+       count(*) filter (where shipment_status = 'partially_delivered')::int as partial,
+       count(*) filter (where shipment_status = 'rejected_goods')::int as rejected,
+       count(*) filter (
+         where shipment_status in ('in_transit','customs','warehouse','arrived','delivered','partially_delivered','rejected_goods')
+       )::int as moving
+       from public.mkt_po_shipments
+      where po_id=$1`,
+    [po.id],
+  )).rows[0] ?? {};
+
+  const total = Number(aggregate.total ?? 0);
+  const delivered = Number(aggregate.delivered ?? 0);
+  const partial = Number(aggregate.partial ?? 0);
+  const rejected = Number(aggregate.rejected ?? 0);
+  const moving = Number(aggregate.moving ?? 0);
+  if (!total) return po.status;
+
+  let target = null;
+  if (rejected > 0) target = "rejected_goods";
+  else if (delivered === total) target = "delivered";
+  else if (delivered > 0 || partial > 0) target = "partially_delivered";
+  else if (moving > 0) target = "in_transit";
+
+  if (!target || target === po.status) return po.status;
+
+  const updated = await db(
+    `update public.mkt_purchase_orders
+        set status=$1::mkt_po_status, updated_at=now()
+      where id=$2
+        and status not in ('completed','closed','cancelled')
+        and status <> $1::mkt_po_status
+      returning status`,
+    [target, po.id],
+  );
+  if (!updated.rowCount) return po.status;
+
+  const key = `po-shipment-sync:${po.id}:${target}`;
+  await writeActivity(db, {
+    poId: po.id,
+    user: actor(user, isAdmin ? "admin" : "system"),
+    action: `po_${target}`,
+    oldValue: { status: po.status },
+    newValue: { status: target },
+    description: `Status PO disinkronkan dari lifecycle shipment menjadi ${target}.`,
+    key,
+  });
+  await queueNotification(db, {
+    eventType: `po_${target}`,
+    po,
+    payload: { status: target, source: "shipment_lifecycle" },
+    key,
+  });
+  await notifyMarketplaceEvent(db, {
+    eventType: `po_${target}`,
+    po,
+    payload: { status: target, source: "shipment_lifecycle" },
+    key,
+  });
+  return target;
+}
+
 async function appendShipmentEvent({ shipmentId, body, request, user, isAdmin }) {
   const key = idempotencyKey(request, body);
   if (!key) fail(400, "Idempotency-Key wajib diisi untuk event shipment.");
@@ -572,6 +641,7 @@ async function appendShipmentEvent({ shipmentId, body, request, user, isAdmin })
       payload: { shipmentId: Number(shipment.id), eventType, status: targetStatus },
       key: `shipment-event:${shipment.id}:${key}`,
     });
+    await syncPoStatusFromShipments(db, shipment.po_id, user, isAdmin);
     return { id: Number(inserted.rows[0].id), alreadyProcessed: false, event: mapEvent(inserted.rows[0]) };
   });
 }
@@ -894,6 +964,7 @@ async function createGoodsReceipt({ shipmentId, body, request, user, isAdmin }) 
       payload: { shipmentId: Number(shipment.id), receiptId: Number(inserted.rows[0].id), receiptType },
       key: `goods-receipt:${shipment.id}:${key}`,
     });
+    await syncPoStatusFromShipments(db, shipment.po_id, user, isAdmin);
     if (receiptType === "full") await maybeCompletePo(db, shipment.po_id, user, isAdmin);
     const receipt = (await goodsReceipts(shipment.id, user, isAdmin, db)).find((row) => row.id === Number(inserted.rows[0].id));
     return { alreadyProcessed: false, receipt };

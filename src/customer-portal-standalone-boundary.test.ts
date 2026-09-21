@@ -564,4 +564,15 @@ describe("standalone Customer Portal API boundary", () => {
     expect(poPage).not.toContain("Backend GAP:");
   });
 
+  it("keeps PO status synchronized with the shipment lifecycle", () => {
+    const operations = readFileSync(join(process.cwd(), "server/marketplace-operations.mjs"), "utf8");
+    expect(operations).toContain("async function syncPoStatusFromShipments");
+    expect(operations).toContain('target = "in_transit"');
+    expect(operations).toContain('target = "partially_delivered"');
+    expect(operations).toContain('target = "delivered"');
+    expect(operations).toContain('target = "rejected_goods"');
+    expect(operations).toContain("source: \"shipment_lifecycle\"");
+    expect(operations).toContain("await syncPoStatusFromShipments(db, shipment.po_id, user, isAdmin)");
+  });
+
 });
