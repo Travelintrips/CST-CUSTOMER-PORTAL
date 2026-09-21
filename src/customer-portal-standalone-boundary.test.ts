@@ -505,4 +505,21 @@ describe("standalone Customer Portal API boundary", () => {
     expect(detail).toContain("PT Cahaya Sejati Teknologi (CST)");
   });
 
+  it("fills admin marketplace operation panels with RFQ transaction information", () => {
+    const marketplace = readFileSync(join(process.cwd(), "server/marketplace-service.mjs"), "utf8");
+    const operations = readFileSync(join(process.cwd(), "src/pages/admin/MarketplaceOperations.tsx"), "utf8");
+
+    expect(marketplace).toContain("buyer_email, buyer_phone");
+    expect(marketplace).toContain("delivery_address, required_delivery_date");
+    expect(marketplace).toContain("proposed_quote_id, winning_quote_id");
+    expect(marketplace).toContain("po.currency_snapshot");
+    expect(marketplace).toContain("negotiatedNotes: quote.negotiated_notes");
+
+    expect(operations).toContain("Informasi customer");
+    expect(operations).toContain("Ringkasan transaksi");
+    expect(operations).toContain("Purchase Order");
+    expect(operations).toContain("Customer sudah menyetujui · PO telah dibuat");
+    expect(operations).toContain("setDealNotes(result.negotiatedNotes ?? result.notes ??");
+  });
+
 });

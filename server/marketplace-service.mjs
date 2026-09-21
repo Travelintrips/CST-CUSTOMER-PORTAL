@@ -302,6 +302,7 @@ async function quoteDetail(db, quoteId) {
     incoterm: quote.incoterm,
     deliveryLocation: quote.delivery_location,
     notes: quote.notes,
+    negotiatedNotes: quote.negotiated_notes,
     requoteNotes: quote.requote_notes,
     requoteDeadline: quote.requote_deadline,
     requoteRound: quote.requote_round,
@@ -871,14 +872,41 @@ async function handleVendorQuote(request, response, pathname, body) {
 async function handleAdminMarketplace(request, response, pathname, body, user) {
   const rfqList = pathname === "/api/mkt/admin/rfqs";
   if (request.method === "GET" && rfqList) {
-    const rows = await query(`select id, rfq_number, status, approval_status, buyer_name, buyer_company, quote_count, line_count, created_at from public.mkt_rfqs order by created_at desc limit 500`);
-    response._sendJson(200, { ok: true, data: rows.rows.map((r) => ({ rfqId: Number(r.id), rfqNumber: r.rfq_number, rfqStatus: r.status, approvalStatus: r.approval_status, buyerName: r.buyer_name, buyerCompany: r.buyer_company, quoteCount: r.quote_count, lineCount: r.line_count, createdAt: r.created_at })) });
+    const rows = await query(`
+      select id, rfq_number, status, approval_status,
+             buyer_name, buyer_company, buyer_email, buyer_phone,
+             delivery_address, required_delivery_date, notes,
+             proposed_quote_id, winning_quote_id,
+             quote_count, line_count, created_at
+        from public.mkt_rfqs
+       order by created_at desc
+       limit 500
+    `);
+    response._sendJson(200, { ok: true, data: rows.rows.map((r) => ({
+      rfqId: Number(r.id),
+      rfqNumber: r.rfq_number,
+      rfqStatus: r.status,
+      approvalStatus: r.approval_status,
+      buyerName: r.buyer_name,
+      buyerCompany: r.buyer_company,
+      buyerEmail: r.buyer_email,
+      buyerPhone: r.buyer_phone,
+      deliveryAddress: r.delivery_address,
+      requiredDeliveryDate: r.required_delivery_date,
+      notes: r.notes,
+      proposedQuoteId: r.proposed_quote_id == null ? null : Number(r.proposed_quote_id),
+      winningQuoteId: r.winning_quote_id == null ? null : Number(r.winning_quote_id),
+      quoteCount: r.quote_count,
+      lineCount: r.line_count,
+      createdAt: r.created_at,
+    })) });
     return true;
   }
   if (request.method === "GET" && pathname === "/api/mkt/admin/purchase-orders") {
     const limit = Math.min(Math.max(Number(new URL(request.url ?? "/", "http://portal.local").searchParams.get("limit") ?? 200), 1), 500);
     const result = await query(
-      `select po.id, po.po_number, po.rfq_id, po.status, po.grand_total, po.created_at,
+      `select po.id, po.po_number, po.rfq_id, po.quote_id, po.vendor_id, po.status,
+              po.total_amount, po.tax_amount, po.grand_total, po.currency_snapshot, po.created_at,
               r.rfq_number, s.name as vendor_name
          from public.mkt_purchase_orders po
          join public.mkt_rfqs r on r.id=po.rfq_id
@@ -890,8 +918,13 @@ async function handleAdminMarketplace(request, response, pathname, body, user) {
       id: Number(row.id),
       poNumber: row.po_number,
       rfqId: Number(row.rfq_id),
+      quoteId: row.quote_id == null ? null : Number(row.quote_id),
+      vendorId: row.vendor_id == null ? null : Number(row.vendor_id),
       status: row.status,
+      totalAmount: row.total_amount,
+      taxAmount: row.tax_amount,
       grandTotal: row.grand_total,
+      currency: row.currency_snapshot || "IDR",
       vendorName: row.vendor_name,
       vendorNameSnapshot: row.vendor_name,
       rfqNumber: row.rfq_number,

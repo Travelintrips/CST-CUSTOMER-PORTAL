@@ -17,6 +17,13 @@ type Rfq = {
   approvalStatus: string | null;
   buyerName: string | null;
   buyerCompany: string | null;
+  buyerEmail: string | null;
+  buyerPhone: string | null;
+  deliveryAddress: string | null;
+  requiredDeliveryDate: string | null;
+  notes: string | null;
+  proposedQuoteId: number | null;
+  winningQuoteId: number | null;
   quoteCount: number | null;
   lineCount: number | null;
   createdAt: string;
@@ -28,9 +35,13 @@ type Quote = {
   status: string;
   quoteId?: number;
   vendorId?: number;
+  vendorPhone?: string | null;
+  vendorEmail?: string | null;
   updatedAt?: string | null;
   vendorUnitPrice?: string | number | null;
   dealTotal?: number | null;
+  notes?: string | null;
+  negotiatedNotes?: string | null;
 };
 
 type QuoteDetail = Quote & {
@@ -51,8 +62,13 @@ type PurchaseOrder = {
   id: number;
   poNumber: string;
   rfqId: number;
+  quoteId?: number | null;
+  vendorId?: number | null;
   status: string;
+  totalAmount?: string | number | null;
+  taxAmount?: string | number | null;
   grandTotal: string | number;
+  currency?: string | null;
   vendorName?: string | null;
   vendorNameSnapshot?: string | null;
   rfqNumber?: string | null;
@@ -92,6 +108,16 @@ async function api<T>(path: string, init?: RequestInit): Promise<T> {
 function fmtDate(value: string | null | undefined): string {
   if (!value) return "—";
   return new Date(value).toLocaleString("id-ID", { dateStyle: "medium", timeStyle: "short" });
+}
+
+function fmtMoney(value: string | number | null | undefined, currency = "IDR"): string {
+  const amount = Number(value ?? 0);
+  if (!Number.isFinite(amount)) return "—";
+  return new Intl.NumberFormat("id-ID", {
+    style: "currency",
+    currency: currency || "IDR",
+    maximumFractionDigits: 0,
+  }).format(amount);
 }
 
 function StatusBadge({ value }: { value: string | null | undefined }) {
@@ -173,6 +199,7 @@ export function MarketplaceOperationsTab() {
         `/api/mkt/admin/rfqs/${selectedRfq.rfqId}/quotes/${quote.id}/deal-price`,
       );
       setSelectedQuote(result);
+      setDealNotes(result.negotiatedNotes ?? result.notes ?? "");
     } catch (error) {
       toast({ title: "Harga deal gagal dimuat", description: (error as Error).message, variant: "destructive" });
     }
@@ -337,6 +364,10 @@ export function MarketplaceOperationsTab() {
   };
 
   const selectedPoShipment = shipments[0];
+  const selectedRfqPo = useMemo(
+    () => selectedRfq ? purchaseOrders.find((po) => po.rfqId === selectedRfq.rfqId) ?? null : null,
+    [purchaseOrders, selectedRfq],
+  );
   const rfqSummary = useMemo(() => ({
     pending: rfqs.filter((rfq) => ["submitted", "approved", "quoted", "customer_review"].includes(rfq.rfqStatus)).length,
     review: rfqs.filter((rfq) => rfq.rfqStatus === "customer_review").length,
@@ -382,9 +413,79 @@ export function MarketplaceOperationsTab() {
             {!selectedRfq ? <p className="text-sm text-slate-500">Pilih RFQ di sebelah kiri untuk melihat quote dan menjalankan aksi.</p> : (
               <>
                 <div className="grid gap-3 md:grid-cols-2">
-                  <div className="rounded-lg border p-3"><p className="text-xs text-slate-500">Approve & invite vendor</p><div className="mt-2 flex gap-2"><Input placeholder="Vendor ID, pisahkan koma" value={vendorIds} onChange={(e) => setVendorIds(e.target.value)} /><button className="rounded-md bg-indigo-600 px-3 text-sm text-white disabled:opacity-50" disabled={working} onClick={approveAndInvite}><Users className="mr-1 inline h-4 w-4" />Proses</button></div></div>
-                  <div className="rounded-lg border p-3"><p className="text-xs text-slate-500">Status customer</p><div className="mt-2"><StatusBadge value={selectedRfq.rfqStatus} /> <span className="ml-2 text-sm text-slate-600">{selectedRfq.rfqStatus === "customer_review" ? "Menunggu approve/reject customer" : "Tidak ada bypass admin"}</span></div></div>
+                  {["customer_review", "awarded"].includes(selectedRfq.rfqStatus) && (selectedQuote || selectedRfqPo) ? (
+                    <div className="rounded-lg border bg-indigo-50 p-3">
+                      <p className="text-xs text-slate-500">Vendor / quotation terpilih</p>
+                      <p className="mt-1 font-semibold">{selectedQuote?.vendorName || selectedRfqPo?.vendorName || "Vendor"}</p>
+                      <p className="text-xs text-slate-600">
+                        {selectedQuote?.vendorId ? `Vendor #${selectedQuote.vendorId}` : selectedRfqPo?.vendorId ? `Vendor #${selectedRfqPo.vendorId}` : "—"}
+                        {selectedQuote?.id ? ` · Quote #${selectedQuote.id}` : selectedRfqPo?.quoteId ? ` · Quote #${selectedRfqPo.quoteId}` : ""}
+                      </p>
+                    </div>
+                  ) : (
+                    <div className="rounded-lg border p-3">
+                      <p className="text-xs text-slate-500">Approve & invite vendor</p>
+                      <div className="mt-2 flex gap-2">
+                        <Input placeholder="Vendor ID, pisahkan koma" value={vendorIds} onChange={(e) => setVendorIds(e.target.value)} />
+                        <button className="rounded-md bg-indigo-600 px-3 text-sm text-white disabled:opacity-50" disabled={working} onClick={approveAndInvite}><Users className="mr-1 inline h-4 w-4" />Proses</button>
+                      </div>
+                    </div>
+                  )}
+                  <div className="rounded-lg border p-3">
+                    <p className="text-xs text-slate-500">Status customer</p>
+                    <div className="mt-2">
+                      <StatusBadge value={selectedRfq.rfqStatus} />
+                      <span className="ml-2 text-sm text-slate-600">
+                        {selectedRfq.rfqStatus === "customer_review"
+                          ? "Menunggu approve/reject customer"
+                          : selectedRfq.rfqStatus === "awarded"
+                            ? "Customer sudah menyetujui · PO telah dibuat"
+                            : "Belum masuk tahap keputusan customer"}
+                      </span>
+                    </div>
+                  </div>
                 </div>
+
+                <div className="grid gap-3 md:grid-cols-2">
+                  <div className="rounded-lg border bg-slate-50 p-3">
+                    <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Informasi customer</p>
+                    <div className="mt-2 space-y-1 text-sm">
+                      <p><span className="text-slate-500">Nama:</span> {selectedRfq.buyerName || "—"}</p>
+                      <p><span className="text-slate-500">Perusahaan:</span> {selectedRfq.buyerCompany || "—"}</p>
+                      <p><span className="text-slate-500">Email:</span> {selectedRfq.buyerEmail || "—"}</p>
+                      <p><span className="text-slate-500">Telepon:</span> {selectedRfq.buyerPhone || "—"}</p>
+                    </div>
+                  </div>
+                  <div className="rounded-lg border bg-slate-50 p-3">
+                    <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Pengiriman</p>
+                    <div className="mt-2 space-y-1 text-sm">
+                      <p><span className="text-slate-500">Alamat:</span> {selectedRfq.deliveryAddress || "—"}</p>
+                      <p><span className="text-slate-500">Dibutuhkan:</span> {fmtDate(selectedRfq.requiredDeliveryDate)}</p>
+                    </div>
+                  </div>
+                </div>
+
+                {(selectedQuote || selectedRfqPo) && (
+                  <div className="grid gap-3 md:grid-cols-2">
+                    <div className="rounded-lg border bg-emerald-50 p-3">
+                      <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Ringkasan transaksi</p>
+                      <div className="mt-2 space-y-1 text-sm">
+                        <p><span className="text-slate-500">Produk:</span> {selectedQuote?.lines?.[0]?.itemName || "—"}</p>
+                        <p><span className="text-slate-500">Qty:</span> {selectedQuote?.lines?.[0] ? `${selectedQuote.lines[0].offeredQty} ${selectedQuote.lines[0].unit || ""}` : "—"}</p>
+                        <p><span className="text-slate-500">Harga vendor:</span> {selectedQuote?.lines?.[0] ? fmtMoney(selectedQuote.lines[0].vendorUnitPrice) : "—"}</p>
+                        <p><span className="text-slate-500">Harga deal:</span> {selectedQuote?.lines?.[0] ? fmtMoney(selectedQuote.lines[0].dealUnitPrice) : "—"}</p>
+                      </div>
+                    </div>
+                    <div className="rounded-lg border bg-blue-50 p-3">
+                      <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Purchase Order</p>
+                      <div className="mt-2 space-y-1 text-sm">
+                        <p><span className="text-slate-500">Nomor:</span> {selectedRfqPo?.poNumber || "Belum dibuat"}</p>
+                        <p><span className="text-slate-500">Total:</span> {selectedRfqPo ? fmtMoney(selectedRfqPo.grandTotal, selectedRfqPo.currency || "IDR") : "—"}</p>
+                        <p className="flex items-center gap-2"><span className="text-slate-500">Status:</span> <StatusBadge value={selectedRfqPo?.status} /></p>
+                      </div>
+                    </div>
+                  </div>
+                )}
                 <div className="space-y-2">
                   <p className="text-sm font-semibold">Vendor quotes</p>
                   {quotes.length === 0 ? <p className="text-sm text-slate-500">Belum ada quote vendor.</p> : quotes.map((quote) => (
