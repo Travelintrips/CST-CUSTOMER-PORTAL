@@ -518,3 +518,16 @@ export async function uploadAiChatDocument({ file }) {
   }
   return { path, fileName: safeFileName(file.name), mimeType, size };
 }
+
+export async function uploadVendorCatalogImage({ vendorId, catalogItemId, file }) {
+  if (!file || typeof file.arrayBuffer !== "function") { const e = new Error("File gambar vendor wajib diunggah."); e.statusCode=400; throw e; }
+  const mimeType=String(file.type||"").toLowerCase(), size=Number(file.size);
+  if (!["image/jpeg","image/png","image/webp"].includes(mimeType)) { const e=new Error("Gambar vendor harus JPG, PNG, atau WEBP."); e.statusCode=415; throw e; }
+  if (!Number.isFinite(size)||size<=0||size>MAX_FILE_BYTES) { const e=new Error("Ukuran gambar vendor maksimal 5 MB."); e.statusCode=413; throw e; }
+  const storage=client(); await ensurePublicBucket(storage);
+  const path=`vendor-catalog/vendor-${Number(vendorId)}/item-${Number(catalogItemId)}/${crypto.randomUUID()}-${safeFileName(file.name||"image")}`;
+  const result=await storage.supabase.storage.from(storage.publicBucket).upload(path,Buffer.from(await file.arrayBuffer()),{contentType:mimeType,cacheControl:"3600",upsert:false});
+  if(result.error){const e=new Error("Upload gambar vendor gagal.");e.statusCode=502;throw e;}
+  const publicData=storage.supabase.storage.from(storage.publicBucket).getPublicUrl(path);
+  return {path,url:publicData.data?.publicUrl??null,fileName:safeFileName(file.name),mimeType,size};
+}

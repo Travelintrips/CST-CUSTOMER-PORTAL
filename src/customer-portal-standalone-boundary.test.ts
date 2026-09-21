@@ -338,4 +338,14 @@ describe("standalone Customer Portal API boundary", () => {
     expect(whatsapp).not.toContain("where q.channel = 'internal'");
     expect(server).toContain('IS_PRODUCTION && process.env.CUSTOMER_PORTAL_WA_WORKER_ENABLED !== "false"');
   });
+
+  it("supports owned vendor catalog image uploads through standalone API", () => {
+    const vendor = readFileSync(join(process.cwd(), "server/vendor-portal.mjs"), "utf8");
+    const storage = readFileSync(join(process.cwd(), "server/storage.mjs"), "utf8");
+    expect(vendor).toContain("catalogImageMatch");
+    expect(vendor).toContain("uploadVendorCatalogImage");
+    expect(vendor).toContain("vendor_id=$2");
+    expect(storage).toContain("vendor-catalog/vendor-");
+    expect(storage).toContain("image/webp");
+  });
 });

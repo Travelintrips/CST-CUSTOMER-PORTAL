@@ -7,6 +7,7 @@ import {
   signedVendorFeaturedPaymentProofUrl,
   uploadVendorInvitationAsset,
   uploadVendorFeaturedPaymentProof,
+  uploadVendorCatalogImage,
 } from "./storage.mjs";
 
 const REQUIRED_INVITATION_DOCUMENTS = new Set(["npwp", "siup_nib", "ktp_pic"]);
@@ -1320,6 +1321,21 @@ export async function handleVendorPortalRoutes({ request, response, url, user, b
     }))));
     return true;
   }
+  const catalogImageMatch = url.pathname.match(/^\/api\/portal\/vendor\/catalog\/(\d+)\/(?:image|images|upload)$/);
+  if (catalogImageMatch && request.method === "POST") {
+    if (!vendor?.supplier_id) return sendError(response, 403, "Supplier vendor belum terhubung.");
+    const itemId = Number(catalogImageMatch[1]);
+    const owned = await query("select id, media_assets from public.vendor_catalog_items where id=$1 and vendor_id=$2 limit 1", [itemId, vendor.supplier_id]);
+    if (!owned.rows[0]) return sendError(response, 404, "Item katalog vendor tidak ditemukan.");
+    if (!body?.file || typeof body.file.arrayBuffer !== "function") return sendError(response, 400, "File gambar wajib diunggah.");
+    const uploaded = await uploadVendorCatalogImage({ vendorId: vendor.supplier_id, catalogItemId: itemId, file: body.file });
+    const current = jsonValue(owned.rows[0].media_assets, []);
+    const mediaAssets = [...(Array.isArray(current) ? current : []), { url: uploaded.url, path: uploaded.path, type: "image", mediaType: "image", isPrimary: !Array.isArray(current) || !current.some((asset) => asset?.isPrimary), originalFilename: uploaded.fileName }];
+    await query("update public.vendor_catalog_items set media_assets=$1::jsonb, updated_at=now() where id=$2 and vendor_id=$3", [JSON.stringify(mediaAssets), itemId, vendor.supplier_id]);
+    sendJson(response, 201, { success: true, image: mediaAssets[mediaAssets.length - 1], mediaAssets });
+    return true;
+  }
+
   if (url.pathname === "/api/portal/vendor/catalog" && request.method === "GET") {
     if (!vendor?.supplier_id) return sendJson(response, 200, { supplierId: null, supplierName: "", items: [] });
     const result = await query(
