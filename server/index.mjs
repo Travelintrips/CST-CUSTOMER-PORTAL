@@ -2786,6 +2786,23 @@ async function handleMarketplace(response, url) {
   sendJson(response, 200, items);
 }
 
+async function handleMarketplaceItem(response, itemId) {
+  const id = Number(itemId);
+  if (!Number.isInteger(id) || id <= 0) {
+    sendError(response, 404, "Item tidak ditemukan atau belum dipublikasikan.");
+    return;
+  }
+
+  const rows = await getPublishedCatalogItems({ requirePublishedStatus: false });
+  const item = rows.find((row) => Number(row.id) === id);
+  if (!item) {
+    sendError(response, 404, "Item tidak ditemukan atau belum dipublikasikan.");
+    return;
+  }
+
+  sendJson(response, 200, mapCatalogItem(item));
+}
+
 async function handleMarketplaceFeatured(response, url) {
   const limit = Math.min(Math.max(Number(url.searchParams.get("limit") ?? 6), 1), 24);
   // Admin activation uses the same public visibility flags as the catalog
@@ -3688,6 +3705,11 @@ async function route(request, response) {
   }
   if (request.method === "GET" && pathname === "/api/portal/marketplace") {
     await handleMarketplace(response, url);
+    return;
+  }
+  const marketplaceItemMatch = pathname.match(/^\/api\/portal\/marketplace\/(\d+)$/);
+  if (request.method === "GET" && marketplaceItemMatch) {
+    await handleMarketplaceItem(response, marketplaceItemMatch[1]);
     return;
   }
   if (request.method === "GET" && pathname === "/api/portal/marketplace/featured") {
