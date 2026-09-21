@@ -3727,7 +3727,7 @@ async function route(request, response) {
     }
     return;
   }
-  if (pathname === "/api/portal/admin/service-operations" || /^\/api\/portal\/admin\/service-operations\/[^/]+\/\d+(?:\/actions)?$/.test(pathname)) {
+  if (pathname === "/api/portal/admin/service-operations" || /^\/api\/portal\/admin\/service-operations\/[^/]+\/\d+(?:\/actions|\/vendor-routing)?$/.test(pathname)) {
     const user = await requireAdmin(request, response);
     if (user) {
       const body = ["POST", "PUT", "PATCH"].includes(request.method ?? "") ? await readJson(request) : {};

@@ -408,4 +408,12 @@ describe("standalone Customer Portal API boundary", () => {
     expect(server).not.toContain('name: row.company_name ?? "PT Cahaya Sejati Teknologi"');
   });
 
+  it("routes marketplace vendor-routing through the admin service-operations gateway", () => {
+    const server = readFileSync(join(process.cwd(), "server/index.mjs"), "utf8");
+    const adminPortal = readFileSync(join(process.cwd(), "server/admin-portal.mjs"), "utf8");
+    expect(server).toContain("(?:\\/actions|\\/vendor-routing)?$");
+    expect(adminPortal).toContain("/vendor-routing$");
+    expect(adminPortal).toContain("loadMarketplaceVendorRouting");
+  });
+
 });
