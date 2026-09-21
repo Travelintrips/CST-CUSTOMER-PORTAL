@@ -14,7 +14,7 @@ export const COMPANY_CONFIG = {
   brandName: "B2B Marketplace and Logistic",
 
   /** Nama entitas hukum — digunakan di copyright dan dokumen legal */
-  legalName: "PT. Cahaya Sejati Teknologi",
+  legalName: "PT Cahaya Sejati Teknologi",
 
   /** Domain website publik */
   domain: "https://cstlogistic.co.id",

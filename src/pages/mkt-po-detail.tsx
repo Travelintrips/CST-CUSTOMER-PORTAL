@@ -260,7 +260,7 @@ function OverviewTab({ po }: { po: PoDetail }) {
           {po.isInternalVendor && po.vendorEmail && <InfoRow label="Email" value={po.vendorEmail} />}
           {!po.isInternalVendor && (
             <p className="text-xs text-slate-500 pt-1">
-              Seluruh komunikasi, pembayaran, dan layanan transaksi ini dilakukan melalui CST.
+              Seluruh komunikasi, pembayaran, dan layanan transaksi ini dikelola melalui PT Cahaya Sejati Teknologi (CST).
             </p>
           )}
         </CardContent>

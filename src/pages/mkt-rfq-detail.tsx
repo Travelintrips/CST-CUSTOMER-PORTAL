@@ -440,7 +440,7 @@ export default function MktRfqDetailPage() {
                       <p className="text-xs text-muted-foreground">{quotation.isInternalVendor ? "Vendor Internal" : "Penyedia"}</p>
                       <p className="font-semibold">{quotation.vendorName ?? "—"}</p>
                       {!quotation.isInternalVendor && (
-                        <p className="text-[11px] text-muted-foreground mt-0.5">Seluruh komunikasi dan transaksi melalui CST.</p>
+                        <p className="text-[11px] text-muted-foreground mt-0.5">Seluruh komunikasi dan transaksi dikelola melalui PT Cahaya Sejati Teknologi (CST).</p>
                       )}
                     </div>
                     <div>

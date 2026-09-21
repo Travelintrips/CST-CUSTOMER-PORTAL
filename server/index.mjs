@@ -2688,7 +2688,7 @@ function mediaFromRow(row) {
   };
 }
 
-const PUBLIC_MARKETPLACE_SELLER_NAME = process.env.PORTAL_PUBLIC_SELLER_NAME?.trim() || "PT. Cahaya Sejati Teknologi";
+const PUBLIC_MARKETPLACE_SELLER_NAME = "PT Cahaya Sejati Teknologi";
 
 function mapCatalogItem(row) {
   const media = mediaFromRow(row);

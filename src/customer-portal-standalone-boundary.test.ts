@@ -487,10 +487,22 @@ describe("standalone Customer Portal API boundary", () => {
     expect(server).toContain("documents: isInternalVendor ? parseJson(row.documents, []) : []");
     expect(marketplace).toContain('event.actor_type === "vendor"');
     expect(marketplace).toContain("result.rows[0].is_internal_vendor ? line.notes : null");
-    expect(poPage).toContain("Seluruh komunikasi, pembayaran, dan layanan transaksi ini dilakukan melalui CST.");
-    expect(rfqPage).toContain("Seluruh komunikasi dan transaksi melalui CST.");
+    expect(poPage).toContain("Seluruh komunikasi, pembayaran, dan layanan transaksi ini dikelola melalui PT Cahaya Sejati Teknologi (CST).");
+    expect(rfqPage).toContain("Seluruh komunikasi dan transaksi dikelola melalui PT Cahaya Sejati Teknologi (CST).");
     expect(detailPage).toContain("external vendor identity stays private");
     expect(detailPage).toContain("COMPANY_CONFIG.legalName");
+  });
+
+  it("uses the full legal entity name for customer-facing seller identity", () => {
+    const marketplace = readFileSync(join(process.cwd(), "server/marketplace-service.mjs"), "utf8");
+    const server = readFileSync(join(process.cwd(), "server/index.mjs"), "utf8");
+    const company = readFileSync(join(process.cwd(), "src/config/company.ts"), "utf8");
+    const detail = readFileSync(join(process.cwd(), "src/pages/marketplace-detail.tsx"), "utf8");
+
+    expect(marketplace).toContain('const CUSTOMER_FACING_SELLER_NAME = "PT Cahaya Sejati Teknologi"');
+    expect(server).toContain('const PUBLIC_MARKETPLACE_SELLER_NAME = "PT Cahaya Sejati Teknologi"');
+    expect(company).toContain('legalName: "PT Cahaya Sejati Teknologi"');
+    expect(detail).toContain("PT Cahaya Sejati Teknologi (CST)");
   });
 
 });

@@ -10,7 +10,7 @@ import { handleAdminOperations, handlePortalOperations } from "./marketplace-ope
 const RFQ_TERMINAL = new Set(["awarded", "cancelled", "expired"]);
 const QUOTE_TERMINAL = new Set(["selected", "rejected", "expired", "withdrawn"]);
 const PO_TERMINAL = new Set(["completed", "closed", "cancelled", "vendor_rejected"]);
-const CUSTOMER_FACING_SELLER_NAME = process.env.PORTAL_PUBLIC_SELLER_NAME?.trim() || "PT. Cahaya Sejati Teknologi";
+const CUSTOMER_FACING_SELLER_NAME = "PT Cahaya Sejati Teknologi";
 
 function fail(statusCode, message) {
   const error = new Error(message);

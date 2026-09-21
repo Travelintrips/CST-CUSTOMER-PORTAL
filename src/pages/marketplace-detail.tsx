@@ -1876,7 +1876,7 @@ export default function MarketplaceDetailPage() {
                   <p className="text-[14px] font-bold text-slate-900">{COMPANY_CONFIG.legalName}</p>
                 </div>
                 <p className="text-[11px] text-slate-500 mt-2">
-                  Pemesanan, pembayaran, komunikasi, dan layanan transaksi dilakukan melalui CST.
+                  Pemesanan, pembayaran, komunikasi, dan layanan transaksi dikelola melalui PT Cahaya Sejati Teknologi (CST).
                 </p>
               </div>
             )}
