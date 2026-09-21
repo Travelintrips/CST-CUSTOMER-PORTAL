@@ -347,6 +347,9 @@ describe("standalone Customer Portal API boundary", () => {
     expect(vendor).toContain("vendor_id=$2");
     expect(storage).toContain("vendor-catalog/vendor-");
     expect(storage).toContain("image/webp");
+    expect(storage).toContain("const storage=publicAssetStorage()");
+    expect(storage).not.toContain("ensurePublicBucket(storage)");
+    expect(storage).not.toContain("storage.publicBucket");
   });
 
   it("supports standalone vendor product CRUD for external and internal vendors", () => {

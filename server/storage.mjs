@@ -524,11 +524,11 @@ export async function uploadVendorCatalogImage({ vendorId, catalogItemId, file }
   const mimeType=String(file.type||"").toLowerCase(), size=Number(file.size);
   if (!["image/jpeg","image/png","image/webp"].includes(mimeType)) { const e=new Error("Gambar vendor harus JPG, PNG, atau WEBP."); e.statusCode=415; throw e; }
   if (!Number.isFinite(size)||size<=0||size>MAX_FILE_BYTES) { const e=new Error("Ukuran gambar vendor maksimal 5 MB."); e.statusCode=413; throw e; }
-  const storage=client(); await ensurePublicBucket(storage);
+  const storage=publicAssetStorage();
   const path=`vendor-catalog/vendor-${Number(vendorId)}/item-${Number(catalogItemId)}/${crypto.randomUUID()}-${safeFileName(file.name||"image")}`;
-  const result=await storage.supabase.storage.from(storage.publicBucket).upload(path,Buffer.from(await file.arrayBuffer()),{contentType:mimeType,cacheControl:"3600",upsert:false});
+  const result=await storage.supabase.storage.from(storage.bucket).upload(path,Buffer.from(await file.arrayBuffer()),{contentType:mimeType,cacheControl:"3600",upsert:false});
   if(result.error){const e=new Error("Upload gambar vendor gagal.");e.statusCode=502;throw e;}
-  const publicData=storage.supabase.storage.from(storage.publicBucket).getPublicUrl(path);
+  const publicData=storage.supabase.storage.from(storage.bucket).getPublicUrl(path);
   return {path,url:publicData.data?.publicUrl??null,fileName:safeFileName(file.name),mimeType,size};
 }
 
@@ -537,10 +537,10 @@ export async function uploadVendorCatalogAsset({ vendorId, catalogItemId, file }
   const mimeType=String(file.type||"").toLowerCase(), size=Number(file.size);
   if (!ALLOWED_VENDOR_ASSET_TYPES.has(mimeType)) { const e=new Error("Tipe media vendor tidak didukung."); e.statusCode=415; throw e; }
   if (!Number.isFinite(size)||size<=0||size>MAX_VENDOR_ASSET_BYTES) { const e=new Error("Ukuran media vendor maksimal 50 MB."); e.statusCode=413; throw e; }
-  const storage=client(); await ensurePublicBucket(storage);
+  const storage=publicAssetStorage();
   const path=`vendor-catalog/vendor-${Number(vendorId)}/item-${Number(catalogItemId)}/${crypto.randomUUID()}-${safeFileName(file.name||"asset")}`;
-  const result=await storage.supabase.storage.from(storage.publicBucket).upload(path,Buffer.from(await file.arrayBuffer()),{contentType:mimeType,cacheControl:"3600",upsert:false});
+  const result=await storage.supabase.storage.from(storage.bucket).upload(path,Buffer.from(await file.arrayBuffer()),{contentType:mimeType,cacheControl:"3600",upsert:false});
   if(result.error){const e=new Error("Upload media vendor gagal.");e.statusCode=502;throw e;}
-  const publicData=storage.supabase.storage.from(storage.publicBucket).getPublicUrl(path);
+  const publicData=storage.supabase.storage.from(storage.bucket).getPublicUrl(path);
   return {objectPath:path,url:publicData.data?.publicUrl??null,fileName:safeFileName(file.name),mimeType,sizeBytes:size};
 }
