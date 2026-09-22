@@ -575,4 +575,32 @@ describe("standalone Customer Portal API boundary", () => {
     expect(operations).toContain("await syncPoStatusFromShipments(db, shipment.po_id, user, isAdmin)");
   });
 
+  it("uses the canonical service catalog for all customer service cards", () => {
+    const jasa = readFileSync(join(process.cwd(), "src/pages/jasa.tsx"), "utf8");
+    const category = readFileSync(join(process.cwd(), "src/pages/jasa-kategori.tsx"), "utf8");
+    const shared = readFileSync(join(process.cwd(), "src/lib/jasa-shared.ts"), "utf8");
+    const server = readFileSync(join(process.cwd(), "server/index.mjs"), "utf8");
+
+    for (const code of [
+      "sea_freight", "air_freight", "trucking", "customs_clearance", "ppjk_consulting",
+      "handling", "port_charges", "storage_demurrage", "emkl", "cargo_insurance",
+    ]) {
+      expect(jasa).toContain(`serviceCode: "${code}"`);
+    }
+    expect(jasa).toContain("normalizeCanonicalService");
+    expect(jasa).toContain("canonicalByCode");
+    expect(jasa).toContain("serviceCardsForCategory");
+    expect(jasa).not.toContain("const legacyItems:");
+    expect(category).toContain("const serviceCards =");
+    expect(category).not.toContain("const legacyItems:");
+    expect(shared).toContain("CANONICAL_SERVICE_ROUTES");
+    expect(shared).toContain('sea_freight: "/ocean-freight-booking"');
+    expect(shared).toContain('customs_clearance: "/custom-clearance"');
+
+    expect(server).toContain('const requestedKind = (url.searchParams.get("kind") ?? "product")');
+    expect(server).toContain('const kind = requestedKind === "service" ? "service" : "product"');
+    expect(server).toContain("where ($1::text is null or type = $1)");
+    expect(server).toContain("requirePublishedStatus: false, type: null");
+  });
+
 });

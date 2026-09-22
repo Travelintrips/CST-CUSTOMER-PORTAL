@@ -5,6 +5,7 @@ import {
   Ship, Plane, Truck, ClipboardList, FileCheck, BookOpen,
   ChevronRight, Search, SlidersHorizontal, ArrowUpDown,
   ArrowUp, ArrowDown, Building2, Clock, Star, Filter, X,
+  Package, Warehouse, ShieldCheck,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -16,18 +17,22 @@ import { useListPortalServices } from "@shared/api-client-react";
 import { useLanguage } from "@/i18n/LanguageContext";
 import {
   type ServiceHubItem,
+  type CanonicalPortalService,
   CATEGORY_PLACEHOLDER,
   SERVICE_PHOTOS,
   CAT_PHOTOS,
   formatIDR,
+  normalizeCanonicalService,
+  canonicalServiceTarget,
 } from "@/lib/jasa-shared";
 
 interface SubService {
+  serviceCode: string;
   title: string;
   titleKey?: string;
   desc: string;
   descKey?: string;
-  href: string;
+  href?: string;
   icon: React.ElementType;
   eta: string;
   categoryKeys: string[];
@@ -60,38 +65,12 @@ const CATEGORIES: CategoryDef[] = [
     gradient: "from-blue-600 to-sky-500",
     lightBg: "bg-blue-50",
     textColor: "text-blue-700",
+    badgeCls: "bg-blue-100 text-blue-700 border-blue-200",
     accentColor: "#0369a1",
     services: [
-      {
-        title: "Sea Freight",
-        titleKey: "servicesMenu.seaFreightCard.title",
-        desc: "Pengiriman via laut FCL & LCL untuk volume besar internasional",
-        descKey: "servicesMenu.seaFreightCard.desc",
-        href: "/ocean-freight-booking",
-        icon: Ship,
-        eta: "7–30 hari",
-        categoryKeys: ["sea_freight"],
-      },
-      {
-        title: "Air Freight",
-        titleKey: "servicesMenu.airFreightCard.title",
-        desc: "Pengiriman ekspres via udara ke seluruh dunia",
-        descKey: "servicesMenu.airFreightCard.desc",
-        href: "/air-freight-booking",
-        icon: Plane,
-        eta: "1–3 hari",
-        categoryKeys: ["air_freight"],
-      },
-      {
-        title: "Domestik",
-        titleKey: "servicesMenu.domesticCard.title",
-        desc: "Distribusi kargo antar kota & antar pulau di seluruh Indonesia",
-        descKey: "servicesMenu.domesticCard.desc",
-        href: "/trucking",
-        icon: Truck,
-        eta: "1–5 hari",
-        categoryKeys: ["trucking"],
-      },
+      { serviceCode: "sea_freight", title: "Sea Freight", desc: "Pengiriman kargo via laut FCL & LCL.", href: "/ocean-freight-booking", icon: Ship, eta: "7–30 hari", categoryKeys: ["sea_freight"] },
+      { serviceCode: "air_freight", title: "Air Freight", desc: "Pengiriman kargo ekspres via udara.", href: "/air-freight-booking", icon: Plane, eta: "1–3 hari", categoryKeys: ["air_freight"] },
+      { serviceCode: "trucking", title: "Domestik", desc: "Distribusi kargo antar kota dan antar pulau.", href: "/trucking", icon: Truck, eta: "1–5 hari", categoryKeys: ["trucking"] },
     ],
   },
   {
@@ -104,36 +83,32 @@ const CATEGORIES: CategoryDef[] = [
     gradient: "from-orange-600 to-amber-500",
     lightBg: "bg-orange-50",
     textColor: "text-orange-700",
+    badgeCls: "bg-orange-100 text-orange-700 border-orange-200",
     accentColor: "#b45309",
     services: [
-      {
-        title: "Custom Clearance Proses",
-        titleKey: "servicesMenu.customsClearanceCard.title",
-        desc: "Pengurusan penuh proses kepabeanan impor & ekspor di pelabuhan",
-        descKey: "servicesMenu.customsClearanceCard.desc",
-        href: "/custom-clearance",
-        icon: FileCheck,
-        eta: "1–3 hari kerja",
-        categoryKeys: ["ppjk"],
-      },
-      {
-        title: "Konsultan Pabean",
-        titleKey: "servicesMenu.consultant.title",
-        desc: "Layanan konsultasi & pendampingan prosedur kepabeanan secara menyeluruh",
-        descKey: "servicesMenu.consultant.desc",
-        href: "/pabean",
-        icon: BookOpen,
-        eta: "Sesuai kebutuhan",
-        categoryKeys: ["ppjk"],
-        subItemKeys: [
-          "servicesMenu.consultant.sub1",
-          "servicesMenu.consultant.sub2",
-          "servicesMenu.consultant.sub3",
-        ],
-      },
+      { serviceCode: "customs_clearance", title: "Custom Clearance Proses", desc: "Pengurusan proses kepabeanan impor dan ekspor.", href: "/custom-clearance", icon: FileCheck, eta: "1–3 hari kerja", categoryKeys: ["ppjk"] },
+      { serviceCode: "ppjk_consulting", title: "Konsultan Pabean", desc: "Konsultasi dan pendampingan prosedur kepabeanan.", href: "/pabean", icon: BookOpen, eta: "Sesuai kebutuhan", categoryKeys: ["ppjk"] },
     ],
   },
-];
+  {
+    id: "additional",
+    title: "Layanan Logistik Tambahan",
+    subtitle: "Handling, pelabuhan, storage, EMKL, dan proteksi kargo",
+    icon: Package,
+    gradient: "from-emerald-600 to-teal-500",
+    lightBg: "bg-emerald-50",
+    textColor: "text-emerald-700",
+    badgeCls: "bg-emerald-100 text-emerald-700 border-emerald-200",
+    accentColor: "#047857",
+    services: [
+      { serviceCode: "handling", title: "Handling", desc: "Penanganan kargo di titik operasional.", icon: Package, eta: "Sesuai kebutuhan", categoryKeys: ["handling"] },
+      { serviceCode: "port_charges", title: "Port Charges", desc: "Pengelolaan biaya operasional pelabuhan.", icon: Building2, eta: "Sesuai kebutuhan", categoryKeys: ["additional", "document"] },
+      { serviceCode: "storage_demurrage", title: "Storage / Demurrage", desc: "Penyimpanan dan kebutuhan storage/demurrage.", icon: Warehouse, eta: "Sesuai kebutuhan", categoryKeys: ["storage", "handling"] },
+      { serviceCode: "emkl", title: "EMKL", desc: "Ekspedisi Muatan Kapal Laut dan koordinasi operasional.", icon: Ship, eta: "Sesuai kebutuhan", categoryKeys: ["sea_freight", "exim_service"] },
+      { serviceCode: "cargo_insurance", title: "Asuransi Kargo", desc: "Proteksi risiko kargo selama pengiriman.", icon: ShieldCheck, eta: "Sesuai kebutuhan", categoryKeys: ["additional"] },
+    ],
+  },
+]
 
 type SortMode = "default" | "price_asc" | "price_desc";
 
@@ -274,26 +249,27 @@ export default function JasaKategori() {
     };
   });
 
-  const legacyItems: ServiceHubItem[] = (Array.isArray(servicesRaw) ? servicesRaw : []).map((s: unknown) => {
-    const svc = s as Record<string, unknown>;
-    const cats = (svc["categories"] as string[] | null) ?? [];
-    return {
-      source: "product",
-      id: svc["id"] as number,
-      title: svc["name"] as string,
-      category: cats[0] ?? "",
-      serviceType: null,
-      price: (svc["price"] as number) ?? null,
-      unit: (svc["unit"] as string | null) ?? null,
-      targetUrl: `/jasa/${svc["id"]}`,
-      description: (svc["description"] as string | null) ?? null,
-      imageUrl: (svc["imageUrl"] as string | null) ?? null,
-      categories: cats,
-      currency: "IDR",
-    };
-  });
+  const canonicalServices: CanonicalPortalService[] = (Array.isArray(servicesRaw) ? servicesRaw : [])
+    .map(normalizeCanonicalService)
+    .filter((service): service is CanonicalPortalService => Boolean(service?.isActive));
+  const canonicalByCode = new Map(canonicalServices.map((service) => [service.code, service]));
+  const serviceCards = (cat?.services ?? [])
+    .map((presentation) => {
+      const master = canonicalByCode.get(presentation.serviceCode);
+      if (!master) return null;
+      return {
+        ...presentation,
+        title: master.name,
+        desc: master.description ?? presentation.desc,
+        eta: master.estimatedDays ?? "Sesuai kebutuhan",
+        href: presentation.href ?? canonicalServiceTarget(master),
+        master,
+      };
+    })
+    .filter((card): card is NonNullable<typeof card> => Boolean(card));
 
-  const allItems = [...vendorItems, ...legacyItems];
+  // Marketplace/vendor offers are not the CST service master.
+  const allItems = vendorItems;
 
   const categoryKeys = cat?.services.flatMap((s) => s.categoryKeys) ?? [];
 
@@ -373,7 +349,7 @@ export default function JasaKategori() {
             <div>
               <div className="flex items-center gap-3 mb-2">
                 <Badge className="bg-white/15 text-white border-white/25 text-[11px] font-semibold backdrop-blur-sm">
-                  {cat.services.length} {t("jasa.categoryServicesCount")}
+                  {serviceCards.length} {t("jasa.categoryServicesCount")}
                 </Badge>
                 {filteredByCat.length > 0 && (
                   <Badge className="bg-white/15 text-white border-white/25 text-[11px] backdrop-blur-sm">
@@ -399,13 +375,13 @@ export default function JasaKategori() {
             <h2 className="text-[18px] font-black text-slate-800">{t("jasa.pickService")}</h2>
           </div>
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">
-            {cat.services.map((svc) => {
+            {serviceCards.map((svc) => {
               const SvcIcon = svc.icon;
               const photo = SERVICE_PHOTOS[svc.title];
-              const displayTitle = svc.titleKey ? t(svc.titleKey) : svc.title;
-              const displayDesc = svc.descKey ? t(svc.descKey) : svc.desc;
+              const displayTitle = svc.title;
+              const displayDesc = svc.desc;
               return (
-                <Link key={svc.href + svc.title} href={svc.href}>
+                <Link key={svc.master.code} href={svc.href}>
                   <div
                     className="group bg-white rounded-2xl overflow-hidden border border-slate-200 cursor-pointer transition-all duration-300 hover:-translate-y-1.5 hover:shadow-2xl flex flex-col h-full"
                     style={{ boxShadow: "0 4px 16px rgba(0,0,0,0.06)" }}

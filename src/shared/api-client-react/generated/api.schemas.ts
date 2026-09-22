@@ -2249,9 +2249,16 @@ export interface PortalCompany {
 
 export interface PortalService {
   id: number;
+  code?: string | null;
   name: string;
+  category?: string | null;
   description?: string | null;
   price: number;
+  basePrice?: number | null;
+  currency?: string | null;
+  estimatedDays?: string | null;
+  slaHours?: number | null;
+  isActive?: boolean;
   imageUrl?: string | null;
   categories: string[];
 }

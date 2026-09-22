@@ -20,6 +20,61 @@ export interface ServiceHubItem {
   categoryKey?: string | null;
 }
 
+export interface CanonicalPortalService {
+  id: number;
+  code: string;
+  name: string;
+  description: string | null;
+  category: string | null;
+  categories: string[];
+  price: number;
+  basePrice: number | null;
+  currency: string;
+  estimatedDays: string | null;
+  slaHours: number | null;
+  isActive: boolean;
+}
+
+export const CANONICAL_SERVICE_ROUTES: Record<string, string> = {
+  sea_freight: "/ocean-freight-booking",
+  air_freight: "/air-freight-booking",
+  trucking: "/trucking",
+  customs_clearance: "/custom-clearance",
+  ppjk_consulting: "/pabean",
+};
+
+export function normalizeCanonicalService(raw: unknown): CanonicalPortalService | null {
+  const row = raw as Record<string, unknown>;
+  const id = Number(row["id"]);
+  const code = String(row["code"] ?? "").trim().toLowerCase();
+  const name = String(row["name"] ?? "").trim();
+  if (!Number.isInteger(id) || id <= 0 || !code || !name) return null;
+  const categories = Array.isArray(row["categories"])
+    ? (row["categories"] as unknown[]).map((value) => String(value)).filter(Boolean)
+    : [];
+  const category = row["category"] == null
+    ? (categories[0] ?? null)
+    : String(row["category"]);
+  return {
+    id,
+    code,
+    name,
+    description: row["description"] == null ? null : String(row["description"]),
+    category,
+    categories: category && categories.length === 0 ? [category] : categories,
+    price: Number(row["price"] ?? 0),
+    basePrice: row["basePrice"] == null ? null : Number(row["basePrice"]),
+    currency: String(row["currency"] ?? "IDR"),
+    estimatedDays: row["estimatedDays"] == null ? null : String(row["estimatedDays"]),
+    slaHours: row["slaHours"] == null ? null : Number(row["slaHours"]),
+    isActive: row["isActive"] !== false,
+  };
+}
+
+export function canonicalServiceTarget(service: CanonicalPortalService): string {
+  return CANONICAL_SERVICE_ROUTES[service.code] ?? `/jasa/${service.id}`;
+}
+
 export const CATEGORY_PLACEHOLDER: Record<string, { emoji: string; from: string; to: string }> = {
   trucking:    { emoji: "🚛", from: "#1a3a6c", to: "#2a5aaa" },
   sea_freight: { emoji: "🚢", from: "#0c3057", to: "#1a5080" },
@@ -41,11 +96,13 @@ export const SERVICE_PHOTOS: Record<string, string> = {
   "Domestik":                image("banner-trucking-container.png"),
   "Custom Clearance Proses": image("customs.png"),
   "Konsultan Pabean":        image("customs-document.png"),
+  "EMKL":                     image("sea-freight.png"),
 };
 
 export const CAT_PHOTOS: Record<string, string> = {
   forwarding: image("port-operations.png"),
   ppjk:       image("customs.png"),
+  additional: image("port-operations.png"),
 };
 
 export const formatIDR = (v: number): string =>

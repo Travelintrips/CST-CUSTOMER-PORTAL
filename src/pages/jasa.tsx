@@ -20,10 +20,13 @@ import { useLanguage } from "@/i18n/LanguageContext";
 import { translateServiceName } from "@/i18n/serviceData";
 import {
   type ServiceHubItem,
+  type CanonicalPortalService,
   CATEGORY_PLACEHOLDER,
   SERVICE_PHOTOS,
   CAT_PHOTOS,
   formatIDR,
+  normalizeCanonicalService,
+  canonicalServiceTarget,
 } from "@/lib/jasa-shared";
 import PageSeo from "@/components/PageSeo";
 
@@ -36,12 +39,13 @@ const BUNDLE_PHOTOS: Record<string, string> = {
 };
 
 interface SubService {
+  serviceCode: string;
   title: string;
   titleId: string;
   titleKey?: string;
   desc: string;
   descKey?: string;
-  href: string;
+  href?: string;
   icon: React.ElementType;
   eta: string;
   categoryKeys: string[];
@@ -52,9 +56,9 @@ interface SubService {
 interface MainCategory {
   id: string;
   title: string;
-  titleKey: string;
+  titleKey?: string;
   subtitle: string;
-  subtitleKey: string;
+  subtitleKey?: string;
   icon: React.ElementType;
   gradient: string;
   lightBg: string;
@@ -78,39 +82,9 @@ const MAIN_CATEGORIES: MainCategory[] = [
     badgeCls: "bg-blue-100 text-blue-700 border-blue-200",
     accentColor: "#0369a1",
     services: [
-      {
-        title: "Sea Freight",
-        titleId: "Kargo Laut",
-        titleKey: "servicesMenu.seaFreightCard.title",
-        desc: "Pengiriman via laut FCL & LCL untuk volume besar internasional",
-        descKey: "servicesMenu.seaFreightCard.desc",
-        href: "/ocean-freight-booking",
-        icon: Ship,
-        eta: "7–30 hari",
-        categoryKeys: ["sea_freight"],
-      },
-      {
-        title: "Air Freight",
-        titleId: "Kargo Udara",
-        titleKey: "servicesMenu.airFreightCard.title",
-        desc: "Pengiriman ekspres via udara ke seluruh dunia",
-        descKey: "servicesMenu.airFreightCard.desc",
-        href: "/air-freight-booking",
-        icon: Plane,
-        eta: "1–3 hari",
-        categoryKeys: ["air_freight"],
-      },
-      {
-        title: "Domestik",
-        titleId: "Pengiriman Dalam Negeri",
-        titleKey: "servicesMenu.domesticCard.title",
-        desc: "Distribusi kargo antar kota & antar pulau di seluruh Indonesia",
-        descKey: "servicesMenu.domesticCard.desc",
-        href: "/trucking",
-        icon: Truck,
-        eta: "1–5 hari",
-        categoryKeys: ["trucking"],
-      },
+      { serviceCode: "sea_freight", title: "Sea Freight", titleId: "Kargo Laut", desc: "Pengiriman kargo via laut FCL & LCL.", href: "/ocean-freight-booking", icon: Ship, eta: "7–30 hari", categoryKeys: ["sea_freight"] },
+      { serviceCode: "air_freight", title: "Air Freight", titleId: "Kargo Udara", desc: "Pengiriman kargo ekspres via udara.", href: "/air-freight-booking", icon: Plane, eta: "1–3 hari", categoryKeys: ["air_freight"] },
+      { serviceCode: "trucking", title: "Domestik", titleId: "Pengiriman Dalam Negeri", desc: "Distribusi kargo antar kota dan antar pulau.", href: "/trucking", icon: Truck, eta: "1–5 hari", categoryKeys: ["trucking"] },
     ],
   },
   {
@@ -126,36 +100,29 @@ const MAIN_CATEGORIES: MainCategory[] = [
     badgeCls: "bg-orange-100 text-orange-700 border-orange-200",
     accentColor: "#b45309",
     services: [
-      {
-        title: "Custom Clearance Proses",
-        titleId: "Proses Bea Cukai",
-        titleKey: "servicesMenu.customsClearanceCard.title",
-        desc: "Pengurusan penuh proses kepabeanan impor & ekspor di pelabuhan",
-        descKey: "servicesMenu.customsClearanceCard.desc",
-        href: "/custom-clearance",
-        icon: FileCheck,
-        eta: "1–3 hari kerja",
-        categoryKeys: ["ppjk"],
-      },
-      {
-        title: "Konsultan Pabean",
-        titleId: "Konsultasi Kepabeanan",
-        titleKey: "servicesMenu.consultant.title",
-        desc: "Layanan konsultasi & pendampingan prosedur kepabeanan secara menyeluruh",
-        descKey: "servicesMenu.consultant.desc",
-        href: "/pabean",
-        icon: BookOpen,
-        eta: "Sesuai kebutuhan",
-        categoryKeys: ["ppjk"],
-        subItemKeys: [
-          "servicesMenu.consultant.sub1",
-          "servicesMenu.consultant.sub2",
-          "servicesMenu.consultant.sub3",
-        ],
-      },
+      { serviceCode: "customs_clearance", title: "Custom Clearance Proses", titleId: "Proses Bea Cukai", desc: "Pengurusan proses kepabeanan impor dan ekspor.", href: "/custom-clearance", icon: FileCheck, eta: "1–3 hari kerja", categoryKeys: ["ppjk"] },
+      { serviceCode: "ppjk_consulting", title: "Konsultan Pabean", titleId: "Konsultasi Kepabeanan", desc: "Konsultasi dan pendampingan prosedur kepabeanan.", href: "/pabean", icon: BookOpen, eta: "Sesuai kebutuhan", categoryKeys: ["ppjk"] },
     ],
   },
-];
+  {
+    id: "additional",
+    title: "Layanan Logistik Tambahan",
+    subtitle: "Handling, pelabuhan, storage, EMKL, dan proteksi kargo",
+    icon: Package,
+    gradient: "from-emerald-600 to-teal-500",
+    lightBg: "bg-emerald-50",
+    textColor: "text-emerald-700",
+    badgeCls: "bg-emerald-100 text-emerald-700 border-emerald-200",
+    accentColor: "#047857",
+    services: [
+      { serviceCode: "handling", title: "Handling", titleId: "Handling", desc: "Penanganan kargo di titik operasional.", icon: Package, eta: "Sesuai kebutuhan", categoryKeys: ["handling"] },
+      { serviceCode: "port_charges", title: "Port Charges", titleId: "Port Charges", desc: "Pengelolaan biaya operasional pelabuhan.", icon: Building2, eta: "Sesuai kebutuhan", categoryKeys: ["additional", "document"] },
+      { serviceCode: "storage_demurrage", title: "Storage / Demurrage", titleId: "Storage / Demurrage", desc: "Penyimpanan dan kebutuhan storage/demurrage.", icon: Warehouse, eta: "Sesuai kebutuhan", categoryKeys: ["storage", "handling"] },
+      { serviceCode: "emkl", title: "EMKL", titleId: "EMKL", desc: "Ekspedisi Muatan Kapal Laut dan koordinasi operasional.", icon: Ship, eta: "Sesuai kebutuhan", categoryKeys: ["sea_freight", "exim_service"] },
+      { serviceCode: "cargo_insurance", title: "Asuransi Kargo", titleId: "Asuransi Kargo", desc: "Proteksi risiko kargo selama pengiriman.", icon: ShieldCheck, eta: "Sesuai kebutuhan", categoryKeys: ["additional"] },
+    ],
+  },
+]
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -325,31 +292,39 @@ export default function Jasa() {
     };
   });
 
-  const legacyItems: ServiceHubItem[] = (Array.isArray(servicesRaw) ? servicesRaw : []).map((s: unknown) => {
-    const svc = s as Record<string, unknown>;
-    const cats = (svc["categories"] as string[] | null) ?? [];
-    return {
-      source:      "product",
-      id:          svc["id"] as number,
-      title:       svc["name"] as string,
-      category:    cats[0] ?? "",
-      serviceType: null,
-      price:       (svc["price"] as number) ?? null,
-      unit:        (svc["unit"] as string | null) ?? null,
-      targetUrl:   `/jasa/${svc["id"]}`,
-      description: (svc["description"] as string | null) ?? null,
-      imageUrl:    (svc["imageUrl"] as string | null) ?? null,
-      categories:  cats,
-      currency:    "IDR",
-    };
-  });
+  const canonicalServices: CanonicalPortalService[] = (Array.isArray(servicesRaw) ? servicesRaw : [])
+    .map(normalizeCanonicalService)
+    .filter((service): service is CanonicalPortalService => Boolean(service?.isActive));
+  const canonicalByCode = new Map(canonicalServices.map((service) => [service.code, service]));
 
   const dedupById = (items: ServiceHubItem[]) => {
     const seen = new Set<number>();
     return items.filter((i) => { if (seen.has(i.id)) return false; seen.add(i.id); return true; });
   };
 
-  const allItems = [...dedupById(vendorItems), ...dedupById(legacyItems)];
+  // Vendor offers are separate from the canonical CST service master.
+  const allItems = dedupById(vendorItems);
+
+  function serviceCardsForCategory(cat: MainCategory) {
+    const q = searchQuery.trim().toLowerCase();
+    return cat.services
+      .map((presentation) => {
+        const master = canonicalByCode.get(presentation.serviceCode);
+        if (!master) return null;
+        const card = {
+          ...presentation,
+          title: master.name,
+          desc: master.description ?? presentation.desc,
+          eta: master.estimatedDays ?? "Sesuai kebutuhan",
+          href: presentation.href ?? canonicalServiceTarget(master),
+          master,
+        };
+        if (!q) return card;
+        const haystack = `${card.title} ${card.desc} ${master.category ?? ""} ${master.code}`.toLowerCase();
+        return haystack.includes(q) ? card : null;
+      })
+      .filter((card): card is NonNullable<typeof card> => Boolean(card));
+  }
 
   const matchSearch = (item: ServiceHubItem) => {
     const q = searchQuery.toLowerCase();
@@ -371,6 +346,8 @@ export default function Jasa() {
   }
 
   const totalVendorItems = allItems.filter(matchSearch).length;
+  const totalCanonicalItems = MAIN_CATEGORIES.reduce((sum, cat) => sum + serviceCardsForCategory(cat).length, 0);
+  const totalSearchResults = totalVendorItems + totalCanonicalItems;
 
   return (
     <div className="min-h-screen bg-slate-50">
@@ -574,7 +551,7 @@ export default function Jasa() {
               </div>
               {searchQuery && (
                 <p className="text-xs text-slate-400 mt-2 px-1">
-                  {totalVendorItems} {t("jasa.searchResultCount", "layanan vendor ditemukan untuk")} "<span className="font-semibold text-slate-600">{searchQuery}</span>"
+                  {totalSearchResults} {t("jasa.searchResultCount", "layanan ditemukan untuk")} "<span className="font-semibold text-slate-600">{searchQuery}</span>"
                 </p>
               )}
             </div>
@@ -584,7 +561,10 @@ export default function Jasa() {
               {MAIN_CATEGORIES.map((cat) => {
                 const isActive = activeCatId === cat.id;
                 const vendorMatches = getItemsForCategory(cat);
+                const serviceCards = serviceCardsForCategory(cat);
                 const catPhoto = CAT_PHOTOS[cat.id];
+
+                if (!isLoading && serviceCards.length === 0 && vendorMatches.length === 0) return null;
 
                 return (
                   <section key={cat.id}>
@@ -612,8 +592,8 @@ export default function Jasa() {
                             {(() => { const CatIcon = cat.icon; return <CatIcon className="h-6 w-6 text-white" />; })()}
                           </div>
                           <div>
-                            <h2 className="text-xl md:text-2xl font-extrabold text-white leading-tight tracking-tight">{t(cat.titleKey)}</h2>
-                            <p className="text-white/55 text-xs mt-0.5">{t(cat.subtitleKey)}</p>
+                            <h2 className="text-xl md:text-2xl font-extrabold text-white leading-tight tracking-tight">{cat.titleKey ? t(cat.titleKey) : cat.title}</h2>
+                            <p className="text-white/55 text-xs mt-0.5">{cat.subtitleKey ? t(cat.subtitleKey) : cat.subtitle}</p>
                           </div>
                         </div>
                         <span className="shrink-0 flex items-center gap-1.5 text-[12px] font-bold text-white/70 group-hover/banner:text-white group-hover/banner:gap-2.5 transition-all">
@@ -628,12 +608,12 @@ export default function Jasa() {
 
                     {/* ── Service cards with real photo thumbnails ─────────── */}
                     <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5 mb-5">
-                      {cat.services.map((svc) => {
+                      {serviceCards.map((svc) => {
                         const SvcIcon = svc.icon;
                         const photo = SERVICE_PHOTOS[svc.title];
 
                         return (
-                          <Link key={svc.href + svc.title} href={svc.href}>
+                          <Link key={svc.master.code} href={svc.href}>
                             <div
                               className="group bg-white rounded-2xl overflow-hidden border border-slate-200 cursor-pointer transition-all duration-300 hover:-translate-y-1.5 hover:shadow-2xl hover:border-transparent flex flex-col h-full"
                               style={{ boxShadow: "0 4px 16px rgba(0,0,0,0.06)" }}
@@ -666,13 +646,13 @@ export default function Jasa() {
                                   <div className={`w-8 h-8 rounded-lg bg-gradient-to-br ${cat.gradient} flex items-center justify-center mb-2.5 shadow-md`}>
                                     <SvcIcon className="h-4 w-4 text-white" />
                                   </div>
-                                  <h3 className="text-white font-extrabold text-[15px] leading-tight tracking-tight">{svc.titleKey ? t(svc.titleKey) : svc.title}</h3>
+                                  <h3 className="text-white font-extrabold text-[15px] leading-tight tracking-tight">{svc.title}</h3>
                                 </div>
                               </div>
 
                               {/* Body */}
                               <div className="p-4 flex flex-col flex-1 gap-3">
-                                <p className="text-[12.5px] text-slate-500 leading-relaxed">{svc.descKey ? t(svc.descKey) : svc.desc}</p>
+                                <p className="text-[12.5px] text-slate-500 leading-relaxed">{svc.desc}</p>
 
                                 {(svc.subItemKeys || svc.subItems) && (svc.subItemKeys || svc.subItems || []).length > 0 && (
                                   <ul className="space-y-1.5 border-t border-slate-100 pt-3 mt-1">

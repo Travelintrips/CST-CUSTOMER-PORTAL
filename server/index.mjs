@@ -2728,7 +2728,7 @@ function mapCatalogItem(row) {
   };
 }
 
-async function getPublishedCatalogItems({ requirePublishedStatus = true } = {}) {
+async function getPublishedCatalogItems({ requirePublishedStatus = true, type = "product" } = {}) {
   const statusClause = requirePublishedStatus ? "and status = 'published'" : "";
   const result = await query(
     `select id, vendor_id, vendor_name, type, name, description, unit, kategori, subcategory,
@@ -2737,11 +2737,12 @@ async function getPublishedCatalogItems({ requirePublishedStatus = true } = {}) 
             validity_date, location, origin, documents, published_at, sort_order,
             media_assets, is_featured, featured_until, is_internal_vendor
        from public.vendor_catalog_items
-      where type = 'product'
+      where ($1::text is null or type = $1)
         and is_active = true
         and is_published = true
         ${statusClause}
       order by sort_order asc, published_at desc nulls last, id desc`,
+    [type],
   );
   return result.rows;
 }
@@ -2781,7 +2782,9 @@ async function handlePublicProducts(response) {
 async function handleMarketplace(response, url) {
   const search = (url.searchParams.get("q") ?? "").trim().toLowerCase();
   const category = (url.searchParams.get("category") ?? "").trim().toLowerCase();
-  const rows = await getPublishedCatalogItems();
+  const requestedKind = (url.searchParams.get("kind") ?? "product").trim().toLowerCase();
+  const kind = requestedKind === "service" ? "service" : "product";
+  const rows = await getPublishedCatalogItems({ type: kind });
   const items = rows
     .map(mapCatalogItem)
     .filter((item) => {
@@ -2801,7 +2804,7 @@ async function handleMarketplaceItem(response, itemId) {
     return;
   }
 
-  const rows = await getPublishedCatalogItems({ requirePublishedStatus: false });
+  const rows = await getPublishedCatalogItems({ requirePublishedStatus: false, type: null });
   const item = rows.find((row) => Number(row.id) === id);
   if (!item) {
     sendError(response, 404, "Item tidak ditemukan atau belum dipublikasikan.");
