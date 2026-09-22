@@ -3042,6 +3042,13 @@ async function route(request, response) {
     await handleReadiness(response);
     return;
   }
+  if (request.method === "GET" && pathname === "/api/portal/release-info") {
+    sendJson(response, 200, {
+      release: "canonical-services-v1",
+      service: "customer-portal-api",
+    });
+    return;
+  }
   if (request.method === "OPTIONS") {
     sendEmpty(response, 204, {
       Allow: "GET,POST,OPTIONS",

@@ -1,0 +1,50 @@
+name: Production Verify
+
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  verify-production:
+    name: Verify Hostinger production
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - name: Wait for latest release marker
+        shell: bash
+        run: |
+          set -euo pipefail
+          url="https://cstlogistic.co.id/api/portal/release-info"
+          expected='"release":"canonical-services-v1"'
+
+          for attempt in $(seq 1 40); do
+            echo "Attempt ${attempt}/40"
+            body="$(curl --fail --silent --show-error --max-time 15 "$url" || true)"
+            if printf '%s' "$body" | tr -d '[:space:]' | grep -Fq "$expected"; then
+              echo "Latest Customer Portal release is live on Hostinger."
+              exit 0
+            fi
+            sleep 15
+          done
+
+          echo "Production did not expose the expected release marker."
+          curl -i --max-time 20 "$url" || true
+          exit 1
+
+      - name: Verify canonical services are exposed
+        shell: bash
+        run: |
+          set -euo pipefail
+          body="$(curl --fail --silent --show-error --max-time 20 https://cstlogistic.co.id/api/portal/services)"
+          compact="$(printf '%s' "$body" | tr -d '[:space:]')"
+          for code in sea_freight air_freight trucking customs_clearance ppjk_consulting handling port_charges storage_demurrage emkl cargo_insurance; do
+            printf '%s' "$compact" | grep -Fq "\"code\":\"$code\"" || {
+              echo "Missing canonical service: $code"
+              exit 1
+            }
+          done
+          echo "All 10 canonical services are live."
