@@ -40,6 +40,11 @@ interface SubService {
   subItemKeys?: string[];
 }
 
+type ResolvedServiceCard = Omit<SubService, "href"> & {
+  href: string;
+  master: CanonicalPortalService;
+};
+
 interface CategoryDef {
   id: string;
   title: string;
@@ -258,7 +263,7 @@ export default function JasaKategori() {
     CATEGORIES.flatMap((category) => category.services.map((service) => service.serviceCode)),
   );
   const configuredServiceCards = (cat?.services ?? [])
-    .map((presentation) => {
+    .map((presentation): ResolvedServiceCard | null => {
       const master = canonicalByCode.get(presentation.serviceCode);
       if (!master) return null;
       return {
@@ -274,7 +279,7 @@ export default function JasaKategori() {
   const automaticServiceCards = cat?.id === "additional"
     ? canonicalServices
         .filter((master) => !presentedServiceCodes.has(master.code))
-        .map((master) => ({
+        .map((master): ResolvedServiceCard => ({
           serviceCode: master.code,
           title: master.name,
           desc: master.description ?? `Layanan ${master.name}`,

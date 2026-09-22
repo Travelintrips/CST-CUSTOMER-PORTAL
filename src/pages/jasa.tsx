@@ -53,6 +53,11 @@ interface SubService {
   subItemKeys?: string[];
 }
 
+type ResolvedServiceCard = Omit<SubService, "href"> & {
+  href: string;
+  master: CanonicalPortalService;
+};
+
 interface MainCategory {
   id: string;
   title: string;
@@ -311,7 +316,7 @@ export default function Jasa() {
   function serviceCardsForCategory(cat: MainCategory) {
     const q = searchQuery.trim().toLowerCase();
     const configured = cat.services
-      .map((presentation) => {
+      .map((presentation): ResolvedServiceCard | null => {
         const master = canonicalByCode.get(presentation.serviceCode);
         if (!master) return null;
         return {
@@ -328,7 +333,7 @@ export default function Jasa() {
     const automatic = cat.id === "additional"
       ? canonicalServices
           .filter((master) => !presentedServiceCodes.has(master.code))
-          .map((master) => ({
+          .map((master): ResolvedServiceCard => ({
             serviceCode: master.code,
             title: master.name,
             titleId: master.name,
