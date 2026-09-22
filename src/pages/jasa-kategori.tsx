@@ -50,6 +50,7 @@ interface CategoryDef {
   gradient: string;
   lightBg: string;
   textColor: string;
+  badgeCls?: string;
   accentColor: string;
   services: SubService[];
 }
