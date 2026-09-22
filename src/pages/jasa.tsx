@@ -296,6 +296,9 @@ export default function Jasa() {
     .map(normalizeCanonicalService)
     .filter((service): service is CanonicalPortalService => Boolean(service?.isActive));
   const canonicalByCode = new Map(canonicalServices.map((service) => [service.code, service]));
+  const presentedServiceCodes = new Set(
+    MAIN_CATEGORIES.flatMap((category) => category.services.map((service) => service.serviceCode)),
+  );
 
   const dedupById = (items: ServiceHubItem[]) => {
     const seen = new Set<number>();
@@ -307,11 +310,11 @@ export default function Jasa() {
 
   function serviceCardsForCategory(cat: MainCategory) {
     const q = searchQuery.trim().toLowerCase();
-    return cat.services
+    const configured = cat.services
       .map((presentation) => {
         const master = canonicalByCode.get(presentation.serviceCode);
         if (!master) return null;
-        const card = {
+        return {
           ...presentation,
           title: master.name,
           desc: master.description ?? presentation.desc,
@@ -319,11 +322,30 @@ export default function Jasa() {
           href: presentation.href ?? canonicalServiceTarget(master),
           master,
         };
-        if (!q) return card;
-        const haystack = `${card.title} ${card.desc} ${master.category ?? ""} ${master.code}`.toLowerCase();
-        return haystack.includes(q) ? card : null;
       })
       .filter((card): card is NonNullable<typeof card> => Boolean(card));
+
+    const automatic = cat.id === "additional"
+      ? canonicalServices
+          .filter((master) => !presentedServiceCodes.has(master.code))
+          .map((master) => ({
+            serviceCode: master.code,
+            title: master.name,
+            titleId: master.name,
+            desc: master.description ?? `Layanan ${master.name}`,
+            href: canonicalServiceTarget(master),
+            icon: Package,
+            eta: master.estimatedDays ?? "Sesuai kebutuhan",
+            categoryKeys: [master.category ?? master.code],
+            master,
+          }))
+      : [];
+
+    return [...configured, ...automatic].filter((card) => {
+      if (!q) return true;
+      const haystack = `${card.title} ${card.desc} ${card.master.category ?? ""} ${card.master.code}`.toLowerCase();
+      return haystack.includes(q);
+    });
   }
 
   const matchSearch = (item: ServiceHubItem) => {

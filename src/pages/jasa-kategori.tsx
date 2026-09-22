@@ -254,7 +254,10 @@ export default function JasaKategori() {
     .map(normalizeCanonicalService)
     .filter((service): service is CanonicalPortalService => Boolean(service?.isActive));
   const canonicalByCode = new Map(canonicalServices.map((service) => [service.code, service]));
-  const serviceCards = (cat?.services ?? [])
+  const presentedServiceCodes = new Set(
+    CATEGORIES.flatMap((category) => category.services.map((service) => service.serviceCode)),
+  );
+  const configuredServiceCards = (cat?.services ?? [])
     .map((presentation) => {
       const master = canonicalByCode.get(presentation.serviceCode);
       if (!master) return null;
@@ -268,6 +271,21 @@ export default function JasaKategori() {
       };
     })
     .filter((card): card is NonNullable<typeof card> => Boolean(card));
+  const automaticServiceCards = cat?.id === "additional"
+    ? canonicalServices
+        .filter((master) => !presentedServiceCodes.has(master.code))
+        .map((master) => ({
+          serviceCode: master.code,
+          title: master.name,
+          desc: master.description ?? `Layanan ${master.name}`,
+          href: canonicalServiceTarget(master),
+          icon: Package,
+          eta: master.estimatedDays ?? "Sesuai kebutuhan",
+          categoryKeys: [master.category ?? master.code],
+          master,
+        }))
+    : [];
+  const serviceCards = [...configuredServiceCards, ...automaticServiceCards];
 
   // Marketplace/vendor offers are not the CST service master.
   const allItems = vendorItems;

@@ -590,6 +590,9 @@ describe("standalone Customer Portal API boundary", () => {
     expect(jasa).toContain("normalizeCanonicalService");
     expect(jasa).toContain("canonicalByCode");
     expect(jasa).toContain("serviceCardsForCategory");
+    expect(jasa).toContain("presentedServiceCodes");
+    expect(jasa).toContain('cat.id === "additional"');
+    expect(jasa).toContain("!presentedServiceCodes.has(master.code)");
     expect(jasa).not.toContain("const legacyItems:");
     expect(category).toContain("const serviceCards =");
     expect(category).not.toContain("const legacyItems:");
