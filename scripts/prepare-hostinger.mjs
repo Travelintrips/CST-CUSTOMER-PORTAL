@@ -1,4 +1,5 @@
 import path from "node:path";
+import { execFileSync } from "node:child_process";
 import { cp, mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 
@@ -25,6 +26,20 @@ async function assertDirectory(dir, label) {
 await assertDirectory(publicDir, "Customer Portal frontend build");
 await assertDirectory(serverSource, "Customer Portal server source");
 
+let releaseId = process.env.PORTAL_RELEASE_ID || process.env.GITHUB_SHA || "";
+if (!releaseId) {
+  try {
+    releaseId = execFileSync("git", ["rev-parse", "HEAD"], {
+      cwd: repoRoot,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+    }).trim();
+  } catch {
+    releaseId = "";
+  }
+}
+releaseId ||= "unknown";
+
 await rm(serverOutput, { recursive: true, force: true });
 await cp(serverSource, serverOutput, { recursive: true });
 
@@ -38,6 +53,7 @@ process.env.NODE_ENV ||= "production";
 process.env.APP_ENV ||= "production";
 process.env.CUSTOMER_PORTAL_PUBLIC_DIR ||=
   path.join(runtimeDir, "public");
+process.env.PORTAL_RELEASE_ID ||= ${JSON.stringify(releaseId)};
 
 await loadSecrets(process.env);
 await import("./server/index.mjs");
@@ -55,4 +71,4 @@ await writeFile(
   "utf8",
 );
 
-console.log("Prepared Hostinger Customer Portal bundle in ./dist");
+console.log(`Prepared Hostinger Customer Portal bundle in ./dist (release ${releaseId})`);

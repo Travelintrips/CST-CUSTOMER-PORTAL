@@ -205,6 +205,18 @@ describe("standalone Customer Portal API boundary", () => {
     expect(storage).toContain('error.code = "STORAGE_BUCKET_NOT_PRIVATE"');
   });
 
+  it("exposes a commit-specific production release marker", () => {
+    const server = readFileSync(join(process.cwd(), "server/index.mjs"), "utf8");
+    const workflow = readFileSync(join(process.cwd(), ".github/workflows/production-verify.yml"), "utf8");
+    const hostinger = readFileSync(join(process.cwd(), "scripts/prepare-hostinger.mjs"), "utf8");
+    expect(server).toContain('releaseId: process.env.PORTAL_RELEASE_ID ?? "local-development"');
+    expect(hostinger).toContain("process.env.GITHUB_SHA");
+    expect(hostinger).toContain('process.env.PORTAL_RELEASE_ID ||= ${JSON.stringify(releaseId)}');
+    expect(workflow).toContain('expected_sha="${GITHUB_SHA}"');
+    expect(workflow).toContain('release_id="$(printf');
+    expect(workflow).toContain('if [ "$release_id" = "$expected_sha" ]; then');
+  });
+
   it("preserves vendor featured payment references and signs private proof paths", () => {
     const server = readFileSync(join(process.cwd(), "server/index.mjs"), "utf8");
     const vendorPortal = readFileSync(join(process.cwd(), "server/vendor-portal.mjs"), "utf8");

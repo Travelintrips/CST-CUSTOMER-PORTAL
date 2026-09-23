@@ -19,19 +19,27 @@ jobs:
         run: |
           set -euo pipefail
           url="https://cstlogistic.co.id/api/portal/release-info"
-          expected='"release":"canonical-services-v1"'
+          expected_sha="${GITHUB_SHA}"
 
           for attempt in $(seq 1 40); do
             echo "Attempt ${attempt}/40"
             body="$(curl --fail --silent --show-error --max-time 15 "$url" || true)"
-            if printf '%s' "$body" | tr -d '[:space:]' | grep -Fq "$expected"; then
-              echo "Latest Customer Portal release is live on Hostinger."
+            release_id="$(printf '%s' "$body" | node -e '
+              let input = "";
+              process.stdin.on("data", chunk => input += chunk);
+              process.stdin.on("end", () => {
+                try { process.stdout.write(String(JSON.parse(input).releaseId ?? "")); }
+                catch { process.stdout.write(""); }
+              });
+            ')"
+            if [ "$release_id" = "$expected_sha" ]; then
+              echo "Customer Portal release ${expected_sha} is live on Hostinger."
               exit 0
             fi
             sleep 15
           done
 
-          echo "Production did not expose the expected release marker."
+          echo "Production did not expose release ${expected_sha}."
           curl -i --max-time 20 "$url" || true
           exit 1
 

@@ -3060,6 +3060,7 @@ async function route(request, response) {
   if (request.method === "GET" && pathname === "/api/portal/release-info") {
     sendJson(response, 200, {
       release: "canonical-services-v1",
+      releaseId: process.env.PORTAL_RELEASE_ID ?? "local-development",
       service: "customer-portal-api",
     });
     return;
