@@ -1,5 +1,5 @@
 import path from "node:path";
-import { cp, mkdir, rm, stat, writeFile } from "node:fs/promises";
+import { cp, mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
@@ -8,6 +8,9 @@ const outputDir = path.join(repoRoot, "dist");
 const publicDir = path.join(outputDir, "public");
 const serverSource = path.join(repoRoot, "server");
 const serverOutput = path.join(outputDir, "server");
+const rootPackage = JSON.parse(
+  await readFile(path.join(repoRoot, "package.json"), "utf8"),
+);
 
 async function assertDirectory(dir, label) {
   try {
@@ -43,7 +46,12 @@ await import("./server/index.mjs");
 await writeFile(path.join(outputDir, "index.js"), runtimeEntry, "utf8");
 await writeFile(
   path.join(outputDir, "package.json"),
-  JSON.stringify({ type: "module" }, null, 2) + "\n",
+  JSON.stringify({
+    private: true,
+    type: "module",
+    engines: rootPackage.engines,
+    dependencies: rootPackage.dependencies,
+  }, null, 2) + "\n",
   "utf8",
 );
 

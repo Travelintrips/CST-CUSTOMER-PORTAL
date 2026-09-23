@@ -1,4 +1,4 @@
-// Browser-safe copy of SERVICE_SCHEMAS — extracted from artifacts/api-server/src/routes/vendorMiniForm.ts
+// Browser-safe service schemas used by the standalone vendor mini form.
 // The API server file has Express/Drizzle imports that cannot be bundled for the browser.
 // Keep this in sync with the source of truth in the API server file.
 

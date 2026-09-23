@@ -13,8 +13,12 @@ The app is a standalone Vite frontend. It keeps browser-safe local copies under
 
 ## Required configuration
 
-- `VITE_API_SERVER_URL` — absolute URL of the shared API server. The Vite proxy
-  forwards `/api/*` requests to this server.
+- `CUSTOMER_PORTAL_API_URL_DEV` — optional local API URL for development. It
+  must point to the standalone Customer Portal API; production uses same-origin
+  `/api/*` requests.
+- `GCP_SECRET_BUNDLE_PREFIX` — optional Secret Manager bundle prefix; defaults
+  to `customer-portal` for `customer-portal-development` and
+  `customer-portal-production`.
 - `GOOGLE_MAPS_API_KEY` — optional; injected into the browser for the route map
   feature and should be restricted to the required origins/APIs.
 - `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY`, and their `_DEV` variants —
@@ -25,9 +29,8 @@ Database URLs, service-account JSON, GCP Secret Manager bootstrap data,
 `SESSION_SECRET`, and GitHub tokens are backend/operations credentials and are
 not read by this standalone frontend.
 
-## Repository split
+## Standalone boundary
 
-The standalone project corresponds to the Customer Portal portion of
-`CST-SUPER-APP`'s `customer-portal` branch. Do not import the complete
-monorepo into this repository: that would reintroduce BizPortal and workspace
-dependencies.
+Keep browser-safe shared code under `src/shared/`. Do not add monorepo
+workspace packages, sibling application paths, or backend-only imports to this
+repository.

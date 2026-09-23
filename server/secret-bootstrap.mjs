@@ -1,7 +1,7 @@
 import { SecretManagerServiceClient } from "@google-cloud/secret-manager";
 
 const ALLOWED_ENVIRONMENTS = new Set(["development", "production"]);
-const DEFAULT_BUNDLE_PREFIX = "cst-super-app";
+const DEFAULT_BUNDLE_PREFIX = "customer-portal";
 const REQUIRED_SECRETS = [
   ["SESSION_SECRET", 32],
   ["SUPABASE_DATABASE_URL", 10],

@@ -8,7 +8,7 @@ const serverSource = readFileSync(
 );
 
 describe("standalone Customer Portal API boundary", () => {
-  it("does not proxy unknown API routes to CST-SUPER-APP", () => {
+  it("does not proxy unknown API routes to a legacy upstream", () => {
     expect(serverSource).not.toContain("CUSTOMER_PORTAL_API_UPSTREAM_URL");
     expect(serverSource).not.toContain("VITE_API_SERVER_URL");
     expect(serverSource).not.toContain("proxyToUpstream");
@@ -26,9 +26,22 @@ describe("standalone Customer Portal API boundary", () => {
     expect(viteSource).not.toContain("process.env.API_SERVER_URL_DEV");
     expect(launcherSource).toContain("unset CUSTOMER_PORTAL_API_UPSTREAM_URL");
     expect(launcherSource).toContain('CUSTOMER_PORTAL_API_URL_DEV="http://127.0.0.1:18444"');
+    expect(launcherSource).not.toContain("VITE_API_SERVER_URL");
     expect(replitSource).not.toContain('VITE_API_SERVER_URL = "https://cstlogistic.co.id"');
     expect(replitSource).not.toContain("VITE_API_SERVER_URL");
     expect(replitSource).toContain("localPort = 18444");
+    expect(viteSource).not.toContain("../logistic-order");
+    expect(viteSource).not.toContain("../mockup-sandbox");
+    expect(viteSource).not.toContain("/wa-gateway");
+  });
+
+  it("uses a portal-specific Secret Manager bundle and standalone build", () => {
+    const bootstrap = readFileSync(join(process.cwd(), "server/secret-bootstrap.mjs"), "utf8");
+    const packageSource = readFileSync(join(process.cwd(), "package.json"), "utf8");
+    expect(bootstrap).toContain('DEFAULT_BUNDLE_PREFIX = "customer-portal"');
+    expect(bootstrap).not.toContain('DEFAULT_BUNDLE_PREFIX = "cst-super-app"');
+    expect(packageSource).toContain('"build:portal"');
+    expect(packageSource).not.toContain('"build:workspace"');
   });
 
   it("keeps vendor PO confirmation on the standalone marketplace API", () => {

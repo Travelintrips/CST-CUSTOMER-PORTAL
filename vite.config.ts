@@ -136,8 +136,6 @@ export default defineConfig({
     watch: {
       ignored: [
         "**/node_modules/**",
-        path.resolve(import.meta.dirname, "../logistic-order/**"),
-        path.resolve(import.meta.dirname, "../mockup-sandbox/**"),
       ],
     },
     hmr: false,
@@ -152,14 +150,6 @@ export default defineConfig({
       "/q": {
         target: apiServerUrl,
         changeOrigin: true,
-      },
-      // Logistic Order is owned by this Customer Portal. Its compatibility
-      // aliases are handled by the SPA routes above; do not proxy them to the
-      // deprecated standalone redirect shim.
-      "/wa-gateway": {
-        target: `http://localhost:${process.env.WA_GATEWAY_PORT ?? 8000}`,
-        changeOrigin: true,
-        ws: true,
       },
     },
   },

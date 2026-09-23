@@ -1,4 +1,4 @@
-// ── Service category normalisation (mirrors artifacts/api-server/src/routes/portal.ts) ──
+// ── Service category normalisation for the standalone portal catalog. ──
 
 const SERVICE_CATEGORY_ALIASES: Record<string, string> = {
   // trucking
