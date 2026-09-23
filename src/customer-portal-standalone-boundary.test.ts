@@ -194,6 +194,17 @@ describe("standalone Customer Portal API boundary", () => {
     expect(storage).toContain("createSignedUrl(normalizedPath, SIGNED_URL_TTL_SECONDS)");
   });
 
+  it("reports storage readiness separately from database readiness", () => {
+    const server = readFileSync(join(process.cwd(), "server/index.mjs"), "utf8");
+    const storage = readFileSync(join(process.cwd(), "server/storage.mjs"), "utf8");
+    expect(server).toContain('storageReason: "database_unavailable"');
+    expect(server).toContain('database: "connected"');
+    expect(server).toContain("storageReason: error?.code ?? \"storage_unavailable\"");
+    expect(storage).toContain('error.code = "STORAGE_NOT_CONFIGURED"');
+    expect(storage).toContain('error.code = existing.error ? "STORAGE_BUCKET_UNAVAILABLE" : "STORAGE_BUCKET_MISSING"');
+    expect(storage).toContain('error.code = "STORAGE_BUCKET_NOT_PRIVATE"');
+  });
+
   it("preserves vendor featured payment references and signs private proof paths", () => {
     const server = readFileSync(join(process.cwd(), "server/index.mjs"), "utf8");
     const vendorPortal = readFileSync(join(process.cwd(), "server/vendor-portal.mjs"), "utf8");

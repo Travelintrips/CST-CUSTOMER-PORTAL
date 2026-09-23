@@ -519,6 +519,20 @@ async function handleHealth(response) {
 async function handleReadiness(response) {
   try {
     await checkDatabase();
+  } catch {
+    sendJson(response, 503, {
+      status: "not_ready",
+      service: "customer-portal",
+      appEnv: APP_ENV,
+      database: "unavailable",
+      databaseEnvironment,
+      storage: "unavailable",
+      storageReason: "database_unavailable",
+    });
+    return;
+  }
+
+  try {
     const storage = await checkStorageReadiness();
     sendJson(response, 200, {
       status: "ready",
@@ -529,14 +543,15 @@ async function handleReadiness(response) {
       storage: storage.private ? "private" : "unavailable",
       storageBucket: storage.bucket,
     });
-  } catch {
+  } catch (error) {
     sendJson(response, 503, {
       status: "not_ready",
       service: "customer-portal",
       appEnv: APP_ENV,
-      database: "unavailable",
+      database: "connected",
       databaseEnvironment,
       storage: "unavailable",
+      storageReason: error?.code ?? "storage_unavailable",
     });
   }
 }

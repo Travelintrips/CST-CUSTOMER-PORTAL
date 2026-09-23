@@ -51,11 +51,13 @@ function storageConfig() {
         : "Development document storage is not configured.",
     );
     error.statusCode = 503;
+    error.code = "STORAGE_NOT_CONFIGURED";
     throw error;
   }
   if (bucket === "public-assets") {
     const error = new Error("Document storage cannot use the public-assets bucket.");
     error.statusCode = 503;
+    error.code = "STORAGE_PUBLIC_BUCKET_FORBIDDEN";
     throw error;
   }
   if (!isValidBucketName(bucket)) {
@@ -65,6 +67,7 @@ function storageConfig() {
         : "Development document storage bucket configuration is invalid.",
     );
     error.statusCode = 503;
+    error.code = "STORAGE_INVALID_BUCKET";
     throw error;
   }
   const parsedUrl = new URL(url);
@@ -75,6 +78,7 @@ function storageConfig() {
         : "Development document storage URL is invalid.",
     );
     error.statusCode = 503;
+    error.code = "STORAGE_INVALID_URL";
     throw error;
   }
   return { url: parsedUrl.origin, serviceRoleKey, bucket };
@@ -138,11 +142,13 @@ export async function checkStorageReadiness() {
         : "Development document storage bucket is unavailable.",
     );
     error.statusCode = 503;
+    error.code = existing.error ? "STORAGE_BUCKET_UNAVAILABLE" : "STORAGE_BUCKET_MISSING";
     throw error;
   }
   if (existing.data.public) {
     const error = new Error("Document storage bucket must be private.");
     error.statusCode = 503;
+    error.code = "STORAGE_BUCKET_NOT_PRIVATE";
     throw error;
   }
   return { bucket: storage.bucket, private: true };
