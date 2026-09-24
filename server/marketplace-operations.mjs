@@ -1330,6 +1330,23 @@ async function setPoPaymentTerms({ poId, body, user }) {
     if (totals.receivedAmount > 0.005) {
       fail(409, "Syarat pembayaran tidak dapat diubah setelah ada pembayaran yang sudah disetujui.");
     }
+    const pendingProof = (await db(
+      `select id from public.mkt_po_payment_proofs where po_id=$1 and review_status='submitted' limit 1`,
+      [po.id],
+    )).rows[0];
+    const pendingPaylabs = (await db(
+      `select id from public.payments
+        where ref_kind='purchase'::payment_ref_kind
+          and ref_id=$1
+          and provider='paylabs'::payment_provider
+          and status='pending'::payment_status
+          and (expired_at is null or expired_at > now())
+        limit 1`,
+      [po.id],
+    )).rows[0];
+    if (pendingProof || pendingPaylabs) {
+      fail(409, "Syarat pembayaran tidak dapat diubah saat ada pembayaran yang masih menunggu penyelesaian/verifikasi.");
+    }
 
     const days = paymentTermDays(code);
     const label = paymentTermLabel(code, dpPercent);
@@ -1495,7 +1512,12 @@ async function submitPoPaymentProof({ poId, body, user }) {
   }
 
   return withTransaction(async (db) => {
+    await db("select pg_advisory_xact_lock($1,$2)", [481516, Number(po.id)]);
     const locked = await loadPo(po.id, user, { client: db, forUpdate: true, isAdmin: false });
+    const lockedPaylabsState = await getMarketplacePaylabsState(locked, db);
+    if (lockedPaylabsState.hasPendingPayment) {
+      fail(409, "Pembayaran Paylabs masih aktif. Transfer manual diblokir untuk mencegah pembayaran ganda.");
+    }
     const lockedTotals = await paymentTotals(locked, db);
     if (lockedTotals.remainingAmount <= 0.005) fail(409, "Pembayaran PO ini sudah Lunas.");
     if (expectedAmount > lockedTotals.remainingAmount + 0.005) {
