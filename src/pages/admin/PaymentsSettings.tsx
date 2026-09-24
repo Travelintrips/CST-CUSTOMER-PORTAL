@@ -150,7 +150,7 @@ export function PayLabsSettingTab() {
       });
       if (!r.ok) throw new Error(t("adminPayments.saveFailedError", "Gagal menyimpan"));
       const saved = await r.json().catch(() => ({})) as PaylabsConfigResponse;
-      const savedMarker = saved._savedMarker ?? SAVED || "__SAVED__";
+      const savedMarker = saved._savedMarker ?? (SAVED || "__SAVED__");
       setSAVED(savedMarker);
       setForm({
         sandboxMode: saved.sandboxMode ?? form.sandboxMode,
