@@ -66,6 +66,12 @@ type PurchaseOrder = {
   vendorId?: number | null;
   status: string;
   confirmedAt?: string | null;
+  paymentTerms?: string | null;
+  paymentTermCode?: string | null;
+  paymentStatus?: string | null;
+  paymentDueAt?: string | null;
+  paymentProofUploadedAt?: string | null;
+  paymentVerifiedAt?: string | null;
   totalAmount?: string | number | null;
   taxAmount?: string | number | null;
   grandTotal: string | number;
@@ -74,6 +80,23 @@ type PurchaseOrder = {
   vendorNameSnapshot?: string | null;
   rfqNumber?: string | null;
   createdAt: string;
+};
+
+type PaymentView = {
+  poId: number;
+  paymentTermCode: string | null;
+  paymentTerms: string | null;
+  paymentStatus: "unpaid" | "proof_submitted" | "paid" | "rejected";
+  paymentDueAt: string | null;
+  amount: string | number | null;
+  currency: string;
+  proofAvailable: boolean;
+  proofUrl: string | null;
+  proofUploadedAt: string | null;
+  verifiedAt: string | null;
+  rejectionReason: string | null;
+  requiresClearanceBeforeHandover: boolean;
+  termsMissing: boolean;
 };
 
 type Shipment = {
@@ -140,6 +163,9 @@ export function MarketplaceOperationsTab() {
   const [selectedPo, setSelectedPo] = useState<PurchaseOrder | null>(null);
   const [shipments, setShipments] = useState<Shipment[]>([]);
   const [shipmentItems, setShipmentItems] = useState<ShipmentItem[]>([]);
+  const [payment, setPayment] = useState<PaymentView | null>(null);
+  const [paymentTermDraft, setPaymentTermDraft] = useState("");
+  const [paymentRejectReason, setPaymentRejectReason] = useState("");
   const [loading, setLoading] = useState(true);
   const [working, setWorking] = useState(false);
   const [vendorIds, setVendorIds] = useState("");
@@ -263,8 +289,13 @@ export function MarketplaceOperationsTab() {
   const selectPo = async (po: PurchaseOrder) => {
     setSelectedPo(po);
     try {
-      const result = await api<Shipment[]>(`/api/mkt/admin/purchase-orders/${po.id}/shipments`);
+      const [result, paymentResult] = await Promise.all([
+        api<Shipment[]>(`/api/mkt/admin/purchase-orders/${po.id}/shipments`),
+        api<PaymentView>(`/api/mkt/admin/purchase-orders/${po.id}/payment`),
+      ]);
       setShipments(result);
+      setPayment(paymentResult);
+      setPaymentTermDraft(paymentResult.paymentTermCode ?? "");
       if (result[0]) {
         const detail = await api<{ items: ShipmentItem[] }>(`/api/mkt/admin/shipments/${result[0].id}`);
         setShipmentItems(detail.items ?? []);
@@ -274,6 +305,43 @@ export function MarketplaceOperationsTab() {
     } catch (error) {
       toast({ title: "Detail PO gagal dimuat", description: (error as Error).message, variant: "destructive" });
     }
+  };
+
+  const savePaymentTerms = () => {
+    if (!selectedPo || !paymentTermDraft) return;
+    void run(async () => {
+      await api<PaymentView>(`/api/mkt/admin/purchase-orders/${selectedPo.id}/payment`, {
+        method: "PUT",
+        body: JSON.stringify({ paymentTermCode: paymentTermDraft }),
+      });
+      await selectPo(selectedPo);
+    }, "Syarat pembayaran disimpan");
+  };
+
+  const verifyPayment = () => {
+    if (!selectedPo) return;
+    void run(async () => {
+      await api<PaymentView>(`/api/mkt/admin/purchase-orders/${selectedPo.id}/payment/verify`, {
+        method: "POST",
+        body: JSON.stringify({}),
+      });
+      await selectPo(selectedPo);
+    }, "Pembayaran diverifikasi lunas");
+  };
+
+  const rejectPayment = () => {
+    if (!selectedPo || !paymentRejectReason.trim()) {
+      toast({ title: "Isi alasan penolakan bukti pembayaran", variant: "destructive" });
+      return;
+    }
+    void run(async () => {
+      await api<PaymentView>(`/api/mkt/admin/purchase-orders/${selectedPo.id}/payment/reject`, {
+        method: "POST",
+        body: JSON.stringify({ reason: paymentRejectReason.trim() }),
+      });
+      setPaymentRejectReason("");
+      await selectPo(selectedPo);
+    }, "Bukti pembayaran ditolak");
   };
 
   const transitionPo = (action: string) => {
@@ -550,6 +618,22 @@ export function MarketplaceOperationsTab() {
                         </div>
                       );
                     }
+                    if (hasShipment && selectedPo.status === "ready_to_ship" && payment?.termsMissing) {
+                      return (
+                        <div className="mt-2">
+                          <p className="font-semibold text-indigo-950">Admin · Tetapkan syarat pembayaran</p>
+                          <p className="mt-1 text-sm text-indigo-800">Barang sudah siap, tetapi syarat pembayaran belum ada. Vendor tidak boleh menyerahkan/mengirim sampai aturan pembayaran ditetapkan.</p>
+                        </div>
+                      );
+                    }
+                    if (hasShipment && selectedPo.status === "ready_to_ship" && payment?.requiresClearanceBeforeHandover && payment.paymentStatus !== "paid") {
+                      return (
+                        <div className="mt-2">
+                          <p className="font-semibold text-indigo-950">{payment.paymentStatus === "proof_submitted" ? "Admin · Verifikasi pembayaran" : "Customer · Lakukan pembayaran"}</p>
+                          <p className="mt-1 text-sm text-indigo-800">Terms mewajibkan lunas sebelum handover. Setelah status pembayaran Lunas, vendor dapat menyerahkan/mengirim barang.</p>
+                        </div>
+                      );
+                    }
                     if (["vendor_accepted", "production", "ready_to_ship", "in_transit"].includes(selectedPo.status) && hasShipment) {
                       return (
                         <div className="mt-2">
@@ -571,12 +655,14 @@ export function MarketplaceOperationsTab() {
                         <div className="mt-2 flex flex-wrap items-center justify-between gap-3">
                           <div>
                             <p className="font-semibold text-indigo-950">Admin · Tutup Purchase Order</p>
-                            <p className="mt-1 text-sm text-indigo-800">Seluruh fulfillment dan penerimaan sudah memenuhi gate canonical.</p>
+                            <p className="mt-1 text-sm text-indigo-800">
+                              Fulfillment sudah selesai. PO hanya dapat ditutup setelah pembayaran customer berstatus Lunas.
+                            </p>
                           </div>
                           <button
                             type="button"
                             onClick={() => transitionPo("close")}
-                            disabled={working}
+                            disabled={working || payment?.paymentStatus !== "paid"}
                             className="rounded-md bg-indigo-600 px-3 py-2 text-sm font-semibold text-white disabled:opacity-50"
                           >
                             Tutup PO
@@ -591,6 +677,96 @@ export function MarketplaceOperationsTab() {
                       </div>
                     );
                   })()}
+                </div>
+
+                <div className="rounded-lg border p-3 space-y-3">
+                  <div className="flex items-center justify-between gap-3">
+                    <div>
+                      <p className="font-semibold"><Wallet className="mr-1 inline h-4 w-4" />Pembayaran customer</p>
+                      <p className="mt-1 text-xs text-slate-500">Pembayaran customer ke CST dipisahkan dari pembayaran CST ke vendor.</p>
+                    </div>
+                    <StatusBadge value={payment?.paymentStatus ?? "unpaid"} />
+                  </div>
+
+                  {payment?.termsMissing ? (
+                    <div className="rounded-md border border-amber-200 bg-amber-50 p-3">
+                      <p className="text-sm font-semibold text-amber-900">Syarat pembayaran belum ditetapkan</p>
+                      <p className="mt-1 text-xs text-amber-800">Pilih syarat pembayaran. Handover/pengiriman akan diblokir sampai aturan pembayaran jelas.</p>
+                    </div>
+                  ) : (
+                    <div className="grid gap-2 text-sm md:grid-cols-2">
+                      <p><span className="text-slate-500">Terms:</span> {payment?.paymentTerms ?? "—"}</p>
+                      <p><span className="text-slate-500">Tagihan:</span> {fmtMoney(payment?.amount, payment?.currency ?? selectedPo.currency ?? "IDR")}</p>
+                      <p><span className="text-slate-500">Jatuh tempo:</span> {fmtDate(payment?.paymentDueAt)}</p>
+                      <p><span className="text-slate-500">Bukti:</span> {payment?.proofAvailable ? "Tersedia" : "Belum ada"}</p>
+                    </div>
+                  )}
+
+                  {payment?.proofUrl && (
+                    <a href={payment.proofUrl} target="_blank" rel="noreferrer" className="inline-block text-sm font-medium text-indigo-600 underline">
+                      Lihat bukti pembayaran
+                    </a>
+                  )}
+                  {payment?.rejectionReason && (
+                    <p className="rounded-md bg-red-50 p-2 text-xs text-red-700">Alasan penolakan terakhir: {payment.rejectionReason}</p>
+                  )}
+
+                  {payment?.paymentStatus !== "paid" && (
+                    <div className="grid gap-2 md:grid-cols-[220px_auto]">
+                      <select
+                        value={paymentTermDraft}
+                        onChange={(e) => setPaymentTermDraft(e.target.value)}
+                        className="h-10 rounded-md border bg-white px-3 text-sm"
+                      >
+                        <option value="">Pilih syarat pembayaran</option>
+                        <option value="prepaid">Bayar sebelum serah/kirim</option>
+                        <option value="net_7">NET 7 hari</option>
+                        <option value="net_14">NET 14 hari</option>
+                        <option value="net_30">NET 30 hari</option>
+                      </select>
+                      <button
+                        type="button"
+                        onClick={savePaymentTerms}
+                        disabled={working || !paymentTermDraft}
+                        className="rounded-md border px-3 py-2 text-sm font-medium disabled:opacity-50"
+                      >
+                        Simpan syarat pembayaran
+                      </button>
+                    </div>
+                  )}
+
+                  {payment?.paymentStatus === "proof_submitted" && (
+                    <div className="flex flex-wrap gap-2">
+                      <button
+                        type="button"
+                        onClick={verifyPayment}
+                        disabled={working}
+                        className="rounded-md bg-emerald-600 px-3 py-2 text-sm font-semibold text-white disabled:opacity-50"
+                      >
+                        Verifikasi Lunas
+                      </button>
+                      <Input
+                        className="max-w-sm"
+                        placeholder="Alasan jika bukti ditolak"
+                        value={paymentRejectReason}
+                        onChange={(e) => setPaymentRejectReason(e.target.value)}
+                      />
+                      <button
+                        type="button"
+                        onClick={rejectPayment}
+                        disabled={working || !paymentRejectReason.trim()}
+                        className="rounded-md border border-red-300 px-3 py-2 text-sm text-red-700 disabled:opacity-50"
+                      >
+                        Tolak Bukti
+                      </button>
+                    </div>
+                  )}
+
+                  {payment?.paymentStatus === "paid" && (
+                    <div className="rounded-md bg-emerald-50 p-3 text-sm text-emerald-800">
+                      Pembayaran sudah diverifikasi CST{payment.verifiedAt ? ` · ${fmtDate(payment.verifiedAt)}` : ""}.
+                    </div>
+                  )}
                 </div>
 
                 <div className="rounded-lg border p-3 space-y-3">
