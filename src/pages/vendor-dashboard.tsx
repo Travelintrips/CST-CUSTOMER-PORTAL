@@ -109,7 +109,7 @@ interface MarketplaceRfq {
   rfqStatus: string;
   quoteId: number;
   quoteStatus: string;
-  quoteUrl: string;
+  quoteUrl: string | null;
   validUntil: string | null;
   submittedAt: string | null;
   buyerName: string;
@@ -127,7 +127,7 @@ interface MarketplaceOrder {
   status: string;
   grandTotal: number;
   currency: string;
-  poUrl: string;
+  poUrl: string | null;
   createdAt: string;
 }
 
@@ -2172,11 +2172,17 @@ export default function VendorDashboard() {
                         <div className="flex flex-wrap items-center gap-2 pt-1">
                           {isActionable && (
                             <>
-                              <Button asChild size="sm" className="gap-2">
-                                <a href={rfq.quoteUrl}>
-                                  <Send className="h-4 w-4" /> Isi harga & kirim penawaran
-                                </a>
-                              </Button>
+                              {rfq.quoteUrl ? (
+                                <Button asChild size="sm" className="gap-2">
+                                  <a href={rfq.quoteUrl}>
+                                    <Send className="h-4 w-4" /> Isi harga & kirim penawaran
+                                  </a>
+                                </Button>
+                              ) : (
+                                <Button size="sm" disabled className="gap-2">
+                                  <Send className="h-4 w-4" /> Link penawaran belum tersedia
+                                </Button>
+                              )}
                               <Button
                                 variant="outline"
                                 size="sm"
@@ -2187,10 +2193,16 @@ export default function VendorDashboard() {
                               </Button>
                             </>
                           )}
-                          {!isActionable && rfq.quoteStatus === "submitted" && (
-                            <Button asChild variant="outline" size="sm" className="gap-2">
-                              <a href={rfq.quoteUrl}>Lihat penawaran</a>
-                            </Button>
+                          {!isActionable && ["submitted", "selected", "rejected"].includes(rfq.quoteStatus) && (
+                            rfq.quoteUrl ? (
+                              <Button asChild variant="outline" size="sm" className="gap-2">
+                                <a href={rfq.quoteUrl}>Lihat penawaran</a>
+                              </Button>
+                            ) : (
+                              <Button variant="outline" size="sm" disabled>
+                                Link penawaran belum tersedia
+                              </Button>
+                            )
                           )}
                         </div>
                         {rfq.validUntil && (
@@ -2253,11 +2265,17 @@ export default function VendorDashboard() {
                             Diterbitkan {new Date(order.createdAt).toLocaleDateString("id-ID")}
                           </p>
                         </div>
-                        <Button asChild size="sm" variant={canRespond ? "default" : "outline"} className="gap-2">
-                          <a href={order.poUrl}>
-                            {canRespond ? "Tindak lanjuti PO" : "Lihat PO"}
-                          </a>
-                        </Button>
+                        {order.poUrl ? (
+                          <Button asChild size="sm" variant={canRespond ? "default" : "outline"} className="gap-2">
+                            <a href={order.poUrl}>
+                              {canRespond ? "Tindak lanjuti PO" : "Lihat PO"}
+                            </a>
+                          </Button>
+                        ) : (
+                          <Button size="sm" variant="outline" disabled>
+                            Link PO belum tersedia
+                          </Button>
+                        )}
                       </CardContent>
                     </Card>
                   );
