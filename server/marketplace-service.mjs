@@ -37,6 +37,31 @@ function text(value, fallback = null) {
   return typeof value === "string" && value.trim() ? value.trim() : fallback;
 }
 
+const PAYMENT_TERM_LABELS = {
+  prepaid: "Bayar sebelum barang diserahkan/dikirim",
+  net_7: "NET 7 hari setelah penerimaan",
+  net_14: "NET 14 hari setelah penerimaan",
+  net_30: "NET 30 hari setelah penerimaan",
+};
+
+function normalizePaymentTerm(value) {
+  const normalized = String(value ?? "").trim().toLowerCase().replace(/\s+/g, " ");
+  if (!normalized) return null;
+  if (["prepaid", "prepayment", "cash before delivery", "bayar sebelum", "bayar sebelum kirim", "bayar sebelum pengambilan"].includes(normalized)) return "prepaid";
+  if (/^net[ _-]?7(?:\s*hari)?$/.test(normalized) || normalized.includes("7 hari")) return "net_7";
+  if (/^net[ _-]?14(?:\s*hari)?$/.test(normalized) || normalized.includes("14 hari")) return "net_14";
+  if (/^net[ _-]?30(?:\s*hari)?$/.test(normalized) || normalized.includes("30 hari")) return "net_30";
+  return null;
+}
+
+function paymentTermLabel(code) {
+  return PAYMENT_TERM_LABELS[code] ?? null;
+}
+
+function paymentRequiresClearance(code) {
+  return code === "prepaid";
+}
+
 function token() {
   return randomBytes(24).toString("hex");
 }
@@ -351,6 +376,12 @@ async function poDetail(db, poId, { customerView = false } = {}) {
     vendorNameSnapshot: redactVendor ? CUSTOMER_FACING_SELLER_NAME : row.vendor_name_snapshot,
     vendorAddressSnapshot: redactVendor ? null : row.vendor_address_snapshot,
     paymentTermsSnapshot: row.payment_terms_snapshot,
+    paymentTermCode: row.payment_term_code ?? normalizePaymentTerm(row.payment_terms_snapshot),
+    paymentStatus: row.payment_status ?? "unpaid",
+    paymentDueAt: row.payment_due_at ?? null,
+    paymentProofUploadedAt: row.payment_proof_uploaded_at ?? null,
+    paymentVerifiedAt: row.payment_verified_at ?? null,
+    paymentRejectionReason: row.payment_rejection_reason ?? null,
     incotermSnapshot: row.incoterm_snapshot,
     quotationNumberSnapshot: redactVendor ? null : row.quotation_number_snapshot,
     quotationDateSnapshot: redactVendor ? null : row.quotation_date_snapshot,
@@ -391,17 +422,21 @@ async function createPo(db, rfq, quote, user) {
   const vendor = (await db("select id, name, address from public.suppliers where id = $1", [quote.vendor_id])).rows[0];
   if (!vendor) fail(409, "Vendor quotation tidak ditemukan.");
   const total = details.lines.reduce((sum, line) => sum + Number(line.dealSubtotal ?? 0), 0);
+  const paymentTermCode = normalizePaymentTerm(quote.payment_terms);
+  if (!paymentTermCode) fail(409, "Quotation belum memiliki syarat pembayaran yang valid.");
+  const paymentTermsSnapshot = paymentTermLabel(paymentTermCode);
   const inserted = await db(
     `insert into public.mkt_purchase_orders
        (po_number, rfq_id, quote_id, company_id, vendor_id, status, total_amount,
         tax_amount, grand_total, created_by, vendor_name_snapshot, vendor_address_snapshot,
-        payment_terms_snapshot, incoterm_snapshot, quotation_number_snapshot,
+        payment_terms_snapshot, payment_term_code, payment_status,
+        incoterm_snapshot, quotation_number_snapshot,
         quotation_date_snapshot, currency_snapshot, lead_time_days_snapshot,
         vendor_token, vendor_token_expires_at, expected_completion_date)
      values (
        'PENDING-' || $1::text, $2, $3, $4, $5, 'issued'::mkt_po_status, $6, 0, $6,
-       $7, $8, $9, $10, $11, $12, $13, 'IDR', $14, $15, now() + interval '14 days',
-        case when $14::int is null then null else current_date + $14::int end
+       $7, $8, $9, $10, 'unpaid', $11, $12, $13, $14, 'IDR', $15, $16, now() + interval '14 days',
+        case when $15::int is null then null else current_date + $15::int end
      )
      returning id`,
     [
@@ -414,7 +449,8 @@ async function createPo(db, rfq, quote, user) {
       user?.email ?? "customer-approval",
       vendor.name,
       vendor.address,
-      quote.payment_terms,
+      paymentTermsSnapshot,
+      paymentTermCode,
       quote.incoterm,
       quote.quotation_number,
       quote.quotation_date,
@@ -773,6 +809,10 @@ async function handleVendorQuote(request, response, pathname, body) {
   if (request.method !== "POST" || !match[2]) return false;
   const lines = Array.isArray(body.lines) ? body.lines : [];
   if (!lines.length) fail(400, "Line quotation wajib diisi.");
+  const requestedPaymentTerm = normalizePaymentTerm(body.paymentTerms);
+  if (match[2] === "submit" && !requestedPaymentTerm) {
+    fail(400, "Syarat pembayaran wajib dipilih sebelum quotation dikirim.");
+  }
   let resultingStatus = quote.status;
   await withTransaction(async (db) => {
     const lockedQuote = await loadQuote(db, true);
@@ -838,7 +878,7 @@ async function handleVendorQuote(request, response, pathname, body) {
               status=case when $4 then 'submitted'::mkt_quote_status else status end,
               submitted_at=case when $4 then now() else submitted_at end, updated_at=now()
         where id=$5`,
-       [text(body.notes), text(body.paymentTerms), text(body.quotationDate), match[2] === "submit", lockedQuote.id],
+       [text(body.notes), requestedPaymentTerm ? paymentTermLabel(requestedPaymentTerm) : text(body.paymentTerms), text(body.quotationDate), match[2] === "submit", lockedQuote.id],
     );
     resultingStatus = match[2] === "submit" ? "submitted" : lockedQuote.status;
     if (match[2] === "submit") {
@@ -907,7 +947,9 @@ async function handleAdminMarketplace(request, response, pathname, body, user) {
     const limit = Math.min(Math.max(Number(new URL(request.url ?? "/", "http://portal.local").searchParams.get("limit") ?? 200), 1), 500);
     const result = await query(
       `select po.id, po.po_number, po.rfq_id, po.quote_id, po.vendor_id, po.status,
-              po.total_amount, po.tax_amount, po.grand_total, po.currency_snapshot, po.confirmed_at, po.created_at,
+              po.total_amount, po.tax_amount, po.grand_total, po.currency_snapshot, po.confirmed_at,
+              po.payment_terms_snapshot, po.payment_term_code, po.payment_status, po.payment_due_at,
+              po.payment_proof_uploaded_at, po.payment_verified_at, po.created_at,
               r.rfq_number, s.name as vendor_name
          from public.mkt_purchase_orders po
          join public.mkt_rfqs r on r.id=po.rfq_id
@@ -923,6 +965,12 @@ async function handleAdminMarketplace(request, response, pathname, body, user) {
       vendorId: row.vendor_id == null ? null : Number(row.vendor_id),
       status: row.status,
       confirmedAt: row.confirmed_at,
+      paymentTerms: row.payment_terms_snapshot,
+      paymentTermCode: row.payment_term_code ?? normalizePaymentTerm(row.payment_terms_snapshot),
+      paymentStatus: row.payment_status ?? "unpaid",
+      paymentDueAt: row.payment_due_at,
+      paymentProofUploadedAt: row.payment_proof_uploaded_at,
+      paymentVerifiedAt: row.payment_verified_at,
       totalAmount: row.total_amount,
       taxAmount: row.tax_amount,
       grandTotal: row.grand_total,
@@ -1348,6 +1396,16 @@ async function handlePublicVendorPo(request, response, pathname, body) {
         const pickupLocation = text(body.location ?? body.note ?? shipment.origin);
         if (!pickupLocation) fail(400, "Lokasi pengambilan wajib diisi sebelum barang dinyatakan siap.");
         body.location = pickupLocation;
+      }
+
+      if (["handed_over", "departed"].includes(eventType)) {
+        const paymentTermCode = po.payment_term_code ?? normalizePaymentTerm(po.payment_terms_snapshot);
+        if (!paymentTermCode) {
+          fail(409, "Syarat pembayaran PO belum ditetapkan. Hubungi admin CST sebelum barang diserahkan/dikirim.");
+        }
+        if (paymentRequiresClearance(paymentTermCode) && po.payment_status !== "paid") {
+          fail(409, "Pembayaran customer belum terverifikasi lunas. Barang belum boleh diserahkan/dikirim.");
+        }
       }
 
       if (!VENDOR_SHIPMENT_TRANSITIONS[shipment.shipment_status]?.has(target)) {
