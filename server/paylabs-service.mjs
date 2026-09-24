@@ -745,7 +745,15 @@ export async function handlePaylabsWebhook({ request, response, body, rawBodyTex
       return true;
     }
 
-    const targetStatus = mapPaylabsStatus(webhookStatus(body));
+    const mappedStatus = mapPaylabsStatus(webhookStatus(body));
+    // Provider callbacks can be retried/out-of-order. Never downgrade a paid
+    // transaction, and do not turn an existing terminal status back to pending
+    // merely because a later callback carries an unknown/non-terminal status.
+    const targetStatus = payment.status === "paid"
+      ? "paid"
+      : mappedStatus === "pending" && payment.status !== "pending"
+        ? payment.status
+        : mappedStatus;
     const paidAmount = webhookAmount(body);
     if (targetStatus === "paid" && paidAmount != null && paidAmount !== Number(payment.amount)) {
       await client.query("rollback");
@@ -809,7 +817,9 @@ export async function handlePaylabsWebhook({ request, response, body, rawBodyTex
         );
       }
 
-      if (po.payment_status === "paid" && po.payment_verified_by !== "paylabs:webhook") {
+      const duplicatePayment = po.payment_status === "paid"
+        && po.payment_verified_by !== "paylabs:webhook";
+      if (duplicatePayment) {
         await client.query(
           `insert into public.activity_logs
              (actor_type,actor_id,actor_name,action,old_value,new_value,description,
@@ -835,46 +845,46 @@ export async function handlePaylabsWebhook({ request, response, body, rawBodyTex
             where id=$1`,
           [po.id],
         );
+        await client.query(
+          `insert into public.activity_logs
+             (actor_type,actor_id,actor_name,action,old_value,new_value,description,
+              mkt_purchase_order_id,deduplication_key)
+           values ('system',null,'Paylabs','po_payment_verified',
+                   $1::jsonb,$2::jsonb,$3,$4,$5)
+           on conflict (deduplication_key) where deduplication_key is not null do nothing`,
+          [
+            JSON.stringify({ paymentStatus: po.payment_status }),
+            JSON.stringify({
+              paymentStatus: "paid",
+              paymentId: Number(updated.id),
+              provider: "paylabs",
+              paymentMethod,
+            }),
+            "Pembayaran customer dikonfirmasi otomatis melalui webhook Paylabs.",
+            po.id,
+            `po-payment-paylabs:${updated.id}:paid`,
+          ],
+        );
+        await client.query(
+          `insert into public.mkt_notification_queue
+             (event_type,channel,recipient_type,recipient_id,rfq_id,purchase_order_id,payload_json,deduplication_key)
+           values ('po_payment_verified','internal','customer',$1,$2,$3,$4::jsonb,$5)
+           on conflict do nothing`,
+          [
+            po.portal_customer_id ?? null,
+            po.rfq_id,
+            po.id,
+            JSON.stringify({
+              poId: Number(po.id),
+              poNumber: po.po_number,
+              paymentStatus: "paid",
+              provider: "paylabs",
+              paymentMethod,
+            }),
+            `po-payment-paylabs-notify:${updated.id}:paid`,
+          ],
+        ).catch(() => {});
       }
-      await client.query(
-        `insert into public.activity_logs
-           (actor_type,actor_id,actor_name,action,old_value,new_value,description,
-            mkt_purchase_order_id,deduplication_key)
-         values ('system',null,'Paylabs','po_payment_verified',
-                 $1::jsonb,$2::jsonb,$3,$4,$5)
-         on conflict (deduplication_key) where deduplication_key is not null do nothing`,
-        [
-          JSON.stringify({ paymentStatus: po.payment_status }),
-          JSON.stringify({
-            paymentStatus: "paid",
-            paymentId: Number(updated.id),
-            provider: "paylabs",
-            paymentMethod,
-          }),
-          "Pembayaran customer dikonfirmasi otomatis melalui webhook Paylabs.",
-          po.id,
-          `po-payment-paylabs:${updated.id}:paid`,
-        ],
-      );
-      await client.query(
-        `insert into public.mkt_notification_queue
-           (event_type,channel,recipient_type,recipient_id,rfq_id,purchase_order_id,payload_json,deduplication_key)
-         values ('po_payment_verified','internal','customer',$1,$2,$3,$4::jsonb,$5)
-         on conflict do nothing`,
-        [
-          po.portal_customer_id ?? null,
-          po.rfq_id,
-          po.id,
-          JSON.stringify({
-            poId: Number(po.id),
-            poNumber: po.po_number,
-            paymentStatus: "paid",
-            provider: "paylabs",
-            paymentMethod,
-          }),
-          `po-payment-paylabs-notify:${updated.id}:paid`,
-        ],
-      ).catch(() => {});
     }
 
     await client.query("commit");
