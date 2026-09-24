@@ -854,7 +854,7 @@ export function MarketplaceOperationsTab() {
 
                       {!payment.paylabs.configured && (
                         <a
-                          href="/admin?tab=paylabs"
+                          href="/admin?tab=paylabs-setting"
                           className="inline-flex rounded-md border border-violet-300 bg-white px-3 py-2 text-xs font-semibold text-violet-700 hover:bg-violet-50"
                         >
                           Buka Paylabs Setting
