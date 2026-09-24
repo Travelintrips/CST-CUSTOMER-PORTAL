@@ -1281,8 +1281,24 @@ function PaymentTab({ po }: { po: PoDetail }) {
                           ? "Nominal cocok. Bukti dapat dikirim untuk verifikasi admin."
                           : scanResult.timedOut
                             ? "Pembacaan nominal melewati batas waktu. Pilih gambar yang lebih jelas."
-                            : "Nominal belum cocok atau belum terbaca. Periksa nominal pembayaran atau pilih bukti lain."}
+                            : scanResult.extractedAmount != null
+                              ? `Nominal OCR ${fmtAmount(scanResult.extractedAmount, payment.currency)} berbeda dari nominal pembayaran ${fmtAmount(scanResult.expectedAmount, payment.currency)}.`
+                              : "Nominal belum terbaca. Pilih bukti yang lebih jelas."}
                       </p>
+                      {!scanResult.matchesExpected
+                        && scanResult.extractedAmount != null
+                        && scanResult.extractedAmount > 0
+                        && scanResult.extractedAmount <= payment.remainingAmount + 0.005 && (
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          className="mt-3 bg-white"
+                          onClick={() => selectAmount(scanResult.extractedAmount!)}
+                        >
+                          Gunakan {fmtAmount(scanResult.extractedAmount, payment.currency)} sebagai pembayaran kali ini
+                        </Button>
+                      )}
                     </div>
                   )}
 
