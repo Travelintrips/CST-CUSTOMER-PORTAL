@@ -196,13 +196,16 @@ async function latestMarketplacePayment(poId, client = query) {
 }
 
 async function marketplacePaymentTotals(po, client = query) {
-  const manual = (await client(
+  const run = typeof client === "function"
+    ? client
+    : (sql, values) => client.query(sql, values);
+  const manual = (await run(
     `select coalesce(sum(ocr_amount),0) as paid_amount
        from public.mkt_po_payment_proofs
       where po_id=$1 and review_status='approved'`,
     [po.id],
   )).rows[0] ?? {};
-  const gateway = (await client(
+  const gateway = (await run(
     `select coalesce(sum(amount),0) as paid_amount
        from public.payments
       where ref_kind='purchase'::payment_ref_kind
