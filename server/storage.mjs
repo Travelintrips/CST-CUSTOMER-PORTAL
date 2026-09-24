@@ -354,6 +354,16 @@ export async function signedMarketplacePaymentProofUrl({ poId, path }) {
   return data.signedUrl;
 }
 
+export async function deleteMarketplacePaymentProof({ poId, path }) {
+  const normalizedPath = String(path || "");
+  const prefix = `marketplace-payment-proofs/po-${Number(poId)}/`;
+  if (!normalizedPath.startsWith(prefix)) return;
+  const storage = client();
+  await ensurePrivateBucket(storage);
+  const { error } = await storage.supabase.storage.from(storage.bucket).remove([normalizedPath]);
+  if (error) throw error;
+}
+
 export async function uploadPaymentProof({ token, file }) {
   const { mimeType, size } = validateDocumentFile(file);
   const storage = client();
