@@ -170,6 +170,66 @@ function formatDate(value: string | null | undefined) {
   }).format(new Date(value));
 }
 
+function marketplaceFlowGuide(detail: Detail): { owner: string; action: string; description: string } | null {
+  if (!["marketplace", "marketplace-po"].includes(detail.service)) return null;
+  const operations = detail.projection?.operations;
+  if (!operations) return null;
+
+  const poStatus = String(operations.completion.currentStatus ?? detail.record["status"] ?? "").toLowerCase();
+  const shipmentStatus = String(operations.tracking.currentStatus ?? "").toLowerCase();
+  const hasTracking = operations.tracking.status === "available" && Boolean(shipmentStatus);
+  const podAvailable = operations.pod.status === "available" && operations.pod.available;
+  const receiptCount = operations.receipts.status === "available" ? operations.receipts.count : 0;
+
+  if (operations.completion.status === "completed" || poStatus === "completed") {
+    return {
+      owner: "Admin",
+      action: "Tutup Purchase Order",
+      description: "Barang sudah diterima penuh dan gate fulfillment selesai. Admin dapat menutup PO dari Marketplace Operations.",
+    };
+  }
+  if (podAvailable && receiptCount === 0) {
+    return {
+      owner: "Customer",
+      action: "Konfirmasi penerimaan barang",
+      description: "POD sudah tersedia. Customer membuka Goods Receipt lalu memilih diterima lengkap, sebagian, atau ada masalah.",
+    };
+  }
+  if (shipmentStatus === "arrived" && !podAvailable) {
+    return {
+      owner: "Vendor",
+      action: "Upload POD / bukti serah terima",
+      description: "Barang sudah tiba atau diserahkan. Vendor harus mengunggah POD agar customer dapat mengonfirmasi penerimaan.",
+    };
+  }
+  if (hasTracking && ["planned", "packing", "loading", "ready_to_ship", "in_transit", "customs", "warehouse"].includes(shipmentStatus)) {
+    return {
+      owner: "Vendor",
+      action: shipmentStatus === "planned" ? "Mulai siapkan barang" : "Lanjutkan fulfillment",
+      description: "Vendor memperbarui status pada shipment canonical yang sama. Admin cukup memonitor dan menangani exception.",
+    };
+  }
+  if (poStatus === "vendor_accepted" && !hasTracking) {
+    return {
+      owner: "Customer",
+      action: "Pilih metode pengiriman",
+      description: "Vendor sudah menerima PO. Customer memilih satu mode pengiriman untuk membuat shipment canonical.",
+    };
+  }
+  if (poStatus === "issued") {
+    return {
+      owner: "Vendor",
+      action: "Terima / Tolak / Minta Revisi PO",
+      description: "Customer belum boleh memilih pengiriman sebelum vendor menerima Purchase Order.",
+    };
+  }
+  return {
+    owner: "Admin",
+    action: "Monitor alur canonical",
+    description: "Pantau Customer → Vendor → Customer. Hindari membuat shipment atau Goods Receipt duplikat dari panel admin.",
+  };
+}
+
 export function ServiceOperationsTab() {
   const [rows, setRows] = useState<ServiceRow[]>([]);
   const [summary, setSummary] = useState<ServiceSummary[]>([]);
@@ -574,6 +634,18 @@ export function ServiceOperationsTab() {
                   )}
                 </div>
               )}
+              {selected.projection?.operations && (() => {
+                const guide = marketplaceFlowGuide(selected);
+                return guide ? (
+                  <div className="rounded-xl border border-indigo-200 bg-indigo-50/60 p-4">
+                    <p className="text-[11px] font-semibold uppercase tracking-wide text-indigo-500">Langkah berikutnya</p>
+                    <div className="mt-2 flex flex-col gap-1">
+                      <p className="text-sm font-semibold text-indigo-950">{guide.owner} · {guide.action}</p>
+                      <p className="text-xs text-indigo-800">{guide.description}</p>
+                    </div>
+                  </div>
+                ) : null;
+              })()}
               {selected.projection?.operations && (
                 <div className="rounded-xl border border-violet-100 bg-violet-50/40 p-4">
                   <div className="flex items-center justify-between gap-3 mb-3">
