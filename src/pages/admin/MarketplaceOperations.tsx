@@ -842,7 +842,7 @@ export function MarketplaceOperationsTab() {
                             : ` · masih kurang ${fmtMoney(payment.requiredBeforeHandoverRemaining, payment.currency)}`}
                         </div>
                       )}
-                      {payment?.overpaidAmount > 0 && (
+                      {(payment?.overpaidAmount ?? 0) > 0 && payment && (
                         <div className="rounded-md border border-red-200 bg-red-50 p-3 text-xs text-red-700">
                           Kelebihan pembayaran terdeteksi: {fmtMoney(payment.overpaidAmount, payment.currency)}.
                         </div>
