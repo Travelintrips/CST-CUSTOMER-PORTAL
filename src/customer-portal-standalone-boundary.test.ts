@@ -78,6 +78,12 @@ describe("standalone Customer Portal API boundary", () => {
     expect(server).toContain("idempotency_key");
   });
 
+  it("sends an idempotency key when a customer selects a PO shipment", () => {
+    const page = readFileSync(join(process.cwd(), "src/pages/mkt-po-detail.tsx"), "utf8");
+    expect(page).toContain('const [shipmentRequestKey] = useState(() => crypto.randomUUID())');
+    expect(page).toContain('"Idempotency-Key": `customer-po-shipment:${poId}:${shipmentRequestKey}`');
+  });
+
   it("keeps trucking booking writes on the standalone Customer Portal API", () => {
     const page = readFileSync(join(process.cwd(), "src/pages/trucking.tsx"), "utf8");
     const server = readFileSync(join(process.cwd(), "server/index.mjs"), "utf8");

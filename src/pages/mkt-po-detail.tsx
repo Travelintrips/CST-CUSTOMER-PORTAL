@@ -467,6 +467,7 @@ function ShipmentTab({
 }) {
   const queryClient = useQueryClient();
   const [selectedType, setSelectedType] = useState<string>("trucking");
+  const [shipmentRequestKey] = useState(() => crypto.randomUUID());
   const { data, isLoading, isError, refetch } = useQuery<{ ok: boolean; data: Shipment[] }>({
     queryKey: ["mkt-po-shipments", poId],
     queryFn: async () => {
@@ -483,7 +484,10 @@ function ShipmentTab({
       const res = await fetch(`/api/mkt/portal/purchase-orders/${poId}/shipment-selection`, {
         method: "POST",
         credentials: "include",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          "Idempotency-Key": `customer-po-shipment:${poId}:${shipmentRequestKey}`,
+        },
         body: JSON.stringify({ shipmentType }),
       });
       const body = await res.json() as { ok?: boolean; error?: string; message?: string };
