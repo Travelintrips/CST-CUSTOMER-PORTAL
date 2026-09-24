@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { pool, query } from "./db.mjs";
 import {
   bestEffortNotificationWrite,
@@ -10,7 +11,9 @@ import {
   signedMarketplacePodUrl,
   uploadMarketplacePaymentProof,
   signedMarketplacePaymentProofUrl,
+  deleteMarketplacePaymentProof,
 } from "./storage.mjs";
+import { extractPaymentAmountFromFile } from "./marketplace-payment-ocr.mjs";
 
 const SHIPMENT_EVENT_STATUS = {
   packing: "packing",
@@ -145,8 +148,14 @@ async function paymentView(po) {
     amount: po.grand_total,
     currency: po.currency_snapshot ?? "IDR",
     proofAvailable: Boolean(po.payment_proof_path),
+    proofLocked: Boolean(po.payment_proof_path),
     proofUrl,
+    proofFileName: po.payment_proof_file_name ?? null,
+    proofMimeType: po.payment_proof_mime_type ?? null,
     proofUploadedAt: po.payment_proof_uploaded_at ?? null,
+    ocrAmount: po.payment_ocr_amount == null ? null : Number(po.payment_ocr_amount),
+    ocrConfidence: po.payment_ocr_confidence == null ? null : Number(po.payment_ocr_confidence),
+    ocrMatches: po.payment_ocr_matches == null ? null : Boolean(po.payment_ocr_matches),
     verifiedAt: po.payment_verified_at ?? null,
     rejectionReason: po.payment_rejection_reason ?? null,
     requiresClearanceBeforeHandover: paymentRequiresClearance(code),
@@ -1217,48 +1226,171 @@ async function setPoPaymentTerms({ poId, body, user }) {
   });
 }
 
+async function scanPoPaymentProof({ poId, body, user }) {
+  const po = await loadPo(poId, user, { isAdmin: false });
+  const code = po.payment_term_code ?? normalizePaymentTerm(po.payment_terms_snapshot);
+  if (!code) fail(409, "Syarat pembayaran belum ditetapkan. Hubungi admin CST.");
+  if (po.payment_proof_path) {
+    fail(409, "Bukti pembayaran untuk PO ini sudah pernah dikirim dan dikunci. Upload ulang tidak diizinkan.");
+  }
+
+  const file = body?.file;
+  if (!file || typeof file.arrayBuffer !== "function") {
+    fail(400, "Pilih gambar bukti pembayaran JPG/PNG/WEBP.");
+  }
+
+  const expectedAmount = Number(po.grand_total ?? 0);
+  const timeoutMs = 30_000;
+  const timeout = new Promise((resolve) => setTimeout(() => resolve(null), timeoutMs));
+  const result = await Promise.race([
+    extractPaymentAmountFromFile(file, expectedAmount),
+    timeout,
+  ]);
+
+  if (!result) {
+    return {
+      extractedAmount: null,
+      confidence: 0,
+      matchesExpected: false,
+      expectedAmount,
+      timedOut: true,
+    };
+  }
+
+  return {
+    extractedAmount: result.extractedAmount,
+    confidence: result.confidence,
+    matchesExpected: Boolean(
+      result.extractedAmount != null
+      && Number(result.extractedAmount) === expectedAmount
+    ),
+    expectedAmount,
+    timedOut: false,
+  };
+}
+
 async function submitPoPaymentProof({ poId, body, user }) {
   const po = await loadPo(poId, user, { isAdmin: false });
   const code = po.payment_term_code ?? normalizePaymentTerm(po.payment_terms_snapshot);
   if (!code) fail(409, "Syarat pembayaran belum ditetapkan. Hubungi admin CST.");
-  if (po.payment_status === "paid") return { alreadyProcessed: true, payment: await paymentView(po) };
+  if (po.payment_status === "paid") fail(409, "Pembayaran PO ini sudah berstatus Lunas.");
+  if (po.payment_proof_path) {
+    fail(409, "Bukti pembayaran untuk PO ini sudah pernah dikirim dan dikunci. Upload ulang tidak diizinkan.");
+  }
+
   const file = body?.file;
-  if (!file || typeof file.arrayBuffer !== "function") fail(400, "File bukti pembayaran JPG/PNG/PDF wajib diunggah.");
-  const uploaded = await uploadMarketplacePaymentProof({ poId: po.id, file });
+  if (!file || typeof file.arrayBuffer !== "function") {
+    fail(400, "File bukti pembayaran JPG/PNG/WEBP wajib diunggah.");
+  }
+
+  const fileBuffer = Buffer.from(await file.arrayBuffer());
+  const proofSha256 = createHash("sha256").update(fileBuffer).digest("hex");
+  const expectedAmount = Number(po.grand_total ?? 0);
+  const timeoutMs = 30_000;
+  const timeout = new Promise((resolve) => setTimeout(() => resolve(null), timeoutMs));
+  const ocr = await Promise.race([
+    extractPaymentAmountFromFile(file, expectedAmount),
+    timeout,
+  ]);
+
+  if (!ocr?.extractedAmount) {
+    fail(422, "Nominal pada bukti belum terbaca. Gunakan foto yang lebih jelas sebelum mengirim bukti pembayaran.");
+  }
+  if (Number(ocr.extractedAmount) !== expectedAmount) {
+    fail(
+      422,
+      `Nominal bukti ${Number(ocr.extractedAmount).toLocaleString("id-ID")} tidak sama dengan tagihan ${expectedAmount.toLocaleString("id-ID")}.`,
+    );
+  }
 
   return withTransaction(async (db) => {
     const locked = await loadPo(po.id, user, { client: db, forUpdate: true, isAdmin: false });
-    if (locked.payment_status === "paid") return { alreadyProcessed: true, payment: await paymentView(locked) };
-    const updated = (await db(
-      `update public.mkt_purchase_orders
-          set payment_status='proof_submitted',
-              payment_proof_path=$1,
-              payment_proof_uploaded_at=now(),
-              payment_rejection_reason=null,
-              updated_at=now()
-        where id=$2
-        returning *`,
-      [uploaded.path, locked.id],
+    if (locked.payment_status === "paid") fail(409, "Pembayaran PO ini sudah berstatus Lunas.");
+    if (locked.payment_proof_path) {
+      fail(409, "Bukti pembayaran untuk PO ini sudah pernah dikirim dan dikunci. Upload ulang tidak diizinkan.");
+    }
+
+    const duplicate = (await db(
+      `select id, po_number
+         from public.mkt_purchase_orders
+        where payment_proof_sha256=$1
+        limit 1`,
+      [proofSha256],
     )).rows[0];
-    await writeActivity(db, {
-      poId: locked.id,
-      user: actor(user, "customer"),
-      action: "po_payment_proof_submitted",
-      newValue: { paymentStatus: "proof_submitted" },
-      description: "Customer mengunggah bukti pembayaran marketplace.",
-      key: `po-payment-proof:${locked.id}:${uploaded.path}`,
-    });
-    await notifyAdmins(db, {
-      eventKey: `po-payment-proof:${locked.id}:${uploaded.path}`,
-      type: "po_payment_proof_submitted",
-      title: "Bukti pembayaran marketplace",
-      message: `Bukti pembayaran ${locked.po_number} menunggu verifikasi admin.`,
-      resourceType: "purchase_order",
-      resourceId: Number(locked.id),
-      link: "/admin?tab=marketplace-operations",
-      payload: { poId: Number(locked.id), paymentStatus: "proof_submitted" },
-    });
-    return { alreadyProcessed: false, payment: await paymentView(updated) };
+    if (duplicate) {
+      fail(409, "File bukti pembayaran yang sama sudah pernah digunakan pada transaksi lain.");
+    }
+
+    let uploaded = null;
+    try {
+      uploaded = await uploadMarketplacePaymentProof({ poId: locked.id, file });
+      const updated = (await db(
+        `update public.mkt_purchase_orders
+            set payment_status='proof_submitted',
+                payment_proof_path=$1,
+                payment_proof_sha256=$2,
+                payment_proof_file_name=$3,
+                payment_proof_mime_type=$4,
+                payment_proof_uploaded_at=now(),
+                payment_ocr_amount=$5,
+                payment_ocr_confidence=$6,
+                payment_ocr_raw_text=$7,
+                payment_ocr_matches=true,
+                payment_rejection_reason=null,
+                updated_at=now()
+          where id=$8 and payment_proof_path is null
+          returning *`,
+        [
+          uploaded.path,
+          proofSha256,
+          uploaded.fileName || String(file.name || "bukti-pembayaran"),
+          uploaded.mimeType || String(file.type || ""),
+          Number(ocr.extractedAmount),
+          Number(ocr.confidence ?? 0),
+          String(ocr.rawText ?? "").slice(0, 3000),
+          locked.id,
+        ],
+      )).rows[0];
+      if (!updated) {
+        fail(409, "Bukti pembayaran sudah tersimpan oleh proses lain. Upload ulang tidak diizinkan.");
+      }
+
+      await writeActivity(db, {
+        poId: locked.id,
+        user: actor(user, "customer"),
+        action: "po_payment_proof_submitted",
+        newValue: {
+          paymentStatus: "proof_submitted",
+          ocrAmount: Number(ocr.extractedAmount),
+          expectedAmount,
+          ocrMatches: true,
+        },
+        description: "Customer mengunggah bukti pembayaran marketplace; nominal OCR cocok dengan tagihan dan bukti dikunci.",
+        key: `po-payment-proof:${locked.id}:${proofSha256}`,
+      });
+      await notifyAdmins(db, {
+        eventKey: `po-payment-proof:${locked.id}:${proofSha256}`,
+        type: "po_payment_proof_submitted",
+        title: "Bukti pembayaran marketplace",
+        message: `Bukti pembayaran ${locked.po_number} menunggu pemeriksaan dan persetujuan admin.`,
+        resourceType: "purchase_order",
+        resourceId: Number(locked.id),
+        link: `/admin?tab=marketplace-operations&poId=${locked.id}&focus=payment`,
+        payload: {
+          poId: Number(locked.id),
+          paymentStatus: "proof_submitted",
+          ocrAmount: Number(ocr.extractedAmount),
+          expectedAmount,
+          ocrMatches: true,
+        },
+      });
+      return { alreadyProcessed: false, payment: await paymentView(updated) };
+    } catch (error) {
+      if (uploaded?.path) {
+        await deleteMarketplacePaymentProof({ poId: locked.id, path: uploaded.path }).catch(() => {});
+      }
+      throw error;
+    }
   });
 }
 
@@ -1388,6 +1520,11 @@ async function transitionPo({ poId, action, body, request, user, isAdmin }) {
 }
 
 async function handlePortalOperations({ request, response, pathname, body, user, sendJson }) {
+  const poPaymentScan = pathname.match(/^\/api\/mkt\/portal\/purchase-orders\/(\d+)\/payment\/scan$/);
+  if (request.method === "POST" && poPaymentScan) {
+    sendJson(response, 200, { ok: true, data: await scanPoPaymentProof({ poId: poPaymentScan[1], body, user }) });
+    return true;
+  }
   const poPayment = pathname.match(/^\/api\/mkt\/portal\/purchase-orders\/(\d+)\/payment$/);
   if (request.method === "GET" && poPayment) {
     const po = await loadPo(poPayment[1], user, { isAdmin: false });
