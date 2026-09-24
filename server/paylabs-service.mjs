@@ -248,8 +248,7 @@ export async function getMarketplacePaylabsState(po, client = query) {
 
   const pending = latest?.status === "pending"
     && latest?.expired_at
-    && new Date(latest.expired_at).getTime() > Date.now()
-    && isTrustedPaylabsPaymentUrl(latest.payment_url);
+    && new Date(latest.expired_at).getTime() > Date.now();
 
   return {
     configured: credentials.configured,
