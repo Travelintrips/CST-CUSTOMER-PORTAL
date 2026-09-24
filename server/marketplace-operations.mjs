@@ -158,11 +158,10 @@ function money(value) {
 
 async function paymentTotals(po, db = query) {
   const manual = (await db(
-    `select coalesce(sum(ocr_amount),0) as paid_amount,
+    `select coalesce(sum(case when review_status='approved' then ocr_amount else 0 end),0) as paid_amount,
             coalesce(sum(case when review_status='submitted' then ocr_amount else 0 end),0) as pending_amount
        from public.mkt_po_payment_proofs
-      where po_id=$1
-        and review_status='approved'`,
+      where po_id=$1`,
     [po.id],
   )).rows[0] ?? {};
 
