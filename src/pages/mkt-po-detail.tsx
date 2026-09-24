@@ -42,6 +42,12 @@ interface PoDetail {
   vendorNameSnapshot: string | null;
   vendorAddressSnapshot: string | null;
   paymentTermsSnapshot: string | null;
+  paymentTermCode: string | null;
+  paymentStatus: string;
+  paymentDueAt: string | null;
+  paymentProofUploadedAt: string | null;
+  paymentVerifiedAt: string | null;
+  paymentRejectionReason: string | null;
   incotermSnapshot: string | null;
   quotationNumberSnapshot: string | null;
   quotationDateSnapshot: string | null;
@@ -139,6 +145,23 @@ interface GoodsReceipt {
   items: GoodsReceiptItem[];
 }
 
+interface PaymentView {
+  poId: number;
+  paymentTermCode: string | null;
+  paymentTerms: string | null;
+  paymentStatus: "unpaid" | "proof_submitted" | "paid" | "rejected";
+  paymentDueAt: string | null;
+  amount: string | number | null;
+  currency: string;
+  proofAvailable: boolean;
+  proofUrl: string | null;
+  proofUploadedAt: string | null;
+  verifiedAt: string | null;
+  rejectionReason: string | null;
+  requiresClearanceBeforeHandover: boolean;
+  termsMissing: boolean;
+}
+
 interface ActivityEvent {
   id: number;
   action: string;
@@ -150,7 +173,7 @@ interface ActivityEvent {
   createdAt: string;
 }
 
-type Tab = "overview" | "items" | "shipment" | "goods-receipt" | "timeline" | "activity";
+type Tab = "overview" | "items" | "shipment" | "payment" | "goods-receipt" | "timeline" | "activity";
 
 // ── Status config ─────────────────────────────────────────────────────────────
 
@@ -237,6 +260,7 @@ const TABS: { id: Tab; label: string; icon: React.ReactNode }[] = [
   { id: "overview",      label: "Overview",      icon: <FileText className="w-4 h-4" /> },
   { id: "items",         label: "Items",         icon: <Package className="w-4 h-4" /> },
   { id: "shipment",      label: "Shipment",      icon: <Truck className="w-4 h-4" /> },
+  { id: "payment",       label: "Pembayaran",    icon: <FileText className="w-4 h-4" /> },
   { id: "goods-receipt", label: "Goods Receipt", icon: <ClipboardCheck className="w-4 h-4" /> },
   { id: "timeline",      label: "Timeline",      icon: <Clock className="w-4 h-4" /> },
   { id: "activity",      label: "Activity Log",  icon: <FileText className="w-4 h-4" /> },
@@ -672,6 +696,135 @@ function ShipmentTab({
           </Card>
         );
       })}
+    </div>
+  );
+}
+
+function PaymentTab({ po }: { po: PoDetail }) {
+  const queryClient = useQueryClient();
+  const [proofFile, setProofFile] = useState<File | null>(null);
+
+  const { data, isLoading, isError, refetch } = useQuery<{ ok: boolean; data: PaymentView }>({
+    queryKey: ["mkt-po-payment", po.id],
+    queryFn: async () => {
+      const res = await fetch(`/api/mkt/portal/purchase-orders/${po.id}/payment`, { credentials: "include" });
+      if (!res.ok) throw new Error("Gagal memuat status pembayaran");
+      return res.json();
+    },
+  });
+
+  const uploadProof = useMutation({
+    mutationFn: async () => {
+      if (!proofFile) throw new Error("Pilih file bukti pembayaran terlebih dahulu.");
+      const form = new FormData();
+      form.append("file", proofFile);
+      const res = await fetch(`/api/mkt/portal/purchase-orders/${po.id}/payment`, {
+        method: "POST",
+        credentials: "include",
+        body: form,
+      });
+      const result = await res.json().catch(() => ({}));
+      if (!res.ok || !result.ok) throw new Error(result.message ?? "Upload bukti pembayaran gagal");
+      return result;
+    },
+    onSuccess: async () => {
+      setProofFile(null);
+      await queryClient.invalidateQueries({ queryKey: ["mkt-po-payment", po.id] });
+      await queryClient.invalidateQueries({ queryKey: ["mkt-po-detail", po.id] });
+    },
+  });
+
+  if (isLoading) return <Skeleton className="h-48 rounded-xl" />;
+  if (isError || !data?.data) {
+    return (
+      <Card className="border-red-200 bg-red-50">
+        <CardContent className="p-5 text-center">
+          <p className="text-sm text-red-600">Status pembayaran gagal dimuat.</p>
+          <Button size="sm" variant="outline" className="mt-2" onClick={() => void refetch()}>Coba Lagi</Button>
+        </CardContent>
+      </Card>
+    );
+  }
+
+  const payment = data.data;
+  const statusLabel: Record<string, string> = {
+    unpaid: "Belum Dibayar",
+    proof_submitted: "Menunggu Verifikasi",
+    paid: "Lunas",
+    rejected: "Bukti Ditolak",
+  };
+  const statusClass: Record<string, string> = {
+    unpaid: "bg-amber-100 text-amber-700",
+    proof_submitted: "bg-blue-100 text-blue-700",
+    paid: "bg-green-100 text-green-700",
+    rejected: "bg-red-100 text-red-700",
+  };
+
+  return (
+    <div className="space-y-4">
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">Pembayaran Customer ke CST</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          {payment.termsMissing ? (
+            <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
+              Syarat pembayaran belum ditetapkan. Admin CST harus menetapkan syarat pembayaran sebelum barang dapat diserahkan/dikirim.
+            </div>
+          ) : (
+            <>
+              <InfoRow label="Syarat Pembayaran" value={payment.paymentTerms} />
+              <InfoRow label="Jumlah Tagihan" value={fmtAmount(payment.amount, payment.currency)} />
+              <InfoRow
+                label="Status"
+                value={<Badge className={statusClass[payment.paymentStatus] ?? "bg-gray-100 text-gray-700"} variant="secondary">{statusLabel[payment.paymentStatus] ?? payment.paymentStatus}</Badge>}
+              />
+              {payment.paymentDueAt && <InfoRow label="Jatuh Tempo" value={fmtDateTime(payment.paymentDueAt)} />}
+              {payment.requiresClearanceBeforeHandover && payment.paymentStatus !== "paid" && (
+                <div className="rounded-lg border border-orange-200 bg-orange-50 p-3 text-sm text-orange-800">
+                  Pembayaran harus terverifikasi lunas sebelum vendor dapat menyerahkan atau mengirim barang.
+                </div>
+              )}
+              {payment.paymentTermCode?.startsWith("net_") && payment.paymentStatus !== "paid" && (
+                <div className="rounded-lg border border-blue-200 bg-blue-50 p-3 text-sm text-blue-800">
+                  Barang dapat diproses sesuai fulfillment. Pembayaran tetap tercatat sebagai piutang sampai diverifikasi lunas.
+                </div>
+              )}
+              {payment.rejectionReason && (
+                <div className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+                  Bukti pembayaran ditolak: {payment.rejectionReason}
+                </div>
+              )}
+              {payment.proofAvailable && (
+                <div className="flex items-center justify-between gap-3 rounded-lg border p-3 text-sm">
+                  <span>Bukti pembayaran sudah diunggah{payment.proofUploadedAt ? ` · ${fmtDateTime(payment.proofUploadedAt)}` : ""}</span>
+                  {payment.proofUrl && <a href={payment.proofUrl} target="_blank" rel="noreferrer" className="font-medium text-blue-600 underline">Lihat bukti</a>}
+                </div>
+              )}
+              {payment.paymentStatus !== "paid" && (
+                <div className="space-y-2 rounded-lg border p-3">
+                  <p className="text-sm font-medium">Upload bukti transfer ke CST</p>
+                  <input
+                    type="file"
+                    accept=".pdf,.png,.jpg,.jpeg"
+                    onChange={(e) => setProofFile(e.target.files?.[0] ?? null)}
+                    className="block w-full text-sm"
+                  />
+                  {uploadProof.isError && <p className="text-sm text-red-600">{(uploadProof.error as Error).message}</p>}
+                  <Button size="sm" onClick={() => uploadProof.mutate()} disabled={!proofFile || uploadProof.isPending}>
+                    {uploadProof.isPending ? "Mengunggah…" : "Kirim Bukti Pembayaran"}
+                  </Button>
+                </div>
+              )}
+              {payment.paymentStatus === "paid" && (
+                <div className="rounded-lg border border-green-200 bg-green-50 p-3 text-sm text-green-800">
+                  Pembayaran sudah diverifikasi CST{payment.verifiedAt ? ` pada ${fmtDateTime(payment.verifiedAt)}` : ""}.
+                </div>
+              )}
+            </>
+          )}
+        </CardContent>
+      </Card>
     </div>
   );
 }
@@ -1299,10 +1452,10 @@ export default function MktPoDetailPage({ params }: { params?: { poId?: string }
               selectedId={selectedShipmentId}
               onSelect={(id) => {
                 setSelectedShipmentId(id);
-                // Auto-navigate user to goods-receipt/timeline hint
               }}
             />
           )}
+          {activeTab === "payment"       && <PaymentTab po={po} />}
           {activeTab === "goods-receipt" && (
             <div className="space-y-4">
               {!selectedShipmentId && (
