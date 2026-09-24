@@ -56,3 +56,32 @@ jobs:
             }
           done
           echo "All 10 canonical services are live."
+
+
+      - name: Verify Paylabs routes are locally owned and fail closed
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          webhook_status="$(curl --silent --show-error --output /tmp/paylabs-webhook.json --write-out '%{http_code}' \
+            --max-time 20 \
+            -H 'Content-Type: application/json' \
+            -X POST \
+            --data '{}' \
+            https://cstlogistic.co.id/api/payments/paylabs/webhook)"
+          if [ "$webhook_status" != "401" ]; then
+            echo "Expected unsigned Paylabs webhook to fail closed with 401, got $webhook_status"
+            cat /tmp/paylabs-webhook.json || true
+            exit 1
+          fi
+
+          config_status="$(curl --silent --show-error --output /tmp/paylabs-config.json --write-out '%{http_code}' \
+            --max-time 20 \
+            https://cstlogistic.co.id/api/payments/paylabs/config)"
+          if [ "$config_status" != "401" ]; then
+            echo "Expected unauthenticated Paylabs config to return 401, got $config_status"
+            cat /tmp/paylabs-config.json || true
+            exit 1
+          fi
+
+          echo "Paylabs webhook and admin routes are live and fail closed."
