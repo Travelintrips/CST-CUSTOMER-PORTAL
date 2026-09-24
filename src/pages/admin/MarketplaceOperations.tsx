@@ -978,7 +978,10 @@ export function MarketplaceOperationsTab() {
                     <p className="rounded-md bg-red-50 p-2 text-xs text-red-700">Alasan penolakan terakhir: {payment.rejectionReason}</p>
                   )}
 
-                  {payment?.paidAmount === 0 && payment?.paymentStatus !== "paid" && (
+                  {payment?.paidAmount === 0
+                    && payment?.paymentStatus !== "paid"
+                    && !payment?.proofLocked
+                    && !payment?.paylabs?.hasPendingPayment && (
                     <div className="space-y-2 rounded-md border bg-white p-3">
                       <p className="text-xs font-semibold text-slate-700">Atur syarat pembayaran</p>
                       <div className="grid gap-2 md:grid-cols-[240px_140px_auto]">
@@ -1025,6 +1028,14 @@ export function MarketplaceOperationsTab() {
                       {paymentTermDraft === "dp_after_receipt" && (
                         <p className="text-xs text-slate-500">Vendor boleh handover setelah DP minimum terpenuhi. Sisa wajib dilunasi setelah customer menerima barang sebelum PO ditutup.</p>
                       )}
+                    </div>
+                  )}
+
+                  {payment?.paidAmount === 0
+                    && (payment?.proofLocked || payment?.paylabs?.hasPendingPayment)
+                    && payment?.paymentStatus !== "paid" && (
+                    <div className="rounded-md border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800">
+                      Payment terms dikunci sementara karena ada pembayaran yang sedang diproses. Selesaikan atau tolak transaksi tersebut sebelum mengubah skema pembayaran.
                     </div>
                   )}
 
