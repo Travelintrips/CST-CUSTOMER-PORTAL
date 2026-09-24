@@ -144,6 +144,24 @@ function buildLines(
   });
 }
 
+function paymentTermChoice(value: string | null | undefined): string {
+  const normalized = String(value ?? "").trim().toLowerCase();
+  if (!normalized) return "";
+  if (normalized === "dp_after_receipt" || normalized.startsWith("dp ") || normalized.includes("down payment") || normalized.includes("uang muka")) {
+    return "dp_after_receipt";
+  }
+  if (normalized === "prepaid" || normalized.includes("bayar sebelum") || normalized.includes("bayar penuh sebelum")) return "prepaid";
+  if (normalized === "net_7" || normalized.includes("net 7") || normalized.includes("7 hari")) return "net_7";
+  if (normalized === "net_14" || normalized.includes("net 14") || normalized.includes("14 hari")) return "net_14";
+  if (normalized === "net_30" || normalized.includes("net 30") || normalized.includes("30 hari")) return "net_30";
+  return "";
+}
+
+function dpPercentFromLabel(value: string | null | undefined): string {
+  const match = String(value ?? "").match(/(?:dp|down payment|uang muka)\s*([0-9]+(?:[.,][0-9]+)?)\s*%/i);
+  return match ? match[1].replace(",", ".") : "30";
+}
+
 export default function MktVendorQuotePage() {
   const { token } = useParams<{ token: string }>();
   const { toast } = useToast();
@@ -152,6 +170,7 @@ export default function MktVendorQuotePage() {
   const [lineEdits, setLineEdits] = useState<LineEdits>({});
   const [headerNotes, setHeaderNotes] = useState("");
   const [paymentTerms, setPaymentTerms] = useState("");
+  const [paymentDpPercent, setPaymentDpPercent] = useState("30");
   const [editMode, setEditMode] = useState(false);
 
   const { data, isLoading, isError, refetch } = useQuery<{ ok: boolean; data: VendorQuoteData }>({
@@ -172,7 +191,8 @@ export default function MktVendorQuotePage() {
     if (!data?.data) return;
     const q = data.data.quote;
     setHeaderNotes(q.notes ?? "");
-    setPaymentTerms(q.paymentTerms ?? "");
+    setPaymentTerms(paymentTermChoice(q.paymentTerms));
+    setPaymentDpPercent(dpPercentFromLabel(q.paymentTerms));
     const edits: LineEdits = {};
     data.data.quoteLines.forEach((ql) => {
       edits[ql.rfqLineId] = {
@@ -194,6 +214,7 @@ export default function MktVendorQuotePage() {
         quotationDate: vqd.quote.quotationDate,
         notes: headerNotes || null,
         paymentTerms: paymentTerms || null,
+        paymentDpPercent: paymentTerms === "dp_after_receipt" ? Number(paymentDpPercent) : null,
         lines,
       };
       const res = await fetch(`/api/vendor-quote/${token}/save`, {
@@ -223,6 +244,7 @@ export default function MktVendorQuotePage() {
         quotationDate: vqd.quote.quotationDate,
         notes: headerNotes || null,
         paymentTerms: paymentTerms || null,
+        paymentDpPercent: paymentTerms === "dp_after_receipt" ? Number(paymentDpPercent) : null,
         lines,
       };
       const res = await fetch(`/api/vendor-quote/${token}/submit`, {
@@ -538,13 +560,34 @@ export default function MktVendorQuotePage() {
                     required
                   >
                     <option value="">Pilih syarat pembayaran</option>
-                    <option value="Bayar sebelum barang diserahkan/dikirim">Bayar sebelum barang diserahkan/dikirim</option>
-                    <option value="NET 7 hari setelah penerimaan">NET 7 hari setelah penerimaan</option>
-                    <option value="NET 14 hari setelah penerimaan">NET 14 hari setelah penerimaan</option>
-                    <option value="NET 30 hari setelah penerimaan">NET 30 hari setelah penerimaan</option>
+                    <option value="prepaid">Bayar penuh sebelum barang diserahkan/dikirim</option>
+                    <option value="dp_after_receipt">DP sebelum serah/kirim, pelunasan setelah barang diterima</option>
+                    <option value="net_7">NET 7 hari setelah penerimaan</option>
+                    <option value="net_14">NET 14 hari setelah penerimaan</option>
+                    <option value="net_30">NET 30 hari setelah penerimaan</option>
                   </select>
+                  {paymentTerms === "dp_after_receipt" && (
+                    <div className="mt-2">
+                      <Label className="text-xs">Persentase DP</Label>
+                      <div className="relative mt-1 max-w-40">
+                        <Input
+                          type="number"
+                          min="1"
+                          max="99"
+                          step="1"
+                          value={paymentDpPercent}
+                          onChange={(e) => setPaymentDpPercent(e.target.value)}
+                          className="pr-8"
+                        />
+                        <span className="pointer-events-none absolute right-3 top-2.5 text-sm text-gray-500">%</span>
+                      </div>
+                      <p className="mt-1 text-xs text-blue-600">
+                        Customer wajib memenuhi DP ini sebelum handover. Sisa pembayaran dapat dilunasi setelah barang diterima.
+                      </p>
+                    </div>
+                  )}
                   <p className="mt-1 text-xs text-gray-500">
-                    Syarat ini menjadi bagian PO dan menentukan apakah barang boleh diserahkan sebelum pembayaran lunas.
+                    Syarat pembayaran menjadi bagian PO dan mengontrol kapan vendor boleh menyerahkan/mengirim barang.
                   </p>
                 </div>
                 <div>
@@ -584,7 +627,10 @@ export default function MktVendorQuotePage() {
               <Button
                 className="flex-1 bg-orange-500 hover:bg-orange-600"
                 onClick={() => setShowSubmitConfirm(true)}
-                disabled={!paymentTerms}
+                disabled={
+                  !paymentTerms
+                  || (paymentTerms === "dp_after_receipt" && !(Number(paymentDpPercent) > 0 && Number(paymentDpPercent) < 100))
+                }
               >
                 <Send className="w-4 h-4 mr-2" />
                 {isRequote ? t("mktVendorQuote.sendRevision", "Kirim Revisi") : t("mktVendorQuote.sendQuote", "Kirim Penawaran")}
