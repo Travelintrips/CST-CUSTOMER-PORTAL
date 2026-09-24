@@ -162,7 +162,7 @@ async function paymentTotals(po, db = query) {
             coalesce(sum(case when review_status='submitted' then ocr_amount else 0 end),0) as pending_amount
        from public.mkt_po_payment_proofs
       where po_id=$1
-        and (review_status='approved' or review_status='submitted')`,
+        and review_status='approved'`,
     [po.id],
   )).rows[0] ?? {};
 
