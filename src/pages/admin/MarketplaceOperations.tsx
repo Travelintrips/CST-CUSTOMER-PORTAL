@@ -91,8 +91,14 @@ type PaymentView = {
   amount: string | number | null;
   currency: string;
   proofAvailable: boolean;
+  proofLocked: boolean;
   proofUrl: string | null;
+  proofFileName: string | null;
+  proofMimeType: string | null;
   proofUploadedAt: string | null;
+  ocrAmount: number | null;
+  ocrConfidence: number | null;
+  ocrMatches: boolean | null;
   verifiedAt: string | null;
   rejectionReason: string | null;
   requiresClearanceBeforeHandover: boolean;
@@ -748,10 +754,62 @@ export function MarketplaceOperationsTab() {
                     </div>
                   )}
 
-                  {payment?.proofUrl && (
-                    <a href={payment.proofUrl} target="_blank" rel="noreferrer" className="inline-block text-sm font-medium text-indigo-600 underline">
-                      Lihat bukti pembayaran
-                    </a>
+                  {payment?.proofAvailable && (
+                    <div className="space-y-3 rounded-lg border border-indigo-200 bg-white p-4">
+                      <div className="flex flex-wrap items-start justify-between gap-3">
+                        <div>
+                          <p className="text-sm font-semibold text-slate-900">Pemeriksaan bukti pembayaran</p>
+                          <p className="mt-1 text-xs text-slate-500">
+                            Bukti sudah dikunci setelah customer mengirim. Periksa bukti asli sebelum menyetujui pembayaran.
+                          </p>
+                        </div>
+                        <Badge className={payment.ocrMatches ? "border-green-200 bg-green-100 text-green-700" : "border-red-200 bg-red-100 text-red-700"}>
+                          {payment.ocrMatches ? "Nominal OCR Cocok" : "Perlu Pemeriksaan"}
+                        </Badge>
+                      </div>
+
+                      {payment.proofUrl && payment.proofMimeType?.startsWith("image/") && (
+                        <a href={payment.proofUrl} target="_blank" rel="noreferrer" className="block">
+                          <img
+                            src={payment.proofUrl}
+                            alt="Bukti pembayaran customer"
+                            className="max-h-[420px] w-full rounded-lg border bg-slate-50 object-contain"
+                          />
+                        </a>
+                      )}
+                      {payment.proofUrl && !payment.proofMimeType?.startsWith("image/") && (
+                        <a href={payment.proofUrl} target="_blank" rel="noreferrer" className="inline-block text-sm font-medium text-indigo-600 underline">
+                          Buka bukti pembayaran
+                        </a>
+                      )}
+
+                      <div className="grid gap-3 text-sm sm:grid-cols-3">
+                        <div className="rounded-md bg-slate-50 p-3">
+                          <p className="text-xs text-slate-500">Tagihan PO</p>
+                          <p className="mt-1 font-semibold">{fmtMoney(payment.amount, payment.currency ?? selectedPo.currency ?? "IDR")}</p>
+                        </div>
+                        <div className="rounded-md bg-slate-50 p-3">
+                          <p className="text-xs text-slate-500">Nominal hasil OCR</p>
+                          <p className="mt-1 font-semibold">
+                            {payment.ocrAmount == null ? "Tidak terbaca" : fmtMoney(payment.ocrAmount, payment.currency ?? selectedPo.currency ?? "IDR")}
+                          </p>
+                        </div>
+                        <div className="rounded-md bg-slate-50 p-3">
+                          <p className="text-xs text-slate-500">Dikirim</p>
+                          <p className="mt-1 font-semibold">{fmtDate(payment.proofUploadedAt)}</p>
+                        </div>
+                      </div>
+
+                      <div className={`rounded-md p-3 text-xs ${
+                        payment.ocrMatches
+                          ? "bg-emerald-50 text-emerald-800"
+                          : "bg-amber-50 text-amber-800"
+                      }`}>
+                        {payment.ocrMatches
+                          ? "OCR membaca nominal yang sama dengan tagihan. Admin tetap wajib memeriksa bukti secara visual sebelum menyetujui."
+                          : "Nominal OCR tidak cocok atau tidak terbaca. Jangan menyetujui sebelum bukti diverifikasi secara manual."}
+                      </div>
+                    </div>
                   )}
                   {payment?.rejectionReason && (
                     <p className="rounded-md bg-red-50 p-2 text-xs text-red-700">Alasan penolakan terakhir: {payment.rejectionReason}</p>
@@ -782,14 +840,18 @@ export function MarketplaceOperationsTab() {
                   )}
 
                   {payment?.paymentStatus === "proof_submitted" && (
-                    <div className="flex flex-wrap gap-2">
+                    <div className="space-y-2">
+                      <p className="text-xs text-slate-600">
+                        Setujui hanya setelah bukti visual, nominal, dan transaksi benar-benar sesuai. Jika ditolak, bukti tetap tersimpan sebagai audit trail dan customer tidak dapat menggantinya.
+                      </p>
+                      <div className="flex flex-wrap gap-2">
                       <button
                         type="button"
                         onClick={verifyPayment}
                         disabled={working}
                         className="rounded-md bg-emerald-600 px-3 py-2 text-sm font-semibold text-white disabled:opacity-50"
                       >
-                        Verifikasi Lunas
+                        Setujui Bukti & Tandai Lunas
                       </button>
                       <Input
                         className="max-w-sm"
@@ -805,6 +867,7 @@ export function MarketplaceOperationsTab() {
                       >
                         Tolak Bukti
                       </button>
+                    </div>
                     </div>
                   )}
 
