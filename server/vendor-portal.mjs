@@ -785,6 +785,7 @@ export async function handleVendorPortalRoutes({ request, response, url, user, b
     ) : { rows: [] };
     const marketplaceRfqs = vendor?.supplier_id ? await query(
       `select q.id as quote_id, q.rfq_id, q.status as quote_status, q.valid_until, q.submitted_at,
+              q.token,
               r.rfq_number, r.status as rfq_status, r.buyer_name, r.buyer_company,
               r.required_delivery_date, r.delivery_address, r.notes, r.line_count
          from public.mkt_vendor_quotes q
@@ -796,7 +797,8 @@ export async function handleVendorPortalRoutes({ request, response, url, user, b
     ) : { rows: [] };
     const marketplaceOrders = vendor?.supplier_id ? await query(
       `select p.id, p.po_number, p.rfq_id, p.quote_id, p.status, p.total_amount, p.tax_amount,
-              p.grand_total, p.currency_snapshot, p.confirmed_at, p.created_at, r.rfq_number
+              p.grand_total, p.currency_snapshot, p.confirmed_at, p.created_at,
+              p.vendor_token, p.vendor_token_expires_at, r.rfq_number
          from public.mkt_purchase_orders p
          join public.mkt_rfqs r on r.id = p.rfq_id
         where p.vendor_id = $1
@@ -836,7 +838,8 @@ export async function handleVendorPortalRoutes({ request, response, url, user, b
       })),
       marketplaceRfqs: marketplaceRfqs.rows.map((row) => ({
         id: Number(row.rfq_id), rfqNumber: row.rfq_number, rfqStatus: row.rfq_status,
-        quoteId: Number(row.quote_id), quoteStatus: row.quote_status, quoteUrl: "",
+        quoteId: Number(row.quote_id), quoteStatus: row.quote_status,
+        quoteUrl: row.token ? `/mkt-vendor-quote/${encodeURIComponent(row.token)}` : null,
         validUntil: row.valid_until, submittedAt: row.submitted_at, buyerName: row.buyer_name,
         buyerCompany: row.buyer_company, requiredDeliveryDate: row.required_delivery_date,
         deliveryAddress: row.delivery_address, notes: row.notes, lineCount: Number(row.line_count ?? 0),
@@ -846,6 +849,8 @@ export async function handleVendorPortalRoutes({ request, response, url, user, b
         quoteId: Number(row.quote_id), rfqNumber: row.rfq_number, status: row.status,
         totalAmount: Number(row.total_amount ?? 0), taxAmount: Number(row.tax_amount ?? 0),
         grandTotal: Number(row.grand_total ?? 0), currency: row.currency_snapshot || "IDR",
+        poUrl: row.vendor_token ? `/mkt-vendor-po/${encodeURIComponent(row.vendor_token)}` : null,
+        vendorTokenExpiresAt: row.vendor_token_expires_at ?? null,
         confirmedAt: row.confirmed_at, createdAt: row.created_at,
       })),
       vendorProfile: vendor ? {
