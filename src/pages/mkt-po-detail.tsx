@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useLocation, Link } from "wouter";
 import { isAuthenticated, removeAuthToken } from "@/lib/auth";
@@ -458,10 +458,12 @@ function ItemsTab({ po }: { po: PoDetail }) {
 
 function ShipmentTab({
   poId,
+  poStatus,
   selectedId,
   onSelect,
 }: {
   poId: number;
+  poStatus: string;
   selectedId: number | null;
   onSelect: (id: number) => void;
 }) {
@@ -496,10 +498,15 @@ function ShipmentTab({
     },
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: ["mkt-po-shipments", poId] });
+      await queryClient.invalidateQueries({ queryKey: ["mkt-po-detail", poId] });
     },
   });
 
   const shipments = data?.data ?? [];
+
+  useEffect(() => {
+    if (!selectedId && shipments[0]?.id) onSelect(shipments[0].id);
+  }, [onSelect, selectedId, shipments]);
 
   if (isLoading) return <div className="space-y-3">{[1,2].map(i => <Skeleton key={i} className="h-24 rounded-xl" />)}</div>;
 
@@ -514,6 +521,22 @@ function ShipmentTab({
     </Card>
   );
 
+  if (shipments.length === 0 && poStatus !== "vendor_accepted") return (
+    <Card className="border-amber-200 bg-amber-50">
+      <CardContent className="p-5">
+        <div className="flex gap-3">
+          <Clock className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
+          <div>
+            <p className="font-semibold text-amber-900">Menunggu vendor menerima Purchase Order</p>
+            <p className="mt-1 text-sm text-amber-800">
+              Setelah vendor menekan Terima PO, pilihan metode pengiriman akan terbuka di sini.
+            </p>
+          </div>
+        </div>
+      </CardContent>
+    </Card>
+  );
+
   if (shipments.length === 0) return (
     <Card className="border-dashed">
       <CardHeader>
@@ -522,7 +545,7 @@ function ShipmentTab({
           Pilih mode pengiriman
         </CardTitle>
         <p className="text-sm text-gray-500">
-          Pilihan ini membuat shipment canonical untuk PO ini. Setelah disimpan, mode tidak dapat diganti dari portal.
+          Vendor sudah menerima PO. Pilih satu metode pengiriman; pilihan ini membuat satu shipment canonical yang sama untuk customer, vendor, dan admin.
         </p>
       </CardHeader>
       <CardContent className="space-y-3">
@@ -558,11 +581,23 @@ function ShipmentTab({
     </Card>
   );
 
+
   return (
     <div className="space-y-3">
+      <Card className="border-blue-200 bg-blue-50">
+        <CardContent className="p-4 text-sm text-blue-800">
+          <p className="font-semibold">Status order & pengiriman</p>
+          <p className="mt-1 text-xs">
+            Customer cukup memantau di sini. Vendor yang memperbarui persiapan/pengiriman dan mengunggah POD.
+            Setelah barang diserahkan/tiba dan POD tersedia, konfirmasi penerimaan dilakukan di tab Goods Receipt.
+          </p>
+        </CardContent>
+      </Card>
       {shipments.map((s) => {
         const st = SHIPMENT_STATUS[s.shipmentStatus] ?? { label: s.shipmentStatus, color: "bg-gray-100 text-gray-700" };
         const active = selectedId === s.id;
+        const isPickup = s.shipmentType === "pickup_self";
+        const shipmentTypeLabel = SHIPMENT_OPTIONS.find((option) => option.value === s.shipmentType)?.label ?? s.shipmentType;
         return (
           <Card
             key={s.id}
@@ -572,45 +607,57 @@ function ShipmentTab({
             <CardContent className="p-4 space-y-2">
               <div className="flex items-start justify-between gap-2">
                 <div>
-                  <span className="font-mono text-sm font-semibold text-gray-800">
-                    {s.shipmentNumber}
-                  </span>
-                  {s.carrierName && (
+                  <span className="font-mono text-sm font-semibold text-gray-800">{s.shipmentNumber}</span>
+                  {s.carrierName && !isPickup && (
                     <span className="text-xs text-gray-500 ml-2">via {s.carrierName}</span>
                   )}
-                  {s.shipmentType && (
-                    <span className="text-xs text-gray-400 ml-1">({s.shipmentType})</span>
+                  {shipmentTypeLabel && (
+                    <span className="text-xs text-gray-400 ml-1">({shipmentTypeLabel})</span>
                   )}
                 </div>
                 <Badge className={`text-xs ${st.color}`} variant="secondary">{st.label}</Badge>
               </div>
 
-              {s.trackingNumber && (
+              {s.trackingNumber && !isPickup && (
                 <p className="text-xs text-gray-600">
                   Tracking: <span className="font-mono">{s.trackingNumber}</span>
                 </p>
               )}
 
-              <div className="grid grid-cols-2 gap-2 text-xs text-gray-500">
-                {s.origin && (
-                  <span className="flex items-start gap-1">
-                    <MapPin className="w-3 h-3 mt-0.5 shrink-0" />
-                    <span>Dari: {s.origin}</span>
-                  </span>
-                )}
-                {s.destination && (
-                  <span className="flex items-start gap-1">
-                    <MapPin className="w-3 h-3 mt-0.5 shrink-0" />
-                    <span>Ke: {s.destination}</span>
-                  </span>
-                )}
-                {s.estimatedArrival && (
-                  <span>Est. Tiba: {fmtDate(s.estimatedArrival)}</span>
-                )}
-                {s.actualArrival && (
-                  <span className="text-green-600">Tiba: {fmtDate(s.actualArrival)}</span>
-                )}
-              </div>
+              {isPickup ? (
+                <div className="text-xs text-gray-500">
+                  {s.origin || (s.shipmentStatus !== "planned" ? s.destination : null) ? (
+                    <span className="flex items-start gap-1">
+                      <MapPin className="w-3 h-3 mt-0.5 shrink-0" />
+                      <span>Lokasi pengambilan: {s.origin || s.destination}</span>
+                    </span>
+                  ) : (
+                    <span>Lokasi pengambilan akan tampil setelah vendor menyatakan barang siap diambil.</span>
+                  )}
+                </div>
+              ) : (
+                <div className="grid grid-cols-2 gap-2 text-xs text-gray-500">
+                  {s.origin && (
+                    <span className="flex items-start gap-1">
+                      <MapPin className="w-3 h-3 mt-0.5 shrink-0" />
+                      <span>Dari: {s.origin}</span>
+                    </span>
+                  )}
+                  {s.destination && (
+                    <span className="flex items-start gap-1">
+                      <MapPin className="w-3 h-3 mt-0.5 shrink-0" />
+                      <span>Ke: {s.destination}</span>
+                    </span>
+                  )}
+                </div>
+              )}
+
+              {s.estimatedArrival && <p className="text-xs text-gray-500">Est. tiba: {fmtDate(s.estimatedArrival)}</p>}
+              {s.actualArrival && (
+                <p className="text-xs text-emerald-700">
+                  {isPickup ? "Barang sudah diserahkan. Menunggu POD dan konfirmasi penerimaan." : "Tiba: " + fmtDate(s.actualArrival)}
+                </p>
+              )}
             </CardContent>
           </Card>
         );
@@ -1238,6 +1285,7 @@ export default function MktPoDetailPage({ params }: { params?: { poId?: string }
           {activeTab === "shipment"      && (
             <ShipmentTab
               poId={po.id}
+              poStatus={po.status}
               selectedId={selectedShipmentId}
               onSelect={(id) => {
                 setSelectedShipmentId(id);
