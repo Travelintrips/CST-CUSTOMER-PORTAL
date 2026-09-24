@@ -184,9 +184,12 @@ async function paymentView(po, db = query) {
     ocrMatches: active?.ocr_matches == null ? null : Boolean(active.ocr_matches),
     proofReviewStatus: active?.review_status ?? null,
     verifiedAt: active?.reviewed_at ?? po.payment_verified_at ?? null,
-    rejectionReason: latest?.review_status === "rejected"
-      ? latest.rejection_reason
-      : po.payment_rejection_reason ?? null,
+    verifiedBy: po.payment_verified_by ?? null,
+    rejectionReason: po.payment_status === "paid"
+      ? null
+      : latest?.review_status === "rejected"
+        ? latest.rejection_reason
+        : po.payment_rejection_reason ?? null,
     requiresClearanceBeforeHandover: paymentRequiresClearance(code),
     termsMissing: !code,
     manualTransferAllowed: canUploadNewProof,
