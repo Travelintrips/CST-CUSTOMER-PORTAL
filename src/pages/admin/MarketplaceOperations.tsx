@@ -68,6 +68,7 @@ type PurchaseOrder = {
   confirmedAt?: string | null;
   paymentTerms?: string | null;
   paymentTermCode?: string | null;
+  paymentDpPercent?: number | null;
   paymentStatus?: string | null;
   paymentDueAt?: string | null;
   paymentProofUploadedAt?: string | null;
@@ -85,16 +86,28 @@ type PurchaseOrder = {
 type PaymentView = {
   poId: number;
   paymentTermCode: string | null;
+  paymentDpPercent: number | null;
   paymentTerms: string | null;
-  paymentStatus: "unpaid" | "proof_submitted" | "paid" | "rejected";
+  paymentStatus: "unpaid" | "proof_submitted" | "partially_paid" | "paid" | "rejected";
   paymentDueAt: string | null;
-  amount: string | number | null;
+  amount: number;
+  paidAmount: number;
+  remainingAmount: number;
+  overpaidAmount: number;
+  manualPaidAmount: number;
+  paylabsPaidAmount: number;
+  pendingManualAmount: number;
+  pendingPaylabsAmount: number;
+  requiredBeforeHandoverAmount: number;
+  requiredBeforeHandoverRemaining: number;
+  handoverPaymentSatisfied: boolean;
   currency: string;
   proofAvailable: boolean;
   proofLocked: boolean;
   canUploadNewProof: boolean;
   proofAttemptCount: number;
   proofId: number | null;
+  proofExpectedAmount: number | null;
   proofReviewStatus: "submitted" | "approved" | "rejected" | null;
   proofUrl: string | null;
   proofFileName: string | null;
@@ -137,7 +150,6 @@ type PaymentView = {
     canCreate: boolean;
   };
 };
-
 type Shipment = {
   id: number;
   shipmentNumber: string;
@@ -184,11 +196,13 @@ function fmtMoney(value: string | number | null | undefined, currency = "IDR"): 
 }
 
 function StatusBadge({ value }: { value: string | null | undefined }) {
-  const tone = value === "completed" || value === "approved" || value === "submitted"
+  const tone = value === "completed" || value === "approved" || value === "submitted" || value === "paid"
     ? "bg-emerald-100 text-emerald-700 border-emerald-200"
-    : value === "rejected" || value === "cancelled" || value === "vendor_rejected"
-      ? "bg-red-100 text-red-700 border-red-200"
-      : "bg-amber-100 text-amber-700 border-amber-200";
+    : value === "partially_paid" || value === "proof_submitted"
+      ? "bg-cyan-100 text-cyan-700 border-cyan-200"
+      : value === "rejected" || value === "cancelled" || value === "vendor_rejected"
+        ? "bg-red-100 text-red-700 border-red-200"
+        : "bg-amber-100 text-amber-700 border-amber-200";
   return <Badge className={`${tone} border`}>{value ?? "—"}</Badge>;
 }
 
@@ -204,6 +218,7 @@ export function MarketplaceOperationsTab() {
   const [shipmentItems, setShipmentItems] = useState<ShipmentItem[]>([]);
   const [payment, setPayment] = useState<PaymentView | null>(null);
   const [paymentTermDraft, setPaymentTermDraft] = useState("");
+  const [paymentDpPercentDraft, setPaymentDpPercentDraft] = useState("30");
   const [paymentRejectReason, setPaymentRejectReason] = useState("");
   const deepLinkHandled = useRef(false);
   const [loading, setLoading] = useState(true);
@@ -336,6 +351,7 @@ export function MarketplaceOperationsTab() {
       setShipments(result);
       setPayment(paymentResult);
       setPaymentTermDraft(paymentResult.paymentTermCode ?? "");
+      setPaymentDpPercentDraft(String(paymentResult.paymentDpPercent ?? 30));
       if (result[0]) {
         const detail = await api<{ items: ShipmentItem[] }>(`/api/mkt/admin/shipments/${result[0].id}`);
         setShipmentItems(detail.items ?? []);
@@ -378,7 +394,10 @@ export function MarketplaceOperationsTab() {
     void run(async () => {
       await api<PaymentView>(`/api/mkt/admin/purchase-orders/${selectedPo.id}/payment`, {
         method: "PUT",
-        body: JSON.stringify({ paymentTermCode: paymentTermDraft }),
+        body: JSON.stringify({
+          paymentTermCode: paymentTermDraft,
+          paymentDpPercent: paymentTermDraft === "dp_after_receipt" ? Number(paymentDpPercentDraft) : null,
+        }),
       });
       await selectPo(selectedPo);
     }, "Syarat pembayaran disimpan");
@@ -392,7 +411,7 @@ export function MarketplaceOperationsTab() {
         body: JSON.stringify({}),
       });
       await selectPo(selectedPo);
-    }, "Pembayaran diverifikasi lunas");
+    }, "Pembayaran diverifikasi");
   };
 
   const rejectPayment = () => {
@@ -783,7 +802,13 @@ export function MarketplaceOperationsTab() {
                     </div>
                     <div className={`rounded-lg border p-3 ${payment?.paymentStatus === "paid" ? "border-emerald-400 bg-white" : "bg-white/70"}`}>
                       <p className="text-[11px] font-semibold uppercase text-slate-400">4. Handover</p>
-                      <p className="mt-1 text-xs font-medium text-slate-800">{payment?.requiresClearanceBeforeHandover && payment?.paymentStatus !== "paid" ? "Vendor masih diblokir" : "Ikuti terms PO"}</p>
+                      <p className="mt-1 text-xs font-medium text-slate-800">
+                        {payment?.requiresClearanceBeforeHandover && !payment?.handoverPaymentSatisfied
+                          ? "Vendor masih diblokir"
+                          : payment?.paymentTermCode === "dp_after_receipt" && payment?.remainingAmount > 0
+                            ? "DP terpenuhi · sisa setelah penerimaan"
+                            : "Ikuti terms PO"}
+                      </p>
                     </div>
                   </div>
 
@@ -793,11 +818,39 @@ export function MarketplaceOperationsTab() {
                       <p className="mt-1 text-xs text-amber-800">Pilih syarat pembayaran. Handover/pengiriman akan diblokir sampai aturan pembayaran jelas.</p>
                     </div>
                   ) : (
-                    <div className="grid gap-2 text-sm md:grid-cols-2">
-                      <p><span className="text-slate-500">Terms:</span> {payment?.paymentTerms ?? "—"}</p>
-                      <p><span className="text-slate-500">Tagihan:</span> {fmtMoney(payment?.amount, payment?.currency ?? selectedPo.currency ?? "IDR")}</p>
-                      <p><span className="text-slate-500">Jatuh tempo:</span> {fmtDate(payment?.paymentDueAt)}</p>
-                      <p><span className="text-slate-500">Bukti:</span> {payment?.proofAvailable ? "Tersedia" : "Belum ada"}</p>
+                    <div className="space-y-3">
+                      <p className="text-sm"><span className="text-slate-500">Terms:</span> {payment?.paymentTerms ?? "—"}</p>
+                      <div className="grid gap-2 sm:grid-cols-3">
+                        <div className="rounded-md bg-white p-3 text-sm">
+                          <p className="text-xs text-slate-500">Total PO</p>
+                          <p className="mt-1 font-semibold">{fmtMoney(payment?.amount, payment?.currency ?? selectedPo.currency ?? "IDR")}</p>
+                        </div>
+                        <div className="rounded-md bg-emerald-50 p-3 text-sm">
+                          <p className="text-xs text-emerald-700">Sudah dibayar</p>
+                          <p className="mt-1 font-semibold text-emerald-800">{fmtMoney(payment?.paidAmount, payment?.currency ?? selectedPo.currency ?? "IDR")}</p>
+                        </div>
+                        <div className="rounded-md bg-orange-50 p-3 text-sm">
+                          <p className="text-xs text-orange-700">Sisa tagihan</p>
+                          <p className="mt-1 font-semibold text-orange-800">{fmtMoney(payment?.remainingAmount, payment?.currency ?? selectedPo.currency ?? "IDR")}</p>
+                        </div>
+                      </div>
+                      {payment?.paymentTermCode === "dp_after_receipt" && (
+                        <div className="rounded-md border border-blue-200 bg-blue-50 p-3 text-xs text-blue-800">
+                          DP {payment.paymentDpPercent}% · minimum sebelum handover {fmtMoney(payment.requiredBeforeHandoverAmount, payment.currency)}
+                          {payment.handoverPaymentSatisfied
+                            ? ` · sudah terpenuhi, sisa ${fmtMoney(payment.remainingAmount, payment.currency)} dilunasi setelah penerimaan`
+                            : ` · masih kurang ${fmtMoney(payment.requiredBeforeHandoverRemaining, payment.currency)}`}
+                        </div>
+                      )}
+                      {payment?.overpaidAmount > 0 && (
+                        <div className="rounded-md border border-red-200 bg-red-50 p-3 text-xs text-red-700">
+                          Kelebihan pembayaran terdeteksi: {fmtMoney(payment.overpaidAmount, payment.currency)}.
+                        </div>
+                      )}
+                      <div className="grid gap-2 text-sm md:grid-cols-2">
+                        <p><span className="text-slate-500">Jatuh tempo:</span> {fmtDate(payment?.paymentDueAt)}</p>
+                        <p><span className="text-slate-500">Bukti:</span> {payment?.proofAvailable ? "Tersedia" : "Belum ada"}</p>
+                      </div>
                     </div>
                   )}
 
@@ -895,8 +948,8 @@ export function MarketplaceOperationsTab() {
 
                       <div className="grid gap-3 text-sm sm:grid-cols-3">
                         <div className="rounded-md bg-slate-50 p-3">
-                          <p className="text-xs text-slate-500">Tagihan PO</p>
-                          <p className="mt-1 font-semibold">{fmtMoney(payment.amount, payment.currency ?? selectedPo.currency ?? "IDR")}</p>
+                          <p className="text-xs text-slate-500">Nominal diajukan</p>
+                          <p className="mt-1 font-semibold">{fmtMoney(payment.proofExpectedAmount, payment.currency ?? selectedPo.currency ?? "IDR")}</p>
                         </div>
                         <div className="rounded-md bg-slate-50 p-3">
                           <p className="text-xs text-slate-500">Nominal hasil OCR</p>
@@ -925,27 +978,53 @@ export function MarketplaceOperationsTab() {
                     <p className="rounded-md bg-red-50 p-2 text-xs text-red-700">Alasan penolakan terakhir: {payment.rejectionReason}</p>
                   )}
 
-                  {payment?.paymentStatus !== "paid" && (
-                    <div className="grid gap-2 md:grid-cols-[220px_auto]">
-                      <select
-                        value={paymentTermDraft}
-                        onChange={(e) => setPaymentTermDraft(e.target.value)}
-                        className="h-10 rounded-md border bg-white px-3 text-sm"
-                      >
-                        <option value="">Pilih syarat pembayaran</option>
-                        <option value="prepaid">Bayar sebelum serah/kirim</option>
-                        <option value="net_7">NET 7 hari</option>
-                        <option value="net_14">NET 14 hari</option>
-                        <option value="net_30">NET 30 hari</option>
-                      </select>
-                      <button
-                        type="button"
-                        onClick={savePaymentTerms}
-                        disabled={working || !paymentTermDraft}
-                        className="rounded-md border px-3 py-2 text-sm font-medium disabled:opacity-50"
-                      >
-                        Simpan syarat pembayaran
-                      </button>
+                  {payment?.paidAmount === 0 && payment?.paymentStatus !== "paid" && (
+                    <div className="space-y-2 rounded-md border bg-white p-3">
+                      <p className="text-xs font-semibold text-slate-700">Atur syarat pembayaran</p>
+                      <div className="grid gap-2 md:grid-cols-[240px_140px_auto]">
+                        <select
+                          value={paymentTermDraft}
+                          onChange={(e) => setPaymentTermDraft(e.target.value)}
+                          className="h-10 rounded-md border bg-white px-3 text-sm"
+                        >
+                          <option value="">Pilih syarat pembayaran</option>
+                          <option value="prepaid">Bayar penuh sebelum serah/kirim</option>
+                          <option value="dp_after_receipt">DP + pelunasan setelah barang diterima</option>
+                          <option value="net_7">NET 7 hari</option>
+                          <option value="net_14">NET 14 hari</option>
+                          <option value="net_30">NET 30 hari</option>
+                        </select>
+                        {paymentTermDraft === "dp_after_receipt" ? (
+                          <div className="relative">
+                            <Input
+                              type="number"
+                              min="1"
+                              max="99"
+                              step="1"
+                              value={paymentDpPercentDraft}
+                              onChange={(e) => setPaymentDpPercentDraft(e.target.value)}
+                              className="pr-8"
+                              placeholder="DP"
+                            />
+                            <span className="pointer-events-none absolute right-3 top-2.5 text-sm text-slate-500">%</span>
+                          </div>
+                        ) : <div />}
+                        <button
+                          type="button"
+                          onClick={savePaymentTerms}
+                          disabled={
+                            working
+                            || !paymentTermDraft
+                            || (paymentTermDraft === "dp_after_receipt" && !(Number(paymentDpPercentDraft) > 0 && Number(paymentDpPercentDraft) < 100))
+                          }
+                          className="rounded-md border px-3 py-2 text-sm font-medium disabled:opacity-50"
+                        >
+                          Simpan syarat pembayaran
+                        </button>
+                      </div>
+                      {paymentTermDraft === "dp_after_receipt" && (
+                        <p className="text-xs text-slate-500">Vendor boleh handover setelah DP minimum terpenuhi. Sisa wajib dilunasi setelah customer menerima barang sebelum PO ditutup.</p>
+                      )}
                     </div>
                   )}
 
@@ -961,7 +1040,7 @@ export function MarketplaceOperationsTab() {
                         disabled={working}
                         className="rounded-md bg-emerald-600 px-3 py-2 text-sm font-semibold text-white disabled:opacity-50"
                       >
-                        Setujui Bukti & Tandai Lunas
+                        Setujui Pembayaran
                       </button>
                       <Input
                         className="max-w-sm"
@@ -987,6 +1066,11 @@ export function MarketplaceOperationsTab() {
                         ? "Pembayaran dikonfirmasi otomatis oleh Paylabs"
                         : "Pembayaran sudah diverifikasi CST"}
                       {payment.verifiedAt ? ` · ${fmtDate(payment.verifiedAt)}` : ""}.
+                    </div>
+                  )}
+                  {payment?.paymentStatus === "partially_paid" && (
+                    <div className="rounded-md bg-cyan-50 p-3 text-sm text-cyan-800">
+                      Pembayaran sebagian sudah terverifikasi. Sudah dibayar {fmtMoney(payment.paidAmount, payment.currency)} dan sisa {fmtMoney(payment.remainingAmount, payment.currency)}.
                     </div>
                   )}
                 </div>
