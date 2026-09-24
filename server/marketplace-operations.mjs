@@ -14,6 +14,10 @@ import {
   deleteMarketplacePaymentProof,
 } from "./storage.mjs";
 import { extractPaymentAmountFromFile } from "./marketplace-payment-ocr.mjs";
+import {
+  createMarketplacePaylabsLink,
+  getMarketplacePaylabsState,
+} from "./paylabs-service.mjs";
 
 const SHIPMENT_EVENT_STATUS = {
   packing: "packing",
@@ -152,7 +156,11 @@ async function paymentView(po, db = query) {
   if (active?.storage_path) {
     proofUrl = await signedMarketplacePaymentProofUrl({ poId: po.id, path: active.storage_path });
   }
-  const canUploadNewProof = po.payment_status !== "paid" && !pending;
+  const paylabs = await getMarketplacePaylabsState(po, db);
+  const canUploadNewProof =
+    po.payment_status !== "paid"
+    && !pending
+    && !paylabs.hasPendingPayment;
 
   return {
     poId: Number(po.id),
@@ -181,6 +189,8 @@ async function paymentView(po, db = query) {
       : po.payment_rejection_reason ?? null,
     requiresClearanceBeforeHandover: paymentRequiresClearance(code),
     termsMissing: !code,
+    manualTransferAllowed: canUploadNewProof,
+    paylabs,
   };
 }
 function actor(user, actorType = "admin") {
@@ -230,7 +240,7 @@ async function loadPo(poId, user, { client = query, forUpdate = false, isAdmin =
   if (isAdmin) {
     const result = await client(
       `select po.*, r.rfq_number, r.portal_customer_id, r.buyer_email, r.buyer_name,
-              r.delivery_address
+              r.delivery_address, r.buyer_phone
          from public.mkt_purchase_orders po
          join public.mkt_rfqs r on r.id = po.rfq_id
         where po.id = $1
@@ -244,7 +254,7 @@ async function loadPo(poId, user, { client = query, forUpdate = false, isAdmin =
   const companyIds = await accessibleCompanyIds(user, client === query ? query : client);
   const result = await client(
     `select po.*, r.rfq_number, r.portal_customer_id, r.buyer_email, r.buyer_name,
-            r.delivery_address
+            r.delivery_address, r.buyer_phone
        from public.mkt_purchase_orders po
        join public.mkt_rfqs r on r.id = po.rfq_id
       where po.id = $4 and ${ownerSql("r")}
@@ -1598,6 +1608,18 @@ async function transitionPo({ poId, action, body, request, user, isAdmin }) {
 }
 
 async function handlePortalOperations({ request, response, pathname, body, user, sendJson }) {
+  const poPaylabs = pathname.match(/^\/api\/mkt\/portal\/purchase-orders\/(\d+)\/payment\/paylabs$/);
+  if (request.method === "POST" && poPaylabs) {
+    const po = await loadPo(poPaylabs[1], user, { isAdmin: false });
+    const data = await createMarketplacePaylabsLink({
+      po,
+      request,
+      requestedMethod: text(body?.paymentMethod),
+    });
+    sendJson(response, 200, { ok: true, data });
+    return true;
+  }
+
   const poPaymentScan = pathname.match(/^\/api\/mkt\/portal\/purchase-orders\/(\d+)\/payment\/scan$/);
   if (request.method === "POST" && poPaymentScan) {
     sendJson(response, 200, { ok: true, data: await scanPoPaymentProof({ poId: poPaymentScan[1], body, user }) });
