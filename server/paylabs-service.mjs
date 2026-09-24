@@ -22,8 +22,25 @@ function forwardedValue(request, name) {
 }
 
 function requestOrigin(request) {
-  const protocol = forwardedValue(request, "x-forwarded-proto")
-    ?? (process.env.NODE_ENV === "production" ? "https" : "http");
+  const configured = text(
+    process.env.PAYLABS_CALLBACK_BASE_URL
+      ?? process.env.PORTAL_PUBLIC_ORIGIN
+      ?? process.env.PORTAL_PUBLIC_URL,
+  );
+  if (configured) {
+    try {
+      const url = new URL(configured);
+      if (url.protocol === "https:" || (process.env.NODE_ENV !== "production" && url.protocol === "http:")) {
+        return url.origin;
+      }
+    } catch {
+      // Invalid configured URL falls through to the production-safe default.
+    }
+  }
+  if (process.env.NODE_ENV === "production" || process.env.APP_ENV === "production") {
+    return "https://cstlogistic.co.id";
+  }
+  const protocol = forwardedValue(request, "x-forwarded-proto") ?? "http";
   const host = forwardedValue(request, "x-forwarded-host")
     ?? request?.headers?.host
     ?? "localhost";
@@ -97,6 +114,14 @@ export function mapPaylabsStatus(value) {
   if (["04", "CANCELLED", "CANCELED"].includes(status)) return "cancelled";
   if (["05", "FAILED", "FAIL"].includes(status)) return "failed";
   return "pending";
+}
+
+export function resolvePaylabsWebhookStatus(currentStatus, providerStatus) {
+  const current = String(currentStatus ?? "pending").toLowerCase();
+  const mapped = mapPaylabsStatus(providerStatus);
+  if (current === "paid") return "paid";
+  if (mapped === "pending" && current !== "pending") return current;
+  return mapped;
 }
 
 export function isTrustedPaylabsPaymentUrl(value) {
@@ -745,15 +770,10 @@ export async function handlePaylabsWebhook({ request, response, body, rawBodyTex
       return true;
     }
 
-    const mappedStatus = mapPaylabsStatus(webhookStatus(body));
     // Provider callbacks can be retried/out-of-order. Never downgrade a paid
     // transaction, and do not turn an existing terminal status back to pending
     // merely because a later callback carries an unknown/non-terminal status.
-    const targetStatus = payment.status === "paid"
-      ? "paid"
-      : mappedStatus === "pending" && payment.status !== "pending"
-        ? payment.status
-        : mappedStatus;
+    const targetStatus = resolvePaylabsWebhookStatus(payment.status, webhookStatus(body));
     const paidAmount = webhookAmount(body);
     if (targetStatus === "paid" && paidAmount != null && paidAmount !== Number(payment.amount)) {
       await client.query("rollback");
