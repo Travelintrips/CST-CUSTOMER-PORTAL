@@ -840,9 +840,9 @@ function PaymentTab({ po }: { po: PoDetail }) {
       setProofPreview(null);
       return;
     }
-    if (!["image/jpeg", "image/png", "image/webp"].includes(file.type)) {
+    if (!["image/jpeg", "image/png"].includes(file.type)) {
       setProofPreview(null);
-      setScanError("Bukti pembayaran untuk OCR harus berupa JPG, PNG, atau WEBP.");
+      setScanError("Bukti pembayaran untuk OCR harus berupa JPG atau PNG.");
       return;
     }
     setProofPreview(URL.createObjectURL(file));
@@ -854,7 +854,7 @@ function PaymentTab({ po }: { po: PoDetail }) {
     && scanResult?.extractedAmount
     && scanResult.matchesExpected
     && !scanProof.isPending
-    && !payment.proofAvailable
+    && payment.canUploadNewProof
   );
 
   return (
@@ -951,7 +951,7 @@ function PaymentTab({ po }: { po: PoDetail }) {
 
                   <input
                     type="file"
-                    accept="image/jpeg,image/png,image/webp"
+                    accept="image/jpeg,image/png"
                     onChange={(e) => onSelectProof(e.target.files?.[0] ?? null)}
                     className="block w-full text-sm"
                   />
