@@ -907,7 +907,7 @@ async function handleAdminMarketplace(request, response, pathname, body, user) {
     const limit = Math.min(Math.max(Number(new URL(request.url ?? "/", "http://portal.local").searchParams.get("limit") ?? 200), 1), 500);
     const result = await query(
       `select po.id, po.po_number, po.rfq_id, po.quote_id, po.vendor_id, po.status,
-              po.total_amount, po.tax_amount, po.grand_total, po.currency_snapshot, po.created_at,
+              po.total_amount, po.tax_amount, po.grand_total, po.currency_snapshot, po.confirmed_at, po.created_at,
               r.rfq_number, s.name as vendor_name
          from public.mkt_purchase_orders po
          join public.mkt_rfqs r on r.id=po.rfq_id
@@ -922,6 +922,7 @@ async function handleAdminMarketplace(request, response, pathname, body, user) {
       quoteId: row.quote_id == null ? null : Number(row.quote_id),
       vendorId: row.vendor_id == null ? null : Number(row.vendor_id),
       status: row.status,
+      confirmedAt: row.confirmed_at,
       totalAmount: row.total_amount,
       taxAmount: row.tax_amount,
       grandTotal: row.grand_total,
