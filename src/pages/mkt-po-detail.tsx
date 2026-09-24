@@ -584,6 +584,16 @@ function ShipmentTab({
 
   return (
     <div className="space-y-3">
+      {poStatus === "issued" && (
+        <Card className="border-amber-200 bg-amber-50">
+          <CardContent className="p-4 text-sm text-amber-800">
+            <p className="font-semibold">Menunggu vendor menerima Purchase Order</p>
+            <p className="mt-1 text-xs">
+              Pilihan pengiriman Anda sudah tercatat, tetapi vendor belum dapat memproses shipment sebelum menekan Terima PO.
+            </p>
+          </CardContent>
+        </Card>
+      )}
       <Card className="border-blue-200 bg-blue-50">
         <CardContent className="p-4 text-sm text-blue-800">
           <p className="font-semibold">Status order & pengiriman</p>
