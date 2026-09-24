@@ -9,13 +9,11 @@
  *   - Accept / Reject / Request Revision (only when status = 'issued')
  *   - Status badge with human-readable labels
  *   - Token invalid / expired / already-actioned state handling
- *   - Read-only for all terminal statuses
+ *   - Vendor fulfillment uses the canonical shipment selected by the customer
+ *   - Pickup/delivery tracking and POD upload continue on the same PO/shipment
  *
  * Security: never exposes commission, margin, target price, ranking,
  * or vendor_token itself — only what the backend VendorPoView returns.
- *
- * Backend gap: shipment create/list/timeline are admin-only endpoints.
- * Shipment info is displayed as an informational notice only.
  */
 
 import { useState } from "react";
@@ -47,6 +45,8 @@ import {
   Clock,
   Info,
   Truck,
+  Upload,
+  MapPin,
 } from "lucide-react";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -79,6 +79,7 @@ interface VendorPoView {
   actualCompletionDate: string | null;
   revisionNotes: string | null;
   createdAt: string;
+  confirmedAt: string | null;
   vendorTokenExpiresAt: string | null;
   lines: VendorPoLine[];
 }
@@ -125,9 +126,6 @@ const PO_STATUS: Record<string, { label: string; color: string; icon?: React.Rea
   rejected_goods:       { label: "Barang Ditolak",        color: "bg-red-100 text-red-700" },
   cancelled:            { label: "Dibatalkan",            color: "bg-gray-100 text-gray-500" },
 };
-
-/** Statuses where vendor can take an action */
-const ACTION_STATUSES = new Set(["issued"]);
 
 /** Statuses considered terminal (fully read-only) */
 const TERMINAL_STATUSES = new Set([
@@ -268,164 +266,279 @@ function TokenErrorState({ code, message }: { code?: string; message: string }) 
   );
 }
 
+
 function VendorFulfillment({ token, po }: { token: string; po: VendorPoView }) {
   const { toast } = useToast();
-  const { t } = useLanguage();
   const queryClient = useQueryClient();
   const [selectedId, setSelectedId] = useState<number | null>(null);
-  const [quantities, setQuantities] = useState<Record<number, string>>({});
-  const [carrierName, setCarrierName] = useState("");
-  const [trackingNumber, setTrackingNumber] = useState("");
-  const [origin, setOrigin] = useState("");
-  const [destination, setDestination] = useState("");
-  const [notes, setNotes] = useState("");
-  const [eventType, setEventType] = useState("packing");
   const [eventNote, setEventNote] = useState("");
-  const [shipmentRequestKey, setShipmentRequestKey] = useState(() => crypto.randomUUID());
+  const [pickupLocation, setPickupLocation] = useState("");
+  const [podFile, setPodFile] = useState<File | null>(null);
   const [eventRequestKey, setEventRequestKey] = useState(() => crypto.randomUUID());
+  const [podRequestKey, setPodRequestKey] = useState(() => crypto.randomUUID());
 
   const { data: shipmentData, isLoading } = useQuery<{ ok: boolean; data: VendorShipment[] }>({
     queryKey: ["vendor-po-shipments", token],
     queryFn: async () => {
       const res = await fetch(`${API_BASE}/${token}/shipments`);
-      if (!res.ok) throw new Error("Gagal memuat shipment");
-      return res.json();
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(body.message ?? "Gagal memuat shipment");
+      return body;
     },
     enabled: !!token,
-    staleTime: 15_000,
+    staleTime: 10_000,
   });
   const shipments = shipmentData?.data ?? [];
   const selectedShipmentId = selectedId ?? shipments[0]?.id ?? null;
+
   const { data: detailData } = useQuery<{ ok: boolean; shipment: VendorShipmentDetail }>({
     queryKey: ["vendor-po-shipment", token, selectedShipmentId],
     queryFn: async () => {
       const res = await fetch(`${API_BASE}/${token}/shipments/${selectedShipmentId}`);
-      if (!res.ok) throw new Error("Gagal memuat detail shipment");
-      return res.json();
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(body.message ?? "Gagal memuat detail shipment");
+      return body;
     },
     enabled: selectedShipmentId != null,
+    staleTime: 5_000,
   });
   const detail = detailData?.shipment;
-  const canCreate = ["vendor_accepted", "production", "ready_to_ship", "in_transit"].includes(po.status);
+
+  const { data: podData } = useQuery<{ ok: boolean; data?: { available: boolean; url: string; uploadedAt: string; note?: string | null } }>({
+    queryKey: ["vendor-po-pod", token, selectedShipmentId],
+    queryFn: async () => {
+      const res = await fetch(`${API_BASE}/${token}/shipments/${selectedShipmentId}/pod`);
+      if (res.status === 404) return { ok: false };
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(body.message ?? "Gagal memuat POD");
+      return body;
+    },
+    enabled: selectedShipmentId != null,
+    staleTime: 5_000,
+  });
+  const podAvailable = Boolean(podData?.ok && podData.data?.available);
 
   const refresh = () => {
     void queryClient.invalidateQueries({ queryKey: ["vendor-po-shipments", token] });
     void queryClient.invalidateQueries({ queryKey: ["vendor-po-shipment", token, selectedShipmentId] });
+    void queryClient.invalidateQueries({ queryKey: ["vendor-po-pod", token, selectedShipmentId] });
     void queryClient.invalidateQueries({ queryKey: ["vendor-po", token] });
   };
 
-  const createShipment = useMutation({
-    mutationFn: async () => {
-      const items = po.lines.map((line) => {
-        const qty = Number(quantities[line.lineNumber] ?? line.qty);
-        if (!Number.isFinite(qty) || qty <= 0) throw new Error(`Qty line ${line.lineNumber} harus lebih besar dari nol`);
-        return { lineNumber: line.lineNumber, qty, uom: line.unit };
-      });
-      const res = await fetch(`${API_BASE}/${token}/shipments`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "Idempotency-Key": shipmentRequestKey },
-        body: JSON.stringify({ carrierName: carrierName || undefined, trackingNumber: trackingNumber || undefined, origin: origin || undefined, destination: destination || undefined, notes: notes || undefined, items }),
-      });
-      const result = await res.json().catch(() => ({}));
-      if (!res.ok || !result.ok) throw new Error(result.message ?? result.code ?? "Shipment gagal dibuat");
-      return result;
-    },
-    onSuccess: (result: { shipment?: VendorShipment; alreadyExists?: boolean }) => {
-      toast({ title: result.alreadyExists ? "Shipment sudah tercatat" : "Shipment dibuat" });
-      setSelectedId(result.shipment?.id ?? null);
-      setShipmentRequestKey(crypto.randomUUID());
-      setCarrierName(""); setTrackingNumber(""); setOrigin(""); setDestination(""); setNotes(""); setQuantities({});
-      refresh();
-    },
-    onError: (err: Error) => toast({ title: "Shipment gagal", description: err.message, variant: "destructive" }),
-  });
+  const isPickup = detail?.shipmentType === "pickup_self";
+  const action = (() => {
+    if (!detail || !po.confirmedAt) return null;
+    if (isPickup) {
+      if (detail.shipmentStatus === "planned") return { eventType: "packing", label: "Mulai siapkan barang" };
+      if (detail.shipmentStatus === "packing") return { eventType: "ready_for_pickup", label: "Barang siap diambil" };
+      if (detail.shipmentStatus === "ready_to_ship") return { eventType: "handed_over", label: "Barang sudah diserahkan" };
+      return null;
+    }
+    if (detail.shipmentStatus === "planned") return { eventType: "packing", label: "Mulai packing" };
+    if (detail.shipmentStatus === "packing") return { eventType: "loaded", label: "Barang selesai dimuat" };
+    if (detail.shipmentStatus === "loading") return { eventType: "ready_to_ship", label: "Siap dikirim" };
+    if (detail.shipmentStatus === "ready_to_ship") return { eventType: "departed", label: "Mulai pengiriman" };
+    if (detail.shipmentStatus === "in_transit") return { eventType: "arrived", label: "Barang tiba di tujuan" };
+    return null;
+  })();
 
-  const eventOptions: Record<string, string[]> = {
-    planned: ["packing"],
-    packing: ["pickup"],
-    loading: ["in_transit"],
-    in_transit: ["delivered"],
-  };
-  const allowedEvents = eventOptions[detail?.shipmentStatus ?? ""] ?? [];
   const appendEvent = useMutation({
     mutationFn: async () => {
-      if (!selectedShipmentId || !eventType) throw new Error("Pilih shipment dan event");
+      if (!selectedShipmentId || !action) throw new Error("Tidak ada aksi shipment yang tersedia.");
+      if (action.eventType === "ready_for_pickup" && !pickupLocation.trim()) {
+        throw new Error("Lokasi pengambilan wajib diisi.");
+      }
       const res = await fetch(`${API_BASE}/${token}/shipments/${selectedShipmentId}/events`, {
         method: "POST",
         headers: { "Content-Type": "application/json", "Idempotency-Key": eventRequestKey },
-        body: JSON.stringify({ eventType, note: eventNote || undefined }),
+        body: JSON.stringify({
+          eventType: action.eventType,
+          note: eventNote || undefined,
+          location: action.eventType === "ready_for_pickup" ? pickupLocation.trim() : undefined,
+        }),
       });
       const result = await res.json().catch(() => ({}));
-      if (!res.ok || !result.ok) throw new Error(result.message ?? result.code ?? "Event gagal disimpan");
+      if (!res.ok || !result.ok) throw new Error(result.message ?? result.code ?? "Status shipment gagal diperbarui");
       return result;
     },
-    onSuccess: (result: { alreadyAppended?: boolean }) => {
-      toast({ title: result.alreadyAppended ? "Event sudah tercatat" : "Tracking diperbarui" });
+    onSuccess: () => {
+      toast({ title: "Status shipment diperbarui" });
       setEventRequestKey(crypto.randomUUID());
       setEventNote("");
       refresh();
     },
-    onError: (err: Error) => toast({ title: "Tracking gagal", description: err.message, variant: "destructive" }),
+    onError: (err: Error) => toast({ title: "Update shipment gagal", description: err.message, variant: "destructive" }),
+  });
+
+  const uploadPod = useMutation({
+    mutationFn: async () => {
+      if (!selectedShipmentId || !podFile) throw new Error("Pilih file POD terlebih dahulu.");
+      const form = new FormData();
+      form.append("file", podFile);
+      if (eventNote.trim()) form.append("remarks", eventNote.trim());
+      const res = await fetch(`${API_BASE}/${token}/shipments/${selectedShipmentId}/pod`, {
+        method: "POST",
+        headers: { "Idempotency-Key": podRequestKey },
+        body: form,
+      });
+      const result = await res.json().catch(() => ({}));
+      if (!res.ok || !result.ok) throw new Error(result.message ?? result.code ?? "Upload POD gagal");
+      return result;
+    },
+    onSuccess: () => {
+      toast({ title: "POD tersimpan", description: "Customer sekarang dapat mengonfirmasi penerimaan barang." });
+      setPodRequestKey(crypto.randomUUID());
+      setPodFile(null);
+      setEventNote("");
+      refresh();
+    },
+    onError: (err: Error) => toast({ title: "Upload POD gagal", description: err.message, variant: "destructive" }),
   });
 
   return (
     <Card className="border-blue-200">
       <CardHeader className="pb-2">
-        <CardTitle className="text-sm flex items-center gap-2"><Truck className="w-4 h-4 text-blue-600" />{t("mktVendorPo.fulfillmentTitle", "Fulfillment & Tracking")}</CardTitle>
+        <CardTitle className="text-sm flex items-center gap-2">
+          <Truck className="w-4 h-4 text-blue-600" />
+          Fulfillment & Serah Terima
+        </CardTitle>
       </CardHeader>
       <CardContent className="space-y-4">
-        {isLoading ? <Skeleton className="h-16 w-full" /> : shipments.length === 0 ? (
-          <p className="text-sm text-gray-500">Belum ada shipment.</p>
+        {!po.confirmedAt && (
+          <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
+            Konfirmasi penerimaan PO terlebih dahulu. Setelah PO diterima, shipment yang dipilih customer dapat diproses di sini.
+          </div>
+        )}
+
+        {isLoading ? (
+          <Skeleton className="h-20 w-full" />
+        ) : shipments.length === 0 ? (
+          <div className="rounded-lg border border-dashed p-4 text-sm text-gray-600">
+            <p className="font-medium">Menunggu customer memilih metode pengiriman.</p>
+            <p className="mt-1 text-xs text-gray-500">
+              Vendor tidak perlu membuat shipment baru. Shipment canonical akan muncul otomatis setelah customer memilih pengiriman.
+            </p>
+          </div>
         ) : (
           <div className="space-y-2">
             {shipments.map((shipment) => (
-              <button key={shipment.id} type="button" onClick={() => setSelectedId(shipment.id)} className={`w-full text-left rounded-lg border p-3 ${selectedShipmentId === shipment.id ? "border-blue-400 bg-blue-50" : "border-gray-200"}`}>
+              <button
+                key={shipment.id}
+                type="button"
+                onClick={() => setSelectedId(shipment.id)}
+                className={`w-full text-left rounded-lg border p-3 ${selectedShipmentId === shipment.id ? "border-blue-400 bg-blue-50" : "border-gray-200"}`}
+              >
                 <div className="flex justify-between gap-2">
-                  <span className="font-mono text-sm font-semibold">{shipment.shipmentNumber}</span>
+                  <div>
+                    <span className="font-mono text-sm font-semibold">{shipment.shipmentNumber}</span>
+                    <p className="mt-1 text-xs text-gray-500">
+                      {shipment.shipmentType === "pickup_self" ? "Ambil sendiri" : (shipment.shipmentType ?? "Pengiriman")}
+                    </p>
+                  </div>
                   <Badge variant="secondary">{shipment.shipmentStatus}</Badge>
                 </div>
-                <p className="text-xs text-gray-500 mt-1">{shipment.carrierName ?? "Carrier belum diisi"}{shipment.trackingNumber ? ` · ${shipment.trackingNumber}` : ""}</p>
+                {shipment.shipmentType === "pickup_self" ? (
+                  <p className="text-xs text-gray-500 mt-2">
+                    {shipment.origin || shipment.destination
+                      ? `Lokasi pickup: ${shipment.origin || shipment.destination}`
+                      : "Lokasi pickup akan ditetapkan saat barang siap diambil."}
+                  </p>
+                ) : (
+                  <p className="text-xs text-gray-500 mt-2">
+                    {shipment.carrierName ?? "Carrier belum diisi"}{shipment.trackingNumber ? ` · ${shipment.trackingNumber}` : ""}
+                  </p>
+                )}
               </button>
             ))}
           </div>
         )}
 
-        {canCreate && (
-          <div className="rounded-lg border border-dashed p-3 space-y-3">
-            <p className="text-xs font-semibold uppercase tracking-wider text-gray-500">Buat shipment (mendukung partial)</p>
-            <div className="grid grid-cols-2 gap-2">
-              <Input placeholder="Carrier" value={carrierName} onChange={(e) => setCarrierName(e.target.value)} />
-              <Input placeholder="Tracking number" value={trackingNumber} onChange={(e) => setTrackingNumber(e.target.value)} />
-              <Input placeholder="Origin" value={origin} onChange={(e) => setOrigin(e.target.value)} />
-              <Input placeholder="Destination" value={destination} onChange={(e) => setDestination(e.target.value)} />
-            </div>
-            {po.lines.map((line) => (
-              <div key={line.lineNumber} className="grid grid-cols-[1fr_110px] gap-2 items-center text-xs">
-                <span>Line {line.lineNumber} · {line.itemName} · max {line.qty} {line.unit ?? ""}</span>
-                <Input type="number" min="0" max={line.qty} step="any" value={quantities[line.lineNumber] ?? line.qty} onChange={(e) => setQuantities((prev) => ({ ...prev, [line.lineNumber]: e.target.value }))} />
-              </div>
-            ))}
-            <Input placeholder="Catatan shipment" value={notes} onChange={(e) => setNotes(e.target.value)} />
-            <Button size="sm" onClick={() => createShipment.mutate()} disabled={createShipment.isPending}>{createShipment.isPending ? "Menyimpan…" : "Buat Shipment"}</Button>
-          </div>
-        )}
-
         {detail && (
-          <div className="space-y-3 border-t pt-3">
-            <p className="text-xs font-semibold uppercase tracking-wider text-gray-500">Tracking timeline</p>
-            {detail.timeline.length === 0 ? <p className="text-xs text-gray-500">Belum ada event.</p> : detail.timeline.map((event) => (
-              <div key={event.id} className="flex gap-2 text-xs">
-                <Clock className="w-3.5 h-3.5 text-blue-500 shrink-0 mt-0.5" />
-                <div><span className="font-medium">{event.eventType}</span>{event.note ? ` — ${event.note}` : ""}<p className="text-gray-400">{fmtDateTime(event.createdAt)}{event.location ? ` · ${event.location}` : ""}</p></div>
+          <div className="space-y-4 border-t pt-4">
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-wider text-gray-500">Alur shipment</p>
+              <p className="mt-1 text-sm text-gray-700">
+                {isPickup
+                  ? "Siapkan barang → tandai siap diambil → serahkan ke customer → upload POD → customer konfirmasi penerimaan."
+                  : "Packing → loading → siap dikirim → perjalanan → tiba → upload POD → customer konfirmasi penerimaan."}
+              </p>
+            </div>
+
+            {detail.timeline.length > 0 && (
+              <div className="space-y-2">
+                {detail.timeline.map((event) => (
+                  <div key={event.id} className="flex gap-2 text-xs">
+                    <Clock className="w-3.5 h-3.5 text-blue-500 shrink-0 mt-0.5" />
+                    <div>
+                      <span className="font-medium">{event.eventType.replaceAll("_", " ")}</span>
+                      {event.location ? <p className="text-gray-600"><MapPin className="mr-1 inline h-3 w-3" />{event.location}</p> : null}
+                      {event.note ? <p className="text-gray-500">{event.note}</p> : null}
+                      <p className="text-gray-400">{fmtDateTime(event.createdAt)}</p>
+                    </div>
+                  </div>
+                ))}
               </div>
-            ))}
-            {allowedEvents.length > 0 && (
-              <div className="flex gap-2 items-center">
-                <select className="h-9 rounded-md border bg-white px-2 text-sm" value={eventType} onChange={(e) => setEventType(e.target.value)}>
-                  {allowedEvents.map((event) => <option key={event} value={event}>{event}</option>)}
-                </select>
-                <Input placeholder="Catatan / lokasi" value={eventNote} onChange={(e) => setEventNote(e.target.value)} />
-                <Button size="sm" onClick={() => appendEvent.mutate()} disabled={appendEvent.isPending}>Simpan</Button>
+            )}
+
+            {action && (
+              <div className="rounded-lg border bg-slate-50 p-3 space-y-3">
+                {action.eventType === "ready_for_pickup" && (
+                  <div>
+                    <Label className="text-xs">Lokasi pengambilan</Label>
+                    <Input
+                      className="mt-1"
+                      placeholder="Alamat/lokasi barang dapat diambil customer"
+                      value={pickupLocation}
+                      onChange={(e) => setPickupLocation(e.target.value)}
+                    />
+                  </div>
+                )}
+                <Input
+                  placeholder="Catatan status (opsional)"
+                  value={eventNote}
+                  onChange={(e) => setEventNote(e.target.value)}
+                />
+                <Button
+                  size="sm"
+                  onClick={() => appendEvent.mutate()}
+                  disabled={appendEvent.isPending || !po.confirmedAt}
+                >
+                  {appendEvent.isPending ? "Menyimpan…" : action.label}
+                </Button>
+              </div>
+            )}
+
+            {detail.shipmentStatus === "arrived" && !podAvailable && (
+              <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-3 space-y-3">
+                <div>
+                  <p className="text-sm font-semibold text-emerald-800">
+                    {isPickup ? "Barang sudah diserahkan" : "Barang sudah tiba"}
+                  </p>
+                  <p className="text-xs text-emerald-700 mt-1">
+                    Upload POD/bukti serah terima agar customer dapat membuka konfirmasi penerimaan.
+                  </p>
+                </div>
+                <Input
+                  type="file"
+                  accept=".pdf,.png,.jpg,.jpeg"
+                  onChange={(e) => setPodFile(e.target.files?.[0] ?? null)}
+                />
+                <Button size="sm" onClick={() => uploadPod.mutate()} disabled={!podFile || uploadPod.isPending}>
+                  <Upload className="w-3.5 h-3.5 mr-1.5" />
+                  {uploadPod.isPending ? "Mengunggah…" : "Upload POD"}
+                </Button>
+              </div>
+            )}
+
+            {podAvailable && (
+              <div className="rounded-lg border border-green-200 bg-green-50 p-3 text-sm text-green-800">
+                <CheckCircle2 className="mr-1 inline h-4 w-4" />
+                POD sudah tersedia. Menunggu customer melakukan Goods Receipt.
+                {podData?.data?.url ? (
+                  <a className="ml-2 underline font-medium" href={podData.data.url} target="_blank" rel="noreferrer">
+                    Lihat POD
+                  </a>
+                ) : null}
               </div>
             )}
           </div>
@@ -493,7 +606,9 @@ export default function MktVendorPoPage() {
   if (!po) return null;
 
   const statusInfo = PO_STATUS[po.status] ?? { label: po.status, color: "bg-gray-100 text-gray-600" };
-  const canAct = ACTION_STATUSES.has(po.status);
+  const canInitialRespond = po.status === "issued";
+  const needsLegacyAcceptance = !po.confirmedAt && ["production", "ready_to_ship", "in_transit"].includes(po.status);
+  const canAccept = canInitialRespond || needsLegacyAcceptance;
   const isTerminal = TERMINAL_STATUSES.has(po.status);
   const currency = po.currencySnapshot ?? "IDR";
 
@@ -700,34 +815,41 @@ export default function MktVendorPoPage() {
         )}
       </div>
 
-      {/* Action bar — only shown when status = 'issued' */}
-      {canAct && (
+      
+{/* Action bar */}
+      {canAccept && (
         <div className="fixed bottom-0 left-0 right-0 bg-white border-t shadow-lg px-4 py-3 z-20">
           <div className="max-w-2xl mx-auto">
             <p className="text-xs text-gray-500 mb-2 text-center">
-              {t("mktVendorPo.reviewBeforeAction", "Harap tinjau PO di atas sebelum mengambil tindakan")}
+              {needsLegacyAcceptance
+                ? "PO ini sudah memiliki aktivitas fulfillment lama tetapi belum tercatat dikonfirmasi vendor. Konfirmasi sekarang untuk melanjutkan."
+                : t("mktVendorPo.reviewBeforeAction", "Harap tinjau PO di atas sebelum mengambil tindakan")}
             </p>
-            <div className="grid grid-cols-3 gap-2">
-              <Button
-                variant="outline"
-                size="sm"
-                className="border-orange-300 text-orange-700 hover:bg-orange-50"
-                onClick={() => setShowRevision(true)}
-                disabled={actionMutation.isPending}
-              >
-                <RotateCcw className="w-3.5 h-3.5 mr-1.5" />
-                {t("mktVendorPo.revisionBtn", "Revisi")}
-              </Button>
-              <Button
-                variant="outline"
-                size="sm"
-                className="border-red-300 text-red-700 hover:bg-red-50"
-                onClick={() => setShowReject(true)}
-                disabled={actionMutation.isPending}
-              >
-                <XCircle className="w-3.5 h-3.5 mr-1.5" />
-                {t("mktVendorPo.rejectBtn", "Tolak")}
-              </Button>
+            <div className={canInitialRespond ? "grid grid-cols-3 gap-2" : "grid grid-cols-1"}>
+              {canInitialRespond && (
+                <>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="border-orange-300 text-orange-700 hover:bg-orange-50"
+                    onClick={() => setShowRevision(true)}
+                    disabled={actionMutation.isPending}
+                  >
+                    <RotateCcw className="w-3.5 h-3.5 mr-1.5" />
+                    {t("mktVendorPo.revisionBtn", "Revisi")}
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="border-red-300 text-red-700 hover:bg-red-50"
+                    onClick={() => setShowReject(true)}
+                    disabled={actionMutation.isPending}
+                  >
+                    <XCircle className="w-3.5 h-3.5 mr-1.5" />
+                    {t("mktVendorPo.rejectBtn", "Tolak")}
+                  </Button>
+                </>
+              )}
               <Button
                 size="sm"
                 className="bg-green-600 hover:bg-green-700 text-white"
@@ -735,7 +857,7 @@ export default function MktVendorPoPage() {
                 disabled={actionMutation.isPending}
               >
                 <CheckCircle2 className="w-3.5 h-3.5 mr-1.5" />
-                {t("mktVendorPo.acceptBtn", "Terima")}
+                {needsLegacyAcceptance ? "Konfirmasi PO" : t("mktVendorPo.acceptBtn", "Terima")}
               </Button>
             </div>
           </div>
