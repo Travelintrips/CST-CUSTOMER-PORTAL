@@ -1334,7 +1334,9 @@ async function handleServiceOperations(ctx) {
         ),
         query(
           `select id, po_number, status, grand_total, currency_snapshot,
-                  confirmed_at, created_at, updated_at
+                  confirmed_at, payment_terms_snapshot, payment_term_code, payment_status,
+                  payment_due_at, payment_proof_path, payment_proof_uploaded_at,
+                  payment_verified_at, payment_rejection_reason, created_at, updated_at
              from public.mkt_purchase_orders
             where rfq_id = $1
             order by id desc
@@ -1399,6 +1401,14 @@ async function handleServiceOperations(ctx) {
           status: po.status,
           grandTotal: Number(po.grand_total ?? 0),
           currency: po.currency_snapshot || "IDR",
+          paymentTerms: po.payment_terms_snapshot ?? null,
+          paymentTermCode: po.payment_term_code ?? null,
+          paymentStatus: po.payment_status ?? "unpaid",
+          paymentDueAt: po.payment_due_at ?? null,
+          paymentProofAvailable: Boolean(po.payment_proof_path),
+          paymentProofUploadedAt: po.payment_proof_uploaded_at ?? null,
+          paymentVerifiedAt: po.payment_verified_at ?? null,
+          paymentRejectionReason: po.payment_rejection_reason ?? null,
           createdAt: po.created_at,
         } : null,
         timeline: {
@@ -1431,6 +1441,18 @@ async function handleServiceOperations(ctx) {
           receipts: {
             status: "available",
             count: receipts.rowCount ?? receipts.rows.length,
+          },
+          payment: {
+            status: po ? "available" : "not_applicable",
+            terms: po?.payment_terms_snapshot ?? null,
+            termCode: po?.payment_term_code ?? null,
+            paymentStatus: po?.payment_status ?? null,
+            dueAt: po?.payment_due_at ?? null,
+            proofAvailable: Boolean(po?.payment_proof_path),
+            proofUploadedAt: po?.payment_proof_uploaded_at ?? null,
+            verifiedAt: po?.payment_verified_at ?? null,
+            rejectionReason: po?.payment_rejection_reason ?? null,
+            requiresClearanceBeforeHandover: po?.payment_term_code === "prepaid",
           },
           completion: {
             status: po
