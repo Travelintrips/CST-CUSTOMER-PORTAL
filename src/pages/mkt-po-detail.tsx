@@ -44,6 +44,7 @@ interface PoDetail {
   vendorAddressSnapshot: string | null;
   paymentTermsSnapshot: string | null;
   paymentTermCode: string | null;
+  paymentDpPercent: number | null;
   paymentStatus: string;
   paymentDueAt: string | null;
   paymentProofUploadedAt: string | null;
@@ -149,16 +150,28 @@ interface GoodsReceipt {
 interface PaymentView {
   poId: number;
   paymentTermCode: string | null;
+  paymentDpPercent: number | null;
   paymentTerms: string | null;
-  paymentStatus: "unpaid" | "proof_submitted" | "paid" | "rejected";
+  paymentStatus: "unpaid" | "proof_submitted" | "partially_paid" | "paid" | "rejected";
   paymentDueAt: string | null;
-  amount: string | number | null;
+  amount: number;
+  paidAmount: number;
+  remainingAmount: number;
+  overpaidAmount: number;
+  manualPaidAmount: number;
+  paylabsPaidAmount: number;
+  pendingManualAmount: number;
+  pendingPaylabsAmount: number;
+  requiredBeforeHandoverAmount: number;
+  requiredBeforeHandoverRemaining: number;
+  handoverPaymentSatisfied: boolean;
   currency: string;
   proofAvailable: boolean;
   proofLocked: boolean;
   canUploadNewProof: boolean;
   proofAttemptCount: number;
   proofId: number | null;
+  proofExpectedAmount: number | null;
   proofReviewStatus: "submitted" | "approved" | "rejected" | null;
   proofUrl: string | null;
   proofFileName: string | null;
@@ -201,7 +214,6 @@ interface PaymentView {
     canCreate: boolean;
   };
 }
-
 interface ActivityEvent {
   id: number;
   action: string;
@@ -749,11 +761,15 @@ function PaymentTab({ po }: { po: PoDetail }) {
   const queryClient = useQueryClient();
   const [proofFile, setProofFile] = useState<File | null>(null);
   const [proofPreview, setProofPreview] = useState<string | null>(null);
+  const [paymentAmountInput, setPaymentAmountInput] = useState("");
   const [scanResult, setScanResult] = useState<{
     extractedAmount: number | null;
     confidence: number;
     matchesExpected: boolean;
     expectedAmount: number;
+    totalAmount: number;
+    paidAmount: number;
+    remainingAmount: number;
     timedOut: boolean;
   } | null>(null);
   const [scanError, setScanError] = useState<string | null>(null);
@@ -774,10 +790,24 @@ function PaymentTab({ po }: { po: PoDetail }) {
     },
   });
 
+  const payment = data?.data;
+
+  useEffect(() => {
+    if (!payment || payment.remainingAmount <= 0) return;
+    setPaymentAmountInput((current) => {
+      if (current && Number(current) > 0 && Number(current) <= payment.remainingAmount) return current;
+      const suggested = payment.requiredBeforeHandoverRemaining > 0
+        ? payment.requiredBeforeHandoverRemaining
+        : payment.remainingAmount;
+      return String(Math.round(suggested));
+    });
+  }, [payment?.remainingAmount, payment?.requiredBeforeHandoverRemaining]);
+
   const scanProof = useMutation({
-    mutationFn: async (file: File) => {
+    mutationFn: async ({ file, amount }: { file: File; amount: number }) => {
       const form = new FormData();
       form.append("file", file);
+      form.append("paymentAmount", String(amount));
       const res = await fetch(`/api/mkt/portal/purchase-orders/${po.id}/payment/scan`, {
         method: "POST",
         credentials: "include",
@@ -792,6 +822,9 @@ function PaymentTab({ po }: { po: PoDetail }) {
         confidence: number;
         matchesExpected: boolean;
         expectedAmount: number;
+        totalAmount: number;
+        paidAmount: number;
+        remainingAmount: number;
         timedOut: boolean;
       };
     },
@@ -806,12 +839,12 @@ function PaymentTab({ po }: { po: PoDetail }) {
   });
 
   const createPaylabsPayment = useMutation({
-    mutationFn: async (paymentMethod: string) => {
+    mutationFn: async ({ paymentMethod, amount }: { paymentMethod: string; amount: number }) => {
       const res = await fetch(`/api/mkt/portal/purchase-orders/${po.id}/payment/paylabs`, {
         method: "POST",
         credentials: "include",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ paymentMethod }),
+        body: JSON.stringify({ paymentMethod, paymentAmount: amount }),
       });
       const result = await res.json().catch(() => ({}));
       if (!res.ok || !result.ok) {
@@ -820,7 +853,7 @@ function PaymentTab({ po }: { po: PoDetail }) {
       return result.data as {
         reused: boolean;
         sandboxMode: boolean;
-        payment: { paymentUrl: string | null };
+        payment: { paymentUrl: string | null; amount?: number };
       };
     },
     onSuccess: async (result) => {
@@ -834,14 +867,17 @@ function PaymentTab({ po }: { po: PoDetail }) {
   const uploadProof = useMutation({
     mutationFn: async () => {
       if (!proofFile) throw new Error("Pilih file bukti pembayaran terlebih dahulu.");
+      const amount = Number(paymentAmountInput);
+      if (!Number.isFinite(amount) || amount <= 0) throw new Error("Isi nominal pembayaran yang valid.");
       if (!scanResult?.extractedAmount) {
         throw new Error("Nominal belum terbaca. Pilih bukti pembayaran yang lebih jelas.");
       }
-      if (!scanResult.matchesExpected) {
-        throw new Error("Nominal pada bukti pembayaran tidak sama dengan jumlah tagihan.");
+      if (!scanResult.matchesExpected || Math.abs(scanResult.expectedAmount - amount) > 0.005) {
+        throw new Error("Nominal pada bukti pembayaran tidak sama dengan nominal pembayaran yang dipilih.");
       }
       const form = new FormData();
       form.append("file", proofFile);
+      form.append("paymentAmount", String(amount));
       const res = await fetch(`/api/mkt/portal/purchase-orders/${po.id}/payment`, {
         method: "POST",
         credentials: "include",
@@ -857,13 +893,14 @@ function PaymentTab({ po }: { po: PoDetail }) {
       setProofPreview(null);
       setScanResult(null);
       setScanError(null);
+      setPaymentAmountInput("");
       await queryClient.invalidateQueries({ queryKey: ["mkt-po-payment", po.id] });
       await queryClient.invalidateQueries({ queryKey: ["mkt-po-detail", po.id] });
     },
   });
 
   if (isLoading) return <Skeleton className="h-48 rounded-xl" />;
-  if (isError || !data?.data) {
+  if (isError || !payment) {
     return (
       <Card className="border-red-200 bg-red-50">
         <CardContent className="p-5 text-center">
@@ -874,21 +911,37 @@ function PaymentTab({ po }: { po: PoDetail }) {
     );
   }
 
-  const payment = data.data;
   const paylabsMethods = payment.paylabs?.activeMethods ?? [];
   const activePaylabsMethod = selectedPaylabsMethod || paylabsMethods[0]?.code || "";
   const pendingPaylabs = payment.paylabs?.hasPendingPayment ? payment.paylabs.latestPayment : null;
+  const selectedAmount = Number(paymentAmountInput);
+  const validSelectedAmount = Number.isFinite(selectedAmount)
+    && selectedAmount > 0
+    && selectedAmount <= payment.remainingAmount + 0.005;
+
   const statusLabel: Record<string, string> = {
     unpaid: "Belum Dibayar",
     proof_submitted: "Menunggu Verifikasi",
+    partially_paid: "Dibayar Sebagian",
     paid: "Lunas",
     rejected: "Bukti Ditolak",
   };
   const statusClass: Record<string, string> = {
     unpaid: "bg-amber-100 text-amber-700",
     proof_submitted: "bg-blue-100 text-blue-700",
+    partially_paid: "bg-cyan-100 text-cyan-700",
     paid: "bg-green-100 text-green-700",
     rejected: "bg-red-100 text-red-700",
+  };
+
+  const selectAmount = (amount: number) => {
+    const normalized = Math.max(0, Math.min(amount, payment.remainingAmount));
+    setPaymentAmountInput(String(Math.round(normalized)));
+    if (proofFile) {
+      setScanResult(null);
+      setScanError(null);
+      scanProof.mutate({ file: proofFile, amount: normalized });
+    }
   };
 
   const onSelectProof = (file: File | null) => {
@@ -906,13 +959,19 @@ function PaymentTab({ po }: { po: PoDetail }) {
       return;
     }
     setProofPreview(URL.createObjectURL(file));
-    scanProof.mutate(file);
+    if (!validSelectedAmount) {
+      setScanError("Isi nominal pembayaran terlebih dahulu sebelum memilih bukti.");
+      return;
+    }
+    scanProof.mutate({ file, amount: selectedAmount });
   };
 
   const canSubmit = Boolean(
     proofFile
+    && validSelectedAmount
     && scanResult?.extractedAmount
     && scanResult.matchesExpected
+    && Math.abs(scanResult.expectedAmount - selectedAmount) <= 0.005
     && !scanProof.isPending
     && payment.canUploadNewProof
   );
@@ -931,22 +990,58 @@ function PaymentTab({ po }: { po: PoDetail }) {
           ) : (
             <>
               <InfoRow label="Syarat Pembayaran" value={payment.paymentTerms} />
-              <InfoRow label="Jumlah Tagihan" value={fmtAmount(payment.amount, payment.currency)} />
               <InfoRow
                 label="Status"
                 value={<Badge className={statusClass[payment.paymentStatus] ?? "bg-gray-100 text-gray-700"} variant="secondary">{statusLabel[payment.paymentStatus] ?? payment.paymentStatus}</Badge>}
               />
-              {payment.paymentDueAt && <InfoRow label="Jatuh Tempo" value={fmtDateTime(payment.paymentDueAt)} />}
+              {payment.paymentDueAt && <InfoRow label="Jatuh Tempo Pelunasan" value={fmtDateTime(payment.paymentDueAt)} />}
 
-              {payment.requiresClearanceBeforeHandover && payment.paymentStatus !== "paid" && (
+              <div className="grid gap-3 sm:grid-cols-3">
+                <div className="rounded-xl border bg-slate-50 p-3">
+                  <p className="text-xs text-slate-500">Total Tagihan</p>
+                  <p className="mt-1 text-base font-bold text-slate-900">{fmtAmount(payment.amount, payment.currency)}</p>
+                </div>
+                <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-3">
+                  <p className="text-xs text-emerald-700">Sudah Dibayar</p>
+                  <p className="mt-1 text-base font-bold text-emerald-800">{fmtAmount(payment.paidAmount, payment.currency)}</p>
+                </div>
+                <div className="rounded-xl border border-orange-200 bg-orange-50 p-3">
+                  <p className="text-xs text-orange-700">Sisa Tagihan</p>
+                  <p className="mt-1 text-base font-bold text-orange-800">{fmtAmount(payment.remainingAmount, payment.currency)}</p>
+                </div>
+              </div>
+
+              {payment.overpaidAmount > 0 && (
+                <div className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+                  Terdeteksi kelebihan pembayaran {fmtAmount(payment.overpaidAmount, payment.currency)}. Hubungi admin CST untuk pemeriksaan/refund.
+                </div>
+              )}
+
+              {payment.paymentTermCode === "dp_after_receipt" && (
+                <div className={`rounded-lg border p-3 text-sm ${
+                  payment.handoverPaymentSatisfied
+                    ? "border-green-200 bg-green-50 text-green-800"
+                    : "border-orange-200 bg-orange-50 text-orange-800"
+                }`}>
+                  <p className="font-semibold">Ketentuan DP {payment.paymentDpPercent}%</p>
+                  <p className="mt-1">
+                    Minimum sebelum barang diserahkan/dikirim: {fmtAmount(payment.requiredBeforeHandoverAmount, payment.currency)}.
+                    {payment.handoverPaymentSatisfied
+                      ? ` DP sudah terpenuhi. Sisa ${fmtAmount(payment.remainingAmount, payment.currency)} dapat dilunasi setelah barang diterima.`
+                      : ` Masih kurang ${fmtAmount(payment.requiredBeforeHandoverRemaining, payment.currency)} untuk memenuhi DP.`}
+                  </p>
+                </div>
+              )}
+
+              {payment.paymentTermCode === "prepaid" && !payment.handoverPaymentSatisfied && (
                 <div className="rounded-lg border border-orange-200 bg-orange-50 p-3 text-sm text-orange-800">
-                  Pembayaran harus terverifikasi lunas sebelum vendor dapat menyerahkan atau mengirim barang.
+                  Pembayaran harus lunas sebelum vendor dapat menyerahkan atau mengirim barang. Kekurangan saat ini {fmtAmount(payment.requiredBeforeHandoverRemaining, payment.currency)}.
                 </div>
               )}
 
               {payment.paymentTermCode?.startsWith("net_") && payment.paymentStatus !== "paid" && (
                 <div className="rounded-lg border border-blue-200 bg-blue-50 p-3 text-sm text-blue-800">
-                  Barang dapat diproses sesuai fulfillment. Pembayaran tetap tercatat sebagai piutang sampai diverifikasi lunas.
+                  Barang dapat diproses sesuai fulfillment. Sisa pembayaran {fmtAmount(payment.remainingAmount, payment.currency)} tetap tercatat sebagai piutang sampai lunas.
                 </div>
               )}
 
@@ -956,13 +1051,51 @@ function PaymentTab({ po }: { po: PoDetail }) {
                 </div>
               )}
 
+              {payment.paymentStatus !== "paid" && payment.remainingAmount > 0 && !pendingPaylabs && !payment.proofLocked && (
+                <div className="space-y-3 rounded-xl border border-slate-200 bg-white p-4">
+                  <div>
+                    <p className="text-sm font-semibold text-slate-900">Nominal pembayaran kali ini</p>
+                    <p className="mt-1 text-xs text-slate-500">
+                      Anda dapat membayar sebagian/DP. Sistem otomatis menghitung sisa tagihan setelah pembayaran disetujui.
+                    </p>
+                  </div>
+                  <div className="flex flex-col gap-2 sm:flex-row">
+                    <input
+                      type="number"
+                      min="1"
+                      max={payment.remainingAmount}
+                      step="1"
+                      value={paymentAmountInput}
+                      onChange={(e) => {
+                        setPaymentAmountInput(e.target.value);
+                        setScanResult(null);
+                        setScanError(null);
+                      }}
+                      className="h-10 flex-1 rounded-md border px-3 text-sm"
+                      placeholder="Masukkan nominal pembayaran"
+                    />
+                    <Button variant="outline" size="sm" className="h-10" onClick={() => selectAmount(payment.remainingAmount)}>
+                      Bayar Sisa Penuh
+                    </Button>
+                    {payment.requiredBeforeHandoverRemaining > 0 && payment.requiredBeforeHandoverRemaining < payment.remainingAmount && (
+                      <Button variant="outline" size="sm" className="h-10" onClick={() => selectAmount(payment.requiredBeforeHandoverRemaining)}>
+                        Bayar DP Minimum
+                      </Button>
+                    )}
+                  </div>
+                  {!validSelectedAmount && paymentAmountInput && (
+                    <p className="text-xs text-red-600">Nominal harus lebih dari Rp0 dan tidak boleh melebihi sisa tagihan.</p>
+                  )}
+                </div>
+              )}
+
               {payment.paymentStatus !== "paid" && payment.paylabs?.configured && paylabsMethods.length > 0 && (
                 <div className="space-y-3 rounded-lg border border-indigo-200 bg-indigo-50/40 p-4">
                   <div className="flex flex-wrap items-start justify-between gap-3">
                     <div>
                       <p className="text-sm font-semibold text-slate-900">Bayar melalui Paylabs</p>
                       <p className="mt-1 text-xs text-slate-600">
-                        Pembayaran diverifikasi otomatis melalui callback Paylabs. Tidak perlu upload bukti transfer.
+                        Bisa untuk DP/cicilan maupun pelunasan. Pembayaran diverifikasi otomatis melalui callback Paylabs.
                       </p>
                     </div>
                     {payment.paylabs.sandboxMode && (
@@ -975,13 +1108,10 @@ function PaymentTab({ po }: { po: PoDetail }) {
                       <div className="rounded-lg bg-white p-3 text-sm">
                         <p className="font-medium">Pembayaran Paylabs sedang menunggu penyelesaian.</p>
                         <p className="mt-1 text-xs text-slate-500">
-                          Metode: {pendingPaylabs.paymentMethod ?? "Paylabs"} · dibuat {fmtDateTime(pendingPaylabs.createdAt)}
+                          Nominal: {fmtAmount(pendingPaylabs.amount, payment.currency)} · Metode: {pendingPaylabs.paymentMethod ?? "Paylabs"}.
                         </p>
                       </div>
-                      <Button
-                        size="sm"
-                        onClick={() => window.location.assign(pendingPaylabs.paymentUrl!)}
-                      >
+                      <Button size="sm" onClick={() => window.location.assign(pendingPaylabs.paymentUrl!)}>
                         Lanjutkan Pembayaran Paylabs
                       </Button>
                       <p className="text-xs text-amber-700">
@@ -1001,31 +1131,21 @@ function PaymentTab({ po }: { po: PoDetail }) {
                             <option key={method.code} value={method.code}>{method.label}</option>
                           ))}
                         </select>
-                        {paylabsMethods.find((method) => method.code === activePaylabsMethod)?.description && (
-                          <p className="mt-1 text-xs text-slate-500">
-                            {paylabsMethods.find((method) => method.code === activePaylabsMethod)?.description}
-                          </p>
-                        )}
                       </div>
-
                       {createPaylabsPayment.isError && (
                         <p className="text-sm text-red-600">{(createPaylabsPayment.error as Error).message}</p>
                       )}
                       <Button
                         size="sm"
-                        onClick={() => createPaylabsPayment.mutate(activePaylabsMethod)}
-                        disabled={!payment.paylabs.canCreate || !activePaylabsMethod || createPaylabsPayment.isPending}
+                        onClick={() => createPaylabsPayment.mutate({ paymentMethod: activePaylabsMethod, amount: selectedAmount })}
+                        disabled={!payment.paylabs.canCreate || !activePaylabsMethod || !validSelectedAmount || createPaylabsPayment.isPending}
                       >
-                        {createPaylabsPayment.isPending ? "Membuat pembayaran…" : "Bayar via Paylabs"}
+                        {createPaylabsPayment.isPending
+                          ? "Membuat pembayaran…"
+                          : `Bayar ${validSelectedAmount ? fmtAmount(selectedAmount, payment.currency) : ""} via Paylabs`}
                       </Button>
                     </div>
                   )}
-                </div>
-              )}
-
-              {payment.paymentStatus !== "paid" && (!payment.paylabs?.configured || paylabsMethods.length === 0) && (
-                <div className="rounded-lg border bg-slate-50 p-3 text-xs text-slate-600">
-                  Paylabs belum tersedia untuk PO ini. Gunakan transfer manual atau hubungi admin CST.
                 </div>
               )}
 
@@ -1038,38 +1158,25 @@ function PaymentTab({ po }: { po: PoDetail }) {
                       {payment.proofUploadedAt ? ` Dikirim ${fmtDateTime(payment.proofUploadedAt)}.` : ""}
                     </p>
                   </div>
-
                   {payment.proofUrl && payment.proofMimeType?.startsWith("image/") && (
                     <a href={payment.proofUrl} target="_blank" rel="noreferrer" className="block">
-                      <img
-                        src={payment.proofUrl}
-                        alt="Preview bukti pembayaran"
-                        className="max-h-80 w-full rounded-lg border bg-white object-contain"
-                      />
+                      <img src={payment.proofUrl} alt="Preview bukti pembayaran" className="max-h-80 w-full rounded-lg border bg-white object-contain" />
                     </a>
                   )}
-                  {payment.proofUrl && !payment.proofMimeType?.startsWith("image/") && (
-                    <a href={payment.proofUrl} target="_blank" rel="noreferrer" className="font-medium text-blue-600 underline">
-                      Buka bukti pembayaran
-                    </a>
-                  )}
-
-                  <div className="grid gap-2 rounded-lg bg-white p-3 text-sm sm:grid-cols-2">
+                  <div className="grid gap-2 rounded-lg bg-white p-3 text-sm sm:grid-cols-3">
+                    <div>
+                      <p className="text-xs text-slate-500">Nominal diajukan</p>
+                      <p className="font-semibold">{payment.proofExpectedAmount == null ? "—" : fmtAmount(payment.proofExpectedAmount, payment.currency)}</p>
+                    </div>
                     <div>
                       <p className="text-xs text-slate-500">Nominal hasil OCR</p>
                       <p className="font-semibold">{payment.ocrAmount == null ? "Tidak terbaca" : fmtAmount(payment.ocrAmount, payment.currency)}</p>
                     </div>
                     <div>
-                      <p className="text-xs text-slate-500">Kesesuaian nominal</p>
-                      <p className={payment.ocrMatches ? "font-semibold text-green-700" : "font-semibold text-red-700"}>
-                        {payment.ocrMatches ? "Cocok dengan tagihan" : "Tidak cocok / belum terverifikasi"}
-                      </p>
+                      <p className="text-xs text-slate-500">Status bukti</p>
+                      <p className="font-semibold">{payment.proofReviewStatus === "submitted" ? "Menunggu Admin" : payment.proofReviewStatus === "approved" ? "Disetujui" : payment.proofReviewStatus === "rejected" ? "Ditolak" : "—"}</p>
                     </div>
                   </div>
-
-                  {payment.paymentStatus === "proof_submitted" && (
-                    <p className="text-sm text-blue-700">Menunggu admin CST memeriksa bukti dan menyetujui pembayaran.</p>
-                  )}
                 </div>
               )}
 
@@ -1079,7 +1186,7 @@ function PaymentTab({ po }: { po: PoDetail }) {
                     <p className="text-sm font-semibold">Transfer Bank Manual</p>
                     <p className="mt-1 text-xs font-medium text-slate-700">Upload bukti transfer ke CST</p>
                     <p className="mt-1 text-xs text-slate-500">
-                      Pilih gambar terlebih dahulu. Sistem membaca nominal sebelum bukti dikirim. File yang sama tidak dapat digunakan ulang pada transaksi mana pun.
+                      OCR akan mencocokkan nominal pada bukti dengan nominal pembayaran kali ini, bukan harus selalu sama dengan total PO.
                     </p>
                   </div>
 
@@ -1093,17 +1200,27 @@ function PaymentTab({ po }: { po: PoDetail }) {
                     />
                     <label
                       htmlFor={`payment-proof-${po.id}`}
-                      className="group flex min-h-28 w-full cursor-pointer items-center justify-center rounded-xl border-2 border-dashed border-blue-300 bg-blue-50/50 px-5 py-5 text-center transition hover:border-blue-500 hover:bg-blue-50 focus-within:ring-2 focus-within:ring-blue-500 focus-within:ring-offset-2"
+                      className={`group flex min-h-28 w-full items-center justify-center rounded-xl border-2 border-dashed px-5 py-5 text-center transition ${
+                        validSelectedAmount
+                          ? "cursor-pointer border-blue-300 bg-blue-50/50 hover:border-blue-500 hover:bg-blue-50"
+                          : "cursor-not-allowed border-slate-200 bg-slate-50 opacity-60"
+                      }`}
+                      onClick={(event) => {
+                        if (!validSelectedAmount) {
+                          event.preventDefault();
+                          setScanError("Isi nominal pembayaran yang valid terlebih dahulu.");
+                        }
+                      }}
                     >
                       <div className="space-y-2">
-                        <div className="mx-auto flex h-10 w-10 items-center justify-center rounded-full bg-white shadow-sm ring-1 ring-blue-100 transition group-hover:scale-105">
+                        <div className="mx-auto flex h-10 w-10 items-center justify-center rounded-full bg-white shadow-sm ring-1 ring-blue-100">
                           <UploadCloud className="h-5 w-5 text-blue-600" />
                         </div>
                         <div>
                           <p className="text-sm font-semibold text-blue-700">
                             {proofFile ? "Klik untuk ganti bukti pembayaran" : "Klik di area ini untuk unggah bukti pembayaran"}
                           </p>
-                          <p className="mt-1 text-xs text-slate-500">JPG atau PNG</p>
+                          <p className="mt-1 text-xs text-slate-500">JPG atau PNG · nominal yang dipilih {validSelectedAmount ? fmtAmount(selectedAmount, payment.currency) : "belum valid"}</p>
                         </div>
                       </div>
                     </label>
@@ -1114,10 +1231,7 @@ function PaymentTab({ po }: { po: PoDetail }) {
                           <p className="truncate font-medium text-slate-700">{proofFile.name}</p>
                           <p className="text-xs text-slate-500">{Math.max(1, Math.round(proofFile.size / 1024))} KB</p>
                         </div>
-                        <label
-                          htmlFor={`payment-proof-${po.id}`}
-                          className="shrink-0 cursor-pointer text-xs font-semibold text-blue-600 hover:underline"
-                        >
+                        <label htmlFor={`payment-proof-${po.id}`} className="shrink-0 cursor-pointer text-xs font-semibold text-blue-600 hover:underline">
                           Ganti file
                         </label>
                       </div>
@@ -1125,11 +1239,7 @@ function PaymentTab({ po }: { po: PoDetail }) {
                   </div>
 
                   {proofPreview && (
-                    <img
-                      src={proofPreview}
-                      alt="Preview bukti yang akan dikirim"
-                      className="max-h-80 w-full rounded-lg border bg-slate-50 object-contain"
-                    />
+                    <img src={proofPreview} alt="Preview bukti yang akan dikirim" className="max-h-80 w-full rounded-lg border bg-slate-50 object-contain" />
                   )}
 
                   {scanProof.isPending && (
@@ -1148,14 +1258,10 @@ function PaymentTab({ po }: { po: PoDetail }) {
                       <div className="grid gap-2 sm:grid-cols-2">
                         <div>
                           <p className="text-xs opacity-70">Nominal terbaca OCR</p>
-                          <p className="font-semibold">
-                            {scanResult.extractedAmount == null
-                              ? "Belum terbaca"
-                              : fmtAmount(scanResult.extractedAmount, payment.currency)}
-                          </p>
+                          <p className="font-semibold">{scanResult.extractedAmount == null ? "Belum terbaca" : fmtAmount(scanResult.extractedAmount, payment.currency)}</p>
                         </div>
                         <div>
-                          <p className="text-xs opacity-70">Jumlah tagihan</p>
+                          <p className="text-xs opacity-70">Nominal pembayaran kali ini</p>
                           <p className="font-semibold">{fmtAmount(scanResult.expectedAmount, payment.currency)}</p>
                         </div>
                       </div>
@@ -1164,7 +1270,7 @@ function PaymentTab({ po }: { po: PoDetail }) {
                           ? "Nominal cocok. Bukti dapat dikirim untuk verifikasi admin."
                           : scanResult.timedOut
                             ? "Pembacaan nominal melewati batas waktu. Pilih gambar yang lebih jelas."
-                            : "Nominal belum cocok atau belum terbaca. Pilih bukti pembayaran lain yang lebih jelas sebelum mengirim."}
+                            : "Nominal belum cocok atau belum terbaca. Periksa nominal pembayaran atau pilih bukti lain."}
                       </p>
                     </div>
                   )}
@@ -1172,12 +1278,8 @@ function PaymentTab({ po }: { po: PoDetail }) {
                   {scanError && <p className="text-sm text-red-600">{scanError}</p>}
                   {uploadProof.isError && <p className="text-sm text-red-600">{(uploadProof.error as Error).message}</p>}
 
-                  <Button
-                    size="sm"
-                    onClick={() => uploadProof.mutate()}
-                    disabled={!canSubmit || uploadProof.isPending}
-                  >
-                    {uploadProof.isPending ? "Mengunggah…" : "Kirim Bukti Pembayaran"}
+                  <Button size="sm" onClick={() => uploadProof.mutate()} disabled={!canSubmit || uploadProof.isPending}>
+                    {uploadProof.isPending ? "Mengunggah…" : `Kirim Bukti ${validSelectedAmount ? fmtAmount(selectedAmount, payment.currency) : ""}`}
                   </Button>
                 </div>
               )}
