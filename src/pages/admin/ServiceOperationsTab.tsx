@@ -121,6 +121,18 @@ type Detail = {
         status: "available" | "not_applicable";
         count: number;
       };
+      payment?: {
+        status: "available" | "not_applicable";
+        terms: string | null;
+        termCode: string | null;
+        paymentStatus: string | null;
+        dueAt: string | null;
+        proofAvailable: boolean;
+        proofUploadedAt: string | null;
+        verifiedAt: string | null;
+        rejectionReason: string | null;
+        requiresClearanceBeforeHandover: boolean;
+      };
       completion: {
         status: "completed" | "in_progress" | "cancelled" | "not_applicable";
         currentStatus: string | null;
@@ -180,12 +192,40 @@ function marketplaceFlowGuide(detail: Detail): { owner: string; action: string; 
   const hasTracking = operations.tracking.status === "available" && Boolean(shipmentStatus);
   const podAvailable = operations.pod.status === "available" && operations.pod.available;
   const receiptCount = operations.receipts.status === "available" ? operations.receipts.count : 0;
+  const payment = operations.payment;
+  const paymentStatus = String(payment?.paymentStatus ?? "").toLowerCase();
+  const paymentTermsMissing = payment?.status === "available" && !payment?.termCode;
 
+  if ((operations.completion.status === "completed" || poStatus === "completed") && paymentStatus !== "paid") {
+    return {
+      owner: paymentStatus === "proof_submitted" ? "Admin" : "Customer",
+      action: paymentStatus === "proof_submitted" ? "Verifikasi pembayaran customer" : "Selesaikan pembayaran",
+      description: "Fulfillment barang sudah selesai, tetapi PO belum boleh ditutup sampai pembayaran customer ke CST berstatus Lunas.",
+    };
+  }
   if (operations.completion.status === "completed" || poStatus === "completed") {
     return {
       owner: "Admin",
       action: "Tutup Purchase Order",
-      description: "Barang sudah diterima penuh dan gate fulfillment selesai. Admin dapat menutup PO dari Marketplace Operations.",
+      description: "Barang sudah diterima penuh dan pembayaran sudah Lunas. Admin dapat menutup PO dari Marketplace Operations.",
+    };
+  }
+  if (shipmentStatus === "ready_to_ship" && paymentTermsMissing) {
+    return {
+      owner: "Admin",
+      action: "Tetapkan syarat pembayaran",
+      description: "Barang sudah siap, tetapi payment terms PO belum ditetapkan. Handover/pengiriman diblokir sampai aturan pembayaran jelas.",
+    };
+  }
+  if (
+    shipmentStatus === "ready_to_ship"
+    && payment?.requiresClearanceBeforeHandover
+    && paymentStatus !== "paid"
+  ) {
+    return {
+      owner: paymentStatus === "proof_submitted" ? "Admin" : "Customer",
+      action: paymentStatus === "proof_submitted" ? "Verifikasi bukti pembayaran" : "Bayar sebelum serah/kirim",
+      description: "PO menggunakan prepayment. Vendor baru dapat menyerahkan/mengirim barang setelah pembayaran diverifikasi Lunas oleh CST.",
     };
   }
   if (podAvailable && receiptCount === 0) {
@@ -652,7 +692,7 @@ export function ServiceOperationsTab() {
                     <h4 className="text-sm font-semibold text-slate-800">Fulfillment & delivery operations</h4>
                     <span className="text-[11px] text-slate-500">Data canonical</span>
                   </div>
-                  <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+                  <div className="grid grid-cols-2 md:grid-cols-6 gap-3">
                     {[
                       ["Fulfillment", selected.projection.operations.fulfillment.status === "available"
                         ? (selected.projection.operations.fulfillment.display
@@ -667,6 +707,9 @@ export function ServiceOperationsTab() {
                         : "N/A"],
                       ["Goods receipt", selected.projection.operations.receipts.status === "available"
                         ? `${selected.projection.operations.receipts.count} receipt`
+                        : "N/A"],
+                      ["Payment", selected.projection.operations.payment?.status === "available"
+                        ? statusLabel(selected.projection.operations.payment.paymentStatus ?? "unpaid")
                         : "N/A"],
                       ["Completion", statusLabel(selected.projection.operations.completion.status)],
                     ].map(([label, value]) => (
