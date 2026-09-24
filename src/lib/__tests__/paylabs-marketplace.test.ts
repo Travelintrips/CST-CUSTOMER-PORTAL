@@ -8,7 +8,7 @@ import {
   mapPaylabsStatus,
   normalizePaylabsPem,
   resolvePaylabsWebhookStatus,
-} from "../../../server/paylabs-service.mjs";
+} from "../../../server/paylabs-contract.mjs";
 
 describe("Paylabs marketplace payment contract", () => {
   it("formats the Paylabs timestamp as WIB wall-clock", () => {
