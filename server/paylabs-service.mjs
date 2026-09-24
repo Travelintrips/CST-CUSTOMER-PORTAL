@@ -844,7 +844,10 @@ export async function handlePaylabsWebhook({ request, response, body, rawBodyTex
         `update public.mkt_purchase_orders
             set payment_status=$1,
                 payment_verified_at=case when $1='paid' then coalesce(payment_verified_at,now()) else null end,
-                payment_verified_by=case when $1='paid' then 'paylabs:webhook' else null end,
+                payment_verified_by=case
+                  when $1='paid' then coalesce(payment_verified_by,'paylabs:webhook')
+                  else null
+                end,
                 payment_rejection_reason=null,
                 updated_at=now()
           where id=$2`,
