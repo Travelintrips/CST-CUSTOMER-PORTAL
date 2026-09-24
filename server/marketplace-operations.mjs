@@ -133,12 +133,27 @@ function paymentRequiresClearance(code) {
   return code === "prepaid";
 }
 
-async function paymentView(po) {
+async function paymentView(po, db = query) {
   const code = po.payment_term_code ?? normalizePaymentTerm(po.payment_terms_snapshot);
+  const proofRows = await db(
+    `select id, storage_path, file_name, mime_type, expected_amount, ocr_amount,
+            ocr_confidence, ocr_matches, review_status, rejection_reason,
+            submitted_at, reviewed_by, reviewed_at
+       from public.mkt_po_payment_proofs
+      where po_id=$1
+      order by submitted_at desc, id desc`,
+    [po.id],
+  );
+  const proofs = proofRows.rows ?? [];
+  const latest = proofs[0] ?? null;
+  const pending = proofs.find((row) => row.review_status === "submitted") ?? null;
+  const active = pending ?? latest;
   let proofUrl = null;
-  if (po.payment_proof_path) {
-    proofUrl = await signedMarketplacePaymentProofUrl({ poId: po.id, path: po.payment_proof_path });
+  if (active?.storage_path) {
+    proofUrl = await signedMarketplacePaymentProofUrl({ poId: po.id, path: active.storage_path });
   }
+  const canUploadNewProof = po.payment_status !== "paid" && !pending;
+
   return {
     poId: Number(po.id),
     paymentTermCode: code,
@@ -147,22 +162,27 @@ async function paymentView(po) {
     paymentDueAt: po.payment_due_at ?? null,
     amount: po.grand_total,
     currency: po.currency_snapshot ?? "IDR",
-    proofAvailable: Boolean(po.payment_proof_path),
-    proofLocked: Boolean(po.payment_proof_path),
+    proofAvailable: Boolean(active),
+    proofLocked: Boolean(pending || po.payment_status === "paid"),
+    canUploadNewProof,
+    proofAttemptCount: proofs.length,
+    proofId: active ? Number(active.id) : null,
     proofUrl,
-    proofFileName: po.payment_proof_file_name ?? null,
-    proofMimeType: po.payment_proof_mime_type ?? null,
-    proofUploadedAt: po.payment_proof_uploaded_at ?? null,
-    ocrAmount: po.payment_ocr_amount == null ? null : Number(po.payment_ocr_amount),
-    ocrConfidence: po.payment_ocr_confidence == null ? null : Number(po.payment_ocr_confidence),
-    ocrMatches: po.payment_ocr_matches == null ? null : Boolean(po.payment_ocr_matches),
-    verifiedAt: po.payment_verified_at ?? null,
-    rejectionReason: po.payment_rejection_reason ?? null,
+    proofFileName: active?.file_name ?? null,
+    proofMimeType: active?.mime_type ?? null,
+    proofUploadedAt: active?.submitted_at ?? null,
+    ocrAmount: active?.ocr_amount == null ? null : Number(active.ocr_amount),
+    ocrConfidence: active?.ocr_confidence == null ? null : Number(active.ocr_confidence),
+    ocrMatches: active?.ocr_matches == null ? null : Boolean(active.ocr_matches),
+    proofReviewStatus: active?.review_status ?? null,
+    verifiedAt: active?.reviewed_at ?? po.payment_verified_at ?? null,
+    rejectionReason: latest?.review_status === "rejected"
+      ? latest.rejection_reason
+      : po.payment_rejection_reason ?? null,
     requiresClearanceBeforeHandover: paymentRequiresClearance(code),
     termsMissing: !code,
   };
 }
-
 function actor(user, actorType = "admin") {
   return {
     actorType,
@@ -1230,13 +1250,29 @@ async function scanPoPaymentProof({ poId, body, user }) {
   const po = await loadPo(poId, user, { isAdmin: false });
   const code = po.payment_term_code ?? normalizePaymentTerm(po.payment_terms_snapshot);
   if (!code) fail(409, "Syarat pembayaran belum ditetapkan. Hubungi admin CST.");
-  if (po.payment_proof_path) {
-    fail(409, "Bukti pembayaran untuk PO ini sudah pernah dikirim dan dikunci. Upload ulang tidak diizinkan.");
+  if (po.payment_status === "paid") fail(409, "Pembayaran PO ini sudah berstatus Lunas.");
+
+  const pending = (await query(
+    `select id from public.mkt_po_payment_proofs where po_id=$1 and review_status='submitted' limit 1`,
+    [po.id],
+  )).rows[0];
+  if (pending) {
+    fail(409, "Bukti pembayaran sudah dikirim dan sedang menunggu pemeriksaan admin.");
   }
 
   const file = body?.file;
   if (!file || typeof file.arrayBuffer !== "function") {
     fail(400, "Pilih gambar bukti pembayaran JPG/PNG/WEBP.");
+  }
+
+  const buffer = Buffer.from(await file.arrayBuffer());
+  const proofSha256 = createHash("sha256").update(buffer).digest("hex");
+  const duplicate = (await query(
+    `select id, po_id from public.mkt_po_payment_proofs where sha256=$1 limit 1`,
+    [proofSha256],
+  )).rows[0];
+  if (duplicate) {
+    fail(409, "Bukti pembayaran yang sama sudah pernah diunggah dan tidak boleh digunakan ulang.");
   }
 
   const expectedAmount = Number(po.grand_total ?? 0);
@@ -1268,15 +1304,11 @@ async function scanPoPaymentProof({ poId, body, user }) {
     timedOut: false,
   };
 }
-
 async function submitPoPaymentProof({ poId, body, user }) {
   const po = await loadPo(poId, user, { isAdmin: false });
   const code = po.payment_term_code ?? normalizePaymentTerm(po.payment_terms_snapshot);
   if (!code) fail(409, "Syarat pembayaran belum ditetapkan. Hubungi admin CST.");
   if (po.payment_status === "paid") fail(409, "Pembayaran PO ini sudah berstatus Lunas.");
-  if (po.payment_proof_path) {
-    fail(409, "Bukti pembayaran untuk PO ini sudah pernah dikirim dan dikunci. Upload ulang tidak diizinkan.");
-  }
 
   const file = body?.file;
   if (!file || typeof file.arrayBuffer !== "function") {
@@ -1306,24 +1338,46 @@ async function submitPoPaymentProof({ poId, body, user }) {
   return withTransaction(async (db) => {
     const locked = await loadPo(po.id, user, { client: db, forUpdate: true, isAdmin: false });
     if (locked.payment_status === "paid") fail(409, "Pembayaran PO ini sudah berstatus Lunas.");
-    if (locked.payment_proof_path) {
-      fail(409, "Bukti pembayaran untuk PO ini sudah pernah dikirim dan dikunci. Upload ulang tidak diizinkan.");
+
+    const pending = (await db(
+      `select id from public.mkt_po_payment_proofs where po_id=$1 and review_status='submitted' limit 1 for update`,
+      [locked.id],
+    )).rows[0];
+    if (pending) {
+      fail(409, "Bukti pembayaran sudah dikirim dan sedang menunggu pemeriksaan admin.");
     }
 
     const duplicate = (await db(
-      `select id, po_number
-         from public.mkt_purchase_orders
-        where payment_proof_sha256=$1
-        limit 1`,
+      `select id, po_id from public.mkt_po_payment_proofs where sha256=$1 limit 1`,
       [proofSha256],
     )).rows[0];
     if (duplicate) {
-      fail(409, "File bukti pembayaran yang sama sudah pernah digunakan pada transaksi lain.");
+      fail(409, "Bukti pembayaran yang sama sudah pernah diunggah dan tidak boleh digunakan ulang.");
     }
 
     let uploaded = null;
     try {
       uploaded = await uploadMarketplacePaymentProof({ poId: locked.id, file });
+      const proof = (await db(
+        `insert into public.mkt_po_payment_proofs (
+             po_id, storage_path, file_name, mime_type, sha256,
+             expected_amount, ocr_amount, ocr_confidence, ocr_matches,
+             review_status, submitted_by
+           ) values ($1,$2,$3,$4,$5,$6,$7,$8,true,'submitted',$9)
+           returning *`,
+        [
+          locked.id,
+          uploaded.path,
+          uploaded.fileName || String(file.name || "bukti-pembayaran"),
+          uploaded.mimeType || String(file.type || ""),
+          proofSha256,
+          expectedAmount,
+          Number(ocr.extractedAmount),
+          Number(ocr.confidence ?? 0),
+          user?.email ?? user?.name ?? String(user?.id ?? "customer"),
+        ],
+      )).rows[0];
+
       const updated = (await db(
         `update public.mkt_purchase_orders
             set payment_status='proof_submitted',
@@ -1331,41 +1385,41 @@ async function submitPoPaymentProof({ poId, body, user }) {
                 payment_proof_sha256=$2,
                 payment_proof_file_name=$3,
                 payment_proof_mime_type=$4,
-                payment_proof_uploaded_at=now(),
-                payment_ocr_amount=$5,
-                payment_ocr_confidence=$6,
-                payment_ocr_raw_text=$7,
+                payment_proof_uploaded_at=$5,
+                payment_ocr_amount=$6,
+                payment_ocr_confidence=$7,
+                payment_ocr_raw_text=null,
                 payment_ocr_matches=true,
+                payment_verified_at=null,
+                payment_verified_by=null,
                 payment_rejection_reason=null,
                 updated_at=now()
-          where id=$8 and payment_proof_path is null
+          where id=$8
           returning *`,
         [
-          uploaded.path,
-          proofSha256,
-          uploaded.fileName || String(file.name || "bukti-pembayaran"),
-          uploaded.mimeType || String(file.type || ""),
+          proof.storage_path,
+          proof.sha256,
+          proof.file_name,
+          proof.mime_type,
+          proof.submitted_at,
           Number(ocr.extractedAmount),
           Number(ocr.confidence ?? 0),
-          null,
           locked.id,
         ],
       )).rows[0];
-      if (!updated) {
-        fail(409, "Bukti pembayaran sudah tersimpan oleh proses lain. Upload ulang tidak diizinkan.");
-      }
 
       await writeActivity(db, {
         poId: locked.id,
         user: actor(user, "customer"),
         action: "po_payment_proof_submitted",
         newValue: {
+          proofId: Number(proof.id),
           paymentStatus: "proof_submitted",
           ocrAmount: Number(ocr.extractedAmount),
           expectedAmount,
           ocrMatches: true,
         },
-        description: "Customer mengunggah bukti pembayaran marketplace; nominal OCR cocok dengan tagihan dan bukti dikunci.",
+        description: "Customer mengunggah bukti pembayaran marketplace; nominal OCR cocok dengan tagihan.",
         key: `po-payment-proof:${locked.id}:${proofSha256}`,
       });
       await notifyAdmins(db, {
@@ -1378,13 +1432,14 @@ async function submitPoPaymentProof({ poId, body, user }) {
         link: `/admin?tab=marketplace-operations&poId=${locked.id}&focus=payment`,
         payload: {
           poId: Number(locked.id),
+          proofId: Number(proof.id),
           paymentStatus: "proof_submitted",
           ocrAmount: Number(ocr.extractedAmount),
           expectedAmount,
           ocrMatches: true,
         },
       });
-      return { alreadyProcessed: false, payment: await paymentView(updated) };
+      return { alreadyProcessed: false, payment: await paymentView(updated, db) };
     } catch (error) {
       if (uploaded?.path) {
         await deleteMarketplacePaymentProof({ poId: locked.id, path: uploaded.path }).catch(() => {});
@@ -1393,17 +1448,35 @@ async function submitPoPaymentProof({ poId, body, user }) {
     }
   });
 }
-
 async function reviewPoPayment({ poId, action, body, user }) {
   if (!["verify", "reject"].includes(action)) fail(400, "Aksi pembayaran tidak valid.");
   return withTransaction(async (db) => {
     const po = await loadPo(poId, user, { client: db, forUpdate: true, isAdmin: true });
     const code = po.payment_term_code ?? normalizePaymentTerm(po.payment_terms_snapshot);
     if (!code) fail(409, "Tetapkan syarat pembayaran terlebih dahulu.");
+
+    const proof = (await db(
+      `select *
+         from public.mkt_po_payment_proofs
+        where po_id=$1 and review_status='submitted'
+        order by submitted_at desc, id desc
+        limit 1
+        for update`,
+      [po.id],
+    )).rows[0];
+    if (!proof) fail(409, "Tidak ada bukti pembayaran yang sedang menunggu pemeriksaan.");
+
     if (action === "verify") {
-      if (!po.payment_proof_path && po.payment_status !== "paid") {
-        fail(409, "Bukti pembayaran belum tersedia.");
+      if (!proof.ocr_matches || Number(proof.ocr_amount) !== Number(po.grand_total)) {
+        fail(409, "Nominal OCR bukti tidak cocok dengan tagihan. Bukti tidak dapat disetujui.");
       }
+      const reviewer = user?.email ?? user?.name ?? "admin";
+      await db(
+        `update public.mkt_po_payment_proofs
+            set review_status='approved', reviewed_by=$1, reviewed_at=now(), rejection_reason=null
+          where id=$2`,
+        [reviewer, proof.id],
+      );
       const updated = (await db(
         `update public.mkt_purchase_orders
             set payment_status='paid',
@@ -1413,29 +1486,35 @@ async function reviewPoPayment({ poId, action, body, user }) {
                 updated_at=now()
           where id=$2
           returning *`,
-        [user?.email ?? user?.name ?? "admin", po.id],
+        [reviewer, po.id],
       )).rows[0];
       await writeActivity(db, {
         poId: po.id,
         user: actor(user, "admin"),
         action: "po_payment_verified",
         oldValue: { paymentStatus: po.payment_status },
-        newValue: { paymentStatus: "paid" },
-        description: text(body.notes, "Pembayaran customer diverifikasi lunas."),
-        key: `po-payment-verified:${po.id}`,
+        newValue: { paymentStatus: "paid", proofId: Number(proof.id) },
+        description: text(body.notes, "Bukti pembayaran diperiksa admin dan pembayaran diverifikasi lunas."),
+        key: `po-payment-verified:${po.id}:${proof.id}`,
       });
       await notifyMarketplaceEvent(db, {
         eventType: "po_payment_verified",
         po,
-        payload: { paymentStatus: "paid" },
-        key: `po-payment-verified:${po.id}`,
+        payload: { paymentStatus: "paid", proofId: Number(proof.id) },
+        key: `po-payment-verified:${po.id}:${proof.id}`,
       });
-      return paymentView(updated);
+      return paymentView(updated, db);
     }
 
-    if (!po.payment_proof_path) fail(409, "Belum ada bukti pembayaran untuk ditolak.");
     const reason = text(body.reason);
     if (!reason) fail(400, "Alasan penolakan bukti pembayaran wajib diisi.");
+    const reviewer = user?.email ?? user?.name ?? "admin";
+    await db(
+      `update public.mkt_po_payment_proofs
+          set review_status='rejected', rejection_reason=$1, reviewed_by=$2, reviewed_at=now()
+        where id=$3`,
+      [reason, reviewer, proof.id],
+    );
     const updated = (await db(
       `update public.mkt_purchase_orders
           set payment_status='rejected',
@@ -1452,20 +1531,19 @@ async function reviewPoPayment({ poId, action, body, user }) {
       user: actor(user, "admin"),
       action: "po_payment_rejected",
       oldValue: { paymentStatus: po.payment_status },
-      newValue: { paymentStatus: "rejected" },
+      newValue: { paymentStatus: "rejected", proofId: Number(proof.id) },
       description: reason,
-      key: `po-payment-rejected:${po.id}:${Date.now()}`,
+      key: `po-payment-rejected:${po.id}:${proof.id}`,
     });
     await notifyMarketplaceEvent(db, {
       eventType: "po_payment_rejected",
       po,
-      payload: { paymentStatus: "rejected", reason },
-      key: `po-payment-rejected:${po.id}:${Date.now()}`,
+      payload: { paymentStatus: "rejected", proofId: Number(proof.id), reason },
+      key: `po-payment-rejected:${po.id}:${proof.id}`,
     });
-    return paymentView(updated);
+    return paymentView(updated, db);
   });
 }
-
 async function transitionPo({ poId, action, body, request, user, isAdmin }) {
   const target = PO_ACTION_STATUS[action];
   if (!target) return false;
