@@ -531,12 +531,21 @@ export default function MktVendorQuotePage() {
               <div className="mt-4 space-y-3 pt-4 border-t">
                 <div>
                   <Label>{t("mktVendorQuote.paymentTerms", "Syarat Pembayaran")}</Label>
-                  <Input
+                  <select
                     value={paymentTerms}
                     onChange={(e) => setPaymentTerms(e.target.value)}
-                    placeholder={t("mktVendorQuote.paymentTermsPlaceholder", "Contoh: 30 hari net")}
-                    className="mt-1"
-                  />
+                    className="mt-1 h-10 w-full rounded-md border border-input bg-background px-3 text-sm"
+                    required
+                  >
+                    <option value="">Pilih syarat pembayaran</option>
+                    <option value="Bayar sebelum barang diserahkan/dikirim">Bayar sebelum barang diserahkan/dikirim</option>
+                    <option value="NET 7 hari setelah penerimaan">NET 7 hari setelah penerimaan</option>
+                    <option value="NET 14 hari setelah penerimaan">NET 14 hari setelah penerimaan</option>
+                    <option value="NET 30 hari setelah penerimaan">NET 30 hari setelah penerimaan</option>
+                  </select>
+                  <p className="mt-1 text-xs text-gray-500">
+                    Syarat ini menjadi bagian PO dan menentukan apakah barang boleh diserahkan sebelum pembayaran lunas.
+                  </p>
                 </div>
                 <div>
                   <Label>{t("mktVendorQuote.quoteNotes", "Catatan Penawaran")}</Label>
@@ -575,6 +584,7 @@ export default function MktVendorQuotePage() {
               <Button
                 className="flex-1 bg-orange-500 hover:bg-orange-600"
                 onClick={() => setShowSubmitConfirm(true)}
+                disabled={!paymentTerms}
               >
                 <Send className="w-4 h-4 mr-2" />
                 {isRequote ? t("mktVendorQuote.sendRevision", "Kirim Revisi") : t("mktVendorQuote.sendQuote", "Kirim Penawaran")}
