@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { getAuthHeaders } from "@/lib/auth";
 import { useToast } from "@/hooks/use-toast";
 import { Badge } from "@/components/ui/badge";
@@ -166,6 +166,7 @@ export function MarketplaceOperationsTab() {
   const [payment, setPayment] = useState<PaymentView | null>(null);
   const [paymentTermDraft, setPaymentTermDraft] = useState("");
   const [paymentRejectReason, setPaymentRejectReason] = useState("");
+  const deepLinkHandled = useRef(false);
   const [loading, setLoading] = useState(true);
   const [working, setWorking] = useState(false);
   const [vendorIds, setVendorIds] = useState("");
@@ -306,6 +307,27 @@ export function MarketplaceOperationsTab() {
       toast({ title: "Detail PO gagal dimuat", description: (error as Error).message, variant: "destructive" });
     }
   };
+
+  useEffect(() => {
+    if (deepLinkHandled.current || purchaseOrders.length === 0) return;
+    const params = new URLSearchParams(window.location.search);
+    const targetPoId = Number(params.get("poId"));
+    if (!Number.isInteger(targetPoId) || targetPoId <= 0) return;
+    const target = purchaseOrders.find((po) => po.id === targetPoId);
+    if (!target) return;
+
+    deepLinkHandled.current = true;
+    void selectPo(target).then(() => {
+      if (params.get("focus") === "payment") {
+        window.setTimeout(() => {
+          document.getElementById("marketplace-payment-panel")?.scrollIntoView({
+            behavior: "smooth",
+            block: "center",
+          });
+        }, 100);
+      }
+    });
+  }, [purchaseOrders]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const savePaymentTerms = () => {
     if (!selectedPo || !paymentTermDraft) return;
@@ -679,13 +701,32 @@ export function MarketplaceOperationsTab() {
                   })()}
                 </div>
 
-                <div className="rounded-lg border p-3 space-y-3">
+                <div id="marketplace-payment-panel" className="rounded-lg border-2 border-indigo-200 bg-indigo-50/30 p-4 space-y-4 scroll-mt-24">
                   <div className="flex items-center justify-between gap-3">
                     <div>
                       <p className="font-semibold"><Wallet className="mr-1 inline h-4 w-4" />Pembayaran customer</p>
                       <p className="mt-1 text-xs text-slate-500">Pembayaran customer ke CST dipisahkan dari pembayaran CST ke vendor.</p>
                     </div>
                     <StatusBadge value={payment?.paymentStatus ?? "unpaid"} />
+                  </div>
+
+                  <div className="grid gap-2 md:grid-cols-4">
+                    <div className={`rounded-lg border p-3 ${!payment?.paymentTermCode ? "border-indigo-400 bg-white" : "bg-white/70"}`}>
+                      <p className="text-[11px] font-semibold uppercase text-slate-400">1. Payment terms</p>
+                      <p className="mt-1 text-xs font-medium text-slate-800">{payment?.paymentTermCode ? "Sudah ditetapkan" : "Admin pilih terms"}</p>
+                    </div>
+                    <div className={`rounded-lg border p-3 ${payment?.paymentTermCode && !payment?.proofAvailable && payment?.paymentStatus !== "paid" ? "border-indigo-400 bg-white" : "bg-white/70"}`}>
+                      <p className="text-[11px] font-semibold uppercase text-slate-400">2. Customer bayar</p>
+                      <p className="mt-1 text-xs font-medium text-slate-800">{payment?.proofAvailable ? "Bukti sudah ada" : "Upload bukti transfer"}</p>
+                    </div>
+                    <div className={`rounded-lg border p-3 ${payment?.paymentStatus === "proof_submitted" ? "border-indigo-400 bg-white" : "bg-white/70"}`}>
+                      <p className="text-[11px] font-semibold uppercase text-slate-400">3. Verifikasi CST</p>
+                      <p className="mt-1 text-xs font-medium text-slate-800">{payment?.paymentStatus === "paid" ? "Sudah lunas" : "Admin verifikasi bukti"}</p>
+                    </div>
+                    <div className={`rounded-lg border p-3 ${payment?.paymentStatus === "paid" ? "border-emerald-400 bg-white" : "bg-white/70"}`}>
+                      <p className="text-[11px] font-semibold uppercase text-slate-400">4. Handover</p>
+                      <p className="mt-1 text-xs font-medium text-slate-800">{payment?.requiresClearanceBeforeHandover && payment?.paymentStatus !== "paid" ? "Vendor masih diblokir" : "Ikuti terms PO"}</p>
+                    </div>
                   </div>
 
                   {payment?.termsMissing ? (
