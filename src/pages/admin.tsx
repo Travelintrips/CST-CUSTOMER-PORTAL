@@ -48,7 +48,7 @@ export default function AdminPage() {
   const [pendingPortalWorkload, setPendingPortalWorkload] = useState(0);
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [activeTab, setActiveTab] = useState<string>(() => {
-    const query = new URLSearchParams(location.split("?")[1] ?? "");
+    const query = new URLSearchParams(typeof window !== "undefined" ? window.location.search : "");
     return isPortalAdmin() ? (query.get("tab") ?? "service-operations") : "claim";
   });
 
@@ -83,6 +83,19 @@ export default function AdminPage() {
     if (!isAuthenticated()) { setLocation("/login"); return; }
     if (!isPortalAdmin()) { setLocation("/dashboard"); }
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    if (!isPortalAdmin()) return;
+    const syncTabFromUrl = () => {
+      const query = new URLSearchParams(window.location.search);
+      const requestedTab = query.get("tab");
+      if (requestedTab) setActiveTab(requestedTab);
+    };
+    syncTabFromUrl();
+    window.addEventListener("popstate", syncTabFromUrl);
+    return () => window.removeEventListener("popstate", syncTabFromUrl);
+  }, []);
+
 
   if (!isAuthenticated()) return null;
 
