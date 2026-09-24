@@ -65,6 +65,22 @@ type Detail = {
   record: Record<string, unknown>;
   history: Array<Record<string, unknown>>;
   projection?: {
+    purchaseOrder?: {
+      id: number;
+      poNumber: string;
+      status: string;
+      grandTotal: number;
+      currency: string;
+      paymentTerms?: string | null;
+      paymentTermCode?: string | null;
+      paymentStatus?: string | null;
+      paymentDueAt?: string | null;
+      paymentProofAvailable?: boolean;
+      paymentProofUploadedAt?: string | null;
+      paymentVerifiedAt?: string | null;
+      paymentRejectionReason?: string | null;
+      createdAt: string;
+    } | null;
     finance?: {
       available: boolean;
       source: string | null;
@@ -679,9 +695,17 @@ export function ServiceOperationsTab() {
                 return guide ? (
                   <div className="rounded-xl border border-indigo-200 bg-indigo-50/60 p-4">
                     <p className="text-[11px] font-semibold uppercase tracking-wide text-indigo-500">Langkah berikutnya</p>
-                    <div className="mt-2 flex flex-col gap-1">
+                    <div className="mt-2 flex flex-col gap-2">
                       <p className="text-sm font-semibold text-indigo-950">{guide.owner} · {guide.action}</p>
                       <p className="text-xs text-indigo-800">{guide.description}</p>
+                      {selected.projection?.purchaseOrder?.id ? (
+                        <a
+                          href="/admin?tab=marketplace-operations"
+                          className="mt-1 inline-flex w-fit items-center rounded-lg border border-indigo-300 bg-white px-3 py-1.5 text-xs font-semibold text-indigo-700 hover:bg-indigo-50"
+                        >
+                          Buka Marketplace Operations
+                        </a>
+                      ) : null}
                     </div>
                   </div>
                 ) : null;
