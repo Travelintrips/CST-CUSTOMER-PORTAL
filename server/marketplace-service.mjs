@@ -38,7 +38,8 @@ function text(value, fallback = null) {
 }
 
 const PAYMENT_TERM_LABELS = {
-  prepaid: "Bayar sebelum barang diserahkan/dikirim",
+  prepaid: "Bayar penuh sebelum barang diserahkan/dikirim",
+  dp_after_receipt: "DP sebelum serah/kirim, pelunasan setelah barang diterima",
   net_7: "NET 7 hari setelah penerimaan",
   net_14: "NET 14 hari setelah penerimaan",
   net_30: "NET 30 hari setelah penerimaan",
@@ -47,19 +48,70 @@ const PAYMENT_TERM_LABELS = {
 function normalizePaymentTerm(value) {
   const normalized = String(value ?? "").trim().toLowerCase().replace(/\s+/g, " ");
   if (!normalized) return null;
-  if (["prepaid", "prepayment", "cash before delivery"].includes(normalized) || normalized.includes("bayar sebelum")) return "prepaid";
+  if (normalized === "dp_after_receipt" || normalized.startsWith("dp ") || normalized.includes("down payment") || normalized.includes("uang muka")) return "dp_after_receipt";
+  if (["prepaid", "prepayment", "cash before delivery"].includes(normalized) || normalized.includes("bayar penuh sebelum")) return "prepaid";
   if (/^net[ _-]?7(?:\s*hari)?$/.test(normalized) || normalized.includes("7 hari")) return "net_7";
   if (/^net[ _-]?14(?:\s*hari)?$/.test(normalized) || normalized.includes("14 hari")) return "net_14";
   if (/^net[ _-]?30(?:\s*hari)?$/.test(normalized) || normalized.includes("30 hari")) return "net_30";
+  if (normalized.includes("bayar sebelum")) return "prepaid";
   return null;
 }
 
-function paymentTermLabel(code) {
+function normalizeDpPercent(value) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed > 0 && parsed < 100
+    ? Number(parsed.toFixed(2))
+    : null;
+}
+
+function dpPercentFromTerm(value) {
+  const match = String(value ?? "").match(/(?:dp|down payment|uang muka)\s*([0-9]+(?:[.,][0-9]+)?)\s*%/i);
+  return match ? normalizeDpPercent(String(match[1]).replace(",", ".")) : null;
+}
+
+function paymentTermLabel(code, dpPercent = null) {
+  if (code === "dp_after_receipt") {
+    const percent = normalizeDpPercent(dpPercent);
+    return percent
+      ? `DP ${percent}% sebelum serah/kirim, pelunasan setelah barang diterima`
+      : PAYMENT_TERM_LABELS.dp_after_receipt;
+  }
   return PAYMENT_TERM_LABELS[code] ?? null;
 }
 
-function paymentRequiresClearance(code) {
-  return code === "prepaid";
+async function paymentTotalsForPo(db, po) {
+  const manual = (await db(
+    `select coalesce(sum(ocr_amount),0) as paid_amount
+       from public.mkt_po_payment_proofs
+      where po_id=$1 and review_status='approved'`,
+    [po.id],
+  )).rows[0] ?? {};
+  const gateway = (await db(
+    `select coalesce(sum(amount),0) as paid_amount
+       from public.payments
+      where ref_kind='purchase'::payment_ref_kind
+        and ref_id=$1
+        and provider='paylabs'::payment_provider
+        and status='paid'::payment_status`,
+    [po.id],
+  )).rows[0] ?? {};
+  const totalAmount = Number(po.grand_total ?? 0);
+  const receivedAmount = Number(manual.paid_amount ?? 0) + Number(gateway.paid_amount ?? 0);
+  return {
+    totalAmount,
+    receivedAmount,
+    remainingAmount: Math.max(totalAmount - receivedAmount, 0),
+  };
+}
+
+function requiredBeforeHandover(po, totals) {
+  const code = po.payment_term_code ?? normalizePaymentTerm(po.payment_terms_snapshot);
+  if (code === "prepaid") return totals.totalAmount;
+  if (code === "dp_after_receipt") {
+    const percent = normalizeDpPercent(po.payment_dp_percent);
+    return percent ? Number((totals.totalAmount * percent / 100).toFixed(2)) : totals.totalAmount;
+  }
+  return 0;
 }
 
 function token() {
@@ -377,6 +429,7 @@ async function poDetail(db, poId, { customerView = false } = {}) {
     vendorAddressSnapshot: redactVendor ? null : row.vendor_address_snapshot,
     paymentTermsSnapshot: row.payment_terms_snapshot,
     paymentTermCode: row.payment_term_code ?? normalizePaymentTerm(row.payment_terms_snapshot),
+    paymentDpPercent: row.payment_dp_percent == null ? null : Number(row.payment_dp_percent),
     paymentStatus: row.payment_status ?? "unpaid",
     paymentDueAt: row.payment_due_at ?? null,
     paymentProofUploadedAt: row.payment_proof_uploaded_at ?? null,
@@ -424,19 +477,25 @@ async function createPo(db, rfq, quote, user) {
   const total = details.lines.reduce((sum, line) => sum + Number(line.dealSubtotal ?? 0), 0);
   const paymentTermCode = normalizePaymentTerm(quote.payment_terms);
   if (!paymentTermCode) fail(409, "Quotation belum memiliki syarat pembayaran yang valid.");
-  const paymentTermsSnapshot = paymentTermLabel(paymentTermCode);
+  const paymentDpPercent = paymentTermCode === "dp_after_receipt"
+    ? dpPercentFromTerm(quote.payment_terms)
+    : null;
+  if (paymentTermCode === "dp_after_receipt" && !paymentDpPercent) {
+    fail(409, "Quotation DP belum memiliki persentase DP yang valid.");
+  }
+  const paymentTermsSnapshot = paymentTermLabel(paymentTermCode, paymentDpPercent);
   const inserted = await db(
     `insert into public.mkt_purchase_orders
        (po_number, rfq_id, quote_id, company_id, vendor_id, status, total_amount,
         tax_amount, grand_total, created_by, vendor_name_snapshot, vendor_address_snapshot,
-        payment_terms_snapshot, payment_term_code, payment_status,
+        payment_terms_snapshot, payment_term_code, payment_dp_percent, payment_status,
         incoterm_snapshot, quotation_number_snapshot,
         quotation_date_snapshot, currency_snapshot, lead_time_days_snapshot,
         vendor_token, vendor_token_expires_at, expected_completion_date)
      values (
        'PENDING-' || $1::text, $2, $3, $4, $5, 'issued'::mkt_po_status, $6, 0, $6,
-       $7, $8, $9, $10, $11, 'unpaid', $12, $13, $14, 'IDR', $15, $16, now() + interval '14 days',
-        case when $15::int is null then null else current_date + $15::int end
+       $7, $8, $9, $10, $11, $12, 'unpaid', $13, $14, $15, 'IDR', $16, $17, now() + interval '14 days',
+        case when $16::int is null then null else current_date + $16::int end
      )
      returning id`,
     [
@@ -451,6 +510,7 @@ async function createPo(db, rfq, quote, user) {
       vendor.address,
       paymentTermsSnapshot,
       paymentTermCode,
+      paymentDpPercent,
       quote.incoterm,
       quote.quotation_number,
       quote.quotation_date,
@@ -810,8 +870,14 @@ async function handleVendorQuote(request, response, pathname, body) {
   const lines = Array.isArray(body.lines) ? body.lines : [];
   if (!lines.length) fail(400, "Line quotation wajib diisi.");
   const requestedPaymentTerm = normalizePaymentTerm(body.paymentTerms);
+  const requestedDpPercent = requestedPaymentTerm === "dp_after_receipt"
+    ? (normalizeDpPercent(body.paymentDpPercent) ?? dpPercentFromTerm(body.paymentTerms))
+    : null;
   if (match[2] === "submit" && !requestedPaymentTerm) {
     fail(400, "Syarat pembayaran wajib dipilih sebelum quotation dikirim.");
+  }
+  if (match[2] === "submit" && requestedPaymentTerm === "dp_after_receipt" && !requestedDpPercent) {
+    fail(400, "Persentase DP wajib diisi antara 0 dan 100 persen.");
   }
   let resultingStatus = quote.status;
   await withTransaction(async (db) => {
@@ -878,7 +944,7 @@ async function handleVendorQuote(request, response, pathname, body) {
               status=case when $4 then 'submitted'::mkt_quote_status else status end,
               submitted_at=case when $4 then now() else submitted_at end, updated_at=now()
         where id=$5`,
-       [text(body.notes), requestedPaymentTerm ? paymentTermLabel(requestedPaymentTerm) : text(body.paymentTerms), text(body.quotationDate), match[2] === "submit", lockedQuote.id],
+       [text(body.notes), requestedPaymentTerm ? paymentTermLabel(requestedPaymentTerm, requestedDpPercent) : text(body.paymentTerms), text(body.quotationDate), match[2] === "submit", lockedQuote.id],
     );
     resultingStatus = match[2] === "submit" ? "submitted" : lockedQuote.status;
     if (match[2] === "submit") {
@@ -948,7 +1014,7 @@ async function handleAdminMarketplace(request, response, pathname, body, user) {
     const result = await query(
       `select po.id, po.po_number, po.rfq_id, po.quote_id, po.vendor_id, po.status,
               po.total_amount, po.tax_amount, po.grand_total, po.currency_snapshot, po.confirmed_at,
-              po.payment_terms_snapshot, po.payment_term_code, po.payment_status, po.payment_due_at,
+              po.payment_terms_snapshot, po.payment_term_code, po.payment_dp_percent, po.payment_status, po.payment_due_at,
               po.payment_proof_uploaded_at, po.payment_verified_at, po.created_at,
               r.rfq_number, s.name as vendor_name
          from public.mkt_purchase_orders po
@@ -967,6 +1033,7 @@ async function handleAdminMarketplace(request, response, pathname, body, user) {
       confirmedAt: row.confirmed_at,
       paymentTerms: row.payment_terms_snapshot,
       paymentTermCode: row.payment_term_code ?? normalizePaymentTerm(row.payment_terms_snapshot),
+      paymentDpPercent: row.payment_dp_percent == null ? null : Number(row.payment_dp_percent),
       paymentStatus: row.payment_status ?? "unpaid",
       paymentDueAt: row.payment_due_at,
       paymentProofUploadedAt: row.payment_proof_uploaded_at,
@@ -1403,8 +1470,14 @@ async function handlePublicVendorPo(request, response, pathname, body) {
         if (!paymentTermCode) {
           fail(409, "Syarat pembayaran PO belum ditetapkan. Hubungi admin CST sebelum barang diserahkan/dikirim.");
         }
-        if (paymentRequiresClearance(paymentTermCode) && po.payment_status !== "paid") {
-          fail(409, "Pembayaran customer belum terverifikasi lunas. Barang belum boleh diserahkan/dikirim.");
+        const totals = await paymentTotalsForPo(db, po);
+        const requiredAmount = requiredBeforeHandover(po, totals);
+        const shortfall = Math.max(requiredAmount - totals.receivedAmount, 0);
+        if (shortfall > 0.005) {
+          if (paymentTermCode === "dp_after_receipt") {
+            fail(409, `DP minimum belum terpenuhi. Kekurangan sebelum barang boleh diserahkan/dikirim: Rp ${shortfall.toLocaleString("id-ID")}.`);
+          }
+          fail(409, `Pembayaran customer belum lunas. Kekurangan sebelum barang boleh diserahkan/dikirim: Rp ${shortfall.toLocaleString("id-ID")}.`);
         }
       }
 
