@@ -703,7 +703,7 @@ export function ServiceOperationsTab() {
                           href={`/admin?tab=marketplace-operations&poId=${selected.projection.purchaseOrder.id}&focus=payment`}
                           className="mt-1 inline-flex w-fit items-center rounded-lg border border-indigo-300 bg-white px-3 py-1.5 text-xs font-semibold text-indigo-700 hover:bg-indigo-50"
                         >
-                          Buka Marketplace Operations
+                          Atur Pembayaran PO
                         </a>
                       ) : null}
                     </div>
