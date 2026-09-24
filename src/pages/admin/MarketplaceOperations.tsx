@@ -65,6 +65,7 @@ type PurchaseOrder = {
   quoteId?: number | null;
   vendorId?: number | null;
   status: string;
+  confirmedAt?: string | null;
   totalAmount?: string | number | null;
   taxAmount?: string | number | null;
   grandTotal: string | number;
@@ -509,23 +510,138 @@ export function MarketplaceOperationsTab() {
       </div>
 
       <Card>
-        <CardHeader><CardTitle className="text-base">Purchase orders & fulfillment</CardTitle><CardDescription>PO dibuat oleh customer approval canonical. Admin dapat mengelola state fulfillment setelah PO tersedia.</CardDescription></CardHeader>
+        <CardHeader><CardTitle className="text-base">Purchase orders & fulfillment</CardTitle><CardDescription>Admin memantau alur canonical Customer → Vendor → Customer. Fulfillment normal dijalankan vendor pada shipment yang dipilih customer; admin menangani monitoring dan exception.</CardDescription></CardHeader>
         <CardContent className="grid gap-5 xl:grid-cols-[minmax(0,0.9fr)_minmax(0,1.4fr)]">
           <div className="space-y-2">
             {purchaseOrders.length === 0 ? <p className="text-sm text-slate-500">Belum ada PO.</p> : purchaseOrders.map((po) => <button key={po.id} onClick={() => void selectPo(po)} className={`flex w-full items-center justify-between rounded-lg border p-3 text-left ${selectedPo?.id === po.id ? "border-indigo-500 bg-indigo-50" : ""}`}><span><span className="block font-mono text-sm font-semibold">{po.poNumber}</span><span className="text-xs text-slate-500">{po.vendorNameSnapshot || po.vendorName || "Vendor"} · {po.grandTotal}</span></span><StatusBadge value={po.status} /></button>)}
           </div>
           <div className="space-y-4">
-            {!selectedPo ? <p className="text-sm text-slate-500">Pilih PO untuk melihat shipment, tracking, POD, dan receipt.</p> : <>
-              <div className="flex flex-wrap gap-2">{["issue", "production", "ready-to-ship", "in-transit", "delivered", "complete", "close"].map((action) => <button key={action} onClick={() => transitionPo(action)} disabled={working} className="rounded-md border px-2.5 py-1.5 text-xs disabled:opacity-50">{action}</button>)}</div>
-              <div className="rounded-lg border p-3 space-y-3">
-                <p className="font-semibold"><Truck className="mr-1 inline h-4 w-4" />Shipment & tracking</p>
-                <div className="grid gap-2 md:grid-cols-3"><Input placeholder="Tipe shipment" value={shipmentType} onChange={(e) => setShipmentType(e.target.value)} /><Input placeholder="Carrier" value={carrierName} onChange={(e) => setCarrierName(e.target.value)} /><Input placeholder="Tracking number" value={trackingNumber} onChange={(e) => setTrackingNumber(e.target.value)} /></div>
-                <button onClick={createShipment} disabled={working} className="rounded-md bg-indigo-600 px-3 py-2 text-sm text-white disabled:opacity-50">Buat shipment</button>
-                {shipments.map((shipment) => <div key={shipment.id} className="rounded-md bg-slate-50 p-3 text-sm"><div className="flex items-center justify-between"><span className="font-medium">{shipment.shipmentNumber}</span><StatusBadge value={shipment.shipmentStatus} /></div><p className="text-xs text-slate-500">{shipment.carrierName || "Carrier belum diisi"} · {shipment.trackingNumber || "Tracking belum diisi"}</p><div className="mt-3 flex flex-wrap gap-2"><select className="rounded-md border px-2 py-1 text-xs" value={eventType} onChange={(e) => setEventType(e.target.value)}><option value="packing">packing</option><option value="loaded">loaded</option><option value="departed">departed</option><option value="customs">customs</option><option value="warehouse">warehouse</option><option value="arrived">arrived</option><option value="delivered">delivered</option></select><Input className="max-w-xs" placeholder="Catatan tracking" value={eventNote} onChange={(e) => setEventNote(e.target.value)} /><button onClick={() => appendEvent(shipment)} disabled={working} className="rounded-md border px-2 py-1 text-xs">Tambah event</button></div><div className="mt-3 flex items-center gap-2"><Input type="file" accept=".pdf,.png,.jpg,.jpeg" onChange={(e) => setPodFile(e.target.files?.[0] ?? null)} /><button onClick={() => uploadPod(shipment)} disabled={working || !podFile} className="rounded-md border px-2 py-1 text-xs disabled:opacity-50"><Upload className="mr-1 inline h-3.5 w-3.5" />POD</button><button onClick={() => createGoodsReceipt(shipment)} disabled={working || shipmentItems.length === 0} className="rounded-md border px-2 py-1 text-xs disabled:opacity-50"><CheckCircle2 className="mr-1 inline h-3.5 w-3.5" />Goods receipt</button></div></div>)}
-                {selectedPoShipment && shipmentItems.length > 0 && <p className="text-xs text-slate-500">{shipmentItems.length} item shipment siap untuk goods receipt melalui flow canonical.</p>}
-              </div>
-              <div className="rounded-lg border bg-amber-50 p-3 text-sm"><p className="font-semibold">Payment gate</p><p className="mt-1 text-slate-600">Upload proof dan verify/reject payment customer belum memiliki resource `mkt_*` canonical di backend saat audit ini. UI tidak mengaktifkan endpoint lama agar shipment tidak bisa melewati gate pembayaran secara diam-diam.</p></div>
-            </>}
+
+            {!selectedPo ? (
+              <p className="text-sm text-slate-500">Pilih PO untuk melihat siapa yang harus melakukan langkah berikutnya.</p>
+            ) : (
+              <>
+                <div className="rounded-lg border border-indigo-200 bg-indigo-50 p-4">
+                  <p className="text-xs font-semibold uppercase tracking-wide text-indigo-600">Langkah berikutnya</p>
+                  {(() => {
+                    const hasShipment = shipments.length > 0;
+                    const vendorConfirmed = Boolean(selectedPo.confirmedAt);
+                    if (!vendorConfirmed && ["production", "ready_to_ship", "in_transit"].includes(selectedPo.status)) {
+                      return (
+                        <div className="mt-2">
+                          <p className="font-semibold text-indigo-950">Vendor · Konfirmasi Purchase Order</p>
+                          <p className="mt-1 text-sm text-indigo-800">PO lama sudah masuk fulfillment tetapi konfirmasi vendor belum tercatat. Vendor harus membuka PO dan menekan Konfirmasi PO sebelum melanjutkan shipment.</p>
+                        </div>
+                      );
+                    }
+                    if (selectedPo.status === "issued") {
+                      return (
+                        <div className="mt-2">
+                          <p className="font-semibold text-indigo-950">Vendor · Terima / Tolak / Minta Revisi</p>
+                          <p className="mt-1 text-sm text-indigo-800">Customer belum boleh memilih metode pengiriman sebelum vendor menerima PO.</p>
+                        </div>
+                      );
+                    }
+                    if (selectedPo.status === "vendor_accepted" && !hasShipment) {
+                      return (
+                        <div className="mt-2">
+                          <p className="font-semibold text-indigo-950">Customer · Pilih metode pengiriman</p>
+                          <p className="mt-1 text-sm text-indigo-800">Vendor sudah menerima PO. Customer sekarang memilih Ambil sendiri, Trucking, Kargo udara, Kargo laut, atau Door to door.</p>
+                        </div>
+                      );
+                    }
+                    if (["vendor_accepted", "production", "ready_to_ship", "in_transit"].includes(selectedPo.status) && hasShipment) {
+                      return (
+                        <div className="mt-2">
+                          <p className="font-semibold text-indigo-950">Vendor · Proses fulfillment pada shipment yang sama</p>
+                          <p className="mt-1 text-sm text-indigo-800">Vendor menyiapkan barang, memperbarui status pengiriman/pengambilan, lalu mengunggah POD setelah barang tiba atau diserahkan.</p>
+                        </div>
+                      );
+                    }
+                    if (["delivered", "partially_delivered", "rejected_goods"].includes(selectedPo.status)) {
+                      return (
+                        <div className="mt-2">
+                          <p className="font-semibold text-indigo-950">Customer · Konfirmasi Goods Receipt</p>
+                          <p className="mt-1 text-sm text-indigo-800">Customer memeriksa barang dan memilih diterima lengkap, diterima sebagian, atau ditolak. PO akan selesai otomatis jika seluruh qty diterima dan POD tersedia.</p>
+                        </div>
+                      );
+                    }
+                    if (selectedPo.status === "completed") {
+                      return (
+                        <div className="mt-2 flex flex-wrap items-center justify-between gap-3">
+                          <div>
+                            <p className="font-semibold text-indigo-950">Admin · Tutup Purchase Order</p>
+                            <p className="mt-1 text-sm text-indigo-800">Seluruh fulfillment dan penerimaan sudah memenuhi gate canonical.</p>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => transitionPo("close")}
+                            disabled={working}
+                            className="rounded-md bg-indigo-600 px-3 py-2 text-sm font-semibold text-white disabled:opacity-50"
+                          >
+                            Tutup PO
+                          </button>
+                        </div>
+                      );
+                    }
+                    return (
+                      <div className="mt-2">
+                        <p className="font-semibold text-indigo-950">Monitoring</p>
+                        <p className="mt-1 text-sm text-indigo-800">Tidak ada aksi manual admin yang diperlukan pada tahap ini.</p>
+                      </div>
+                    );
+                  })()}
+                </div>
+
+                <div className="rounded-lg border p-3 space-y-3">
+                  <div className="flex items-center justify-between gap-3">
+                    <p className="font-semibold"><Truck className="mr-1 inline h-4 w-4" />Shipment canonical</p>
+                    <span className="text-xs text-slate-500">{shipments.length} shipment</span>
+                  </div>
+
+                  {shipments.length === 0 ? (
+                    <div className="rounded-md border border-dashed p-4 text-sm text-slate-600">
+                      {selectedPo.status === "vendor_accepted"
+                        ? "Belum ada shipment. Menunggu customer memilih metode pengiriman."
+                        : "Belum ada shipment canonical untuk PO ini."}
+                    </div>
+                  ) : (
+                    <div className="space-y-3">
+                      {shipments.map((shipment) => {
+                        const pickup = shipment.shipmentType === "pickup_self";
+                        return (
+                          <div key={shipment.id} className="rounded-md bg-slate-50 p-3 text-sm">
+                            <div className="flex items-center justify-between gap-2">
+                              <div>
+                                <span className="font-mono font-semibold">{shipment.shipmentNumber}</span>
+                                <span className="ml-2 text-xs text-slate-500">
+                                  {pickup ? "Ambil sendiri" : (shipment.shipmentType || "Pengiriman")}
+                                </span>
+                              </div>
+                              <StatusBadge value={shipment.shipmentStatus} />
+                            </div>
+                            <p className="mt-2 text-xs text-slate-600">
+                              {pickup
+                                ? "Vendor memproses: siapkan barang → siap diambil → serahkan → POD. Customer kemudian melakukan Goods Receipt."
+                                : "Vendor memproses packing, pengiriman, tiba, lalu POD. Customer kemudian melakukan Goods Receipt."}
+                            </p>
+                            {!pickup && (
+                              <p className="mt-1 text-xs text-slate-500">
+                                {shipment.carrierName || "Carrier belum diisi"} · {shipment.trackingNumber || "Tracking belum diisi"}
+                              </p>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+
+                  <div className="rounded-md bg-slate-50 p-3 text-xs text-slate-600">
+                    Admin tidak membuat shipment kedua dan tidak membuat Goods Receipt dalam flow normal. Shipment berasal dari pilihan customer, status/POD dikerjakan vendor, dan penerimaan dikonfirmasi customer.
+                  </div>
+                </div>
+              </>
+            )}
           </div>
         </CardContent>
       </Card>
