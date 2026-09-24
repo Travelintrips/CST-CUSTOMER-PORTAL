@@ -106,7 +106,7 @@ const PAYMENT_TERM_LABELS = {
 function normalizePaymentTerm(value) {
   const normalized = String(value ?? "").trim().toLowerCase().replace(/\s+/g, " ");
   if (!normalized) return null;
-  if (["prepaid", "prepayment", "cash before delivery", "bayar sebelum", "bayar sebelum kirim", "bayar sebelum pengambilan"].includes(normalized)) {
+  if (["prepaid", "prepayment", "cash before delivery"].includes(normalized) || normalized.includes("bayar sebelum")) {
     return "prepaid";
   }
   if (/^net[ _-]?7(?:\s*hari)?$/.test(normalized)) return "net_7";
@@ -1184,9 +1184,6 @@ async function setPoPaymentTerms({ poId, body, user }) {
     const po = await loadPo(poId, user, { client: db, forUpdate: true, isAdmin: true });
     if (po.payment_status === "paid") fail(409, "Syarat pembayaran tidak dapat diubah setelah pembayaran lunas.");
     const days = paymentTermDays(code);
-    const dueAt = days > 0 && ["completed", "closed"].includes(po.status)
-      ? `now() + interval '${days} days'`
-      : null;
     const updated = (await db(
       `update public.mkt_purchase_orders
           set payment_term_code=$1,
