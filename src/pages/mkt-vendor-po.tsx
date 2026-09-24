@@ -68,7 +68,13 @@ interface VendorPoView {
   vendorAddressSnapshot: string | null;
   paymentTermsSnapshot: string | null;
   paymentTermCode: string | null;
+  paymentDpPercent: number | null;
   paymentStatus: string;
+  paymentPaidAmount: number;
+  paymentRemainingAmount: number;
+  paymentRequiredBeforeHandoverAmount: number;
+  paymentRequiredBeforeHandoverRemaining: number;
+  paymentHandoverSatisfied: boolean;
   paymentDueAt: string | null;
   paymentProofUploadedAt: string | null;
   paymentVerifiedAt: string | null;
@@ -334,7 +340,11 @@ function VendorFulfillment({ token, po }: { token: string; po: VendorPoView }) {
 
   const isPickup = detail?.shipmentType === "pickup_self";
   const paymentTermMissing = !po.paymentTermCode;
-  const paymentBlocked = po.paymentTermCode === "prepaid" && po.paymentStatus !== "paid";
+  const paymentBlocked = Boolean(
+    po.paymentTermCode
+    && !po.paymentHandoverSatisfied
+    && ["prepaid", "dp_after_receipt"].includes(po.paymentTermCode)
+  );
   const action = (() => {
     if (!detail || !po.confirmedAt) return null;
     if (isPickup) {
@@ -496,21 +506,35 @@ function VendorFulfillment({ token, po }: { token: string; po: VendorPoView }) {
                   className={
                     po.paymentStatus === "paid"
                       ? "bg-green-100 text-green-700"
-                      : po.paymentStatus === "proof_submitted"
-                        ? "bg-blue-100 text-blue-700"
-                        : po.paymentStatus === "rejected"
-                          ? "bg-red-100 text-red-700"
-                          : "bg-amber-100 text-amber-700"
+                      : po.paymentStatus === "partially_paid"
+                        ? "bg-cyan-100 text-cyan-700"
+                        : po.paymentStatus === "proof_submitted"
+                          ? "bg-blue-100 text-blue-700"
+                          : po.paymentStatus === "rejected"
+                            ? "bg-red-100 text-red-700"
+                            : "bg-amber-100 text-amber-700"
                   }
                 >
                   {po.paymentStatus === "paid"
                     ? "Lunas"
-                    : po.paymentStatus === "proof_submitted"
-                      ? "Menunggu verifikasi CST"
-                      : po.paymentStatus === "rejected"
-                        ? "Bukti pembayaran ditolak"
-                        : "Belum dibayar"}
+                    : po.paymentStatus === "partially_paid"
+                      ? "Dibayar sebagian"
+                      : po.paymentStatus === "proof_submitted"
+                        ? "Menunggu verifikasi CST"
+                        : po.paymentStatus === "rejected"
+                          ? "Bukti pembayaran ditolak"
+                          : "Belum dibayar"}
                 </Badge>
+              </div>
+              <div className="mt-3 grid grid-cols-2 gap-2 text-xs">
+                <div className="rounded-md bg-emerald-50 p-2">
+                  <p className="text-emerald-700">Sudah dibayar</p>
+                  <p className="mt-0.5 font-semibold text-emerald-800">{formatMoney(po.paymentPaidAmount, po.currencySnapshot ?? "IDR")}</p>
+                </div>
+                <div className="rounded-md bg-orange-50 p-2">
+                  <p className="text-orange-700">Sisa tagihan</p>
+                  <p className="mt-0.5 font-semibold text-orange-800">{formatMoney(po.paymentRemainingAmount, po.currencySnapshot ?? "IDR")}</p>
+                </div>
               </div>
               {paymentTermMissing && detail.shipmentStatus === "ready_to_ship" && (
                 <p className="mt-2 text-xs text-amber-700">
@@ -519,7 +543,14 @@ function VendorFulfillment({ token, po }: { token: string; po: VendorPoView }) {
               )}
               {paymentBlocked && detail.shipmentStatus === "ready_to_ship" && (
                 <p className="mt-2 text-xs text-orange-700">
-                  Syarat PO mewajibkan pembayaran lunas sebelum handover. Tunggu status Lunas dari CST.
+                  {po.paymentTermCode === "dp_after_receipt"
+                    ? `DP minimum belum terpenuhi. Masih kurang ${formatMoney(po.paymentRequiredBeforeHandoverRemaining, po.currencySnapshot ?? "IDR")} sebelum barang boleh diserahkan/dikirim.`
+                    : `Pembayaran belum lunas. Masih kurang ${formatMoney(po.paymentRequiredBeforeHandoverRemaining, po.currencySnapshot ?? "IDR")} sebelum barang boleh diserahkan/dikirim.`}
+                </p>
+              )}
+              {po.paymentTermCode === "dp_after_receipt" && po.paymentHandoverSatisfied && po.paymentRemainingAmount > 0 && (
+                <p className="mt-2 text-xs text-green-700">
+                  DP {po.paymentDpPercent}% sudah terpenuhi. Barang boleh diserahkan/dikirim; sisa {formatMoney(po.paymentRemainingAmount, po.currencySnapshot ?? "IDR")} dilunasi setelah customer menerima barang.
                 </p>
               )}
               {po.paymentTermCode?.startsWith("net_") && (
