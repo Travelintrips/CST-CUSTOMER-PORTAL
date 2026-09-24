@@ -5,22 +5,26 @@ import {
   notifyAdmins,
   notifyPortalCustomers,
 } from "./notification-service.mjs";
+import { uploadMarketplacePod, signedMarketplacePodUrl } from "./storage.mjs";
 
 const SHIPMENT_EVENT_STATUS = {
   packing: "packing",
   loaded: "loading",
+  ready_to_ship: "ready_to_ship",
+  ready_for_pickup: "ready_to_ship",
   departed: "in_transit",
   customs: "customs",
   warehouse: "warehouse",
   arrived: "arrived",
+  handed_over: "arrived",
   delivered: "delivered",
 };
 
 const SHIPMENT_TRANSITIONS = {
   planned: new Set(["packing", "cancelled"]),
-  packing: new Set(["loading", "cancelled"]),
+  packing: new Set(["loading", "ready_to_ship", "cancelled"]),
   loading: new Set(["ready_to_ship", "in_transit", "cancelled"]),
-  ready_to_ship: new Set(["in_transit", "cancelled"]),
+  ready_to_ship: new Set(["in_transit", "arrived", "cancelled"]),
   in_transit: new Set(["customs", "warehouse", "arrived", "cancelled"]),
   customs: new Set(["warehouse", "arrived", "cancelled"]),
   warehouse: new Set(["arrived", "cancelled"]),
@@ -383,7 +387,24 @@ async function createShipment({ poId, body, request, user, isAdmin }) {
     )).rows[0];
     if (existing) return existingShipmentResult(existing);
 
-    if (!["issued", "vendor_accepted", "production", "ready_to_ship"].includes(po.status)) {
+    if (!isAdmin) {
+      const activeShipment = (await db(
+        `select * from public.mkt_po_shipments
+          where po_id=$1 and shipment_status <> 'cancelled'
+          order by created_at asc,id asc
+          limit 1`,
+        [po.id],
+      )).rows[0];
+      if (activeShipment) {
+        if (activeShipment.shipment_type !== shipmentType) {
+          fail(409, "Mode pengiriman sudah dipilih dan tidak dapat diganti dari portal.");
+        }
+        return existingShipmentResult(activeShipment);
+      }
+      if (po.status !== "vendor_accepted") {
+        fail(409, "Menunggu vendor menerima PO sebelum customer memilih pengiriman.");
+      }
+    } else if (!["issued", "vendor_accepted", "production", "ready_to_ship"].includes(po.status)) {
       fail(409, "PO belum berada pada status yang mengizinkan assignment shipment.");
     }
     const lines = (await db(
@@ -424,8 +445,12 @@ async function createShipment({ poId, body, request, user, isAdmin }) {
         text(body.driverPhone),
         text(body.containerNumber),
         text(body.sealNumber),
-        text(body.origin),
-        text(body.destination ?? po.delivery_address),
+        shipmentType === "pickup_self"
+          ? text(body.origin ?? po.vendor_address_snapshot)
+          : text(body.origin),
+        shipmentType === "pickup_self"
+          ? text(body.destination ?? po.vendor_address_snapshot)
+          : text(body.destination ?? po.delivery_address),
         text(body.notes),
         String(user?.id ?? "system"),
         key,
@@ -469,7 +494,7 @@ async function createShipment({ poId, body, request, user, isAdmin }) {
       key: eventKey,
     });
     await notifyMarketplaceEvent(db, { eventType: "shipment_created", po, payload: { shipmentId: Number(shipment.id), shipmentNumber: shipment.shipment_number }, key: eventKey });
-    if (["issued", "vendor_accepted"].includes(po.status)) {
+    if (po.status === "vendor_accepted") {
       const updatedPo = await db(
         `update public.mkt_purchase_orders
             set status='production'::mkt_po_status, updated_at=now()
@@ -674,12 +699,17 @@ async function listTimeline(shipmentId, user, isAdmin) {
 async function submitPod({ shipmentId, body, request, user, isAdmin }) {
   const key = idempotencyKey(request, body);
   if (!key) fail(400, "Idempotency-Key wajib diisi untuk POD.");
-  const url = text(body.photoUrl ?? body.podUrl ?? body.url);
-  if (!url) {
-    fail(400, "POD canonical memerlukan photoUrl/podUrl yang sudah berada di storage development.");
-  }
+  const file = body?.file;
+  let url = text(body.photoUrl ?? body.podUrl ?? body.url);
   return withTransaction(async (db) => {
     const shipment = await loadShipment(shipmentId, user, { client: db, forUpdate: true, isAdmin });
+    if (file && typeof file.arrayBuffer === "function") {
+      const uploaded = await uploadMarketplacePod({ poId: shipment.po_id, shipmentId: shipment.id, file });
+      url = uploaded.path;
+    }
+    if (!url) {
+      fail(400, "POD wajib berupa file JPG/PNG/PDF atau URL/object path yang valid.");
+    }
     const existing = (await db(
       `select * from public.mkt_po_shipment_events
         where shipment_id=$1 and event_type='pod_submitted' and idempotency_key=$2
@@ -754,7 +784,16 @@ async function getPod(shipmentId, user, isAdmin) {
     [shipment.id],
   );
   if (!result.rows[0]) fail(404, "POD belum tersedia.");
-  return mapPod(result.rows[0]);
+  const row = result.rows[0];
+  const pod = mapPod(row);
+  if (String(row.attachment_object_path ?? "").startsWith("marketplace-pod/")) {
+    pod.url = await signedMarketplacePodUrl({
+      poId: shipment.po_id,
+      shipmentId: shipment.id,
+      path: row.attachment_object_path,
+    });
+  }
+  return pod;
 }
 
 async function goodsReceipts(shipmentId, user, isAdmin, client = query) {
