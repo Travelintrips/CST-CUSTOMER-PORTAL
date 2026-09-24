@@ -699,21 +699,29 @@ export async function handlePaylabsWebhook({ request, response, body, rawBodyTex
   const signature = text(request.headers["x-signature"], "");
   const timestamp = text(request.headers["x-timestamp"], "");
   const partnerId = text(request.headers["x-partner-id"], "");
-  if (!signature || !timestamp || !partnerId) {
+  if (!signature || !timestamp) {
     sendJson(response, 401, { errCode: "401", errMsg: "Invalid signature" });
     return true;
   }
 
   const credentials = await allVerificationCredentials();
-  const signaturePayload = buildPaylabsSignaturePayload(
-    "POST",
-    "/api/payments/paylabs/webhook",
+  const payloadCandidates = [
     rawBodyText,
-    timestamp,
-  );
-  const verified = credentials.some(
-    (item) => item.merchantId === partnerId && rsaVerify(signaturePayload, signature, item.publicKey),
-  );
+    JSON.stringify(body ?? {}),
+  ];
+  const verified = credentials.some((item) => {
+    if (partnerId && item.merchantId !== partnerId) return false;
+    return payloadCandidates.some((payloadText) => rsaVerify(
+      buildPaylabsSignaturePayload(
+        "POST",
+        "/api/payments/paylabs/webhook",
+        payloadText,
+        timestamp,
+      ),
+      signature,
+      item.publicKey,
+    ));
+  });
   if (!verified) {
     sendJson(response, 401, { errCode: "401", errMsg: "Invalid signature" });
     return true;
