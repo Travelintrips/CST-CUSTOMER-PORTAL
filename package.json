@@ -105,7 +105,8 @@
     "nodemailer": "^10.0.10",
     "pg": "^8.23.0",
     "react-helmet-async": "^3.0.0",
-    "ws": "^8.21.3"
+    "ws": "^8.21.3",
+    "tesseract.js": "^7.0.0"
   },
   "engines": {
     "node": "22.x"
