@@ -154,8 +154,14 @@ interface PaymentView {
   amount: string | number | null;
   currency: string;
   proofAvailable: boolean;
+  proofLocked: boolean;
   proofUrl: string | null;
+  proofFileName: string | null;
+  proofMimeType: string | null;
   proofUploadedAt: string | null;
+  ocrAmount: number | null;
+  ocrConfidence: number | null;
+  ocrMatches: boolean | null;
   verifiedAt: string | null;
   rejectionReason: string | null;
   requiresClearanceBeforeHandover: boolean;
@@ -708,6 +714,21 @@ function ShipmentTab({
 function PaymentTab({ po }: { po: PoDetail }) {
   const queryClient = useQueryClient();
   const [proofFile, setProofFile] = useState<File | null>(null);
+  const [proofPreview, setProofPreview] = useState<string | null>(null);
+  const [scanResult, setScanResult] = useState<{
+    extractedAmount: number | null;
+    confidence: number;
+    matchesExpected: boolean;
+    expectedAmount: number;
+    timedOut: boolean;
+  } | null>(null);
+  const [scanError, setScanError] = useState<string | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (proofPreview) URL.revokeObjectURL(proofPreview);
+    };
+  }, [proofPreview]);
 
   const { data, isLoading, isError, refetch } = useQuery<{ ok: boolean; data: PaymentView }>({
     queryKey: ["mkt-po-payment", po.id],
@@ -718,9 +739,46 @@ function PaymentTab({ po }: { po: PoDetail }) {
     },
   });
 
+  const scanProof = useMutation({
+    mutationFn: async (file: File) => {
+      const form = new FormData();
+      form.append("file", file);
+      const res = await fetch(`/api/mkt/portal/purchase-orders/${po.id}/payment/scan`, {
+        method: "POST",
+        credentials: "include",
+        body: form,
+      });
+      const result = await res.json().catch(() => ({}));
+      if (!res.ok || !result.ok) {
+        throw new Error(result.message ?? result.error ?? "OCR bukti pembayaran gagal");
+      }
+      return result.data as {
+        extractedAmount: number | null;
+        confidence: number;
+        matchesExpected: boolean;
+        expectedAmount: number;
+        timedOut: boolean;
+      };
+    },
+    onSuccess: (result) => {
+      setScanResult(result);
+      setScanError(null);
+    },
+    onError: (error) => {
+      setScanResult(null);
+      setScanError((error as Error).message);
+    },
+  });
+
   const uploadProof = useMutation({
     mutationFn: async () => {
       if (!proofFile) throw new Error("Pilih file bukti pembayaran terlebih dahulu.");
+      if (!scanResult?.extractedAmount) {
+        throw new Error("Nominal belum terbaca. Pilih bukti pembayaran yang lebih jelas.");
+      }
+      if (!scanResult.matchesExpected) {
+        throw new Error("Nominal pada bukti pembayaran tidak sama dengan jumlah tagihan.");
+      }
       const form = new FormData();
       form.append("file", proofFile);
       const res = await fetch(`/api/mkt/portal/purchase-orders/${po.id}/payment`, {
@@ -729,11 +787,15 @@ function PaymentTab({ po }: { po: PoDetail }) {
         body: form,
       });
       const result = await res.json().catch(() => ({}));
-      if (!res.ok || !result.ok) throw new Error(result.message ?? "Upload bukti pembayaran gagal");
+      if (!res.ok || !result.ok) throw new Error(result.message ?? result.error ?? "Upload bukti pembayaran gagal");
       return result;
     },
     onSuccess: async () => {
+      if (proofPreview) URL.revokeObjectURL(proofPreview);
       setProofFile(null);
+      setProofPreview(null);
+      setScanResult(null);
+      setScanError(null);
       await queryClient.invalidateQueries({ queryKey: ["mkt-po-payment", po.id] });
       await queryClient.invalidateQueries({ queryKey: ["mkt-po-detail", po.id] });
     },
@@ -765,13 +827,39 @@ function PaymentTab({ po }: { po: PoDetail }) {
     rejected: "bg-red-100 text-red-700",
   };
 
+  const onSelectProof = (file: File | null) => {
+    if (proofPreview) URL.revokeObjectURL(proofPreview);
+    setProofFile(file);
+    setScanResult(null);
+    setScanError(null);
+    if (!file) {
+      setProofPreview(null);
+      return;
+    }
+    if (!["image/jpeg", "image/png", "image/webp"].includes(file.type)) {
+      setProofPreview(null);
+      setScanError("Bukti pembayaran untuk OCR harus berupa JPG, PNG, atau WEBP.");
+      return;
+    }
+    setProofPreview(URL.createObjectURL(file));
+    scanProof.mutate(file);
+  };
+
+  const canSubmit = Boolean(
+    proofFile
+    && scanResult?.extractedAmount
+    && scanResult.matchesExpected
+    && !scanProof.isPending
+    && !payment.proofAvailable
+  );
+
   return (
     <div className="space-y-4">
       <Card>
         <CardHeader>
           <CardTitle className="text-base">Pembayaran Customer ke CST</CardTitle>
         </CardHeader>
-        <CardContent className="space-y-3">
+        <CardContent className="space-y-4">
           {payment.termsMissing ? (
             <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
               Syarat pembayaran belum ditetapkan. Admin CST harus menetapkan syarat pembayaran sebelum barang dapat diserahkan/dikirim.
@@ -785,45 +873,144 @@ function PaymentTab({ po }: { po: PoDetail }) {
                 value={<Badge className={statusClass[payment.paymentStatus] ?? "bg-gray-100 text-gray-700"} variant="secondary">{statusLabel[payment.paymentStatus] ?? payment.paymentStatus}</Badge>}
               />
               {payment.paymentDueAt && <InfoRow label="Jatuh Tempo" value={fmtDateTime(payment.paymentDueAt)} />}
+
               {payment.requiresClearanceBeforeHandover && payment.paymentStatus !== "paid" && (
                 <div className="rounded-lg border border-orange-200 bg-orange-50 p-3 text-sm text-orange-800">
                   Pembayaran harus terverifikasi lunas sebelum vendor dapat menyerahkan atau mengirim barang.
                 </div>
               )}
+
               {payment.paymentTermCode?.startsWith("net_") && payment.paymentStatus !== "paid" && (
                 <div className="rounded-lg border border-blue-200 bg-blue-50 p-3 text-sm text-blue-800">
                   Barang dapat diproses sesuai fulfillment. Pembayaran tetap tercatat sebagai piutang sampai diverifikasi lunas.
                 </div>
               )}
+
               {payment.rejectionReason && (
                 <div className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">
-                  Bukti pembayaran ditolak: {payment.rejectionReason}
+                  Bukti pembayaran ditolak: {payment.rejectionReason}. Bukti yang sudah dikirim tetap dikunci dan tidak dapat diganti dari akun customer.
                 </div>
               )}
-              {payment.proofAvailable && (
-                <div className="flex items-center justify-between gap-3 rounded-lg border p-3 text-sm">
-                  <span>Bukti pembayaran sudah diunggah{payment.proofUploadedAt ? ` · ${fmtDateTime(payment.proofUploadedAt)}` : ""}</span>
-                  {payment.proofUrl && <a href={payment.proofUrl} target="_blank" rel="noreferrer" className="font-medium text-blue-600 underline">Lihat bukti</a>}
+
+              {payment.proofAvailable ? (
+                <div className="space-y-3 rounded-lg border border-blue-200 bg-blue-50/40 p-4">
+                  <div>
+                    <p className="text-sm font-semibold text-slate-800">Bukti pembayaran sudah dikirim dan dikunci</p>
+                    <p className="mt-1 text-xs text-slate-600">
+                      Untuk keamanan audit, bukti yang sudah pernah dikirim tidak dapat diupload ulang atau diganti.
+                      {payment.proofUploadedAt ? ` Dikirim ${fmtDateTime(payment.proofUploadedAt)}.` : ""}
+                    </p>
+                  </div>
+
+                  {payment.proofUrl && payment.proofMimeType?.startsWith("image/") && (
+                    <a href={payment.proofUrl} target="_blank" rel="noreferrer" className="block">
+                      <img
+                        src={payment.proofUrl}
+                        alt="Preview bukti pembayaran"
+                        className="max-h-80 w-full rounded-lg border bg-white object-contain"
+                      />
+                    </a>
+                  )}
+                  {payment.proofUrl && !payment.proofMimeType?.startsWith("image/") && (
+                    <a href={payment.proofUrl} target="_blank" rel="noreferrer" className="font-medium text-blue-600 underline">
+                      Buka bukti pembayaran
+                    </a>
+                  )}
+
+                  <div className="grid gap-2 rounded-lg bg-white p-3 text-sm sm:grid-cols-2">
+                    <div>
+                      <p className="text-xs text-slate-500">Nominal hasil OCR</p>
+                      <p className="font-semibold">{payment.ocrAmount == null ? "Tidak terbaca" : fmtAmount(payment.ocrAmount, payment.currency)}</p>
+                    </div>
+                    <div>
+                      <p className="text-xs text-slate-500">Kesesuaian nominal</p>
+                      <p className={payment.ocrMatches ? "font-semibold text-green-700" : "font-semibold text-red-700"}>
+                        {payment.ocrMatches ? "Cocok dengan tagihan" : "Tidak cocok / belum terverifikasi"}
+                      </p>
+                    </div>
+                  </div>
+
+                  {payment.paymentStatus === "proof_submitted" && (
+                    <p className="text-sm text-blue-700">Menunggu admin CST memeriksa bukti dan menyetujui pembayaran.</p>
+                  )}
                 </div>
-              )}
-              {payment.paymentStatus !== "paid" && (
-                <div className="space-y-2 rounded-lg border p-3">
-                  <p className="text-sm font-medium">Upload bukti transfer ke CST</p>
+              ) : payment.paymentStatus !== "paid" ? (
+                <div className="space-y-3 rounded-lg border p-4">
+                  <div>
+                    <p className="text-sm font-semibold">Upload bukti transfer ke CST</p>
+                    <p className="mt-1 text-xs text-slate-500">
+                      Pilih gambar terlebih dahulu. Sistem membaca nominal sebelum bukti dikirim. Setelah dikirim, bukti tidak dapat diganti.
+                    </p>
+                  </div>
+
                   <input
                     type="file"
-                    accept=".pdf,.png,.jpg,.jpeg"
-                    onChange={(e) => setProofFile(e.target.files?.[0] ?? null)}
+                    accept="image/jpeg,image/png,image/webp"
+                    onChange={(e) => onSelectProof(e.target.files?.[0] ?? null)}
                     className="block w-full text-sm"
                   />
+
+                  {proofPreview && (
+                    <img
+                      src={proofPreview}
+                      alt="Preview bukti yang akan dikirim"
+                      className="max-h-80 w-full rounded-lg border bg-slate-50 object-contain"
+                    />
+                  )}
+
+                  {scanProof.isPending && (
+                    <div className="flex items-center gap-2 rounded-lg bg-blue-50 p-3 text-sm text-blue-700">
+                      <RefreshCw className="h-4 w-4 animate-spin" />
+                      Membaca nominal dari bukti pembayaran…
+                    </div>
+                  )}
+
+                  {!scanProof.isPending && scanResult && (
+                    <div className={`rounded-lg border p-3 text-sm ${
+                      scanResult.matchesExpected
+                        ? "border-green-200 bg-green-50 text-green-800"
+                        : "border-red-200 bg-red-50 text-red-800"
+                    }`}>
+                      <div className="grid gap-2 sm:grid-cols-2">
+                        <div>
+                          <p className="text-xs opacity-70">Nominal terbaca OCR</p>
+                          <p className="font-semibold">
+                            {scanResult.extractedAmount == null
+                              ? "Belum terbaca"
+                              : fmtAmount(scanResult.extractedAmount, payment.currency)}
+                          </p>
+                        </div>
+                        <div>
+                          <p className="text-xs opacity-70">Jumlah tagihan</p>
+                          <p className="font-semibold">{fmtAmount(scanResult.expectedAmount, payment.currency)}</p>
+                        </div>
+                      </div>
+                      <p className="mt-2 font-medium">
+                        {scanResult.matchesExpected
+                          ? "Nominal cocok. Bukti dapat dikirim untuk verifikasi admin."
+                          : scanResult.timedOut
+                            ? "Pembacaan nominal melewati batas waktu. Pilih gambar yang lebih jelas."
+                            : "Nominal belum cocok atau belum terbaca. Pilih bukti pembayaran lain yang lebih jelas sebelum mengirim."}
+                      </p>
+                    </div>
+                  )}
+
+                  {scanError && <p className="text-sm text-red-600">{scanError}</p>}
                   {uploadProof.isError && <p className="text-sm text-red-600">{(uploadProof.error as Error).message}</p>}
-                  <Button size="sm" onClick={() => uploadProof.mutate()} disabled={!proofFile || uploadProof.isPending}>
+
+                  <Button
+                    size="sm"
+                    onClick={() => uploadProof.mutate()}
+                    disabled={!canSubmit || uploadProof.isPending}
+                  >
                     {uploadProof.isPending ? "Mengunggah…" : "Kirim Bukti Pembayaran"}
                   </Button>
                 </div>
-              )}
+              ) : null}
+
               {payment.paymentStatus === "paid" && (
                 <div className="rounded-lg border border-green-200 bg-green-50 p-3 text-sm text-green-800">
-                  Pembayaran sudah diverifikasi CST{payment.verifiedAt ? ` pada ${fmtDateTime(payment.verifiedAt)}` : ""}.
+                  Pembayaran sudah diperiksa dan diverifikasi CST{payment.verifiedAt ? ` pada ${fmtDateTime(payment.verifiedAt)}` : ""}.
                 </div>
               )}
             </>
