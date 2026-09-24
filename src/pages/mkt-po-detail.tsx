@@ -1242,6 +1242,17 @@ function PaymentTab({ po }: { po: PoDetail }) {
                     <img src={proofPreview} alt="Preview bukti yang akan dikirim" className="max-h-80 w-full rounded-lg border bg-slate-50 object-contain" />
                   )}
 
+                  {proofFile && validSelectedAmount && !scanProof.isPending && !scanResult && (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={() => scanProof.mutate({ file: proofFile, amount: selectedAmount })}
+                    >
+                      Baca Nominal Bukti
+                    </Button>
+                  )}
+
                   {scanProof.isPending && (
                     <div className="flex items-center gap-2 rounded-lg bg-blue-50 p-3 text-sm text-blue-700">
                       <RefreshCw className="h-4 w-4 animate-spin" />
