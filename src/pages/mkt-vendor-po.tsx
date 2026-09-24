@@ -88,6 +88,7 @@ interface VendorShipment {
   id: number;
   shipmentNumber: string;
   shipmentStatus: string;
+  shipmentType: string | null;
   carrierName: string | null;
   trackingNumber: string | null;
   origin: string | null;
