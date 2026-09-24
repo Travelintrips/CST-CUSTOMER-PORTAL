@@ -195,6 +195,32 @@ async function latestMarketplacePayment(poId, client = query) {
   return result.rows[0] ?? null;
 }
 
+async function marketplacePaymentTotals(po, client = query) {
+  const manual = (await client(
+    `select coalesce(sum(ocr_amount),0) as paid_amount
+       from public.mkt_po_payment_proofs
+      where po_id=$1 and review_status='approved'`,
+    [po.id],
+  )).rows[0] ?? {};
+  const gateway = (await client(
+    `select coalesce(sum(amount),0) as paid_amount
+       from public.payments
+      where ref_kind='purchase'::payment_ref_kind
+        and ref_id=$1
+        and provider='paylabs'::payment_provider
+        and status='paid'::payment_status`,
+    [po.id],
+  )).rows[0] ?? {};
+  const totalAmount = Number(po.grand_total ?? 0);
+  const receivedAmount = Number(manual.paid_amount ?? 0) + Number(gateway.paid_amount ?? 0);
+  return {
+    totalAmount,
+    receivedAmount,
+    remainingAmount: Math.max(totalAmount - receivedAmount, 0),
+    overpaidAmount: Math.max(receivedAmount - totalAmount, 0),
+  };
+}
+
 export async function getMarketplacePaylabsState(po, client = query) {
   const [credentials, methods, latest] = await Promise.all([
     activeCredentials(client),
@@ -237,7 +263,7 @@ function normalizePhone(value) {
   return digits;
 }
 
-export async function createMarketplacePaylabsLink({ po, request, requestedMethod }) {
+export async function createMarketplacePaylabsLink({ po, request, requestedMethod, requestedAmount }) {
   const credentials = await activeCredentials();
   if (!credentials.configured) {
     fail(503, "Paylabs belum dikonfigurasi lengkap pada Admin > Paylabs Setting.");
@@ -261,6 +287,40 @@ export async function createMarketplacePaylabsLink({ po, request, requestedMetho
   try {
     await client.query("begin");
     await client.query("select pg_advisory_xact_lock($1,$2)", [481516, Number(po.id)]);
+
+    const lockedPo = (await client.query(
+      `select * from public.mkt_purchase_orders where id=$1 for update`,
+      [po.id],
+    )).rows[0];
+    const totals = await marketplacePaymentTotals(lockedPo, client);
+    if (totals.remainingAmount <= 0.005) {
+      await client.query("rollback");
+      fail(409, "Pembayaran PO ini sudah Lunas.");
+    }
+
+    const pendingManual = (await client.query(
+      `select id from public.mkt_po_payment_proofs
+        where po_id=$1 and review_status='submitted'
+        limit 1`,
+      [po.id],
+    )).rows[0];
+    if (pendingManual) {
+      await client.query("rollback");
+      fail(409, "Bukti transfer manual sedang menunggu verifikasi. Paylabs tidak dapat dimulai bersamaan.");
+    }
+
+    const parsedRequested = requestedAmount == null || requestedAmount === ""
+      ? totals.remainingAmount
+      : Number(requestedAmount);
+    if (!Number.isFinite(parsedRequested) || parsedRequested <= 0) {
+      await client.query("rollback");
+      fail(400, "Nominal pembayaran Paylabs tidak valid.");
+    }
+    if (parsedRequested > totals.remainingAmount + 0.005) {
+      await client.query("rollback");
+      fail(409, "Nominal pembayaran Paylabs melebihi sisa tagihan.");
+    }
+    const paymentAmount = Number(parsedRequested.toFixed(2));
 
     await client.query(
       `update public.payments
@@ -314,7 +374,7 @@ export async function createMarketplacePaylabsLink({ po, request, requestedMetho
         po.company_id ?? 1,
         po.id,
         po.po_number,
-        Number(po.grand_total),
+        paymentAmount,
         method.code,
         merchantTradeNo,
         new Date(Date.now() + PAYMENT_TTL_MS),
@@ -322,6 +382,8 @@ export async function createMarketplacePaylabsLink({ po, request, requestedMetho
           source: "marketplace",
           sandboxMode: credentials.sandboxMode,
           methodRequested: method.code,
+          installmentAmount: paymentAmount,
+          remainingBefore: totals.remainingAmount,
         }),
       ],
     )).rows[0];
@@ -335,7 +397,7 @@ export async function createMarketplacePaylabsLink({ po, request, requestedMetho
       merchantId: credentials.merchantId,
       merchantTradeNo,
       requestId: reqId,
-      amount: Number(po.grand_total).toFixed(2),
+      amount: paymentAmount.toFixed(2),
       productName: `Pembayaran ${po.po_number}`,
       payer: text(po.buyer_name, "Customer"),
       phoneNumber: customerPhone,
@@ -444,9 +506,11 @@ export async function createMarketplacePaylabsLink({ po, request, requestedMetho
         JSON.stringify({
           paymentId: Number(payment.id),
           paymentMethod: method.code,
+          paymentAmount,
+          remainingBefore: totals.remainingAmount,
           sandboxMode: credentials.sandboxMode,
         }),
-        "Customer membuat tautan pembayaran Paylabs.",
+        `Customer membuat tautan pembayaran Paylabs sebesar ${paymentAmount.toLocaleString("id-ID")}.`,
         po.id,
         `po-paylabs-link:${payment.id}`,
       ],
@@ -755,11 +819,6 @@ export async function handlePaylabsWebhook({ request, response, body, rawBodyTex
         sendJson(response, 404, { errCode: "404", errMsg: "Purchase Order not found" });
         return true;
       }
-      if (Number(payment.amount) !== Number(po.grand_total)) {
-        await client.query("rollback");
-        sendJson(response, 422, { errCode: "422", errMsg: "Purchase Order amount mismatch" });
-        return true;
-      }
 
       if (po.payment_status === "proof_submitted") {
         await client.query(
@@ -773,74 +832,89 @@ export async function handlePaylabsWebhook({ request, response, body, rawBodyTex
         );
       }
 
-      const duplicatePayment = po.payment_status === "paid"
-        && po.payment_verified_by !== "paylabs:webhook";
+      const totals = await marketplacePaymentTotals(po, client);
+      const fullyPaid = totals.remainingAmount <= 0.005;
+      const paymentStatus = fullyPaid ? "paid" : "partially_paid";
+      const duplicatePayment = totals.overpaidAmount > 0.005;
+
+      await client.query(
+        `update public.mkt_purchase_orders
+            set payment_status=$1,
+                payment_verified_at=case when $1='paid' then coalesce(payment_verified_at,now()) else null end,
+                payment_verified_by=case when $1='paid' then 'paylabs:webhook' else null end,
+                payment_rejection_reason=null,
+                updated_at=now()
+          where id=$2`,
+        [paymentStatus, po.id],
+      );
+
+      await client.query(
+        `insert into public.activity_logs
+           (actor_type,actor_id,actor_name,action,old_value,new_value,description,
+            mkt_purchase_order_id,deduplication_key)
+         values ('system',null,'Paylabs',$1,$2::jsonb,$3::jsonb,$4,$5,$6)
+         on conflict (deduplication_key) where deduplication_key is not null do nothing`,
+        [
+          fullyPaid ? "po_payment_verified" : "po_payment_partially_verified",
+          JSON.stringify({ paymentStatus: po.payment_status }),
+          JSON.stringify({
+            paymentStatus,
+            paymentId: Number(updated.id),
+            provider: "paylabs",
+            paymentMethod,
+            paymentAmount: Number(payment.amount),
+            paidAmount: totals.receivedAmount,
+            remainingAmount: totals.remainingAmount,
+            overpaidAmount: totals.overpaidAmount,
+          }),
+          fullyPaid
+            ? "Pembayaran customer dikonfirmasi otomatis melalui webhook Paylabs dan PO sudah lunas."
+            : `Pembayaran sebagian Paylabs sebesar ${Number(payment.amount).toLocaleString("id-ID")} diterima. Sisa tagihan ${totals.remainingAmount.toLocaleString("id-ID")}.`,
+          po.id,
+          `po-payment-paylabs:${updated.id}:paid`,
+        ],
+      );
+
       if (duplicatePayment) {
         await client.query(
           `insert into public.activity_logs
              (actor_type,actor_id,actor_name,action,old_value,new_value,description,
               mkt_purchase_order_id,deduplication_key)
-           values ('system',null,'Paylabs','po_payment_duplicate_detected',$1::jsonb,$2::jsonb,$3,$4,$5)
+           values ('system',null,'Paylabs','po_payment_overpaid',$1::jsonb,$2::jsonb,$3,$4,$5)
            on conflict (deduplication_key) where deduplication_key is not null do nothing`,
           [
-            JSON.stringify({ paymentStatus: po.payment_status, verifiedBy: po.payment_verified_by }),
-            JSON.stringify({ paylabsPaymentId: Number(updated.id), merchantTradeNo }),
-            "Paylabs melaporkan pembayaran setelah PO sudah berstatus lunas. Periksa kemungkinan pembayaran ganda sebelum settlement/refund.",
+            JSON.stringify({ grandTotal: Number(po.grand_total) }),
+            JSON.stringify({ receivedAmount: totals.receivedAmount, overpaidAmount: totals.overpaidAmount }),
+            "Total pembayaran melebihi nilai PO. Admin harus memeriksa kemungkinan pembayaran ganda/refund.",
             po.id,
-            `po-payment-duplicate:${updated.id}`,
+            `po-payment-overpaid:${updated.id}`,
           ],
         );
-      } else {
-        await client.query(
-          `update public.mkt_purchase_orders
-              set payment_status='paid',
-                  payment_verified_at=coalesce(payment_verified_at,now()),
-                  payment_verified_by='paylabs:webhook',
-                  payment_rejection_reason=null,
-                  updated_at=now()
-            where id=$1`,
-          [po.id],
-        );
-        await client.query(
-          `insert into public.activity_logs
-             (actor_type,actor_id,actor_name,action,old_value,new_value,description,
-              mkt_purchase_order_id,deduplication_key)
-           values ('system',null,'Paylabs','po_payment_verified',
-                   $1::jsonb,$2::jsonb,$3,$4,$5)
-           on conflict (deduplication_key) where deduplication_key is not null do nothing`,
-          [
-            JSON.stringify({ paymentStatus: po.payment_status }),
-            JSON.stringify({
-              paymentStatus: "paid",
-              paymentId: Number(updated.id),
-              provider: "paylabs",
-              paymentMethod,
-            }),
-            "Pembayaran customer dikonfirmasi otomatis melalui webhook Paylabs.",
-            po.id,
-            `po-payment-paylabs:${updated.id}:paid`,
-          ],
-        );
-        await client.query(
-          `insert into public.mkt_notification_queue
-             (event_type,channel,recipient_type,recipient_id,rfq_id,purchase_order_id,payload_json,deduplication_key)
-           values ('po_payment_verified','internal','customer',$1,$2,$3,$4::jsonb,$5)
-           on conflict do nothing`,
-          [
-            po.portal_customer_id ?? null,
-            po.rfq_id,
-            po.id,
-            JSON.stringify({
-              poId: Number(po.id),
-              poNumber: po.po_number,
-              paymentStatus: "paid",
-              provider: "paylabs",
-              paymentMethod,
-            }),
-            `po-payment-paylabs-notify:${updated.id}:paid`,
-          ],
-        ).catch(() => {});
       }
+
+      await client.query(
+        `insert into public.mkt_notification_queue
+           (event_type,channel,recipient_type,recipient_id,rfq_id,purchase_order_id,payload_json,deduplication_key)
+         values ($1,'internal','customer',$2,$3,$4,$5::jsonb,$6)
+         on conflict do nothing`,
+        [
+          fullyPaid ? "po_payment_verified" : "po_payment_partially_verified",
+          po.portal_customer_id ?? null,
+          po.rfq_id,
+          po.id,
+          JSON.stringify({
+            poId: Number(po.id),
+            poNumber: po.po_number,
+            paymentStatus,
+            provider: "paylabs",
+            paymentMethod,
+            paymentAmount: Number(payment.amount),
+            paidAmount: totals.receivedAmount,
+            remainingAmount: totals.remainingAmount,
+          }),
+          `po-payment-paylabs-notify:${updated.id}:paid`,
+        ],
+      ).catch(() => {});
     }
 
     await client.query("commit");
