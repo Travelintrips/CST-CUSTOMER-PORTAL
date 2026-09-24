@@ -67,6 +67,12 @@ interface VendorPoView {
   vendorNameSnapshot: string | null;
   vendorAddressSnapshot: string | null;
   paymentTermsSnapshot: string | null;
+  paymentTermCode: string | null;
+  paymentStatus: string;
+  paymentDueAt: string | null;
+  paymentProofUploadedAt: string | null;
+  paymentVerifiedAt: string | null;
+  paymentRejectionReason: string | null;
   incotermSnapshot: string | null;
   quotationNumberSnapshot: string | null;
   quotationDateSnapshot: string | null;
@@ -327,18 +333,26 @@ function VendorFulfillment({ token, po }: { token: string; po: VendorPoView }) {
   };
 
   const isPickup = detail?.shipmentType === "pickup_self";
+  const paymentTermMissing = !po.paymentTermCode;
+  const paymentBlocked = po.paymentTermCode === "prepaid" && po.paymentStatus !== "paid";
   const action = (() => {
     if (!detail || !po.confirmedAt) return null;
     if (isPickup) {
       if (detail.shipmentStatus === "planned") return { eventType: "packing", label: "Mulai siapkan barang" };
       if (detail.shipmentStatus === "packing") return { eventType: "ready_for_pickup", label: "Barang siap diambil" };
-      if (detail.shipmentStatus === "ready_to_ship") return { eventType: "handed_over", label: "Barang sudah diserahkan" };
+      if (detail.shipmentStatus === "ready_to_ship") {
+        if (paymentTermMissing || paymentBlocked) return null;
+        return { eventType: "handed_over", label: "Barang sudah diserahkan" };
+      }
       return null;
     }
     if (detail.shipmentStatus === "planned") return { eventType: "packing", label: "Mulai packing" };
     if (detail.shipmentStatus === "packing") return { eventType: "loaded", label: "Barang selesai dimuat" };
     if (detail.shipmentStatus === "loading") return { eventType: "ready_to_ship", label: "Siap dikirim" };
-    if (detail.shipmentStatus === "ready_to_ship") return { eventType: "departed", label: "Mulai pengiriman" };
+    if (detail.shipmentStatus === "ready_to_ship") {
+      if (paymentTermMissing || paymentBlocked) return null;
+      return { eventType: "departed", label: "Mulai pengiriman" };
+    }
     if (detail.shipmentStatus === "in_transit") return { eventType: "arrived", label: "Barang tiba di tujuan" };
     return null;
   })();
@@ -463,6 +477,50 @@ function VendorFulfillment({ token, po }: { token: string; po: VendorPoView }) {
                   ? "Siapkan barang → tandai siap diambil → serahkan ke customer → upload POD → customer konfirmasi penerimaan."
                   : "Packing → loading → siap dikirim → perjalanan → tiba → upload POD → customer konfirmasi penerimaan."}
               </p>
+            </div>
+
+            <div className="rounded-lg border p-3 text-sm">
+              <p className="font-semibold">Status pembayaran customer</p>
+              <p className="mt-1 text-xs text-gray-600">
+                {po.paymentTermsSnapshot ?? "Syarat pembayaran belum ditetapkan admin CST."}
+              </p>
+              <div className="mt-2">
+                <Badge
+                  variant="secondary"
+                  className={
+                    po.paymentStatus === "paid"
+                      ? "bg-green-100 text-green-700"
+                      : po.paymentStatus === "proof_submitted"
+                        ? "bg-blue-100 text-blue-700"
+                        : po.paymentStatus === "rejected"
+                          ? "bg-red-100 text-red-700"
+                          : "bg-amber-100 text-amber-700"
+                  }
+                >
+                  {po.paymentStatus === "paid"
+                    ? "Lunas"
+                    : po.paymentStatus === "proof_submitted"
+                      ? "Menunggu verifikasi CST"
+                      : po.paymentStatus === "rejected"
+                        ? "Bukti pembayaran ditolak"
+                        : "Belum dibayar"}
+                </Badge>
+              </div>
+              {paymentTermMissing && detail.shipmentStatus === "ready_to_ship" && (
+                <p className="mt-2 text-xs text-amber-700">
+                  Barang belum dapat diserahkan/dikirim sampai admin CST menetapkan syarat pembayaran.
+                </p>
+              )}
+              {paymentBlocked && detail.shipmentStatus === "ready_to_ship" && (
+                <p className="mt-2 text-xs text-orange-700">
+                  Syarat PO mewajibkan pembayaran lunas sebelum handover. Tunggu status Lunas dari CST.
+                </p>
+              )}
+              {po.paymentTermCode?.startsWith("net_") && (
+                <p className="mt-2 text-xs text-blue-700">
+                  Termin NET: fulfillment boleh dilanjutkan. Pembayaran customer tetap dipantau CST sampai lunas.
+                </p>
+              )}
             </div>
 
             {detail.timeline.length > 0 && (
