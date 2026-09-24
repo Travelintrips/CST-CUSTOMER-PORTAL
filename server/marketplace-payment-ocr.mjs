@@ -123,8 +123,8 @@ function validImageMagic(buffer) {
 
 export async function extractPaymentAmountFromFile(file, expectedAmount = null) {
   const mimeType = String(file?.type ?? "").toLowerCase();
-  if (!["image/jpeg", "image/png", "image/webp"].includes(mimeType)) {
-    const error = new Error("OCR nominal hanya mendukung JPG, PNG, atau WEBP.");
+  if (!["image/jpeg", "image/png"].includes(mimeType)) {
+    const error = new Error("OCR nominal hanya mendukung JPG atau PNG.");
     error.statusCode = 415;
     throw error;
   }
