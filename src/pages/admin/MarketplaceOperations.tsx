@@ -92,6 +92,10 @@ type PaymentView = {
   currency: string;
   proofAvailable: boolean;
   proofLocked: boolean;
+  canUploadNewProof: boolean;
+  proofAttemptCount: number;
+  proofId: number | null;
+  proofReviewStatus: "submitted" | "approved" | "rejected" | null;
   proofUrl: string | null;
   proofFileName: string | null;
   proofMimeType: string | null;
@@ -760,7 +764,7 @@ export function MarketplaceOperationsTab() {
                         <div>
                           <p className="text-sm font-semibold text-slate-900">Pemeriksaan bukti pembayaran</p>
                           <p className="mt-1 text-xs text-slate-500">
-                            Bukti sudah dikunci setelah customer mengirim. Periksa bukti asli sebelum menyetujui pembayaran.
+                            Bukti ini tersimpan permanen sebagai audit trail. Periksa bukti asli sebelum menyetujui pembayaran.
                           </p>
                         </div>
                         <Badge className={payment.ocrMatches ? "border-green-200 bg-green-100 text-green-700" : "border-red-200 bg-red-100 text-red-700"}>
@@ -842,7 +846,7 @@ export function MarketplaceOperationsTab() {
                   {payment?.paymentStatus === "proof_submitted" && (
                     <div className="space-y-2">
                       <p className="text-xs text-slate-600">
-                        Setujui hanya setelah bukti visual, nominal, dan transaksi benar-benar sesuai. Jika ditolak, bukti tetap tersimpan sebagai audit trail dan customer tidak dapat menggantinya.
+                        Setujui hanya setelah bukti visual, nominal, dan transaksi benar-benar sesuai. Jika ditolak, bukti tetap tersimpan; customer hanya dapat mengirim bukti baru yang berbeda dan tidak dapat memakai ulang file yang sama.
                       </p>
                       <div className="flex flex-wrap gap-2">
                       <button
