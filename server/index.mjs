@@ -32,6 +32,7 @@ import {
 } from "./admin-portal.mjs";
 import { checkStorageReadiness, signedDocumentUrl, signedPaymentProofUrl, uploadPaymentProof } from "./storage.mjs";
 import { handleMarketplaceRoute } from "./marketplace-service.mjs";
+import { handlePaylabsAdminRoute, handlePaylabsWebhook } from "./paylabs-service.mjs";
 import { processMarketplaceWhatsAppQueue } from "./whatsapp-service.mjs";
 import {
   handleAdminInvoices,
@@ -3067,14 +3068,44 @@ async function route(request, response) {
   }
   if (request.method === "OPTIONS") {
     sendEmpty(response, 204, {
-      Allow: "GET,POST,OPTIONS",
+      Allow: "GET,POST,PUT,PATCH,DELETE,OPTIONS",
       "Access-Control-Allow-Credentials": "true",
       "Access-Control-Allow-Headers": "Content-Type, Authorization",
-      "Access-Control-Allow-Methods": "GET,POST,OPTIONS",
+      "Access-Control-Allow-Methods": "GET,POST,PUT,PATCH,DELETE,OPTIONS",
       ...corsHeaders(request),
     });
     return;
   }
+
+  if (pathname === "/api/payments/paylabs/webhook") {
+    if (request.method !== "POST") {
+      sendError(response, 405, "Method not allowed.");
+      return;
+    }
+    const raw = await readRawBody(request);
+    const rawBodyText = raw?.toString("utf8") ?? "{}";
+    let body;
+    try {
+      body = JSON.parse(rawBodyText || "{}");
+    } catch {
+      sendJson(response, 400, { errCode: "400", errMsg: "Invalid JSON" });
+      return;
+    }
+    await handlePaylabsWebhook({ request, response, body, rawBodyText, sendJson });
+    return;
+  }
+
+  if (pathname.startsWith("/api/payments/paylabs/")) {
+    const user = await requireAdmin(request, response);
+    if (!user) return;
+    const body = ["POST", "PUT", "PATCH"].includes(request.method ?? "")
+      ? await readJson(request)
+      : {};
+    const handled = await handlePaylabsAdminRoute({ request, response, url, body, user, sendJson });
+    if (!handled) sendJson(response, 404, { message: "Paylabs route tidak ditemukan." });
+    return;
+  }
+
   if (pathname.startsWith("/api/vendor-quote/") || pathname.startsWith("/api/mkt/")) {
     const isPublicMarketplaceRoute =
       pathname.startsWith("/api/vendor-quote/") ||
