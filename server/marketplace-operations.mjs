@@ -1262,7 +1262,7 @@ async function scanPoPaymentProof({ poId, body, user }) {
 
   const file = body?.file;
   if (!file || typeof file.arrayBuffer !== "function") {
-    fail(400, "Pilih gambar bukti pembayaran JPG/PNG/WEBP.");
+    fail(400, "Pilih gambar bukti pembayaran JPG/PNG.");
   }
 
   const buffer = Buffer.from(await file.arrayBuffer());
@@ -1312,7 +1312,7 @@ async function submitPoPaymentProof({ poId, body, user }) {
 
   const file = body?.file;
   if (!file || typeof file.arrayBuffer !== "function") {
-    fail(400, "File bukti pembayaran JPG/PNG/WEBP wajib diunggah.");
+    fail(400, "File bukti pembayaran JPG/PNG wajib diunggah.");
   }
 
   const fileBuffer = Buffer.from(await file.arrayBuffer());
