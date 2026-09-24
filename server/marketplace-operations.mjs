@@ -1607,11 +1607,15 @@ async function submitPoPaymentProof({ poId, body, user }) {
         description: `Customer mengunggah bukti pembayaran sebesar ${expectedAmount.toLocaleString("id-ID")} untuk verifikasi admin.`,
         key: `po-payment-proof:${locked.id}:${proofSha256}`,
       });
+      const isPartialPayment = expectedAmount < lockedTotals.remainingAmount - 0.005;
+      const projectedRemaining = Math.max(lockedTotals.remainingAmount - expectedAmount, 0);
       await notifyAdmins(db, {
         eventKey: `po-payment-proof:${locked.id}:${proofSha256}`,
         type: "po_payment_proof_submitted",
-        title: "Bukti pembayaran marketplace",
-        message: `Bukti pembayaran ${locked.po_number} sebesar ${expectedAmount.toLocaleString("id-ID")} menunggu pemeriksaan admin.`,
+        title: isPartialPayment ? "Pembayaran sebagian marketplace" : "Bukti pembayaran marketplace",
+        message: isPartialPayment
+          ? `Customer membayar sebagian ${locked.po_number} sebesar Rp ${expectedAmount.toLocaleString("id-ID")}. Jika disetujui, sisa tagihan Rp ${projectedRemaining.toLocaleString("id-ID")}.`
+          : `Bukti pembayaran ${locked.po_number} sebesar Rp ${expectedAmount.toLocaleString("id-ID")} menunggu pemeriksaan admin.`,
         resourceType: "purchase_order",
         resourceId: Number(locked.id),
         link: `/admin?tab=marketplace-operations&poId=${locked.id}&focus=payment`,
@@ -1619,9 +1623,11 @@ async function submitPoPaymentProof({ poId, body, user }) {
           poId: Number(locked.id),
           proofId: Number(proof.id),
           paymentStatus: "proof_submitted",
+          paymentType: isPartialPayment ? "partial" : "full",
           paymentAmount: expectedAmount,
           ocrAmount: Number(ocr.extractedAmount),
           remainingBefore: lockedTotals.remainingAmount,
+          projectedRemaining,
           ocrMatches: true,
         },
       });
