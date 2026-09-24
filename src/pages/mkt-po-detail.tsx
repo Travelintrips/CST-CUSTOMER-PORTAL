@@ -155,6 +155,10 @@ interface PaymentView {
   currency: string;
   proofAvailable: boolean;
   proofLocked: boolean;
+  canUploadNewProof: boolean;
+  proofAttemptCount: number;
+  proofId: number | null;
+  proofReviewStatus: "submitted" | "approved" | "rejected" | null;
   proofUrl: string | null;
   proofFileName: string | null;
   proofMimeType: string | null;
@@ -888,16 +892,16 @@ function PaymentTab({ po }: { po: PoDetail }) {
 
               {payment.rejectionReason && (
                 <div className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">
-                  Bukti pembayaran ditolak: {payment.rejectionReason}. Bukti yang sudah dikirim tetap dikunci dan tidak dapat diganti dari akun customer.
+                  Bukti pembayaran ditolak: {payment.rejectionReason}. Bukti lama tetap tersimpan; Anda dapat mengirim bukti baru yang berbeda.
                 </div>
               )}
 
-              {payment.proofAvailable ? (
+              {payment.proofAvailable && (
                 <div className="space-y-3 rounded-lg border border-blue-200 bg-blue-50/40 p-4">
                   <div>
-                    <p className="text-sm font-semibold text-slate-800">Bukti pembayaran sudah dikirim dan dikunci</p>
+                    <p className="text-sm font-semibold text-slate-800">Bukti pembayaran tersimpan sebagai audit trail</p>
                     <p className="mt-1 text-xs text-slate-600">
-                      Untuk keamanan audit, bukti yang sudah pernah dikirim tidak dapat diupload ulang atau diganti.
+                      Untuk keamanan audit, bukti yang sama tidak dapat digunakan ulang. Bukti lama tetap tersimpan meskipun ditolak.
                       {payment.proofUploadedAt ? ` Dikirim ${fmtDateTime(payment.proofUploadedAt)}.` : ""}
                     </p>
                   </div>
@@ -934,12 +938,14 @@ function PaymentTab({ po }: { po: PoDetail }) {
                     <p className="text-sm text-blue-700">Menunggu admin CST memeriksa bukti dan menyetujui pembayaran.</p>
                   )}
                 </div>
-              ) : payment.paymentStatus !== "paid" ? (
+              )}
+
+              {payment.canUploadNewProof && payment.paymentStatus !== "paid" && (
                 <div className="space-y-3 rounded-lg border p-4">
                   <div>
                     <p className="text-sm font-semibold">Upload bukti transfer ke CST</p>
                     <p className="mt-1 text-xs text-slate-500">
-                      Pilih gambar terlebih dahulu. Sistem membaca nominal sebelum bukti dikirim. Setelah dikirim, bukti tidak dapat diganti.
+                      Pilih gambar terlebih dahulu. Sistem membaca nominal sebelum bukti dikirim. File yang sama tidak dapat digunakan ulang pada transaksi mana pun.
                     </p>
                   </div>
 
@@ -1006,7 +1012,7 @@ function PaymentTab({ po }: { po: PoDetail }) {
                     {uploadProof.isPending ? "Mengunggah…" : "Kirim Bukti Pembayaran"}
                   </Button>
                 </div>
-              ) : null}
+              )}
 
               {payment.paymentStatus === "paid" && (
                 <div className="rounded-lg border border-green-200 bg-green-50 p-3 text-sm text-green-800">
