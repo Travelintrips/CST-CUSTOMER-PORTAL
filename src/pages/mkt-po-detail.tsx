@@ -167,6 +167,7 @@ interface PaymentView {
   ocrConfidence: number | null;
   ocrMatches: boolean | null;
   verifiedAt: string | null;
+  verifiedBy: string | null;
   rejectionReason: string | null;
   requiresClearanceBeforeHandover: boolean;
   termsMissing: boolean;
@@ -1148,7 +1149,10 @@ function PaymentTab({ po }: { po: PoDetail }) {
 
               {payment.paymentStatus === "paid" && (
                 <div className="rounded-lg border border-green-200 bg-green-50 p-3 text-sm text-green-800">
-                  Pembayaran sudah diperiksa dan diverifikasi CST{payment.verifiedAt ? ` pada ${fmtDateTime(payment.verifiedAt)}` : ""}.
+                  {payment.verifiedBy === "paylabs:webhook"
+                    ? "Pembayaran berhasil dikonfirmasi otomatis oleh Paylabs"
+                    : "Pembayaran sudah diperiksa dan diverifikasi CST"}
+                  {payment.verifiedAt ? ` pada ${fmtDateTime(payment.verifiedAt)}` : ""}.
                 </div>
               )}
             </>
