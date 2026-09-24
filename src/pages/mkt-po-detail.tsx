@@ -170,6 +170,34 @@ interface PaymentView {
   rejectionReason: string | null;
   requiresClearanceBeforeHandover: boolean;
   termsMissing: boolean;
+  manualTransferAllowed: boolean;
+  paylabs: {
+    configured: boolean;
+    sandboxMode: boolean;
+    activeMethods: Array<{
+      code: string;
+      label: string;
+      description: string;
+      iconUrl: string;
+      iconEnabled: boolean;
+      sortOrder: number;
+    }>;
+    latestPayment: {
+      id: number;
+      status: string;
+      amount: number;
+      paymentMethod: string | null;
+      providerOrderId: string | null;
+      merchantTradeNo: string | null;
+      paymentUrl: string | null;
+      expiredAt: string | null;
+      paidAt: string | null;
+      createdAt: string;
+      updatedAt: string;
+    } | null;
+    hasPendingPayment: boolean;
+    canCreate: boolean;
+  };
 }
 
 interface ActivityEvent {
@@ -727,6 +755,7 @@ function PaymentTab({ po }: { po: PoDetail }) {
     timedOut: boolean;
   } | null>(null);
   const [scanError, setScanError] = useState<string | null>(null);
+  const [selectedPaylabsMethod, setSelectedPaylabsMethod] = useState<string>("");
 
   useEffect(() => {
     return () => {
@@ -774,6 +803,32 @@ function PaymentTab({ po }: { po: PoDetail }) {
     },
   });
 
+  const createPaylabsPayment = useMutation({
+    mutationFn: async (paymentMethod: string) => {
+      const res = await fetch(`/api/mkt/portal/purchase-orders/${po.id}/payment/paylabs`, {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ paymentMethod }),
+      });
+      const result = await res.json().catch(() => ({}));
+      if (!res.ok || !result.ok) {
+        throw new Error(result.message ?? result.error ?? "Gagal membuat pembayaran Paylabs");
+      }
+      return result.data as {
+        reused: boolean;
+        sandboxMode: boolean;
+        payment: { paymentUrl: string | null };
+      };
+    },
+    onSuccess: async (result) => {
+      await queryClient.invalidateQueries({ queryKey: ["mkt-po-payment", po.id] });
+      if (result.payment?.paymentUrl) {
+        window.location.assign(result.payment.paymentUrl);
+      }
+    },
+  });
+
   const uploadProof = useMutation({
     mutationFn: async () => {
       if (!proofFile) throw new Error("Pilih file bukti pembayaran terlebih dahulu.");
@@ -818,6 +873,9 @@ function PaymentTab({ po }: { po: PoDetail }) {
   }
 
   const payment = data.data;
+  const paylabsMethods = payment.paylabs?.activeMethods ?? [];
+  const activePaylabsMethod = selectedPaylabsMethod || paylabsMethods[0]?.code || "";
+  const pendingPaylabs = payment.paylabs?.hasPendingPayment ? payment.paylabs.latestPayment : null;
   const statusLabel: Record<string, string> = {
     unpaid: "Belum Dibayar",
     proof_submitted: "Menunggu Verifikasi",
@@ -896,6 +954,79 @@ function PaymentTab({ po }: { po: PoDetail }) {
                 </div>
               )}
 
+              {payment.paymentStatus !== "paid" && payment.paylabs?.configured && paylabsMethods.length > 0 && (
+                <div className="space-y-3 rounded-lg border border-indigo-200 bg-indigo-50/40 p-4">
+                  <div className="flex flex-wrap items-start justify-between gap-3">
+                    <div>
+                      <p className="text-sm font-semibold text-slate-900">Bayar melalui Paylabs</p>
+                      <p className="mt-1 text-xs text-slate-600">
+                        Pembayaran diverifikasi otomatis melalui callback Paylabs. Tidak perlu upload bukti transfer.
+                      </p>
+                    </div>
+                    {payment.paylabs.sandboxMode && (
+                      <Badge variant="secondary" className="bg-amber-100 text-amber-700">Sandbox</Badge>
+                    )}
+                  </div>
+
+                  {pendingPaylabs?.paymentUrl ? (
+                    <div className="space-y-2">
+                      <div className="rounded-lg bg-white p-3 text-sm">
+                        <p className="font-medium">Pembayaran Paylabs sedang menunggu penyelesaian.</p>
+                        <p className="mt-1 text-xs text-slate-500">
+                          Metode: {pendingPaylabs.paymentMethod ?? "Paylabs"} · dibuat {fmtDateTime(pendingPaylabs.createdAt)}
+                        </p>
+                      </div>
+                      <Button
+                        size="sm"
+                        onClick={() => window.location.assign(pendingPaylabs.paymentUrl!)}
+                      >
+                        Lanjutkan Pembayaran Paylabs
+                      </Button>
+                      <p className="text-xs text-amber-700">
+                        Transfer manual dinonaktifkan selama transaksi Paylabs ini masih aktif untuk mencegah pembayaran ganda.
+                      </p>
+                    </div>
+                  ) : (
+                    <div className="space-y-3">
+                      <div>
+                        <label className="text-xs font-medium text-slate-600">Metode Paylabs</label>
+                        <select
+                          value={activePaylabsMethod}
+                          onChange={(e) => setSelectedPaylabsMethod(e.target.value)}
+                          className="mt-1 h-10 w-full rounded-md border bg-white px-3 text-sm"
+                        >
+                          {paylabsMethods.map((method) => (
+                            <option key={method.code} value={method.code}>{method.label}</option>
+                          ))}
+                        </select>
+                        {paylabsMethods.find((method) => method.code === activePaylabsMethod)?.description && (
+                          <p className="mt-1 text-xs text-slate-500">
+                            {paylabsMethods.find((method) => method.code === activePaylabsMethod)?.description}
+                          </p>
+                        )}
+                      </div>
+
+                      {createPaylabsPayment.isError && (
+                        <p className="text-sm text-red-600">{(createPaylabsPayment.error as Error).message}</p>
+                      )}
+                      <Button
+                        size="sm"
+                        onClick={() => createPaylabsPayment.mutate(activePaylabsMethod)}
+                        disabled={!payment.paylabs.canCreate || !activePaylabsMethod || createPaylabsPayment.isPending}
+                      >
+                        {createPaylabsPayment.isPending ? "Membuat pembayaran…" : "Bayar via Paylabs"}
+                      </Button>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {payment.paymentStatus !== "paid" && (!payment.paylabs?.configured || paylabsMethods.length === 0) && (
+                <div className="rounded-lg border bg-slate-50 p-3 text-xs text-slate-600">
+                  Paylabs belum tersedia untuk PO ini. Gunakan transfer manual atau hubungi admin CST.
+                </div>
+              )}
+
               {payment.proofAvailable && (
                 <div className="space-y-3 rounded-lg border border-blue-200 bg-blue-50/40 p-4">
                   <div>
@@ -940,10 +1071,11 @@ function PaymentTab({ po }: { po: PoDetail }) {
                 </div>
               )}
 
-              {payment.canUploadNewProof && payment.paymentStatus !== "paid" && (
+              {payment.manualTransferAllowed && payment.paymentStatus !== "paid" && (
                 <div className="space-y-3 rounded-lg border p-4">
                   <div>
-                    <p className="text-sm font-semibold">Upload bukti transfer ke CST</p>
+                    <p className="text-sm font-semibold">Transfer Bank Manual</p>
+                    <p className="mt-1 text-xs font-medium text-slate-700">Upload bukti transfer ke CST</p>
                     <p className="mt-1 text-xs text-slate-500">
                       Pilih gambar terlebih dahulu. Sistem membaca nominal sebelum bukti dikirim. File yang sama tidak dapat digunakan ulang pada transaksi mana pun.
                     </p>
