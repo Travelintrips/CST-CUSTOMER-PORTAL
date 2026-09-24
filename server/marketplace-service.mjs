@@ -47,7 +47,7 @@ const PAYMENT_TERM_LABELS = {
 function normalizePaymentTerm(value) {
   const normalized = String(value ?? "").trim().toLowerCase().replace(/\s+/g, " ");
   if (!normalized) return null;
-  if (["prepaid", "prepayment", "cash before delivery", "bayar sebelum", "bayar sebelum kirim", "bayar sebelum pengambilan"].includes(normalized)) return "prepaid";
+  if (["prepaid", "prepayment", "cash before delivery"].includes(normalized) || normalized.includes("bayar sebelum")) return "prepaid";
   if (/^net[ _-]?7(?:\s*hari)?$/.test(normalized) || normalized.includes("7 hari")) return "net_7";
   if (/^net[ _-]?14(?:\s*hari)?$/.test(normalized) || normalized.includes("14 hari")) return "net_14";
   if (/^net[ _-]?30(?:\s*hari)?$/.test(normalized) || normalized.includes("30 hari")) return "net_30";
@@ -435,7 +435,7 @@ async function createPo(db, rfq, quote, user) {
         vendor_token, vendor_token_expires_at, expected_completion_date)
      values (
        'PENDING-' || $1::text, $2, $3, $4, $5, 'issued'::mkt_po_status, $6, 0, $6,
-       $7, $8, $9, $10, 'unpaid', $11, $12, $13, $14, 'IDR', $15, $16, now() + interval '14 days',
+       $7, $8, $9, $10, $11, 'unpaid', $12, $13, $14, 'IDR', $15, $16, now() + interval '14 days',
         case when $15::int is null then null else current_date + $15::int end
      )
      returning id`,
