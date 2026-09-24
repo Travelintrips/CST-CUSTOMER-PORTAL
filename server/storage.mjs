@@ -314,6 +314,46 @@ export async function signedMarketplacePodUrl({ poId, shipmentId, path }) {
   return data.signedUrl;
 }
 
+
+export async function uploadMarketplacePaymentProof({ poId, file }) {
+  const { mimeType, size } = validateDocumentFile(file);
+  const storage = client();
+  await ensurePrivateBucket(storage);
+  const path = `marketplace-payment-proofs/po-${Number(poId)}/${crypto.randomUUID()}-${safeFileName(file.name || `proof.${extensionForMime(mimeType)}`)}`;
+  const { error } = await storage.supabase.storage.from(storage.bucket).upload(
+    path,
+    Buffer.from(await file.arrayBuffer()),
+    { contentType: mimeType, cacheControl: "0", upsert: false },
+  );
+  if (error) {
+    const failure = new Error("Upload bukti pembayaran marketplace gagal.");
+    failure.statusCode = 502;
+    throw failure;
+  }
+  return { path, fileName: safeFileName(file.name), mimeType, size };
+}
+
+export async function signedMarketplacePaymentProofUrl({ poId, path }) {
+  const normalizedPath = String(path || "");
+  const prefix = `marketplace-payment-proofs/po-${Number(poId)}/`;
+  if (!normalizedPath.startsWith(prefix)) {
+    const error = new Error("Object path bukti pembayaran marketplace tidak valid.");
+    error.statusCode = 404;
+    throw error;
+  }
+  const storage = client();
+  await ensurePrivateBucket(storage);
+  const { data, error } = await storage.supabase.storage
+    .from(storage.bucket)
+    .createSignedUrl(normalizedPath, SIGNED_URL_TTL_SECONDS);
+  if (error || !data?.signedUrl) {
+    const failure = new Error("Signed URL bukti pembayaran marketplace tidak tersedia.");
+    failure.statusCode = 502;
+    throw failure;
+  }
+  return data.signedUrl;
+}
+
 export async function uploadPaymentProof({ token, file }) {
   const { mimeType, size } = validateDocumentFile(file);
   const storage = client();
