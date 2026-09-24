@@ -5,7 +5,12 @@ import {
   notifyAdmins,
   notifyPortalCustomers,
 } from "./notification-service.mjs";
-import { uploadMarketplacePod, signedMarketplacePodUrl } from "./storage.mjs";
+import {
+  uploadMarketplacePod,
+  signedMarketplacePodUrl,
+  uploadMarketplacePaymentProof,
+  signedMarketplacePaymentProofUrl,
+} from "./storage.mjs";
 
 const SHIPMENT_EVENT_STATUS = {
   packing: "packing",
@@ -89,6 +94,64 @@ function text(value, fallback = null) {
 
 function idempotencyKey(request, body) {
   return text(request.headers["idempotency-key"]) ?? text(body?.idempotencyKey);
+}
+
+const PAYMENT_TERM_LABELS = {
+  prepaid: "Bayar sebelum barang diserahkan/dikirim",
+  net_7: "NET 7 hari setelah penerimaan",
+  net_14: "NET 14 hari setelah penerimaan",
+  net_30: "NET 30 hari setelah penerimaan",
+};
+
+function normalizePaymentTerm(value) {
+  const normalized = String(value ?? "").trim().toLowerCase().replace(/\s+/g, " ");
+  if (!normalized) return null;
+  if (["prepaid", "prepayment", "cash before delivery", "bayar sebelum", "bayar sebelum kirim", "bayar sebelum pengambilan"].includes(normalized)) {
+    return "prepaid";
+  }
+  if (/^net[ _-]?7(?:\s*hari)?$/.test(normalized)) return "net_7";
+  if (/^net[ _-]?14(?:\s*hari)?$/.test(normalized)) return "net_14";
+  if (/^net[ _-]?30(?:\s*hari)?$/.test(normalized)) return "net_30";
+  if (normalized.includes("30 hari")) return "net_30";
+  if (normalized.includes("14 hari")) return "net_14";
+  if (normalized.includes("7 hari")) return "net_7";
+  return null;
+}
+
+function paymentTermLabel(code) {
+  return PAYMENT_TERM_LABELS[code] ?? null;
+}
+
+function paymentTermDays(code) {
+  return code === "net_7" ? 7 : code === "net_14" ? 14 : code === "net_30" ? 30 : 0;
+}
+
+function paymentRequiresClearance(code) {
+  return code === "prepaid";
+}
+
+async function paymentView(po) {
+  const code = po.payment_term_code ?? normalizePaymentTerm(po.payment_terms_snapshot);
+  let proofUrl = null;
+  if (po.payment_proof_path) {
+    proofUrl = await signedMarketplacePaymentProofUrl({ poId: po.id, path: po.payment_proof_path });
+  }
+  return {
+    poId: Number(po.id),
+    paymentTermCode: code,
+    paymentTerms: paymentTermLabel(code) ?? po.payment_terms_snapshot ?? null,
+    paymentStatus: po.payment_status ?? "unpaid",
+    paymentDueAt: po.payment_due_at ?? null,
+    amount: po.grand_total,
+    currency: po.currency_snapshot ?? "IDR",
+    proofAvailable: Boolean(po.payment_proof_path),
+    proofUrl,
+    proofUploadedAt: po.payment_proof_uploaded_at ?? null,
+    verifiedAt: po.payment_verified_at ?? null,
+    rejectionReason: po.payment_rejection_reason ?? null,
+    requiresClearanceBeforeHandover: paymentRequiresClearance(code),
+    termsMissing: !code,
+  };
 }
 
 function actor(user, actorType = "admin") {
@@ -951,6 +1014,20 @@ async function createGoodsReceipt({ shipmentId, body, request, user, isAdmin }) 
         key,
       ],
     );
+    if (receiptType === "full") {
+      await db(
+        `update public.mkt_purchase_orders
+            set payment_due_at=case payment_term_code
+              when 'net_7' then coalesce(payment_due_at, now() + interval '7 days')
+              when 'net_14' then coalesce(payment_due_at, now() + interval '14 days')
+              when 'net_30' then coalesce(payment_due_at, now() + interval '30 days')
+              else payment_due_at
+            end,
+            updated_at=now()
+          where id=$1`,
+        [shipment.po_id],
+      );
+    }
     for (const item of items) {
       const receivedQty = decimal(item.receivedQty, "Received qty");
       const acceptedQty = decimal(item.acceptedQty ?? receivedQty, "Accepted qty");
@@ -1100,6 +1177,166 @@ async function maybeCompletePo(db, poId, user, isAdmin) {
   return true;
 }
 
+async function setPoPaymentTerms({ poId, body, user }) {
+  const code = normalizePaymentTerm(body.paymentTermCode ?? body.paymentTerms);
+  if (!code) fail(400, "Syarat pembayaran wajib dipilih: prepaid, NET 7, NET 14, atau NET 30.");
+  return withTransaction(async (db) => {
+    const po = await loadPo(poId, user, { client: db, forUpdate: true, isAdmin: true });
+    if (po.payment_status === "paid") fail(409, "Syarat pembayaran tidak dapat diubah setelah pembayaran lunas.");
+    const days = paymentTermDays(code);
+    const dueAt = days > 0 && ["completed", "closed"].includes(po.status)
+      ? `now() + interval '${days} days'`
+      : null;
+    const updated = (await db(
+      `update public.mkt_purchase_orders
+          set payment_term_code=$1,
+              payment_terms_snapshot=$2,
+              payment_due_at=case
+                when $3::int > 0 and status in ('completed','closed') then coalesce(payment_due_at, now() + ($3::text || ' days')::interval)
+                when $3::int = 0 then null
+                else payment_due_at
+              end,
+              updated_at=now()
+        where id=$4
+        returning *`,
+      [code, paymentTermLabel(code), days, po.id],
+    )).rows[0];
+    await writeActivity(db, {
+      poId: po.id,
+      user: actor(user, "admin"),
+      action: "po_payment_terms_set",
+      oldValue: { paymentTermCode: po.payment_term_code, paymentTerms: po.payment_terms_snapshot },
+      newValue: { paymentTermCode: code, paymentTerms: paymentTermLabel(code) },
+      description: `Syarat pembayaran PO ditetapkan: ${paymentTermLabel(code)}.`,
+      key: `po-payment-terms:${po.id}:${code}`,
+    });
+    await notifyMarketplaceEvent(db, {
+      eventType: "po_payment_terms_set",
+      po,
+      payload: { paymentTermCode: code, paymentTerms: paymentTermLabel(code) },
+      key: `po-payment-terms:${po.id}:${code}`,
+    });
+    return paymentView(updated);
+  });
+}
+
+async function submitPoPaymentProof({ poId, body, user }) {
+  const po = await loadPo(poId, user, { isAdmin: false });
+  const code = po.payment_term_code ?? normalizePaymentTerm(po.payment_terms_snapshot);
+  if (!code) fail(409, "Syarat pembayaran belum ditetapkan. Hubungi admin CST.");
+  if (po.payment_status === "paid") return { alreadyProcessed: true, payment: await paymentView(po) };
+  const file = body?.file;
+  if (!file || typeof file.arrayBuffer !== "function") fail(400, "File bukti pembayaran JPG/PNG/PDF wajib diunggah.");
+  const uploaded = await uploadMarketplacePaymentProof({ poId: po.id, file });
+
+  return withTransaction(async (db) => {
+    const locked = await loadPo(po.id, user, { client: db, forUpdate: true, isAdmin: false });
+    if (locked.payment_status === "paid") return { alreadyProcessed: true, payment: await paymentView(locked) };
+    const updated = (await db(
+      `update public.mkt_purchase_orders
+          set payment_status='proof_submitted',
+              payment_proof_path=$1,
+              payment_proof_uploaded_at=now(),
+              payment_rejection_reason=null,
+              updated_at=now()
+        where id=$2
+        returning *`,
+      [uploaded.path, locked.id],
+    )).rows[0];
+    await writeActivity(db, {
+      poId: locked.id,
+      user: actor(user, "customer"),
+      action: "po_payment_proof_submitted",
+      newValue: { paymentStatus: "proof_submitted" },
+      description: "Customer mengunggah bukti pembayaran marketplace.",
+      key: `po-payment-proof:${locked.id}:${uploaded.path}`,
+    });
+    await notifyAdmins(db, {
+      eventKey: `po-payment-proof:${locked.id}:${uploaded.path}`,
+      type: "po_payment_proof_submitted",
+      title: "Bukti pembayaran marketplace",
+      message: `Bukti pembayaran ${locked.po_number} menunggu verifikasi admin.`,
+      resourceType: "purchase_order",
+      resourceId: Number(locked.id),
+      link: "/admin?tab=marketplace-operations",
+      payload: { poId: Number(locked.id), paymentStatus: "proof_submitted" },
+    });
+    return { alreadyProcessed: false, payment: await paymentView(updated) };
+  });
+}
+
+async function reviewPoPayment({ poId, action, body, user }) {
+  if (!["verify", "reject"].includes(action)) fail(400, "Aksi pembayaran tidak valid.");
+  return withTransaction(async (db) => {
+    const po = await loadPo(poId, user, { client: db, forUpdate: true, isAdmin: true });
+    const code = po.payment_term_code ?? normalizePaymentTerm(po.payment_terms_snapshot);
+    if (!code) fail(409, "Tetapkan syarat pembayaran terlebih dahulu.");
+    if (action === "verify") {
+      if (!po.payment_proof_path && po.payment_status !== "paid") {
+        fail(409, "Bukti pembayaran belum tersedia.");
+      }
+      const updated = (await db(
+        `update public.mkt_purchase_orders
+            set payment_status='paid',
+                payment_verified_at=coalesce(payment_verified_at,now()),
+                payment_verified_by=$1,
+                payment_rejection_reason=null,
+                updated_at=now()
+          where id=$2
+          returning *`,
+        [user?.email ?? user?.name ?? "admin", po.id],
+      )).rows[0];
+      await writeActivity(db, {
+        poId: po.id,
+        user: actor(user, "admin"),
+        action: "po_payment_verified",
+        oldValue: { paymentStatus: po.payment_status },
+        newValue: { paymentStatus: "paid" },
+        description: text(body.notes, "Pembayaran customer diverifikasi lunas."),
+        key: `po-payment-verified:${po.id}`,
+      });
+      await notifyMarketplaceEvent(db, {
+        eventType: "po_payment_verified",
+        po,
+        payload: { paymentStatus: "paid" },
+        key: `po-payment-verified:${po.id}`,
+      });
+      return paymentView(updated);
+    }
+
+    if (!po.payment_proof_path) fail(409, "Belum ada bukti pembayaran untuk ditolak.");
+    const reason = text(body.reason);
+    if (!reason) fail(400, "Alasan penolakan bukti pembayaran wajib diisi.");
+    const updated = (await db(
+      `update public.mkt_purchase_orders
+          set payment_status='rejected',
+              payment_rejection_reason=$1,
+              payment_verified_at=null,
+              payment_verified_by=null,
+              updated_at=now()
+        where id=$2
+        returning *`,
+      [reason, po.id],
+    )).rows[0];
+    await writeActivity(db, {
+      poId: po.id,
+      user: actor(user, "admin"),
+      action: "po_payment_rejected",
+      oldValue: { paymentStatus: po.payment_status },
+      newValue: { paymentStatus: "rejected" },
+      description: reason,
+      key: `po-payment-rejected:${po.id}:${Date.now()}`,
+    });
+    await notifyMarketplaceEvent(db, {
+      eventType: "po_payment_rejected",
+      po,
+      payload: { paymentStatus: "rejected", reason },
+      key: `po-payment-rejected:${po.id}:${Date.now()}`,
+    });
+    return paymentView(updated);
+  });
+}
+
 async function transitionPo({ poId, action, body, request, user, isAdmin }) {
   const target = PO_ACTION_STATUS[action];
   if (!target) return false;
@@ -1114,6 +1351,9 @@ async function transitionPo({ poId, action, body, request, user, isAdmin }) {
       const completed = await maybeCompletePo(db, po.id, user, isAdmin);
       if (!completed) fail(409, "PO belum memenuhi gate POD dan goods receipt full.");
       return { status: "completed", alreadyProcessed: false };
+    }
+    if (target === "closed" && po.payment_status !== "paid") {
+      fail(409, "PO belum dapat ditutup karena pembayaran customer belum lunas.");
     }
     const updated = await db(
       `update public.mkt_purchase_orders set status=$1::mkt_po_status,
@@ -1151,6 +1391,16 @@ async function transitionPo({ poId, action, body, request, user, isAdmin }) {
 }
 
 async function handlePortalOperations({ request, response, pathname, body, user, sendJson }) {
+  const poPayment = pathname.match(/^\/api\/mkt\/portal\/purchase-orders\/(\d+)\/payment$/);
+  if (request.method === "GET" && poPayment) {
+    const po = await loadPo(poPayment[1], user, { isAdmin: false });
+    sendJson(response, 200, { ok: true, data: await paymentView(po) });
+    return true;
+  }
+  if (request.method === "POST" && poPayment) {
+    sendJson(response, 200, { ok: true, data: await submitPoPaymentProof({ poId: poPayment[1], body, user }) });
+    return true;
+  }
   const shipmentList = pathname.match(/^\/api\/mkt\/portal\/purchase-orders\/(\d+)\/shipments$/);
   if (request.method === "GET" && shipmentList) {
     sendJson(response, 200, { ok: true, data: await getShipmentList(shipmentList[1], user, false) });
@@ -1196,6 +1446,21 @@ async function handlePortalOperations({ request, response, pathname, body, user,
 }
 
 async function handleAdminOperations({ request, response, pathname, body, user, sendJson }) {
+  const poPayment = pathname.match(/^\/api\/mkt\/admin\/purchase-orders\/(\d+)\/payment$/);
+  if (request.method === "GET" && poPayment) {
+    const po = await loadPo(poPayment[1], user, { isAdmin: true });
+    sendJson(response, 200, { ok: true, data: await paymentView(po) });
+    return true;
+  }
+  if (request.method === "PUT" && poPayment) {
+    sendJson(response, 200, { ok: true, data: await setPoPaymentTerms({ poId: poPayment[1], body, user }) });
+    return true;
+  }
+  const paymentReview = pathname.match(/^\/api\/mkt\/admin\/purchase-orders\/(\d+)\/payment\/(verify|reject)$/);
+  if (request.method === "POST" && paymentReview) {
+    sendJson(response, 200, { ok: true, data: await reviewPoPayment({ poId: paymentReview[1], action: paymentReview[2], body, user }) });
+    return true;
+  }
   const poLines = pathname.match(/^\/api\/mkt\/admin\/purchase-orders\/(\d+)\/lines$/);
   if (request.method === "GET" && poLines) {
     sendJson(response, 200, { ok: true, data: await listPoLines(poLines[1], user, true) });
