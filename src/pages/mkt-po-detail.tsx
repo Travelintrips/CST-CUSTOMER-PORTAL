@@ -628,9 +628,14 @@ function ShipmentTab({
         </CardContent>
       </Card>
       {shipments.map((s) => {
-        const st = SHIPMENT_STATUS[s.shipmentStatus] ?? { label: s.shipmentStatus, color: "bg-gray-100 text-gray-700" };
         const active = selectedId === s.id;
         const isPickup = s.shipmentType === "pickup_self";
+        const baseStatus = SHIPMENT_STATUS[s.shipmentStatus] ?? { label: s.shipmentStatus, color: "bg-gray-100 text-gray-700" };
+        const st = isPickup && s.shipmentStatus === "ready_to_ship"
+          ? { ...baseStatus, label: "Siap Diambil" }
+          : isPickup && s.shipmentStatus === "arrived"
+            ? { ...baseStatus, label: "Sudah Diserahkan" }
+            : baseStatus;
         const shipmentTypeLabel = SHIPMENT_OPTIONS.find((option) => option.value === s.shipmentType)?.label ?? s.shipmentType;
         return (
           <Card
