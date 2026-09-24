@@ -6,6 +6,7 @@ import {
   notifyRfqCustomer,
 } from "./notification-service.mjs";
 import { handleAdminOperations, handlePortalOperations } from "./marketplace-operations.mjs";
+import { uploadMarketplacePod, signedMarketplacePodUrl } from "./storage.mjs";
 
 const RFQ_TERMINAL = new Set(["awarded", "cancelled", "expired"]);
 const QUOTE_TERMINAL = new Set(["selected", "rejected", "expired", "withdrawn"]);
@@ -1102,47 +1103,511 @@ async function handlePortalPurchaseOrders(request, response, pathname, user) {
   return true;
 }
 
-async function handlePublicVendorPo(request, response, pathname, body) {
-  const match = pathname.match(/^\/api\/mkt\/vendor-po\/([^/]+)(?:\/(accept|reject|request-revision))?$/);
-  if (!match) return false;
-  const po = (await query(
-    `select po.*, r.id as rfq_id, r.rfq_number, s.name as vendor_name
-       from public.mkt_purchase_orders po join public.mkt_rfqs r on r.id=po.rfq_id
+
+const VENDOR_SHIPMENT_EVENT_STATUS = {
+  packing: "packing",
+  loaded: "loading",
+  ready_to_ship: "ready_to_ship",
+  ready_for_pickup: "ready_to_ship",
+  departed: "in_transit",
+  arrived: "arrived",
+  handed_over: "arrived",
+};
+
+const VENDOR_SHIPMENT_TRANSITIONS = {
+  planned: new Set(["packing"]),
+  packing: new Set(["loading", "ready_to_ship"]),
+  loading: new Set(["ready_to_ship", "in_transit"]),
+  ready_to_ship: new Set(["in_transit", "arrived"]),
+  in_transit: new Set(["arrived"]),
+  arrived: new Set(),
+};
+
+function requestIdempotencyKey(request, body = {}) {
+  return text(request.headers["idempotency-key"]) ?? text(body.idempotencyKey);
+}
+
+async function vendorPoByToken(db, vendorToken, { forUpdate = false } = {}) {
+  const row = (await db(
+    `select po.*, r.id as rfq_id, r.rfq_number, r.portal_customer_id, r.buyer_email,
+            r.buyer_name, r.delivery_address, s.name as vendor_name
+       from public.mkt_purchase_orders po
+       join public.mkt_rfqs r on r.id=po.rfq_id
        join public.suppliers s on s.id=po.vendor_id
-      where po.vendor_token=$1`,
-    [match[1]],
+      where po.vendor_token=$1
+      limit 1${forUpdate ? " for update of po" : ""}`,
+    [vendorToken],
   )).rows[0];
-  if (!po) fail(404, "Link PO tidak ditemukan.");
-  if (po.vendor_token_expires_at && new Date(po.vendor_token_expires_at) < new Date()) fail(410, "Link PO sudah kedaluwarsa.");
-  if (request.method === "GET" && !match[2]) {
+  if (!row) fail(404, "Link PO tidak ditemukan.");
+  if (row.vendor_token_expires_at && new Date(row.vendor_token_expires_at) < new Date()) {
+    fail(410, "Link PO sudah kedaluwarsa.");
+  }
+  return row;
+}
+
+function mapVendorShipment(row) {
+  return {
+    id: Number(row.id),
+    shipmentNumber: row.shipment_number,
+    shipmentStatus: row.shipment_status,
+    shipmentType: row.shipment_type,
+    carrierName: row.carrier_name,
+    trackingNumber: row.tracking_number,
+    origin: row.origin,
+    destination: row.destination,
+    estimatedArrival: row.estimated_arrival,
+    actualArrival: row.actual_arrival,
+    notes: row.notes,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+async function vendorShipmentDetail(db, po, shipmentId) {
+  const shipment = (await db(
+    `select * from public.mkt_po_shipments
+      where id=$1 and po_id=$2
+      limit 1`,
+    [integer(shipmentId, "Shipment"), po.id],
+  )).rows[0];
+  if (!shipment) fail(404, "Shipment tidak ditemukan untuk PO ini.");
+  const [events, items] = await Promise.all([
+    db(
+      `select id,event_type,note,location,attachment_object_path,created_at
+         from public.mkt_po_shipment_events
+        where shipment_id=$1
+        order by event_sequence,id`,
+      [shipment.id],
+    ),
+    db(
+      `select si.id,si.po_line_id,si.line_number,si.qty,si.uom,pol.item_name
+         from public.mkt_po_shipment_items si
+         join public.mkt_purchase_order_lines pol on pol.id=si.po_line_id
+        where si.shipment_id=$1
+        order by si.line_number,si.id`,
+      [shipment.id],
+    ),
+  ]);
+  return {
+    ...mapVendorShipment(shipment),
+    items: items.rows.map((item) => ({
+      id: Number(item.id),
+      poLineId: Number(item.po_line_id),
+      lineNumber: Number(item.line_number),
+      qty: item.qty,
+      uom: item.uom,
+      itemName: item.item_name,
+    })),
+    timeline: events.rows.map((event) => ({
+      id: Number(event.id),
+      eventType: event.event_type,
+      note: event.note,
+      location: event.location,
+      createdAt: event.created_at,
+    })),
+  };
+}
+
+async function vendorShipmentNotification(db, po, eventType, shipmentId, status, message) {
+  const key = `vendor-shipment:${shipmentId}:${eventType}:${status}`;
+  await queueEvent(db, {
+    eventType: `shipment_${eventType}`,
+    recipientType: "admin",
+    rfqId: po.rfq_id,
+    poId: po.id,
+    payload: { shipmentId: Number(shipmentId), status },
+    key,
+  });
+  await customerNotification(
+    db,
+    {
+      id: po.rfq_id,
+      rfq_number: po.rfq_number,
+      portal_customer_id: po.portal_customer_id,
+      buyer_email: po.buyer_email,
+    },
+    key,
+    `shipment_${eventType}`,
+    "Update pengiriman",
+    message,
+    { poId: Number(po.id), shipmentId: Number(shipmentId), status },
+  );
+  await notifyAdmins(db, {
+    eventKey: key,
+    type: `shipment_${eventType}`,
+    title: "Update shipment vendor",
+    message,
+    resourceType: "shipment",
+    resourceId: Number(shipmentId),
+    link: "/admin?tab=marketplace-operations",
+    payload: { poId: Number(po.id), rfqId: Number(po.rfq_id), shipmentId: Number(shipmentId), status },
+  });
+}
+
+async function handlePublicVendorPo(request, response, pathname, body) {
+  const actionMatch = pathname.match(/^\/api\/mkt\/vendor-po\/([^/]+)\/(accept|reject|request-revision)$/);
+  const shipmentListMatch = pathname.match(/^\/api\/mkt\/vendor-po\/([^/]+)\/shipments$/);
+  const shipmentDetailMatch = pathname.match(/^\/api\/mkt\/vendor-po\/([^/]+)\/shipments\/(\d+)$/);
+  const shipmentEventMatch = pathname.match(/^\/api\/mkt\/vendor-po\/([^/]+)\/shipments\/(\d+)\/events$/);
+  const shipmentPodMatch = pathname.match(/^\/api\/mkt\/vendor-po\/([^/]+)\/shipments\/(\d+)\/pod$/);
+  const baseMatch = pathname.match(/^\/api\/mkt\/vendor-po\/([^/]+)$/);
+  const tokenValue =
+    actionMatch?.[1] ?? shipmentListMatch?.[1] ?? shipmentDetailMatch?.[1]
+    ?? shipmentEventMatch?.[1] ?? shipmentPodMatch?.[1] ?? baseMatch?.[1];
+  if (!tokenValue) return false;
+
+  if (request.method === "GET" && baseMatch) {
+    const po = await vendorPoByToken(query, tokenValue);
     response._sendJson(200, await poDetail(query, po.id));
     return true;
   }
-  if (request.method !== "POST" || !match[2]) return false;
-  const next = match[2] === "accept" ? "vendor_accepted" : match[2] === "reject" ? "vendor_rejected" : "revision_requested";
-  let result = { status: next, poNumber: po.po_number, alreadyProcessed: false };
-  await withTransaction(async (db) => {
-    const locked = (await db(
-      `select po.*, r.id as rfq_id, r.rfq_number, s.name as vendor_name
-         from public.mkt_purchase_orders po
-         join public.mkt_rfqs r on r.id=po.rfq_id
-         join public.suppliers s on s.id=po.vendor_id
-        where po.vendor_token=$1
-        for update of po`,
-      [match[1]],
+
+  if (request.method === "GET" && shipmentListMatch) {
+    const po = await vendorPoByToken(query, tokenValue);
+    const shipments = await query(
+      `select * from public.mkt_po_shipments
+        where po_id=$1 and shipment_status <> 'cancelled'
+        order by created_at asc,id asc`,
+      [po.id],
+    );
+    response._sendJson(200, { ok: true, data: shipments.rows.map(mapVendorShipment) });
+    return true;
+  }
+
+  if (request.method === "GET" && shipmentDetailMatch) {
+    const po = await vendorPoByToken(query, tokenValue);
+    response._sendJson(200, {
+      ok: true,
+      shipment: await vendorShipmentDetail(query, po, shipmentDetailMatch[2]),
+    });
+    return true;
+  }
+
+  if (request.method === "GET" && shipmentPodMatch) {
+    const po = await vendorPoByToken(query, tokenValue);
+    const shipmentId = integer(shipmentPodMatch[2], "Shipment");
+    const shipment = (await query(
+      `select id from public.mkt_po_shipments where id=$1 and po_id=$2 limit 1`,
+      [shipmentId, po.id],
     )).rows[0];
-    if (!locked) fail(404, "Link PO tidak ditemukan.");
-    if (locked.vendor_token_expires_at && new Date(locked.vendor_token_expires_at) < new Date()) fail(410, "Link PO sudah kedaluwarsa.");
-    if (locked.status === next) {
-      result = { status: next, poNumber: locked.po_number, alreadyProcessed: true };
-      return;
+    if (!shipment) fail(404, "Shipment tidak ditemukan untuk PO ini.");
+    const pod = (await query(
+      `select * from public.mkt_po_shipment_events
+        where shipment_id=$1 and event_type='pod_submitted'
+        order by created_at desc,id desc limit 1`,
+      [shipmentId],
+    )).rows[0];
+    if (!pod) fail(404, "POD belum tersedia.");
+    const path = String(pod.attachment_object_path ?? "");
+    const url = path.startsWith("marketplace-pod/")
+      ? await signedMarketplacePodUrl({ poId: po.id, shipmentId, path })
+      : path;
+    response._sendJson(200, {
+      ok: true,
+      data: { available: true, url, uploadedAt: pod.created_at, note: pod.note },
+    });
+    return true;
+  }
+
+  if (request.method === "POST" && shipmentEventMatch) {
+    const key = requestIdempotencyKey(request, body);
+    if (!key) fail(400, "Idempotency-Key wajib diisi untuk event shipment.");
+    const eventType = text(body.eventType);
+    const target = VENDOR_SHIPMENT_EVENT_STATUS[eventType];
+    if (!target) fail(400, "Event shipment vendor tidak valid.");
+
+    const result = await withTransaction(async (db) => {
+      const po = await vendorPoByToken(db, tokenValue, { forUpdate: true });
+      if (!po.confirmed_at) fail(409, "Vendor harus menerima PO terlebih dahulu.");
+      const shipmentId = integer(shipmentEventMatch[2], "Shipment");
+      const shipment = (await db(
+        `select * from public.mkt_po_shipments
+          where id=$1 and po_id=$2
+          for update`,
+        [shipmentId, po.id],
+      )).rows[0];
+      if (!shipment) fail(404, "Shipment tidak ditemukan untuk PO ini.");
+
+      const existing = (await db(
+        `select * from public.mkt_po_shipment_events
+          where shipment_id=$1 and idempotency_key=$2
+          limit 1`,
+        [shipment.id, key],
+      )).rows[0];
+      if (existing) return { alreadyProcessed: true, status: shipment.shipment_status };
+
+      const pickup = shipment.shipment_type === "pickup_self";
+      if (pickup && !["packing", "ready_for_pickup", "handed_over"].includes(eventType)) {
+        fail(409, "Untuk Ambil sendiri gunakan urutan: siapkan barang → siap diambil → diserahkan.");
+      }
+      if (!pickup && ["ready_for_pickup", "handed_over"].includes(eventType)) {
+        fail(409, "Event pickup hanya berlaku untuk mode Ambil sendiri.");
+      }
+      if (eventType === "ready_for_pickup") {
+        const pickupLocation = text(body.location ?? body.note ?? shipment.origin);
+        if (!pickupLocation) fail(400, "Lokasi pengambilan wajib diisi sebelum barang dinyatakan siap.");
+        body.location = pickupLocation;
+      }
+
+      if (!VENDOR_SHIPMENT_TRANSITIONS[shipment.shipment_status]?.has(target)) {
+        fail(409, `Shipment tidak dapat berpindah dari ${shipment.shipment_status} ke ${target}.`);
+      }
+
+      const location = text(body.location);
+      const updated = (await db(
+        `update public.mkt_po_shipments
+            set shipment_status=$1,
+                origin=case when $2='ready_for_pickup' and $3::text is not null then $3 else origin end,
+                destination=case when $2='ready_for_pickup' and $3::text is not null then $3 else destination end,
+                actual_departure=case when $1='in_transit' then coalesce(actual_departure,now()) else actual_departure end,
+                actual_arrival=case when $1='arrived' then coalesce(actual_arrival,now()) else actual_arrival end,
+                updated_at=now()
+          where id=$4 and shipment_status=$5
+          returning *`,
+        [target, eventType, location, shipment.id, shipment.shipment_status],
+      )).rows[0];
+      if (!updated) fail(409, "Shipment berubah oleh proses lain. Muat ulang lalu coba lagi.");
+
+      const sequence = Number((await db(
+        `select coalesce(max(event_sequence),0)+1 as next
+           from public.mkt_po_shipment_events where shipment_id=$1`,
+        [shipment.id],
+      )).rows[0].next);
+      await db(
+        `insert into public.mkt_po_shipment_events
+           (shipment_id,event_sequence,event_type,note,location,actor_type,actor_id,idempotency_key)
+         values ($1,$2,$3,$4,$5,'vendor',$6,$7)`,
+        [shipment.id, sequence, eventType, text(body.note), location, String(po.vendor_id), key],
+      );
+
+      let poStatus = po.status;
+      if (target === "packing" && po.status === "vendor_accepted") poStatus = "production";
+      if (target === "ready_to_ship" && ["vendor_accepted", "production"].includes(po.status)) poStatus = "ready_to_ship";
+      if (target === "in_transit" && ["ready_to_ship", "production"].includes(po.status)) poStatus = "in_transit";
+      if (target === "arrived" && po.status === "ready_to_ship" && !pickup) poStatus = "in_transit";
+      if (poStatus !== po.status) {
+        await db(
+          `update public.mkt_purchase_orders
+              set status=$1::mkt_po_status, updated_at=now()
+            where id=$2`,
+          [poStatus, po.id],
+        );
+      }
+
+      await writeEvent(
+        db,
+        {
+          rfqId: po.rfq_id,
+          poId: po.id,
+          actorType: "vendor",
+          actorId: String(po.vendor_id),
+          actorName: po.vendor_name,
+          action: `shipment_${eventType}`,
+          oldValue: { status: shipment.shipment_status },
+          newValue: { status: target, shipmentId: Number(shipment.id) },
+          description: text(body.note) || `Vendor memperbarui shipment menjadi ${eventType}.`,
+        },
+        `vendor-shipment-event:${shipment.id}:${key}`,
+      );
+      await vendorShipmentNotification(
+        db,
+        po,
+        eventType,
+        shipment.id,
+        target,
+        pickup
+          ? `Status pengambilan ${updated.shipment_number} diperbarui: ${eventType.replaceAll("_", " ")}.`
+          : `Status pengiriman ${updated.shipment_number} diperbarui: ${eventType.replaceAll("_", " ")}.`,
+      );
+      return { alreadyProcessed: false, status: target };
+    });
+    response._sendJson(200, { ok: true, ...result });
+    return true;
+  }
+
+  if (request.method === "POST" && shipmentPodMatch) {
+    const key = requestIdempotencyKey(request, body);
+    if (!key) fail(400, "Idempotency-Key wajib diisi untuk POD.");
+    const result = await withTransaction(async (db) => {
+      const po = await vendorPoByToken(db, tokenValue, { forUpdate: true });
+      if (!po.confirmed_at) fail(409, "Vendor harus menerima PO terlebih dahulu.");
+      const shipmentId = integer(shipmentPodMatch[2], "Shipment");
+      const shipment = (await db(
+        `select * from public.mkt_po_shipments
+          where id=$1 and po_id=$2
+          for update`,
+        [shipmentId, po.id],
+      )).rows[0];
+      if (!shipment) fail(404, "Shipment tidak ditemukan untuk PO ini.");
+      if (!["arrived", "delivered", "partially_delivered"].includes(shipment.shipment_status)) {
+        fail(409, "POD dapat diunggah setelah barang tiba/diserahkan.");
+      }
+      const existing = (await db(
+        `select * from public.mkt_po_shipment_events
+          where shipment_id=$1 and event_type='pod_submitted'
+          order by created_at desc,id desc limit 1`,
+        [shipment.id],
+      )).rows[0];
+      if (existing) return { alreadyProcessed: true, podId: Number(existing.id) };
+      const file = body?.file;
+      if (!file || typeof file.arrayBuffer !== "function") {
+        fail(400, "File POD JPG/PNG/PDF wajib diunggah.");
+      }
+      const uploaded = await uploadMarketplacePod({ poId: po.id, shipmentId: shipment.id, file });
+      const sequence = Number((await db(
+        `select coalesce(max(event_sequence),0)+1 as next
+           from public.mkt_po_shipment_events where shipment_id=$1`,
+        [shipment.id],
+      )).rows[0].next);
+      const pod = (await db(
+        `insert into public.mkt_po_shipment_events
+           (shipment_id,event_sequence,event_type,note,attachment_object_path,actor_type,actor_id,idempotency_key)
+         values ($1,$2,'pod_submitted',$3,$4,'vendor',$5,$6)
+         returning *`,
+        [shipment.id, sequence, text(body.remarks ?? body.note), uploaded.path, String(po.vendor_id), key],
+      )).rows[0];
+      await writeEvent(
+        db,
+        {
+          rfqId: po.rfq_id,
+          poId: po.id,
+          actorType: "vendor",
+          actorId: String(po.vendor_id),
+          actorName: po.vendor_name,
+          action: "shipment_pod_submitted",
+          newValue: { shipmentId: Number(shipment.id) },
+          description: "Vendor mengunggah bukti serah terima (POD).",
+        },
+        `vendor-pod:${shipment.id}:${key}`,
+      );
+      await vendorShipmentNotification(
+        db,
+        po,
+        "pod_submitted",
+        shipment.id,
+        shipment.shipment_status,
+        `Bukti serah terima untuk ${shipment.shipment_number} sudah tersedia. Silakan konfirmasi penerimaan barang.`,
+      );
+      return { alreadyProcessed: false, podId: Number(pod.id) };
+    });
+    response._sendJson(200, { ok: true, ...result });
+    return true;
+  }
+
+  if (request.method !== "POST" || !actionMatch) return false;
+  const action = actionMatch[2];
+  const result = await withTransaction(async (db) => {
+    const locked = await vendorPoByToken(db, tokenValue, { forUpdate: true });
+
+    if (action === "accept") {
+      if (locked.confirmed_at) {
+        return { status: locked.status, poNumber: locked.po_number, alreadyProcessed: true };
+      }
+      if (locked.status === "issued") {
+        await db(
+          `update public.mkt_purchase_orders
+              set status='vendor_accepted'::mkt_po_status, confirmed_at=now(), updated_at=now()
+            where id=$1 and status='issued'`,
+          [locked.id],
+        );
+        await writeEvent(
+          db,
+          {
+            rfqId: locked.rfq_id,
+            poId: locked.id,
+            actorType: "vendor",
+            actorId: String(locked.vendor_id),
+            actorName: locked.vendor_name,
+            action: "po_vendor_accepted",
+            oldValue: { status: "issued" },
+            newValue: { status: "vendor_accepted" },
+            description: "Vendor menerima Purchase Order.",
+          },
+          `po:${locked.id}:vendor_accepted`,
+        );
+        await queueEvent(db, {
+          eventType: "po_vendor_accepted",
+          recipientType: "admin",
+          rfqId: locked.rfq_id,
+          poId: locked.id,
+          payload: { poId: locked.id, status: "vendor_accepted" },
+          key: `po:${locked.id}:vendor_accepted`,
+        });
+        await customerNotification(
+          db,
+          {
+            id: locked.rfq_id,
+            rfq_number: locked.rfq_number,
+            portal_customer_id: locked.portal_customer_id,
+            buyer_email: locked.buyer_email,
+          },
+          `po:${locked.id}:vendor_accepted:customer`,
+          "po_vendor_accepted",
+          "PO diterima vendor",
+          `Vendor telah menerima ${locked.po_number}. Silakan pilih metode pengiriman.`,
+          { poId: Number(locked.id), status: "vendor_accepted" },
+        );
+        return { status: "vendor_accepted", poNumber: locked.po_number, alreadyProcessed: false };
+      }
+      if (["production", "ready_to_ship", "in_transit"].includes(locked.status)) {
+        await db(
+          `update public.mkt_purchase_orders
+              set confirmed_at=now(), updated_at=now()
+            where id=$1 and confirmed_at is null`,
+          [locked.id],
+        );
+        await writeEvent(
+          db,
+          {
+            rfqId: locked.rfq_id,
+            poId: locked.id,
+            actorType: "vendor",
+            actorId: String(locked.vendor_id),
+            actorName: locked.vendor_name,
+            action: "po_vendor_accepted_legacy",
+            oldValue: { status: locked.status, confirmedAt: null },
+            newValue: { status: locked.status, confirmedAt: "now" },
+            description: "Vendor mengonfirmasi PO yang sudah terlanjur masuk fulfillment.",
+          },
+          `po:${locked.id}:vendor_accepted_legacy`,
+        );
+        return { status: locked.status, poNumber: locked.po_number, alreadyProcessed: false };
+      }
+      fail(409, "PO tidak berada pada tahap yang dapat dikonfirmasi vendor.");
     }
+
     if (locked.status !== "issued") fail(409, "PO tidak menunggu konfirmasi vendor.");
-    const updated = await db("update public.mkt_purchase_orders set status=$1::mkt_po_status, revision_notes=$2, confirmed_at=case when $1='vendor_accepted' then now() else confirmed_at end, updated_at=now() where id=$3 and status='issued' returning *", [next, text(body.reason ?? body.notes), locked.id]);
+    const next = action === "reject" ? "vendor_rejected" : "revision_requested";
+    const updated = await db(
+      `update public.mkt_purchase_orders
+          set status=$1::mkt_po_status, revision_notes=$2, updated_at=now()
+        where id=$3 and status='issued'
+        returning *`,
+      [next, text(body.reason ?? body.notes), locked.id],
+    );
     if (!updated.rowCount) fail(409, "PO berubah oleh proses lain.");
-    await writeEvent(db, { rfqId: locked.rfq_id, poId: locked.id, actorType: "vendor", actorId: String(locked.vendor_id), actorName: locked.vendor_name, action: `po_${next}`, description: text(body.reason ?? body.notes) || `Vendor ${next}` }, `po:${locked.id}:${next}`);
-    await queueEvent(db, { eventType: `po_${next}`, recipientType: "admin", rfqId: locked.rfq_id, poId: locked.id, payload: { poId: locked.id, status: next }, key: `po:${locked.id}:${next}` });
-    result = { status: next, poNumber: locked.po_number, alreadyProcessed: false };
+    await writeEvent(
+      db,
+      {
+        rfqId: locked.rfq_id,
+        poId: locked.id,
+        actorType: "vendor",
+        actorId: String(locked.vendor_id),
+        actorName: locked.vendor_name,
+        action: `po_${next}`,
+        description: text(body.reason ?? body.notes) || `Vendor ${next}`,
+      },
+      `po:${locked.id}:${next}`,
+    );
+    await queueEvent(db, {
+      eventType: `po_${next}`,
+      recipientType: "admin",
+      rfqId: locked.rfq_id,
+      poId: locked.id,
+      payload: { poId: locked.id, status: next },
+      key: `po:${locked.id}:${next}`,
+    });
+    return { status: next, poNumber: locked.po_number, alreadyProcessed: false };
   });
   response._sendJson(200, { ok: true, ...result });
   return true;
