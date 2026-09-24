@@ -767,7 +767,7 @@ export async function handlePaylabsWebhook({ request, response, body, rawBodyTex
               payment_method=coalesce($2,payment_method),
               provider_order_id=coalesce($3,provider_order_id),
               paid_at=$4,
-              raw=$5::jsonb,
+              raw=coalesce(raw,'{}'::jsonb) || $5::jsonb,
               updated_at=now()
         where id=$6
         returning *`,
@@ -802,16 +802,45 @@ export async function handlePaylabsWebhook({ request, response, body, rawBodyTex
         return true;
       }
 
-      await client.query(
-        `update public.mkt_purchase_orders
-            set payment_status='paid',
-                payment_verified_at=coalesce(payment_verified_at,now()),
-                payment_verified_by='paylabs:webhook',
-                payment_rejection_reason=null,
-                updated_at=now()
-          where id=$1`,
-        [po.id],
-      );
+      if (po.payment_status === "proof_submitted") {
+        await client.query(
+          `update public.mkt_po_payment_proofs
+              set review_status='rejected',
+                  rejection_reason='Pembayaran diselesaikan melalui Paylabs; bukti transfer manual tidak diproses.',
+                  reviewed_by='paylabs:webhook',
+                  reviewed_at=now()
+            where po_id=$1 and review_status='submitted'`,
+          [po.id],
+        );
+      }
+
+      if (po.payment_status === "paid" && po.payment_verified_by !== "paylabs:webhook") {
+        await client.query(
+          `insert into public.activity_logs
+             (actor_type,actor_id,actor_name,action,old_value,new_value,description,
+              mkt_purchase_order_id,deduplication_key)
+           values ('system',null,'Paylabs','po_payment_duplicate_detected',$1::jsonb,$2::jsonb,$3,$4,$5)
+           on conflict (deduplication_key) where deduplication_key is not null do nothing`,
+          [
+            JSON.stringify({ paymentStatus: po.payment_status, verifiedBy: po.payment_verified_by }),
+            JSON.stringify({ paylabsPaymentId: Number(updated.id), merchantTradeNo }),
+            "Paylabs melaporkan pembayaran setelah PO sudah berstatus lunas. Periksa kemungkinan pembayaran ganda sebelum settlement/refund.",
+            po.id,
+            `po-payment-duplicate:${updated.id}`,
+          ],
+        );
+      } else {
+        await client.query(
+          `update public.mkt_purchase_orders
+              set payment_status='paid',
+                  payment_verified_at=coalesce(payment_verified_at,now()),
+                  payment_verified_by='paylabs:webhook',
+                  payment_rejection_reason=null,
+                  updated_at=now()
+            where id=$1`,
+          [po.id],
+        );
+      }
       await client.query(
         `insert into public.activity_logs
            (actor_type,actor_id,actor_name,action,old_value,new_value,description,
