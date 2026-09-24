@@ -450,7 +450,13 @@ function VendorFulfillment({ token, po }: { token: string; po: VendorPoView }) {
                       {shipment.shipmentType === "pickup_self" ? "Ambil sendiri" : (shipment.shipmentType ?? "Pengiriman")}
                     </p>
                   </div>
-                  <Badge variant="secondary">{shipment.shipmentStatus}</Badge>
+                  <Badge variant="secondary">
+                    {shipment.shipmentType === "pickup_self" && shipment.shipmentStatus === "ready_to_ship"
+                      ? "Siap Diambil"
+                      : shipment.shipmentType === "pickup_self" && shipment.shipmentStatus === "arrived"
+                        ? "Sudah Diserahkan"
+                        : shipment.shipmentStatus.replaceAll("_", " ")}
+                  </Badge>
                 </div>
                 {shipment.shipmentType === "pickup_self" ? (
                   <p className="text-xs text-gray-500 mt-2">
