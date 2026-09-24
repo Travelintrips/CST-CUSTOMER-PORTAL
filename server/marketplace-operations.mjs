@@ -1347,7 +1347,7 @@ async function submitPoPaymentProof({ poId, body, user }) {
           uploaded.mimeType || String(file.type || ""),
           Number(ocr.extractedAmount),
           Number(ocr.confidence ?? 0),
-          String(ocr.rawText ?? "").slice(0, 3000),
+          null,
           locked.id,
         ],
       )).rows[0];
