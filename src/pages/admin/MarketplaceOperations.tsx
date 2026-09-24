@@ -317,17 +317,22 @@ export function MarketplaceOperationsTab() {
     if (!target) return;
 
     deepLinkHandled.current = true;
-    void selectPo(target).then(() => {
-      if (params.get("focus") === "payment") {
-        window.setTimeout(() => {
-          document.getElementById("marketplace-payment-panel")?.scrollIntoView({
-            behavior: "smooth",
-            block: "center",
-          });
-        }, 100);
-      }
-    });
+    void selectPo(target);
   }, [purchaseOrders]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    if (!selectedPo) return;
+    const params = new URLSearchParams(window.location.search);
+    if (Number(params.get("poId")) !== selectedPo.id || params.get("focus") !== "payment") return;
+
+    const frame = window.requestAnimationFrame(() => {
+      document.getElementById("marketplace-payment-panel")?.scrollIntoView({
+        behavior: "smooth",
+        block: "center",
+      });
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [selectedPo, payment]);
 
   const savePaymentTerms = () => {
     if (!selectedPo || !paymentTermDraft) return;
