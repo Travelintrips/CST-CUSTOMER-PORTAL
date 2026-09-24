@@ -21,6 +21,7 @@ import {
   XCircle,
   MapPin,
   AlertCircle,
+  UploadCloud,
 } from "lucide-react";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -1082,12 +1083,46 @@ function PaymentTab({ po }: { po: PoDetail }) {
                     </p>
                   </div>
 
-                  <input
-                    type="file"
-                    accept="image/jpeg,image/png"
-                    onChange={(e) => onSelectProof(e.target.files?.[0] ?? null)}
-                    className="block w-full text-sm"
-                  />
+                  <div className="space-y-2">
+                    <input
+                      id={`payment-proof-${po.id}`}
+                      type="file"
+                      accept="image/jpeg,image/png"
+                      onChange={(e) => onSelectProof(e.target.files?.[0] ?? null)}
+                      className="sr-only"
+                    />
+                    <label
+                      htmlFor={`payment-proof-${po.id}`}
+                      className="group flex min-h-28 w-full cursor-pointer items-center justify-center rounded-xl border-2 border-dashed border-blue-300 bg-blue-50/50 px-5 py-5 text-center transition hover:border-blue-500 hover:bg-blue-50 focus-within:ring-2 focus-within:ring-blue-500 focus-within:ring-offset-2"
+                    >
+                      <div className="space-y-2">
+                        <div className="mx-auto flex h-10 w-10 items-center justify-center rounded-full bg-white shadow-sm ring-1 ring-blue-100 transition group-hover:scale-105">
+                          <UploadCloud className="h-5 w-5 text-blue-600" />
+                        </div>
+                        <div>
+                          <p className="text-sm font-semibold text-blue-700">
+                            {proofFile ? "Klik untuk ganti bukti pembayaran" : "Klik di area ini untuk unggah bukti pembayaran"}
+                          </p>
+                          <p className="mt-1 text-xs text-slate-500">JPG atau PNG</p>
+                        </div>
+                      </div>
+                    </label>
+
+                    {proofFile && (
+                      <div className="flex items-center justify-between gap-3 rounded-lg border bg-slate-50 px-3 py-2 text-sm">
+                        <div className="min-w-0">
+                          <p className="truncate font-medium text-slate-700">{proofFile.name}</p>
+                          <p className="text-xs text-slate-500">{Math.max(1, Math.round(proofFile.size / 1024))} KB</p>
+                        </div>
+                        <label
+                          htmlFor={`payment-proof-${po.id}`}
+                          className="shrink-0 cursor-pointer text-xs font-semibold text-blue-600 hover:underline"
+                        >
+                          Ganti file
+                        </label>
+                      </div>
+                    )}
+                  </div>
 
                   {proofPreview && (
                     <img
