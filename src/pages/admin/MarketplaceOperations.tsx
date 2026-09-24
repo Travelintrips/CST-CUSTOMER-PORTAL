@@ -107,6 +107,34 @@ type PaymentView = {
   rejectionReason: string | null;
   requiresClearanceBeforeHandover: boolean;
   termsMissing: boolean;
+  manualTransferAllowed: boolean;
+  paylabs: {
+    configured: boolean;
+    sandboxMode: boolean;
+    activeMethods: Array<{
+      code: string;
+      label: string;
+      description: string;
+      iconUrl: string;
+      iconEnabled: boolean;
+      sortOrder: number;
+    }>;
+    latestPayment: {
+      id: number;
+      status: string;
+      amount: number;
+      paymentMethod: string | null;
+      providerOrderId: string | null;
+      merchantTradeNo: string | null;
+      paymentUrl: string | null;
+      expiredAt: string | null;
+      paidAt: string | null;
+      createdAt: string;
+      updatedAt: string;
+    } | null;
+    hasPendingPayment: boolean;
+    canCreate: boolean;
+  };
 };
 
 type Shipment = {
@@ -732,11 +760,25 @@ export function MarketplaceOperationsTab() {
                     </div>
                     <div className={`rounded-lg border p-3 ${payment?.paymentTermCode && !payment?.proofAvailable && payment?.paymentStatus !== "paid" ? "border-indigo-400 bg-white" : "bg-white/70"}`}>
                       <p className="text-[11px] font-semibold uppercase text-slate-400">2. Customer bayar</p>
-                      <p className="mt-1 text-xs font-medium text-slate-800">{payment?.proofAvailable ? "Bukti sudah ada" : "Upload bukti transfer"}</p>
+                      <p className="mt-1 text-xs font-medium text-slate-800">
+                        {payment?.paymentStatus === "paid"
+                          ? "Pembayaran selesai"
+                          : payment?.paylabs?.hasPendingPayment
+                            ? "Paylabs menunggu pembayaran"
+                            : payment?.proofAvailable
+                              ? "Bukti transfer sudah ada"
+                              : "Paylabs / transfer manual"}
+                      </p>
                     </div>
                     <div className={`rounded-lg border p-3 ${payment?.paymentStatus === "proof_submitted" ? "border-indigo-400 bg-white" : "bg-white/70"}`}>
-                      <p className="text-[11px] font-semibold uppercase text-slate-400">3. Verifikasi CST</p>
-                      <p className="mt-1 text-xs font-medium text-slate-800">{payment?.paymentStatus === "paid" ? "Sudah lunas" : "Admin verifikasi bukti"}</p>
+                      <p className="text-[11px] font-semibold uppercase text-slate-400">3. Verifikasi</p>
+                      <p className="mt-1 text-xs font-medium text-slate-800">
+                        {payment?.paymentStatus === "paid"
+                          ? "Sudah lunas"
+                          : payment?.paylabs?.hasPendingPayment
+                            ? "Webhook Paylabs otomatis"
+                            : "Admin verifikasi transfer"}
+                      </p>
                     </div>
                     <div className={`rounded-lg border p-3 ${payment?.paymentStatus === "paid" ? "border-emerald-400 bg-white" : "bg-white/70"}`}>
                       <p className="text-[11px] font-semibold uppercase text-slate-400">4. Handover</p>
@@ -755,6 +797,69 @@ export function MarketplaceOperationsTab() {
                       <p><span className="text-slate-500">Tagihan:</span> {fmtMoney(payment?.amount, payment?.currency ?? selectedPo.currency ?? "IDR")}</p>
                       <p><span className="text-slate-500">Jatuh tempo:</span> {fmtDate(payment?.paymentDueAt)}</p>
                       <p><span className="text-slate-500">Bukti:</span> {payment?.proofAvailable ? "Tersedia" : "Belum ada"}</p>
+                    </div>
+                  )}
+
+                  {payment?.paylabs && (
+                    <div className="space-y-3 rounded-lg border border-violet-200 bg-violet-50/40 p-4">
+                      <div className="flex flex-wrap items-start justify-between gap-3">
+                        <div>
+                          <p className="text-sm font-semibold text-slate-900">Paylabs</p>
+                          <p className="mt-1 text-xs text-slate-500">
+                            Status gateway dan callback pembayaran marketplace.
+                          </p>
+                        </div>
+                        <div className="flex flex-wrap gap-2">
+                          <Badge className={payment.paylabs.configured ? "bg-emerald-100 text-emerald-700" : "bg-amber-100 text-amber-700"}>
+                            {payment.paylabs.configured ? "Configured" : "Belum dikonfigurasi"}
+                          </Badge>
+                          {payment.paylabs.sandboxMode && (
+                            <Badge className="bg-amber-100 text-amber-700">Sandbox</Badge>
+                          )}
+                        </div>
+                      </div>
+
+                      <div className="grid gap-3 text-sm sm:grid-cols-3">
+                        <div className="rounded-md bg-white p-3">
+                          <p className="text-xs text-slate-500">Metode aktif</p>
+                          <p className="mt-1 font-semibold">{payment.paylabs.activeMethods.length}</p>
+                        </div>
+                        <div className="rounded-md bg-white p-3">
+                          <p className="text-xs text-slate-500">Transaksi terakhir</p>
+                          <p className="mt-1 font-semibold">
+                            {payment.paylabs.latestPayment?.status ?? "Belum ada"}
+                          </p>
+                        </div>
+                        <div className="rounded-md bg-white p-3">
+                          <p className="text-xs text-slate-500">Channel</p>
+                          <p className="mt-1 font-semibold">
+                            {payment.paylabs.latestPayment?.paymentMethod ?? "—"}
+                          </p>
+                        </div>
+                      </div>
+
+                      {payment.paylabs.latestPayment && (
+                        <div className="rounded-md bg-white p-3 text-xs text-slate-600">
+                          <p>
+                            Merchant ref: <span className="font-mono">{payment.paylabs.latestPayment.merchantTradeNo ?? "—"}</span>
+                          </p>
+                          <p className="mt-1">
+                            Provider ref: <span className="font-mono">{payment.paylabs.latestPayment.providerOrderId ?? "—"}</span>
+                          </p>
+                          {payment.paylabs.latestPayment.paidAt && (
+                            <p className="mt-1">Paid: {fmtDate(payment.paylabs.latestPayment.paidAt)}</p>
+                          )}
+                        </div>
+                      )}
+
+                      {!payment.paylabs.configured && (
+                        <a
+                          href="/admin?tab=paylabs"
+                          className="inline-flex rounded-md border border-violet-300 bg-white px-3 py-2 text-xs font-semibold text-violet-700 hover:bg-violet-50"
+                        >
+                          Buka Paylabs Setting
+                        </a>
+                      )}
                     </div>
                   )}
 
@@ -877,7 +982,10 @@ export function MarketplaceOperationsTab() {
 
                   {payment?.paymentStatus === "paid" && (
                     <div className="rounded-md bg-emerald-50 p-3 text-sm text-emerald-800">
-                      Pembayaran sudah diverifikasi CST{payment.verifiedAt ? ` · ${fmtDate(payment.verifiedAt)}` : ""}.
+                      {payment.paylabs?.latestPayment?.status === "paid"
+                        ? "Pembayaran dikonfirmasi otomatis oleh Paylabs"
+                        : "Pembayaran sudah diverifikasi CST"}
+                      {payment.verifiedAt ? ` · ${fmtDate(payment.verifiedAt)}` : ""}.
                     </div>
                   )}
                 </div>
