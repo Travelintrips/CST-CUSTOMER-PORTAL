@@ -104,6 +104,7 @@ type PaymentView = {
   ocrConfidence: number | null;
   ocrMatches: boolean | null;
   verifiedAt: string | null;
+  verifiedBy: string | null;
   rejectionReason: string | null;
   requiresClearanceBeforeHandover: boolean;
   termsMissing: boolean;
@@ -982,7 +983,7 @@ export function MarketplaceOperationsTab() {
 
                   {payment?.paymentStatus === "paid" && (
                     <div className="rounded-md bg-emerald-50 p-3 text-sm text-emerald-800">
-                      {payment.paylabs?.latestPayment?.status === "paid"
+                      {payment.verifiedBy === "paylabs:webhook"
                         ? "Pembayaran dikonfirmasi otomatis oleh Paylabs"
                         : "Pembayaran sudah diverifikasi CST"}
                       {payment.verifiedAt ? ` · ${fmtDate(payment.verifiedAt)}` : ""}.
