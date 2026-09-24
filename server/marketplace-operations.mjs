@@ -104,7 +104,8 @@ function idempotencyKey(request, body) {
 }
 
 const PAYMENT_TERM_LABELS = {
-  prepaid: "Bayar sebelum barang diserahkan/dikirim",
+  prepaid: "Bayar penuh sebelum barang diserahkan/dikirim",
+  dp_after_receipt: "DP sebelum serah/kirim, pelunasan setelah barang diterima",
   net_7: "NET 7 hari setelah penerimaan",
   net_14: "NET 14 hari setelah penerimaan",
   net_30: "NET 30 hari setelah penerimaan",
@@ -113,7 +114,10 @@ const PAYMENT_TERM_LABELS = {
 function normalizePaymentTerm(value) {
   const normalized = String(value ?? "").trim().toLowerCase().replace(/\s+/g, " ");
   if (!normalized) return null;
-  if (["prepaid", "prepayment", "cash before delivery"].includes(normalized) || normalized.includes("bayar sebelum")) {
+  if (normalized === "dp_after_receipt" || normalized.startsWith("dp ") || normalized.includes("down payment") || normalized.includes("uang muka")) {
+    return "dp_after_receipt";
+  }
+  if (["prepaid", "prepayment", "cash before delivery"].includes(normalized) || normalized.includes("bayar penuh sebelum")) {
     return "prepaid";
   }
   if (/^net[ _-]?7(?:\s*hari)?$/.test(normalized)) return "net_7";
@@ -122,10 +126,24 @@ function normalizePaymentTerm(value) {
   if (normalized.includes("30 hari")) return "net_30";
   if (normalized.includes("14 hari")) return "net_14";
   if (normalized.includes("7 hari")) return "net_7";
+  if (normalized.includes("bayar sebelum")) return "prepaid";
   return null;
 }
 
-function paymentTermLabel(code) {
+function normalizeDpPercent(value) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed > 0 && parsed < 100
+    ? Number(parsed.toFixed(2))
+    : null;
+}
+
+function paymentTermLabel(code, dpPercent = null) {
+  if (code === "dp_after_receipt") {
+    const percent = normalizeDpPercent(dpPercent);
+    return percent
+      ? `DP ${percent}% sebelum serah/kirim, pelunasan setelah barang diterima`
+      : PAYMENT_TERM_LABELS.dp_after_receipt;
+  }
   return PAYMENT_TERM_LABELS[code] ?? null;
 }
 
@@ -133,12 +151,63 @@ function paymentTermDays(code) {
   return code === "net_7" ? 7 : code === "net_14" ? 14 : code === "net_30" ? 30 : 0;
 }
 
-function paymentRequiresClearance(code) {
-  return code === "prepaid";
+function money(value) {
+  const parsed = Number(value ?? 0);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+async function paymentTotals(po, db = query) {
+  const manual = (await db(
+    `select coalesce(sum(ocr_amount),0) as paid_amount,
+            coalesce(sum(case when review_status='submitted' then ocr_amount else 0 end),0) as pending_amount
+       from public.mkt_po_payment_proofs
+      where po_id=$1
+        and (review_status='approved' or review_status='submitted')`,
+    [po.id],
+  )).rows[0] ?? {};
+
+  const gateway = (await db(
+    `select coalesce(sum(case when status='paid'::payment_status then amount else 0 end),0) as paid_amount,
+            coalesce(sum(case when status='pending'::payment_status and (expired_at is null or expired_at > now()) then amount else 0 end),0) as pending_amount
+       from public.payments
+      where ref_kind='purchase'::payment_ref_kind
+        and ref_id=$1
+        and provider='paylabs'::payment_provider`,
+    [po.id],
+  )).rows[0] ?? {};
+
+  const totalAmount = money(po.grand_total);
+  const manualPaidAmount = money(manual.paid_amount);
+  const paylabsPaidAmount = money(gateway.paid_amount);
+  const receivedAmount = manualPaidAmount + paylabsPaidAmount;
+  const remainingAmount = Math.max(totalAmount - receivedAmount, 0);
+  const overpaidAmount = Math.max(receivedAmount - totalAmount, 0);
+
+  return {
+    totalAmount,
+    manualPaidAmount,
+    paylabsPaidAmount,
+    receivedAmount,
+    remainingAmount,
+    overpaidAmount,
+    pendingManualAmount: money(manual.pending_amount),
+    pendingPaylabsAmount: money(gateway.pending_amount),
+  };
+}
+
+function requiredBeforeHandover(po, totals) {
+  const code = po.payment_term_code ?? normalizePaymentTerm(po.payment_terms_snapshot);
+  if (code === "prepaid") return totals.totalAmount;
+  if (code === "dp_after_receipt") {
+    const percent = normalizeDpPercent(po.payment_dp_percent);
+    return percent ? Number((totals.totalAmount * percent / 100).toFixed(2)) : totals.totalAmount;
+  }
+  return 0;
 }
 
 async function paymentView(po, db = query) {
   const code = po.payment_term_code ?? normalizePaymentTerm(po.payment_terms_snapshot);
+  const dpPercent = normalizeDpPercent(po.payment_dp_percent);
   const proofRows = await db(
     `select id, storage_path, file_name, mime_type, expected_amount, ocr_amount,
             ocr_confidence, ocr_matches, review_status, rejection_reason,
@@ -156,25 +225,50 @@ async function paymentView(po, db = query) {
   if (active?.storage_path) {
     proofUrl = await signedMarketplacePaymentProofUrl({ poId: po.id, path: active.storage_path });
   }
+
+  const totals = await paymentTotals(po, db);
   const paylabs = await getMarketplacePaylabsState(po, db);
+  const canonicalStatus = totals.remainingAmount <= 0.005
+    ? "paid"
+    : pending
+      ? "proof_submitted"
+      : totals.receivedAmount > 0
+        ? "partially_paid"
+        : latest?.review_status === "rejected"
+          ? "rejected"
+          : "unpaid";
+  const requiredAmount = requiredBeforeHandover(po, totals);
+  const requiredRemaining = Math.max(requiredAmount - totals.receivedAmount, 0);
   const canUploadNewProof =
-    po.payment_status !== "paid"
+    canonicalStatus !== "paid"
     && !pending
     && !paylabs.hasPendingPayment;
 
   return {
     poId: Number(po.id),
     paymentTermCode: code,
-    paymentTerms: paymentTermLabel(code) ?? po.payment_terms_snapshot ?? null,
-    paymentStatus: po.payment_status ?? "unpaid",
+    paymentDpPercent: dpPercent,
+    paymentTerms: paymentTermLabel(code, dpPercent) ?? po.payment_terms_snapshot ?? null,
+    paymentStatus: canonicalStatus,
     paymentDueAt: po.payment_due_at ?? null,
-    amount: po.grand_total,
+    amount: totals.totalAmount,
+    paidAmount: totals.receivedAmount,
+    remainingAmount: totals.remainingAmount,
+    overpaidAmount: totals.overpaidAmount,
+    manualPaidAmount: totals.manualPaidAmount,
+    paylabsPaidAmount: totals.paylabsPaidAmount,
+    pendingManualAmount: totals.pendingManualAmount,
+    pendingPaylabsAmount: totals.pendingPaylabsAmount,
+    requiredBeforeHandoverAmount: requiredAmount,
+    requiredBeforeHandoverRemaining: requiredRemaining,
+    handoverPaymentSatisfied: requiredRemaining <= 0.005,
     currency: po.currency_snapshot ?? "IDR",
     proofAvailable: Boolean(active),
-    proofLocked: Boolean(pending || po.payment_status === "paid"),
+    proofLocked: Boolean(pending || canonicalStatus === "paid"),
     canUploadNewProof,
     proofAttemptCount: proofs.length,
     proofId: active ? Number(active.id) : null,
+    proofExpectedAmount: active?.expected_amount == null ? null : Number(active.expected_amount),
     proofUrl,
     proofFileName: active?.file_name ?? null,
     proofMimeType: active?.mime_type ?? null,
@@ -185,12 +279,12 @@ async function paymentView(po, db = query) {
     proofReviewStatus: active?.review_status ?? null,
     verifiedAt: active?.reviewed_at ?? po.payment_verified_at ?? null,
     verifiedBy: po.payment_verified_by ?? null,
-    rejectionReason: po.payment_status === "paid"
+    rejectionReason: canonicalStatus === "paid"
       ? null
       : latest?.review_status === "rejected"
         ? latest.rejection_reason
         : po.payment_rejection_reason ?? null,
-    requiresClearanceBeforeHandover: paymentRequiresClearance(code),
+    requiresClearanceBeforeHandover: ["prepaid", "dp_after_receipt"].includes(code),
     termsMissing: !code,
     manualTransferAllowed: canUploadNewProof,
     paylabs,
@@ -1060,6 +1154,7 @@ async function createGoodsReceipt({ shipmentId, body, request, user, isAdmin }) 
       await db(
         `update public.mkt_purchase_orders
             set payment_due_at=case payment_term_code
+              when 'dp_after_receipt' then coalesce(payment_due_at, now())
               when 'net_7' then coalesce(payment_due_at, now() + interval '7 days')
               when 'net_14' then coalesce(payment_due_at, now() + interval '14 days')
               when 'net_30' then coalesce(payment_due_at, now() + interval '30 days')
@@ -1221,49 +1316,82 @@ async function maybeCompletePo(db, poId, user, isAdmin) {
 
 async function setPoPaymentTerms({ poId, body, user }) {
   const code = normalizePaymentTerm(body.paymentTermCode ?? body.paymentTerms);
-  if (!code) fail(400, "Syarat pembayaran wajib dipilih: prepaid, NET 7, NET 14, atau NET 30.");
+  if (!code) {
+    fail(400, "Syarat pembayaran wajib dipilih: prepaid, DP + pelunasan setelah penerimaan, NET 7, NET 14, atau NET 30.");
+  }
+  const dpPercent = code === "dp_after_receipt" ? normalizeDpPercent(body.paymentDpPercent) : null;
+  if (code === "dp_after_receipt" && !dpPercent) {
+    fail(400, "Persentase DP wajib diisi antara 0 dan 100 persen.");
+  }
+
   return withTransaction(async (db) => {
     const po = await loadPo(poId, user, { client: db, forUpdate: true, isAdmin: true });
-    if (po.payment_status === "paid") fail(409, "Syarat pembayaran tidak dapat diubah setelah pembayaran lunas.");
+    const totals = await paymentTotals(po, db);
+    if (totals.receivedAmount > 0.005) {
+      fail(409, "Syarat pembayaran tidak dapat diubah setelah ada pembayaran yang sudah disetujui.");
+    }
+
     const days = paymentTermDays(code);
+    const label = paymentTermLabel(code, dpPercent);
     const updated = (await db(
       `update public.mkt_purchase_orders
           set payment_term_code=$1,
-              payment_terms_snapshot=$2,
+              payment_dp_percent=$2,
+              payment_terms_snapshot=$3,
               payment_due_at=case
-                when $3::int > 0 and status in ('completed','closed') then coalesce(payment_due_at, now() + ($3::text || ' days')::interval)
-                when $3::int = 0 then null
+                when $1='dp_after_receipt' and status in ('completed','closed') then coalesce(payment_due_at, now())
+                when $4::int > 0 and status in ('completed','closed') then coalesce(payment_due_at, now() + ($4::text || ' days')::interval)
+                when $1='prepaid' then null
                 else payment_due_at
               end,
               updated_at=now()
-        where id=$4
+        where id=$5
         returning *`,
-      [code, paymentTermLabel(code), days, po.id],
+      [code, dpPercent, label, days, po.id],
     )).rows[0];
+
     await writeActivity(db, {
       poId: po.id,
       user: actor(user, "admin"),
       action: "po_payment_terms_set",
-      oldValue: { paymentTermCode: po.payment_term_code, paymentTerms: po.payment_terms_snapshot },
-      newValue: { paymentTermCode: code, paymentTerms: paymentTermLabel(code) },
-      description: `Syarat pembayaran PO ditetapkan: ${paymentTermLabel(code)}.`,
-      key: `po-payment-terms:${po.id}:${code}`,
+      oldValue: {
+        paymentTermCode: po.payment_term_code,
+        paymentDpPercent: po.payment_dp_percent,
+        paymentTerms: po.payment_terms_snapshot,
+      },
+      newValue: { paymentTermCode: code, paymentDpPercent: dpPercent, paymentTerms: label },
+      description: `Syarat pembayaran PO ditetapkan: ${label}.`,
+      key: `po-payment-terms:${po.id}:${code}:${dpPercent ?? 0}`,
     });
     await notifyMarketplaceEvent(db, {
       eventType: "po_payment_terms_set",
       po,
-      payload: { paymentTermCode: code, paymentTerms: paymentTermLabel(code) },
-      key: `po-payment-terms:${po.id}:${code}`,
+      payload: { paymentTermCode: code, paymentDpPercent: dpPercent, paymentTerms: label },
+      key: `po-payment-terms:${po.id}:${code}:${dpPercent ?? 0}`,
     });
-    return paymentView(updated);
+    return paymentView(updated, db);
   });
+}
+
+function requestedPaymentAmount(body, remainingAmount) {
+  const raw = body?.paymentAmount;
+  const requested = raw == null || raw === ""
+    ? remainingAmount
+    : decimal(raw, "Nominal pembayaran", { positive: true });
+  if (requested > remainingAmount + 0.005) {
+    fail(409, "Nominal pembayaran melebihi sisa tagihan.");
+  }
+  return Number(requested.toFixed(2));
 }
 
 async function scanPoPaymentProof({ poId, body, user }) {
   const po = await loadPo(poId, user, { isAdmin: false });
   const code = po.payment_term_code ?? normalizePaymentTerm(po.payment_terms_snapshot);
   if (!code) fail(409, "Syarat pembayaran belum ditetapkan. Hubungi admin CST.");
-  if (po.payment_status === "paid") fail(409, "Pembayaran PO ini sudah berstatus Lunas.");
+
+  const totals = await paymentTotals(po);
+  if (totals.remainingAmount <= 0.005) fail(409, "Pembayaran PO ini sudah Lunas.");
+
   const paylabsState = await getMarketplacePaylabsState(po);
   if (paylabsState.hasPendingPayment) {
     fail(409, "Pembayaran Paylabs masih aktif. Selesaikan atau tunggu transaksi Paylabs berakhir sebelum memakai transfer manual.");
@@ -1292,7 +1420,7 @@ async function scanPoPaymentProof({ poId, body, user }) {
     fail(409, "Bukti pembayaran yang sama sudah pernah diunggah dan tidak boleh digunakan ulang.");
   }
 
-  const expectedAmount = Number(po.grand_total ?? 0);
+  const expectedAmount = requestedPaymentAmount(body, totals.remainingAmount);
   const timeoutMs = 30_000;
   const timeout = new Promise((resolve) => setTimeout(() => resolve(null), timeoutMs));
   const result = await Promise.race([
@@ -1306,6 +1434,9 @@ async function scanPoPaymentProof({ poId, body, user }) {
       confidence: 0,
       matchesExpected: false,
       expectedAmount,
+      totalAmount: totals.totalAmount,
+      paidAmount: totals.receivedAmount,
+      remainingAmount: totals.remainingAmount,
       timedOut: true,
     };
   }
@@ -1315,17 +1446,24 @@ async function scanPoPaymentProof({ poId, body, user }) {
     confidence: result.confidence,
     matchesExpected: Boolean(
       result.extractedAmount != null
-      && Number(result.extractedAmount) === expectedAmount
+      && Math.abs(Number(result.extractedAmount) - expectedAmount) <= 0.005
     ),
     expectedAmount,
+    totalAmount: totals.totalAmount,
+    paidAmount: totals.receivedAmount,
+    remainingAmount: totals.remainingAmount,
     timedOut: false,
   };
 }
+
 async function submitPoPaymentProof({ poId, body, user }) {
   const po = await loadPo(poId, user, { isAdmin: false });
   const code = po.payment_term_code ?? normalizePaymentTerm(po.payment_terms_snapshot);
   if (!code) fail(409, "Syarat pembayaran belum ditetapkan. Hubungi admin CST.");
-  if (po.payment_status === "paid") fail(409, "Pembayaran PO ini sudah berstatus Lunas.");
+
+  const currentTotals = await paymentTotals(po);
+  if (currentTotals.remainingAmount <= 0.005) fail(409, "Pembayaran PO ini sudah Lunas.");
+
   const paylabsState = await getMarketplacePaylabsState(po);
   if (paylabsState.hasPendingPayment) {
     fail(409, "Pembayaran Paylabs masih aktif. Transfer manual diblokir untuk mencegah pembayaran ganda.");
@@ -1336,9 +1474,9 @@ async function submitPoPaymentProof({ poId, body, user }) {
     fail(400, "File bukti pembayaran JPG/PNG wajib diunggah.");
   }
 
+  const expectedAmount = requestedPaymentAmount(body, currentTotals.remainingAmount);
   const fileBuffer = Buffer.from(await file.arrayBuffer());
   const proofSha256 = createHash("sha256").update(fileBuffer).digest("hex");
-  const expectedAmount = Number(po.grand_total ?? 0);
   const timeoutMs = 30_000;
   const timeout = new Promise((resolve) => setTimeout(() => resolve(null), timeoutMs));
   const ocr = await Promise.race([
@@ -1349,16 +1487,20 @@ async function submitPoPaymentProof({ poId, body, user }) {
   if (!ocr?.extractedAmount) {
     fail(422, "Nominal pada bukti belum terbaca. Gunakan foto yang lebih jelas sebelum mengirim bukti pembayaran.");
   }
-  if (Number(ocr.extractedAmount) !== expectedAmount) {
+  if (Math.abs(Number(ocr.extractedAmount) - expectedAmount) > 0.005) {
     fail(
       422,
-      `Nominal bukti ${Number(ocr.extractedAmount).toLocaleString("id-ID")} tidak sama dengan tagihan ${expectedAmount.toLocaleString("id-ID")}.`,
+      `Nominal bukti ${Number(ocr.extractedAmount).toLocaleString("id-ID")} tidak sama dengan nominal pembayaran ${expectedAmount.toLocaleString("id-ID")}.`,
     );
   }
 
   return withTransaction(async (db) => {
     const locked = await loadPo(po.id, user, { client: db, forUpdate: true, isAdmin: false });
-    if (locked.payment_status === "paid") fail(409, "Pembayaran PO ini sudah berstatus Lunas.");
+    const lockedTotals = await paymentTotals(locked, db);
+    if (lockedTotals.remainingAmount <= 0.005) fail(409, "Pembayaran PO ini sudah Lunas.");
+    if (expectedAmount > lockedTotals.remainingAmount + 0.005) {
+      fail(409, "Sisa tagihan berubah. Muat ulang halaman sebelum mengirim bukti pembayaran.");
+    }
 
     const pending = (await db(
       `select id from public.mkt_po_payment_proofs where po_id=$1 and review_status='submitted' limit 1 for update`,
@@ -1436,18 +1578,19 @@ async function submitPoPaymentProof({ poId, body, user }) {
         newValue: {
           proofId: Number(proof.id),
           paymentStatus: "proof_submitted",
+          paymentAmount: expectedAmount,
           ocrAmount: Number(ocr.extractedAmount),
-          expectedAmount,
+          remainingBefore: lockedTotals.remainingAmount,
           ocrMatches: true,
         },
-        description: "Customer mengunggah bukti pembayaran marketplace; nominal OCR cocok dengan tagihan.",
+        description: `Customer mengunggah bukti pembayaran sebesar ${expectedAmount.toLocaleString("id-ID")} untuk verifikasi admin.`,
         key: `po-payment-proof:${locked.id}:${proofSha256}`,
       });
       await notifyAdmins(db, {
         eventKey: `po-payment-proof:${locked.id}:${proofSha256}`,
         type: "po_payment_proof_submitted",
         title: "Bukti pembayaran marketplace",
-        message: `Bukti pembayaran ${locked.po_number} menunggu pemeriksaan dan persetujuan admin.`,
+        message: `Bukti pembayaran ${locked.po_number} sebesar ${expectedAmount.toLocaleString("id-ID")} menunggu pemeriksaan admin.`,
         resourceType: "purchase_order",
         resourceId: Number(locked.id),
         link: `/admin?tab=marketplace-operations&poId=${locked.id}&focus=payment`,
@@ -1455,8 +1598,9 @@ async function submitPoPaymentProof({ poId, body, user }) {
           poId: Number(locked.id),
           proofId: Number(proof.id),
           paymentStatus: "proof_submitted",
+          paymentAmount: expectedAmount,
           ocrAmount: Number(ocr.extractedAmount),
-          expectedAmount,
+          remainingBefore: lockedTotals.remainingAmount,
           ocrMatches: true,
         },
       });
@@ -1469,6 +1613,7 @@ async function submitPoPaymentProof({ poId, body, user }) {
     }
   });
 }
+
 async function reviewPoPayment({ poId, action, body, user }) {
   if (!["verify", "reject"].includes(action)) fail(400, "Aksi pembayaran tidak valid.");
   return withTransaction(async (db) => {
@@ -1488,9 +1633,16 @@ async function reviewPoPayment({ poId, action, body, user }) {
     if (!proof) fail(409, "Tidak ada bukti pembayaran yang sedang menunggu pemeriksaan.");
 
     if (action === "verify") {
-      if (!proof.ocr_matches || Number(proof.ocr_amount) !== Number(po.grand_total)) {
-        fail(409, "Nominal OCR bukti tidak cocok dengan tagihan. Bukti tidak dapat disetujui.");
+      if (!proof.ocr_matches || Math.abs(Number(proof.ocr_amount) - Number(proof.expected_amount)) > 0.005) {
+        fail(409, "Nominal OCR bukti tidak cocok dengan nominal pembayaran yang diajukan.");
       }
+
+      const beforeTotals = await paymentTotals(po, db);
+      const proofAmount = money(proof.ocr_amount);
+      if (proofAmount > beforeTotals.remainingAmount + 0.005) {
+        fail(409, "Nominal bukti melebihi sisa tagihan saat ini. Periksa kemungkinan pembayaran ganda.");
+      }
+
       const reviewer = user?.email ?? user?.name ?? "admin";
       await db(
         `update public.mkt_po_payment_proofs
@@ -1498,30 +1650,49 @@ async function reviewPoPayment({ poId, action, body, user }) {
           where id=$2`,
         [reviewer, proof.id],
       );
+
+      const afterTotals = await paymentTotals(po, db);
+      const fullyPaid = afterTotals.remainingAmount <= 0.005;
+      const paymentStatus = fullyPaid ? "paid" : "partially_paid";
       const updated = (await db(
         `update public.mkt_purchase_orders
-            set payment_status='paid',
-                payment_verified_at=coalesce(payment_verified_at,now()),
-                payment_verified_by=$1,
+            set payment_status=$1,
+                payment_verified_at=case when $1='paid' then coalesce(payment_verified_at,now()) else null end,
+                payment_verified_by=case when $1='paid' then $2 else null end,
                 payment_rejection_reason=null,
                 updated_at=now()
-          where id=$2
+          where id=$3
           returning *`,
-        [reviewer, po.id],
+        [paymentStatus, reviewer, po.id],
       )).rows[0];
+
       await writeActivity(db, {
         poId: po.id,
         user: actor(user, "admin"),
-        action: "po_payment_verified",
-        oldValue: { paymentStatus: po.payment_status },
-        newValue: { paymentStatus: "paid", proofId: Number(proof.id) },
-        description: text(body.notes, "Bukti pembayaran diperiksa admin dan pembayaran diverifikasi lunas."),
+        action: fullyPaid ? "po_payment_verified" : "po_payment_partially_verified",
+        oldValue: { paymentStatus: po.payment_status, paidAmount: beforeTotals.receivedAmount },
+        newValue: {
+          paymentStatus,
+          proofId: Number(proof.id),
+          paymentAmount: proofAmount,
+          paidAmount: afterTotals.receivedAmount,
+          remainingAmount: afterTotals.remainingAmount,
+        },
+        description: fullyPaid
+          ? "Bukti pembayaran diperiksa admin dan pembayaran PO sudah lunas."
+          : `Pembayaran sebagian sebesar ${proofAmount.toLocaleString("id-ID")} disetujui. Sisa tagihan ${afterTotals.remainingAmount.toLocaleString("id-ID")}.`,
         key: `po-payment-verified:${po.id}:${proof.id}`,
       });
       await notifyMarketplaceEvent(db, {
-        eventType: "po_payment_verified",
+        eventType: fullyPaid ? "po_payment_verified" : "po_payment_partially_verified",
         po,
-        payload: { paymentStatus: "paid", proofId: Number(proof.id) },
+        payload: {
+          paymentStatus,
+          proofId: Number(proof.id),
+          paymentAmount: proofAmount,
+          paidAmount: afterTotals.receivedAmount,
+          remainingAmount: afterTotals.remainingAmount,
+        },
         key: `po-payment-verified:${po.id}:${proof.id}`,
       });
       return paymentView(updated, db);
@@ -1536,30 +1707,46 @@ async function reviewPoPayment({ poId, action, body, user }) {
         where id=$3`,
       [reason, reviewer, proof.id],
     );
+
+    const totals = await paymentTotals(po, db);
+    const paymentStatus = totals.receivedAmount > 0.005 ? "partially_paid" : "rejected";
     const updated = (await db(
       `update public.mkt_purchase_orders
-          set payment_status='rejected',
-              payment_rejection_reason=$1,
+          set payment_status=$1,
+              payment_rejection_reason=$2,
               payment_verified_at=null,
               payment_verified_by=null,
               updated_at=now()
-        where id=$2
+        where id=$3
         returning *`,
-      [reason, po.id],
+      [paymentStatus, reason, po.id],
     )).rows[0];
+
     await writeActivity(db, {
       poId: po.id,
       user: actor(user, "admin"),
       action: "po_payment_rejected",
       oldValue: { paymentStatus: po.payment_status },
-      newValue: { paymentStatus: "rejected", proofId: Number(proof.id) },
+      newValue: {
+        paymentStatus,
+        proofId: Number(proof.id),
+        paidAmount: totals.receivedAmount,
+        remainingAmount: totals.remainingAmount,
+        reason,
+      },
       description: reason,
       key: `po-payment-rejected:${po.id}:${proof.id}`,
     });
     await notifyMarketplaceEvent(db, {
       eventType: "po_payment_rejected",
       po,
-      payload: { paymentStatus: "rejected", proofId: Number(proof.id), reason },
+      payload: {
+        paymentStatus,
+        proofId: Number(proof.id),
+        paidAmount: totals.receivedAmount,
+        remainingAmount: totals.remainingAmount,
+        reason,
+      },
       key: `po-payment-rejected:${po.id}:${proof.id}`,
     });
     return paymentView(updated, db);
@@ -1580,8 +1767,11 @@ async function transitionPo({ poId, action, body, request, user, isAdmin }) {
       if (!completed) fail(409, "PO belum memenuhi gate POD dan goods receipt full.");
       return { status: "completed", alreadyProcessed: false };
     }
-    if (target === "closed" && po.payment_status !== "paid") {
-      fail(409, "PO belum dapat ditutup karena pembayaran customer belum lunas.");
+    if (target === "closed") {
+      const totals = await paymentTotals(po, db);
+      if (totals.remainingAmount > 0.005) {
+        fail(409, `PO belum dapat ditutup. Sisa pembayaran customer ${totals.remainingAmount.toLocaleString("id-ID")}.`);
+      }
     }
     const updated = await db(
       `update public.mkt_purchase_orders set status=$1::mkt_po_status,
@@ -1626,6 +1816,7 @@ async function handlePortalOperations({ request, response, pathname, body, user,
       po,
       request,
       requestedMethod: text(body?.paymentMethod),
+      requestedAmount: body?.paymentAmount,
     });
     sendJson(response, 200, { ok: true, data });
     return true;
