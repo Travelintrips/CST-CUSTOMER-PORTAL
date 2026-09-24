@@ -1333,13 +1333,23 @@ async function handleServiceOperations(ctx) {
           [row.id],
         ),
         query(
-          `select id, po_number, status, grand_total, currency_snapshot,
-                  confirmed_at, payment_terms_snapshot, payment_term_code, payment_status,
-                  payment_due_at, payment_proof_path, payment_proof_uploaded_at,
-                  payment_verified_at, payment_rejection_reason, created_at, updated_at
-             from public.mkt_purchase_orders
-            where rfq_id = $1
-            order by id desc
+          `select po.id, po.po_number, po.status, po.grand_total, po.currency_snapshot,
+                  po.confirmed_at, po.payment_terms_snapshot, po.payment_term_code, po.payment_dp_percent,
+                  po.payment_status, po.payment_due_at, po.payment_proof_path, po.payment_proof_uploaded_at,
+                  po.payment_verified_at, po.payment_rejection_reason, po.created_at, po.updated_at,
+                  (
+                    coalesce((select sum(pp.ocr_amount) from public.mkt_po_payment_proofs pp
+                              where pp.po_id=po.id and pp.review_status='approved'),0)
+                    +
+                    coalesce((select sum(p.amount) from public.payments p
+                              where p.ref_kind='purchase'::payment_ref_kind
+                                and p.ref_id=po.id
+                                and p.provider='paylabs'::payment_provider
+                                and p.status='paid'::payment_status),0)
+                  ) as payment_paid_amount
+             from public.mkt_purchase_orders po
+            where po.rfq_id = $1
+            order by po.id desc
             limit 1`,
           [row.id],
         ),
@@ -1403,7 +1413,10 @@ async function handleServiceOperations(ctx) {
           currency: po.currency_snapshot || "IDR",
           paymentTerms: po.payment_terms_snapshot ?? null,
           paymentTermCode: po.payment_term_code ?? null,
+          paymentDpPercent: po.payment_dp_percent == null ? null : Number(po.payment_dp_percent),
           paymentStatus: po.payment_status ?? "unpaid",
+          paymentPaidAmount: Number(po.payment_paid_amount ?? 0),
+          paymentRemainingAmount: Math.max(Number(po.grand_total ?? 0) - Number(po.payment_paid_amount ?? 0), 0),
           paymentDueAt: po.payment_due_at ?? null,
           paymentProofAvailable: Boolean(po.payment_proof_path),
           paymentProofUploadedAt: po.payment_proof_uploaded_at ?? null,
@@ -1446,13 +1459,35 @@ async function handleServiceOperations(ctx) {
             status: po ? "available" : "not_applicable",
             terms: po?.payment_terms_snapshot ?? null,
             termCode: po?.payment_term_code ?? null,
+            dpPercent: po?.payment_dp_percent == null ? null : Number(po.payment_dp_percent),
             paymentStatus: po?.payment_status ?? null,
+            paidAmount: Number(po?.payment_paid_amount ?? 0),
+            remainingAmount: po ? Math.max(Number(po.grand_total ?? 0) - Number(po.payment_paid_amount ?? 0), 0) : 0,
+            requiredBeforeHandoverAmount: po
+              ? po.payment_term_code === "prepaid"
+                ? Number(po.grand_total ?? 0)
+                : po.payment_term_code === "dp_after_receipt"
+                  ? Number(po.grand_total ?? 0) * Number(po.payment_dp_percent ?? 0) / 100
+                  : 0
+              : 0,
+            requiredBeforeHandoverRemaining: po
+              ? Math.max(
+                  (
+                    po.payment_term_code === "prepaid"
+                      ? Number(po.grand_total ?? 0)
+                      : po.payment_term_code === "dp_after_receipt"
+                        ? Number(po.grand_total ?? 0) * Number(po.payment_dp_percent ?? 0) / 100
+                        : 0
+                  ) - Number(po.payment_paid_amount ?? 0),
+                  0,
+                )
+              : 0,
             dueAt: po?.payment_due_at ?? null,
             proofAvailable: Boolean(po?.payment_proof_path),
             proofUploadedAt: po?.payment_proof_uploaded_at ?? null,
             verifiedAt: po?.payment_verified_at ?? null,
             rejectionReason: po?.payment_rejection_reason ?? null,
-            requiresClearanceBeforeHandover: po?.payment_term_code === "prepaid",
+            requiresClearanceBeforeHandover: ["prepaid", "dp_after_receipt"].includes(po?.payment_term_code),
           },
           completion: {
             status: po
