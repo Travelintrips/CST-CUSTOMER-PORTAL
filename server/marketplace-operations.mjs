@@ -734,7 +734,7 @@ async function submitPod({ shipmentId, body, request, user, isAdmin }) {
       [
         shipment.id,
         sequence,
-        text(body.note),
+        text(body.note ?? body.remarks),
         url,
         isAdmin ? "admin" : "customer",
         String(user?.id ?? "system"),
