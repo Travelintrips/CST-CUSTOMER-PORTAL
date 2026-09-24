@@ -28,6 +28,14 @@ type PaylabsForm = {
   prodMerchantId: string;
 };
 
+type PaylabsConfigResponse = PaylabsForm & {
+  _savedMarker?: string;
+  hasSandboxKeys?: boolean;
+  hasProdKeys?: boolean;
+  webhookUrl?: string;
+  updatedAt?: string | null;
+};
+
 type PaymentMethod = {
   code: string;
   label: string;
@@ -74,6 +82,7 @@ export function PayLabsSettingTab() {
   const [paymentMethods, setPaymentMethods] = useState<PaymentMethod[]>([]);
   const [selectedCode, setSelectedCode] = useState<string | null>(null);
   const [SAVED, setSAVED] = useState("");
+  const [configMeta, setConfigMeta] = useState<Pick<PaylabsConfigResponse, "hasSandboxKeys" | "hasProdKeys" | "webhookUrl" | "updatedAt">>({});
 
   const [form, setForm] = useState<PaylabsForm>({
     sandboxMode: true,
@@ -102,7 +111,7 @@ export function PayLabsSettingTab() {
           fetch("/api/payments/paylabs/payment-methods", { credentials: "include" }),
         ]);
         if (cfgRes.ok) {
-          const cfg = await cfgRes.json() as PaylabsForm & { _savedMarker?: string };
+          const cfg = await cfgRes.json() as PaylabsConfigResponse;
           setForm({
             sandboxMode: cfg.sandboxMode ?? true,
             storeId: cfg.storeId ?? "",
@@ -114,6 +123,12 @@ export function PayLabsSettingTab() {
             prodMerchantId: cfg.prodMerchantId ?? "",
           });
           setSAVED(cfg._savedMarker ?? "__SAVED__");
+          setConfigMeta({
+            hasSandboxKeys: cfg.hasSandboxKeys,
+            hasProdKeys: cfg.hasProdKeys,
+            webhookUrl: cfg.webhookUrl,
+            updatedAt: cfg.updatedAt,
+          });
         }
         if (methodsRes.ok) setPaymentMethods(await methodsRes.json() as PaymentMethod[]);
       } catch {
@@ -134,6 +149,13 @@ export function PayLabsSettingTab() {
         body: JSON.stringify(form),
       });
       if (!r.ok) throw new Error(t("adminPayments.saveFailedError", "Gagal menyimpan"));
+      const saved = await r.json().catch(() => ({})) as PaylabsConfigResponse;
+      setConfigMeta({
+        hasSandboxKeys: saved.hasSandboxKeys,
+        hasProdKeys: saved.hasProdKeys,
+        webhookUrl: saved.webhookUrl,
+        updatedAt: saved.updatedAt,
+      });
       toast({ title: t("adminPayments.saved", "Tersimpan"), description: t("adminPayments.savedDesc", "Konfigurasi Paylabs berhasil disimpan.") });
     } catch {
       toast({ title: t("adminPayments.saveError", "Gagal menyimpan"), variant: "destructive" });
@@ -280,6 +302,31 @@ export function PayLabsSettingTab() {
             <Label className="text-sm font-medium">Store ID <span className="text-muted-foreground font-normal">{t("adminPayments.optional", "(opsional)")}</span></Label>
             <Input value={form.storeId} onChange={(e) => set("storeId", e.target.value)} placeholder="(opsional)" />
           </div>
+        </CardContent>
+      </Card>
+
+      <Card className={activeEnv === "sandbox"
+        ? (configMeta.hasSandboxKeys ? "border-emerald-200 bg-emerald-50/40" : "border-amber-200 bg-amber-50/40")
+        : (configMeta.hasProdKeys ? "border-emerald-200 bg-emerald-50/40" : "border-amber-200 bg-amber-50/40")}>
+        <CardContent className="pt-5 space-y-2">
+          <div className="flex items-center gap-2">
+            {(activeEnv === "sandbox" ? configMeta.hasSandboxKeys : configMeta.hasProdKeys)
+              ? <CheckCircle2 className="h-4 w-4 text-emerald-600" />
+              : <Shield className="h-4 w-4 text-amber-600" />}
+            <p className="text-sm font-semibold">
+              {(activeEnv === "sandbox" ? configMeta.hasSandboxKeys : configMeta.hasProdKeys)
+                ? `Paylabs ${activeEnv} siap digunakan`
+                : `Kredensial Paylabs ${activeEnv} belum lengkap`}
+            </p>
+          </div>
+          {configMeta.webhookUrl && (
+            <p className="break-all text-xs text-muted-foreground">
+              Webhook: <span className="font-mono">{configMeta.webhookUrl}</span>
+            </p>
+          )}
+          <p className="text-xs text-muted-foreground">
+            Pembayaran Marketplace hanya akan ditawarkan bila kredensial environment aktif lengkap dan minimal satu metode Paylabs diaktifkan.
+          </p>
         </CardContent>
       </Card>
 
