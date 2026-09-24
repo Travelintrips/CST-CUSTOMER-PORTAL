@@ -411,6 +411,9 @@ async function poDetail(db, poId, { customerView = false } = {}) {
   );
   const isInternalVendor = Boolean(row.is_internal_vendor);
   const redactVendor = customerView && !isInternalVendor;
+  const paymentTotals = await paymentTotalsForPo(db, row);
+  const handoverRequiredAmount = requiredBeforeHandover(row, paymentTotals);
+  const handoverRemaining = Math.max(handoverRequiredAmount - paymentTotals.receivedAmount, 0);
   return {
     id: Number(row.id),
     poNumber: row.po_number,
@@ -430,7 +433,16 @@ async function poDetail(db, poId, { customerView = false } = {}) {
     paymentTermsSnapshot: row.payment_terms_snapshot,
     paymentTermCode: row.payment_term_code ?? normalizePaymentTerm(row.payment_terms_snapshot),
     paymentDpPercent: row.payment_dp_percent == null ? null : Number(row.payment_dp_percent),
-    paymentStatus: row.payment_status ?? "unpaid",
+    paymentStatus: paymentTotals.remainingAmount <= 0.005
+      ? "paid"
+      : paymentTotals.receivedAmount > 0
+        ? "partially_paid"
+        : row.payment_status ?? "unpaid",
+    paymentPaidAmount: paymentTotals.receivedAmount,
+    paymentRemainingAmount: paymentTotals.remainingAmount,
+    paymentRequiredBeforeHandoverAmount: handoverRequiredAmount,
+    paymentRequiredBeforeHandoverRemaining: handoverRemaining,
+    paymentHandoverSatisfied: handoverRemaining <= 0.005,
     paymentDueAt: row.payment_due_at ?? null,
     paymentProofUploadedAt: row.payment_proof_uploaded_at ?? null,
     paymentVerifiedAt: row.payment_verified_at ?? null,
