@@ -150,6 +150,18 @@ export function PayLabsSettingTab() {
       });
       if (!r.ok) throw new Error(t("adminPayments.saveFailedError", "Gagal menyimpan"));
       const saved = await r.json().catch(() => ({})) as PaylabsConfigResponse;
+      const savedMarker = saved._savedMarker ?? SAVED || "__SAVED__";
+      setSAVED(savedMarker);
+      setForm({
+        sandboxMode: saved.sandboxMode ?? form.sandboxMode,
+        storeId: saved.storeId ?? form.storeId,
+        sandboxPublicKey: saved.sandboxPublicKey ?? (saved.hasSandboxKeys ? savedMarker : ""),
+        sandboxPrivateKey: saved.sandboxPrivateKey ?? (saved.hasSandboxKeys ? savedMarker : ""),
+        sandboxMerchantId: saved.sandboxMerchantId ?? form.sandboxMerchantId,
+        prodPublicKey: saved.prodPublicKey ?? (saved.hasProdKeys ? savedMarker : ""),
+        prodPrivateKey: saved.prodPrivateKey ?? (saved.hasProdKeys ? savedMarker : ""),
+        prodMerchantId: saved.prodMerchantId ?? form.prodMerchantId,
+      });
       setConfigMeta({
         hasSandboxKeys: saved.hasSandboxKeys,
         hasProdKeys: saved.hasProdKeys,
