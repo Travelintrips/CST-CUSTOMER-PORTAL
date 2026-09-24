@@ -125,14 +125,9 @@ async function loadConfiguration(client = query) {
 function envCredentialSet(sandbox) {
   if (sandbox) {
     return {
-      merchantId: text(process.env.PAYLABS_MERCHANT_ID_SANDBOX)
-        ?? text(process.env.PAYLABS_MERCHANT_ID),
-      publicKey: normalizePaylabsPem(
-        process.env.PAYLABS_PUBLIC_KEY_SANDBOX ?? process.env.PAYLABS_PUBLIC_KEY ?? "",
-      ),
-      privateKey: normalizePaylabsPem(
-        process.env.PAYLABS_PRIVATE_KEY_SANDBOX ?? process.env.PAYLABS_PRIVATE_KEY ?? "",
-      ),
+      merchantId: text(process.env.PAYLABS_MERCHANT_ID_SANDBOX),
+      publicKey: normalizePaylabsPem(process.env.PAYLABS_PUBLIC_KEY_SANDBOX ?? ""),
+      privateKey: normalizePaylabsPem(process.env.PAYLABS_PRIVATE_KEY_SANDBOX ?? ""),
     };
   }
   return {
@@ -150,7 +145,7 @@ function configuredKey(raw) {
 async function activeCredentials(client = query) {
   const cfg = await loadConfiguration(client);
   const sandboxMode = cfg?.sandbox_mode == null
-    ? process.env.USE_PAYMENT_SANDBOX === "true"
+    ? true
     : Boolean(cfg.sandbox_mode);
   const fallback = envCredentialSet(sandboxMode);
 
@@ -547,7 +542,7 @@ async function adminConfigurationView(request) {
 
   return {
     sandboxMode: cfg?.sandbox_mode == null
-      ? process.env.USE_PAYMENT_SANDBOX === "true"
+      ? true
       : Boolean(cfg.sandbox_mode),
     storeId: cfg?.store_id ?? "",
     sandboxPublicKey: sandboxPublic ? SAVED_MARKER : "",
