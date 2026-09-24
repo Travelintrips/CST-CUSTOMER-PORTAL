@@ -1261,6 +1261,10 @@ async function scanPoPaymentProof({ poId, body, user }) {
   const code = po.payment_term_code ?? normalizePaymentTerm(po.payment_terms_snapshot);
   if (!code) fail(409, "Syarat pembayaran belum ditetapkan. Hubungi admin CST.");
   if (po.payment_status === "paid") fail(409, "Pembayaran PO ini sudah berstatus Lunas.");
+  const paylabsState = await getMarketplacePaylabsState(po);
+  if (paylabsState.hasPendingPayment) {
+    fail(409, "Pembayaran Paylabs masih aktif. Selesaikan atau tunggu transaksi Paylabs berakhir sebelum memakai transfer manual.");
+  }
 
   const pending = (await query(
     `select id from public.mkt_po_payment_proofs where po_id=$1 and review_status='submitted' limit 1`,
@@ -1319,6 +1323,10 @@ async function submitPoPaymentProof({ poId, body, user }) {
   const code = po.payment_term_code ?? normalizePaymentTerm(po.payment_terms_snapshot);
   if (!code) fail(409, "Syarat pembayaran belum ditetapkan. Hubungi admin CST.");
   if (po.payment_status === "paid") fail(409, "Pembayaran PO ini sudah berstatus Lunas.");
+  const paylabsState = await getMarketplacePaylabsState(po);
+  if (paylabsState.hasPendingPayment) {
+    fail(409, "Pembayaran Paylabs masih aktif. Transfer manual diblokir untuk mencegah pembayaran ganda.");
+  }
 
   const file = body?.file;
   if (!file || typeof file.arrayBuffer !== "function") {
