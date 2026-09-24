@@ -141,7 +141,12 @@ type Detail = {
         status: "available" | "not_applicable";
         terms: string | null;
         termCode: string | null;
+        dpPercent: number | null;
         paymentStatus: string | null;
+        paidAmount: number;
+        remainingAmount: number;
+        requiredBeforeHandoverAmount: number;
+        requiredBeforeHandoverRemaining: number;
         dueAt: string | null;
         proofAvailable: boolean;
         proofUploadedAt: string | null;
@@ -236,12 +241,29 @@ function marketplaceFlowGuide(detail: Detail): { owner: string; action: string; 
   if (
     shipmentStatus === "ready_to_ship"
     && payment?.requiresClearanceBeforeHandover
-    && paymentStatus !== "paid"
+    && Number(payment.requiredBeforeHandoverRemaining ?? 0) > 0
   ) {
+    const dp = payment.termCode === "dp_after_receipt";
     return {
       owner: paymentStatus === "proof_submitted" ? "Admin" : "Customer",
-      action: paymentStatus === "proof_submitted" ? "Verifikasi bukti pembayaran" : "Bayar sebelum serah/kirim",
-      description: "PO menggunakan prepayment. Vendor baru dapat menyerahkan/mengirim barang setelah pembayaran diverifikasi Lunas oleh CST.",
+      action: paymentStatus === "proof_submitted"
+        ? "Verifikasi bukti pembayaran"
+        : dp ? "Penuhi DP minimum" : "Lunasi sebelum serah/kirim",
+      description: dp
+        ? `PO menggunakan DP ${payment.dpPercent ?? "—"}%. Masih kurang Rp ${new Intl.NumberFormat("id-ID").format(Number(payment.requiredBeforeHandoverRemaining ?? 0))} sebelum vendor boleh menyerahkan/mengirim barang.`
+        : `PO menggunakan prepayment. Masih kurang Rp ${new Intl.NumberFormat("id-ID").format(Number(payment.requiredBeforeHandoverRemaining ?? 0))} sebelum handover.`,
+    };
+  }
+  if (
+    shipmentStatus === "ready_to_ship"
+    && payment?.termCode === "dp_after_receipt"
+    && Number(payment.requiredBeforeHandoverRemaining ?? 0) <= 0
+    && Number(payment.remainingAmount ?? 0) > 0
+  ) {
+    return {
+      owner: "Vendor",
+      action: "Lanjutkan handover / pengiriman",
+      description: `DP ${payment.dpPercent ?? "—"}% sudah terpenuhi. Vendor boleh melanjutkan fulfillment; sisa Rp ${new Intl.NumberFormat("id-ID").format(Number(payment.remainingAmount ?? 0))} dilunasi customer setelah barang diterima.`,
     };
   }
   if (podAvailable && receiptCount === 0) {
@@ -733,7 +755,7 @@ export function ServiceOperationsTab() {
                         ? `${selected.projection.operations.receipts.count} receipt`
                         : "N/A"],
                       ["Payment", selected.projection.operations.payment?.status === "available"
-                        ? statusLabel(selected.projection.operations.payment.paymentStatus ?? "unpaid")
+                        ? `${statusLabel(selected.projection.operations.payment.paymentStatus ?? "unpaid")} · dibayar Rp ${new Intl.NumberFormat("id-ID").format(Number(selected.projection.operations.payment.paidAmount ?? 0))} · sisa Rp ${new Intl.NumberFormat("id-ID").format(Number(selected.projection.operations.payment.remainingAmount ?? 0))}`
                         : "N/A"],
                       ["Completion", statusLabel(selected.projection.operations.completion.status)],
                     ].map(([label, value]) => (
