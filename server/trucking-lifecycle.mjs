@@ -295,6 +295,24 @@ export async function initializeTruckingLifecycle(client, booking, actor) {
   if (!exists) await appendEvent(client, booking.id, "pending_review", actor, "Booking dibuat dan menunggu review CST.");
 }
 
+
+export async function initializeTruckingLifecycleByBookingNumber(bookingNumber, actor) {
+  const client = await pool.connect();
+  try {
+    await client.query("begin");
+    const booking = await bookingByNumber(bookingNumber, { forUpdate: true, client });
+    if (!booking) fail(404, "Booking trucking tidak ditemukan.");
+    await initializeTruckingLifecycle(client, booking, actor);
+    await client.query("commit");
+    return { ok: true };
+  } catch (error) {
+    try { await client.query("rollback"); } catch {}
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
 export async function customerTruckingOrder({ bookingNumber, user, companyIds }) {
   const booking = await bookingByNumber(bookingNumber);
   if (!booking) fail(404, "Booking trucking tidak ditemukan.");
