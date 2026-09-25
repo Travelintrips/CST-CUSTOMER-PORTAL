@@ -42,7 +42,16 @@ export default function TruckingOrderPage() {
     const d = await r.json().catch(() => ({}));
     if (!r.ok) throw new Error(d.error ?? d.message ?? "Gagal memuat booking.");
     setData(d);
-    if (!amount && d?.totals?.remainingAmount > 0) setAmount(String(d.totals.remainingAmount));
+    if (!amount && d?.totals?.remainingAmount > 0) {
+      const initialRemaining = Math.max(
+        0,
+        Number(d?.totals?.initialRequiredAmount ?? 0) - Number(d?.totals?.receivedAmount ?? 0),
+      );
+      const suggested = d?.status === "waiting_payment" && initialRemaining > 0
+        ? initialRemaining
+        : Number(d.totals.remainingAmount);
+      setAmount(String(suggested));
+    }
     if (!method && d?.paylabs?.activeMethods?.[0]?.code) setMethod(d.paylabs.activeMethods[0].code);
   };
 
@@ -191,6 +200,24 @@ export default function TruckingOrderPage() {
                 <Button className="w-full" variant="outline" disabled={busy || !proof} onClick={uploadProof}><Upload className="h-4 w-4 mr-2" /> Upload Bukti</Button>
                 <p className="text-xs text-slate-400">Bukti transfer akan diverifikasi admin sebelum pembayaran dihitung.</p>
               </div>
+            </div>
+          </div>
+        )}
+
+        {data.payments?.length > 0 && (
+          <div className="rounded-2xl bg-white border border-slate-200 p-5">
+            <h2 className="font-black">Riwayat Pembayaran</h2>
+            <div className="mt-3 space-y-2">
+              {data.payments.map((p: any) => (
+                <div key={p.id} className="flex flex-wrap items-center gap-3 rounded-xl border border-slate-100 p-3 text-sm">
+                  <div className="flex-1">
+                    <p className="font-semibold">{rupiah(p.amount)}</p>
+                    <p className="text-xs text-slate-400">{p.paymentKind} · {p.status}</p>
+                  </div>
+                  {p.proofUrl && <a className="text-xs text-blue-600 underline" href={p.proofUrl} target="_blank">Bukti Bayar</a>}
+                  {p.rejectionReason && <p className="w-full text-xs text-red-600">{p.rejectionReason}</p>}
+                </div>
+              ))}
             </div>
           </div>
         )}
