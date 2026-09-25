@@ -315,6 +315,84 @@ export async function signedMarketplacePodUrl({ poId, shipmentId, path }) {
 }
 
 
+export async function uploadTruckingPaymentProof({ bookingId, file }) {
+  const { mimeType, size } = validateDocumentFile(file);
+  const storage = client();
+  await ensurePrivateBucket(storage);
+  const path = `trucking-payment-proofs/booking-${Number(bookingId)}/${crypto.randomUUID()}-${safeFileName(file.name || `proof.${extensionForMime(mimeType)}`)}`;
+  const { error } = await storage.supabase.storage.from(storage.bucket).upload(
+    path,
+    Buffer.from(await file.arrayBuffer()),
+    { contentType: mimeType, cacheControl: "0", upsert: false },
+  );
+  if (error) {
+    const failure = new Error("Upload bukti pembayaran trucking gagal.");
+    failure.statusCode = 502;
+    throw failure;
+  }
+  return { path, fileName: safeFileName(file.name), mimeType, size };
+}
+
+export async function signedTruckingPaymentProofUrl({ bookingId, path }) {
+  const normalizedPath = String(path || "");
+  const prefix = `trucking-payment-proofs/booking-${Number(bookingId)}/`;
+  if (!normalizedPath.startsWith(prefix)) {
+    const error = new Error("Object path bukti pembayaran trucking tidak valid.");
+    error.statusCode = 404;
+    throw error;
+  }
+  const storage = client();
+  await ensurePrivateBucket(storage);
+  const { data, error } = await storage.supabase.storage
+    .from(storage.bucket)
+    .createSignedUrl(normalizedPath, SIGNED_URL_TTL_SECONDS);
+  if (error || !data?.signedUrl) {
+    const failure = new Error("Signed URL bukti pembayaran trucking tidak tersedia.");
+    failure.statusCode = 502;
+    throw failure;
+  }
+  return data.signedUrl;
+}
+
+export async function uploadTruckingPod({ bookingId, stopId, file }) {
+  const { mimeType, size } = validateDocumentFile(file);
+  const storage = client();
+  await ensurePrivateBucket(storage);
+  const path = `trucking-pod/booking-${Number(bookingId)}/stop-${Number(stopId)}/${crypto.randomUUID()}-${safeFileName(file.name || `pod.${extensionForMime(mimeType)}`)}`;
+  const { error } = await storage.supabase.storage.from(storage.bucket).upload(
+    path,
+    Buffer.from(await file.arrayBuffer()),
+    { contentType: mimeType, cacheControl: "0", upsert: false },
+  );
+  if (error) {
+    const failure = new Error("Upload POD trucking gagal.");
+    failure.statusCode = 502;
+    throw failure;
+  }
+  return { path, fileName: safeFileName(file.name), mimeType, size };
+}
+
+export async function signedTruckingPodUrl({ bookingId, stopId, path }) {
+  const normalizedPath = String(path || "");
+  const prefix = `trucking-pod/booking-${Number(bookingId)}/stop-${Number(stopId)}/`;
+  if (!normalizedPath.startsWith(prefix)) {
+    const error = new Error("Object path POD trucking tidak valid.");
+    error.statusCode = 404;
+    throw error;
+  }
+  const storage = client();
+  await ensurePrivateBucket(storage);
+  const { data, error } = await storage.supabase.storage
+    .from(storage.bucket)
+    .createSignedUrl(normalizedPath, SIGNED_URL_TTL_SECONDS);
+  if (error || !data?.signedUrl) {
+    const failure = new Error("Signed URL POD trucking tidak tersedia.");
+    failure.statusCode = 502;
+    throw failure;
+  }
+  return data.signedUrl;
+}
+
 export async function uploadMarketplacePaymentProof({ poId, file }) {
   const { mimeType, size } = validateDocumentFile(file);
   const storage = client();
