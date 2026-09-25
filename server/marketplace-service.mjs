@@ -88,7 +88,7 @@ async function paymentTotalsForPo(db, po) {
   )).rows[0] ?? {};
   const gateway = (await db(
     `select coalesce(sum(amount),0) as paid_amount
-       from public.payments
+       from public.mkt_gateway_payments
       where ref_kind='purchase'::payment_ref_kind
         and ref_id=$1
         and provider='paylabs'::payment_provider
