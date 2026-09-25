@@ -58,6 +58,45 @@ async function resolvePhone(db, row) {
   return null;
 }
 
+export async function getMarketplaceWhatsAppQueueStats() {
+  const result = await query(
+    `select
+       count(*) filter (where channel='whatsapp' and status='pending')::int as pending,
+       count(*) filter (where channel='whatsapp' and status='sending')::int as sending,
+       count(*) filter (where channel='whatsapp' and status in ('failed','retrying'))::int as retrying,
+       count(*) filter (where channel='whatsapp' and status='exhausted')::int as exhausted,
+       count(*) filter (where channel='whatsapp' and status='sent')::int as sent,
+       count(*) filter (
+         where channel='whatsapp'
+           and status in ('pending','sending','failed','retrying')
+           and created_at < now() - interval '10 minutes'
+       )::int as stuck_over_10m,
+       min(created_at) filter (
+         where channel='whatsapp'
+           and status in ('pending','sending','failed','retrying')
+       ) as oldest_actionable,
+       max(sent_at) filter (where channel='whatsapp' and status='sent') as last_sent_at,
+       max(updated_at) filter (where channel='whatsapp') as last_queue_update_at
+     from public.mkt_notification_queue`,
+  );
+  const row = result.rows[0] ?? {};
+  const configured = Boolean(clean(process.env.FONNTE_TOKEN));
+  const workerEnabled = process.env.CUSTOMER_PORTAL_WA_WORKER_ENABLED !== "false";
+  return {
+    configured,
+    workerEnabled,
+    pending: Number(row.pending ?? 0),
+    sending: Number(row.sending ?? 0),
+    retrying: Number(row.retrying ?? 0),
+    exhausted: Number(row.exhausted ?? 0),
+    sent: Number(row.sent ?? 0),
+    stuckOver10m: Number(row.stuck_over_10m ?? 0),
+    oldestActionable: row.oldest_actionable ?? null,
+    lastSentAt: row.last_sent_at ?? null,
+    lastQueueUpdateAt: row.last_queue_update_at ?? null,
+  };
+}
+
 export async function processMarketplaceWhatsAppQueue({ limit = 20 } = {}) {
   if (!clean(process.env.FONNTE_TOKEN)) {
     return { processed: 0, sent: 0, failed: 0, skipped: "not_configured" };
