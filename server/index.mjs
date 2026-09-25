@@ -1994,6 +1994,29 @@ const TRUCKING_VEHICLE_RATE_KEYS = {
   "truk-trailer": "Trailer 40FT",
 };
 
+function normalizeTruckingDeliveryStops(value) {
+  if (!Array.isArray(value)) return [];
+  if (value.length > 20) {
+    const error = new Error("Maksimal 20 alamat pengantaran tambahan per booking.");
+    error.statusCode = 400;
+    throw error;
+  }
+  return value.map((stop, index) => {
+    const normalized = {
+      area: String(stop?.area ?? "").trim(),
+      address: String(stop?.address ?? "").trim(),
+      pic: String(stop?.pic ?? "").trim(),
+      phone: String(stop?.phone ?? "").trim(),
+    };
+    if (!normalized.area || !normalized.address || !normalized.pic || !normalized.phone) {
+      const error = new Error(`Data pengantaran tambahan ${index + 2} belum lengkap.`);
+      error.statusCode = 400;
+      throw error;
+    }
+    return normalized;
+  });
+}
+
 async function calculateCanonicalTruckingEstimate(body) {
   const vehicleType = String(body.vehicle_type ?? "").trim();
   const canonicalVehicle = TRUCKING_VEHICLE_RATE_KEYS[vehicleType];
