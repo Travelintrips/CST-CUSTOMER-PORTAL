@@ -18,6 +18,33 @@ describe("marketplace audit hardening contract", () => {
     expect(source).toContain("updated_at < now() - interval '10 minutes'");
   });
 
+  it("exposes admin-only WhatsApp queue diagnostics and worker observability", () => {
+    const worker = read("server/whatsapp-service.mjs");
+    const operations = read("server/marketplace-operations.mjs");
+    const server = read("server/index.mjs");
+    expect(worker).toContain("getMarketplaceWhatsAppQueueStats");
+    expect(worker).toContain("stuck_over_10m");
+    expect(operations).toContain("/api/mkt/admin/notification-queue/stats");
+    expect(server).toContain("WhatsApp worker skipped");
+    expect(server).toContain("WhatsApp worker cycle");
+  });
+
+  it("keeps Marketplace payment/security tables server-only", () => {
+    const migration = read("supabase/migrations/20260925110500_harden_marketplace_private_tables.sql");
+    for (const table of [
+      "mkt_gateway_payments",
+      "mkt_notification_queue",
+      "mkt_po_payment_proofs",
+      "paylabs_configurations",
+      "paylabs_payment_methods",
+    ]) {
+      expect(migration).toContain(`alter table if exists public.${table} enable row level security`);
+      expect(migration).toContain(`revoke all on table public.${table} from anon, authenticated`);
+      expect(migration).toContain(`grant all on table public.${table} to service_role`);
+    }
+    expect(migration).toContain("public.payments is intentionally NOT changed");
+  });
+
   it("keeps mkt_notification_queue WhatsApp-only", () => {
     const service = read("server/marketplace-service.mjs");
     const operations = read("server/marketplace-operations.mjs");
