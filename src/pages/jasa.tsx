@@ -55,7 +55,7 @@ interface SubService {
 
 type ResolvedServiceCard = Omit<SubService, "href"> & {
   href: string;
-  master: CanonicalPortalService;
+  master: CanonicalPortalService | null;
 };
 
 interface MainCategory {
@@ -152,7 +152,7 @@ function useServicesRealtime(queryKey: string) {
   useEffect(() => {
     if (!supabase) return;
     const ch1 = supabase.channel("portal-services-jasa-rt")
-      .on("postgres_changes", { event: "*", schema: "public", table: "products" }, handleChange)
+      .on("postgres_changes", { event: "*", schema: "public", table: "service_catalog" }, handleChange)
       .subscribe();
     const ch2 = supabase.channel("portal-services-jasa-catalog-rt")
       .on("postgres_changes", { event: "INSERT", schema: "public", table: "vendor_catalog_items" }, handleCatalogChange)
@@ -259,7 +259,7 @@ export default function Jasa() {
     return () => es.close();
   }, [qc]);
 
-  const { data: marketplaceRaw, isLoading: mktLoading } = useQuery<unknown[]>({
+  const { data: marketplaceRaw, isLoading: mktLoading, isError: marketplaceError } = useQuery<unknown[]>({
     queryKey: ["jasaMarketplace"],
     queryFn: async () => {
       const res = await fetch("/api/portal/marketplace?kind=service");
@@ -269,7 +269,7 @@ export default function Jasa() {
     staleTime: 30_000,
   });
 
-  const { data: servicesRaw, isLoading: svcLoading } = useListPortalServices({
+  const { data: servicesRaw, isLoading: svcLoading, isError: servicesError } = useListPortalServices({
     query: { queryKey: ["listPortalServicesJasa"], staleTime: 0, gcTime: 0, refetchOnWindowFocus: true },
   });
 
@@ -317,14 +317,14 @@ export default function Jasa() {
     const q = searchQuery.trim().toLowerCase();
     const configured = cat.services
       .map((presentation): ResolvedServiceCard | null => {
-        const master = canonicalByCode.get(presentation.serviceCode);
-        if (!master) return null;
+        const master = canonicalByCode.get(presentation.serviceCode) ?? null;
+        if (!master && !presentation.href) return null;
         return {
           ...presentation,
-          title: master.name,
-          desc: master.description ?? presentation.desc,
-          eta: master.estimatedDays ?? "Sesuai kebutuhan",
-          href: presentation.href ?? canonicalServiceTarget(master),
+          title: master?.name ?? presentation.title,
+          desc: master?.description ?? presentation.desc,
+          eta: master?.estimatedDays ?? presentation.eta ?? "Sesuai kebutuhan",
+          href: presentation.href ?? canonicalServiceTarget(master!),
           master,
         };
       })
@@ -348,7 +348,7 @@ export default function Jasa() {
 
     return [...configured, ...automatic].filter((card) => {
       if (!q) return true;
-      const haystack = `${card.title} ${card.desc} ${card.master.category ?? ""} ${card.master.code}`.toLowerCase();
+      const haystack = `${card.title} ${card.desc} ${card.master?.category ?? ""} ${card.master?.code ?? card.serviceCode}`.toLowerCase();
       return haystack.includes(q);
     });
   }
@@ -576,6 +576,12 @@ export default function Jasa() {
               )}
             </div>
 
+            {(servicesError || marketplaceError) && (
+              <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-[12px] text-amber-800">
+                Sebagian data katalog sedang tidak tersedia. Layanan inti CST tetap dapat dipilih; penawaran vendor akan muncul kembali setelah koneksi pulih.
+              </div>
+            )}
+
             {/* ── Category sections ─────────────────────────────────────────── */}
             <div className="space-y-14 mt-10">
               {MAIN_CATEGORIES.map((cat) => {
@@ -633,7 +639,7 @@ export default function Jasa() {
                         const photo = SERVICE_PHOTOS[svc.title];
 
                         return (
-                          <Link key={svc.master.code} href={svc.href}>
+                          <Link key={svc.master?.code ?? svc.serviceCode} href={svc.href}>
                             <div
                               className="group bg-white rounded-2xl overflow-hidden border border-slate-200 cursor-pointer transition-all duration-300 hover:-translate-y-1.5 hover:shadow-2xl hover:border-transparent flex flex-col h-full"
                               style={{ boxShadow: "0 4px 16px rgba(0,0,0,0.06)" }}
