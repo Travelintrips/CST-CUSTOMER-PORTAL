@@ -135,18 +135,18 @@ function resolveVehicleImg(
 type VehicleMetaEntry = { bestFor: string[]; advantages: string[]; deliveryDays: string };
 const VEHICLE_META_I18N: Record<string, Record<string, VehicleMetaEntry>> = {
   "mobil": {
-    "id-ID": { bestFor: ["Pengiriman dalam kota", "Dokumen & paket kecil", "Last-mile delivery"], advantages: ["Lincah di jalanan padat", "Biaya paling ekonomis", "Parkir mudah"], deliveryDays: "Hari ini" },
-    "en-US": { bestFor: ["City deliveries", "Documents & small packages", "Last-mile delivery"], advantages: ["Agile in congested traffic", "Most economical rate", "Easy parking"], deliveryDays: "Today" },
-    "zh-CN": { bestFor: ["城市配送", "文件和小件包裹", "末端配送"], advantages: ["穿行拥堵路段灵活", "最经济实惠", "停车便利"], deliveryDays: "今天" },
-    "fr-FR": { bestFor: ["Livraisons en ville", "Documents & petits colis", "Livraison du dernier kilomètre"], advantages: ["Agile dans les embouteillages", "Tarif le plus économique", "Stationnement facile"], deliveryDays: "Aujourd'hui" },
-    "ar-SA": { bestFor: ["التوصيل داخل المدينة", "الوثائق والطرود الصغيرة", "توصيل الميل الأخير"], advantages: ["رشاقة في الازدحام", "الأكثر اقتصاداً", "سهولة الوقوف"], deliveryDays: "اليوم" },
+    "id-ID": { bestFor: ["Perjalanan dalam kota", "Antar jemput bandara", "Perjalanan bisnis"], advantages: ["Nyaman untuk penumpang", "Lincah di jalan padat", "Parkir lebih mudah"], deliveryDays: "Hari ini" },
+    "en-US": { bestFor: ["City trips", "Airport transfers", "Business travel"], advantages: ["Comfortable for passengers", "Agile in traffic", "Easier parking"], deliveryDays: "Today" },
+    "zh-CN": { bestFor: ["市内出行", "机场接送", "商务出行"], advantages: ["乘坐舒适", "拥堵路段灵活", "停车更方便"], deliveryDays: "今天" },
+    "fr-FR": { bestFor: ["Trajets urbains", "Transferts aéroport", "Déplacements professionnels"], advantages: ["Confortable pour les passagers", "Agile dans le trafic", "Stationnement plus facile"], deliveryDays: "Aujourd'hui" },
+    "ar-SA": { bestFor: ["رحلات داخل المدينة", "توصيل المطار", "رحلات العمل"], advantages: ["مريح للركاب", "مرن في الازدحام", "سهولة أكبر في الوقوف"], deliveryDays: "اليوم" },
   },
   "mobil-xl": {
-    "id-ID": { bestFor: ["Pengiriman medium", "Barang rumah tangga", "FMCG"], advantages: ["Kapasitas lebih dari mobil biasa", "Fleksibel untuk berbagai barang", "Harga terjangkau"], deliveryDays: "Hari ini" },
-    "en-US": { bestFor: ["Medium deliveries", "Household goods", "FMCG"], advantages: ["More capacity than standard car", "Flexible for various goods", "Affordable rate"], deliveryDays: "Today" },
-    "zh-CN": { bestFor: ["中型配送", "家居用品", "快消品"], advantages: ["容量大于普通轿车", "适用于各类货物", "价格实惠"], deliveryDays: "今天" },
-    "fr-FR": { bestFor: ["Livraisons moyennes", "Articles ménagers", "FMCG"], advantages: ["Plus de capacité que la voiture standard", "Flexible pour divers articles", "Tarif abordable"], deliveryDays: "Aujourd'hui" },
-    "ar-SA": { bestFor: ["التوصيل المتوسط", "السلع المنزلية", "السلع الاستهلاكية"], advantages: ["سعة أكبر من السيارة العادية", "مرن لمختلف البضائع", "سعر معقول"], deliveryDays: "اليوم" },
+    "id-ID": { bestFor: ["Perjalanan rombongan kecil", "Antar jemput bandara", "Perjalanan luar kota"], advantages: ["Kabin lebih lega", "Nyaman untuk perjalanan lebih jauh", "Bagasi lebih luas"], deliveryDays: "Hari ini" },
+    "en-US": { bestFor: ["Small-group trips", "Airport transfers", "Inter-city travel"], advantages: ["Roomier cabin", "More comfortable for longer trips", "Larger luggage space"], deliveryDays: "Today" },
+    "zh-CN": { bestFor: ["小团体出行", "机场接送", "城际出行"], advantages: ["车厢更宽敞", "长途更舒适", "行李空间更大"], deliveryDays: "今天" },
+    "fr-FR": { bestFor: ["Petits groupes", "Transferts aéroport", "Trajets interurbains"], advantages: ["Habitacle plus spacieux", "Plus confortable sur longue distance", "Plus de place pour les bagages"], deliveryDays: "Aujourd'hui" },
+    "ar-SA": { bestFor: ["رحلات مجموعات صغيرة", "توصيل المطار", "رحلات بين المدن"], advantages: ["مقصورة أوسع", "راحة أكبر للمسافات الطويلة", "مساحة أكبر للأمتعة"], deliveryDays: "اليوم" },
   },
   "van": {
     "id-ID": { bestFor: ["Barang sensitif & tertutup", "Produk fashion", "Elektronik"], advantages: ["Tertutup & aman dari hujan", "Kapasitas bagasi besar", "Nyaman untuk barang premium"], deliveryDays: "Hari ini" },
@@ -1254,8 +1254,14 @@ export default function TruckingPage() {
                     <Calculator className="h-6 w-6 text-white" />
                   </div>
                   <div>
-                    <h3 className="text-lg font-black text-slate-900">{t("truckingPage.shippingCalc")}</h3>
-                    <p className="text-[12px] text-slate-400 mt-0.5">{t("truckingPage.fillToCalculate")}</p>
+                    <h3 className="text-lg font-black text-slate-900">
+                      {isPassengerVehicle ? "Kalkulator Tarif Perjalanan" : t("truckingPage.shippingCalc")}
+                    </h3>
+                    <p className="text-[12px] text-slate-400 mt-0.5">
+                      {isPassengerVehicle
+                        ? "Isi lokasi penjemputan dan tujuan untuk menghitung estimasi perjalanan."
+                        : t("truckingPage.fillToCalculate")}
+                    </p>
                   </div>
                 </div>
 
@@ -1580,8 +1586,8 @@ export default function TruckingPage() {
                       <div>
                         <p className="text-[13px] font-black text-slate-800">Layanan Mobil Penumpang</p>
                         <p className="mt-1 text-[11px] leading-relaxed text-slate-500">
-                          Tidak memerlukan detail barang, berat, koli, atau volume. Perhitungan fokus pada rute pickup,
-                          tujuan pengantaran, jumlah perjalanan, serta biaya tol dan parkir sesuai biaya aktual.
+                          Cukup tentukan lokasi penjemputan, tujuan, jadwal, dan jumlah perjalanan.
+                          Identitas pemesan menggunakan akun yang sedang login. Tol dan parkir mengikuti biaya aktual.
                         </p>
                       </div>
                     </div>
@@ -1922,7 +1928,7 @@ export default function TruckingPage() {
                 <button type="button" onClick={handleCekOngkir}
                   className="group w-full h-14 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white rounded-2xl font-black text-[15px] flex items-center justify-center gap-2.5 shadow-xl shadow-blue-200/70 transition-all duration-200 hover:scale-[1.02] hover:shadow-2xl hover:shadow-blue-200/50">
                   <Calculator className="h-5 w-5 transition-transform duration-200 group-hover:rotate-12" />
-                  {t("truckingPage.cekOngkir")}
+                  {isPassengerVehicle ? "Cek Tarif Perjalanan" : t("truckingPage.cekOngkir")}
                   <ArrowRight className="h-4 w-4 transition-transform duration-200 group-hover:translate-x-0.5" />
                 </button>
 
@@ -1982,14 +1988,22 @@ export default function TruckingPage() {
               </div>
               <div className="px-6 py-5 space-y-5">
                 <ul className="space-y-3">
-                  {[
-                    { icon: <Truck className="h-3.5 w-3.5" />,   text: t("truckingPage.inclVehicle"),   color: "text-blue-500 bg-blue-50" },
-                    { icon: <Package className="h-3.5 w-3.5" />, text: t("truckingPage.inclCargo"),     color: "text-indigo-500 bg-indigo-50" },
-                    { icon: <Users className="h-3.5 w-3.5" />,   text: t("truckingPage.inclDriver"),    color: "text-violet-500 bg-violet-50" },
-                    { icon: <Fuel className="h-3.5 w-3.5" />,    text: t("truckingPage.inclFuel"),      color: "text-orange-500 bg-orange-50" },
-                    { icon: <Clock className="h-3.5 w-3.5" />,   text: t("truckingPage.inclWait"),      color: "text-teal-500 bg-teal-50" },
-                    { icon: <Shield className="h-3.5 w-3.5" />,  text: t("truckingPage.inclInsurance"), color: "text-emerald-500 bg-emerald-50" },
-                  ].map(({ icon, text, color }) => (
+                  {(isPassengerVehicle
+                    ? [
+                        { icon: <Truck className="h-3.5 w-3.5" />, text: "Mobil sesuai pilihan", color: "text-blue-500 bg-blue-50" },
+                        { icon: <Users className="h-3.5 w-3.5" />, text: "Driver", color: "text-violet-500 bg-violet-50" },
+                        { icon: <Fuel className="h-3.5 w-3.5" />, text: "BBM perjalanan", color: "text-orange-500 bg-orange-50" },
+                        { icon: <Navigation className="h-3.5 w-3.5" />, text: "Rute & tracking perjalanan", color: "text-indigo-500 bg-indigo-50" },
+                        { icon: <Clock className="h-3.5 w-3.5" />, text: "Pickup sesuai jadwal", color: "text-teal-500 bg-teal-50" },
+                      ]
+                    : [
+                        { icon: <Truck className="h-3.5 w-3.5" />,   text: t("truckingPage.inclVehicle"),   color: "text-blue-500 bg-blue-50" },
+                        { icon: <Package className="h-3.5 w-3.5" />, text: t("truckingPage.inclCargo"),     color: "text-indigo-500 bg-indigo-50" },
+                        { icon: <Users className="h-3.5 w-3.5" />,   text: t("truckingPage.inclDriver"),    color: "text-violet-500 bg-violet-50" },
+                        { icon: <Fuel className="h-3.5 w-3.5" />,    text: t("truckingPage.inclFuel"),      color: "text-orange-500 bg-orange-50" },
+                        { icon: <Clock className="h-3.5 w-3.5" />,   text: t("truckingPage.inclWait"),      color: "text-teal-500 bg-teal-50" },
+                        { icon: <Shield className="h-3.5 w-3.5" />,  text: t("truckingPage.inclInsurance"), color: "text-emerald-500 bg-emerald-50" },
+                      ]).map(({ icon, text, color }) => (
                     <li key={text} className="flex items-center gap-3 text-[12.5px] text-slate-600 group">
                       <span className={`h-6 w-6 rounded-lg ${color} flex items-center justify-center shrink-0 transition-transform duration-200 group-hover:scale-110`}>
                         {icon}
@@ -2003,7 +2017,10 @@ export default function TruckingPage() {
                 <div>
                   <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-3">{t("truckingPage.tambahanOpsional")}</p>
                   <ul className="space-y-2">
-                    {["Bantuan Muat / Bongkar", "Ferry / Penyeberangan", "Tol (actual cost)", "Multi-drop", "Urgent Delivery", "Overnight"].map((text) => (
+                    {(isPassengerVehicle
+                      ? ["Tol (actual cost)", "Parkir (actual cost)", "Multi-destination"]
+                      : ["Bantuan Muat / Bongkar", "Ferry / Penyeberangan", "Tol (actual cost)", "Multi-drop", "Urgent Delivery", "Overnight"]
+                    ).map((text) => (
                       <li key={text} className="flex items-center gap-2.5 text-[12px] text-slate-500">
                         <div className="h-4 w-4 rounded-full border-2 border-slate-200 flex items-center justify-center shrink-0">
                           <div className="h-1.5 w-1.5 rounded-full bg-blue-400" />
