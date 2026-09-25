@@ -82,6 +82,14 @@ describe("jasa service hub contract", () => {
     expect(page).toContain("image.src = photo.fallback");
   });
 
+  it("uses stable service codes for service-card images", () => {
+    const page = readFileSync(join(process.cwd(), "src/pages/jasa.tsx"), "utf8");
+    const shared = readFileSync(join(process.cwd(), "src/lib/jasa-shared.ts"), "utf8");
+    expect(page).toContain("SERVICE_PHOTOS[svc.serviceCode] ?? SERVICE_PHOTOS[svc.title]");
+    expect(shared).toContain('trucking:           image("banner-trucking-container.png")');
+    expect(shared).toContain('"Transportasi & Distribusi Domestik": image("banner-trucking-container.png")');
+  });
+
   it("uses stable photo keys for localized bulk-package titles", () => {
     const page = readFileSync(join(process.cwd(), "src/pages/jasa.tsx"), "utf8");
 
