@@ -138,6 +138,22 @@ describe("standalone Customer Portal API boundary", () => {
     expect(server).toContain('isPassengerVehicle ? passengerContactName : String(body.picPenerima)');
   });
 
+  it("uses passenger-specific lifecycle copy after booking", () => {
+    const customer = readFileSync(join(process.cwd(), "src/pages/trucking-order.tsx"), "utf8");
+    const admin = readFileSync(join(process.cwd(), "src/pages/admin-trucking.tsx"), "utf8");
+    const driver = readFileSync(join(process.cwd(), "src/pages/trucking-driver.tsx"), "utf8");
+    expect(customer).toContain("Booking Mobil Penumpang");
+    expect(customer).toContain("Mobil & Driver");
+    expect(customer).toContain("Drop-off selesai");
+    expect(customer).toContain("!isPassenger && stop.podUrl");
+    expect(admin).toContain("Assignment Mobil & Driver");
+    expect(admin).toContain("Tujuan & Drop-off");
+    expect(admin).toContain("!isPassenger && s.podUrl");
+    expect(driver).toContain("DRIVER PERJALANAN");
+    expect(driver).toContain("Penumpang Sudah Dijemput");
+    expect(driver).toContain("Konfirmasi Drop-off Selesai");
+  });
+
   it("implements trucking end-to-end lifecycle inside the standalone portal", () => {
     const server = readFileSync(join(process.cwd(), "server/index.mjs"), "utf8");
     const lifecycle = readFileSync(join(process.cwd(), "server/trucking-lifecycle.mjs"), "utf8");
