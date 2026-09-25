@@ -372,6 +372,7 @@ export default function Jasa() {
     });
   }
 
+  const totalVendorOffers = allItems.length;
   const totalVendorItems = allItems.filter(matchSearch).length;
   const totalCanonicalItems = MAIN_CATEGORIES.reduce((sum, cat) => sum + serviceCardsForCategory(cat).length, 0);
   const totalSearchResults = totalVendorItems + totalCanonicalItems;
@@ -461,7 +462,7 @@ export default function Jasa() {
                 {[
                   { val: String(canonicalServices.length || "—"), label: "Layanan Aktif" },
                   { val: String(MAIN_CATEGORIES.length), label: "Kategori Utama" },
-                  { val: String(totalVendorItems || "—"), label: "Penawaran Vendor" },
+                  { val: String(totalVendorOffers || "—"), label: "Penawaran Vendor" },
                 ].map(({ val, label }, i) => (
                   <div key={i} className="flex items-center gap-4">
                     {i > 0 && <div className="w-px h-8 bg-white/20" />}
