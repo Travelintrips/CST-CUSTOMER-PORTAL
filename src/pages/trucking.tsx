@@ -547,6 +547,7 @@ export default function TruckingPage() {
   const [estimasiData, setEstimasiData]       = useState<EstimasiApiResult | null>(null);
   const [estimasiApiError, setEstimasiApiError] = useState<string | null>(null);
   const [submitting, setSubmitting]           = useState(false);
+  const [bookingRequestKey]                    = useState(() => crypto.randomUUID());
   const [bookingNumber, setBookingNumber]     = useState<string | null>(null);
   const [submitError, setSubmitError]         = useState<string | null>(null);
 
@@ -748,6 +749,7 @@ export default function TruckingPage() {
         headers: { "Content-Type": "application/json" },
         credentials: "include",
         body: JSON.stringify({
+          idempotencyKey:       bookingRequestKey,
           vehicleType:          selectedVehicle.id,
           vehicleName:          selectedVehicle.name,
           areaPickup,
