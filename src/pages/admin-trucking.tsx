@@ -16,6 +16,7 @@ export default function AdminTruckingPage() {
   const [busy, setBusy] = useState(false);
   const [finalPrice, setFinalPrice] = useState("");
   const [dpPercent, setDpPercent] = useState("100");
+  const [paymentDueAt, setPaymentDueAt] = useState("");
   const [driverName, setDriverName] = useState("");
   const [driverPhone, setDriverPhone] = useState("");
   const [vehiclePlate, setVehiclePlate] = useState("");
@@ -34,6 +35,7 @@ export default function AdminTruckingPage() {
       setData(d);
       setFinalPrice(String(d.finalPrice ?? d.estimate ?? ""));
       setDpPercent(String(d.paymentTerms?.type === "dp" ? d.paymentTerms.dp_percent : 100));
+      setPaymentDueAt(d.paymentDueAt ? String(d.paymentDueAt).slice(0,16) : "");
       setDriverName(d.assignment?.driverName ?? "");
       setDriverPhone(d.assignment?.driverPhone ?? "");
       setVehiclePlate(d.assignment?.vehiclePlate ?? "");
@@ -110,7 +112,12 @@ export default function AdminTruckingPage() {
                 <option value="50">DP 50%</option>
                 <option value="30">DP 30%</option>
               </select>
-              <Button disabled={busy} onClick={() => post("review", { finalPrice: Number(finalPrice), paymentTerms: Number(dpPercent) === 100 ? { type: "full" } : { type: "dp", dpPercent: Number(dpPercent) } })}>Kirim Harga ke Customer</Button>
+              <Input type="datetime-local" value={paymentDueAt} onChange={(e) => setPaymentDueAt(e.target.value)} />
+              <Button disabled={busy} onClick={() => post("review", {
+                finalPrice: Number(finalPrice),
+                paymentTerms: Number(dpPercent) === 100 ? { type: "full" } : { type: "dp", dpPercent: Number(dpPercent) },
+                paymentDueAt: paymentDueAt || null,
+              })}>Kirim Harga ke Customer</Button>
             </div>
           </section>
 
@@ -128,7 +135,7 @@ export default function AdminTruckingPage() {
 
         <section className="rounded-2xl bg-white border border-slate-200 p-5">
           <h2 className="font-black">Pembayaran</h2>
-          <div className="mt-2 text-sm">Total {rupiah(data.finalPrice)} · Dibayar {rupiah(data.totals.receivedAmount)} · Sisa {rupiah(data.totals.remainingAmount)}</div>
+          <div className="mt-2 text-sm">Harga dasar {rupiah(data.finalPrice)} · Total tagihan {rupiah(data.totals.totalAmount)} · Dibayar {rupiah(data.totals.receivedAmount)} · Sisa {rupiah(data.totals.remainingAmount)}</div>
           <div className="mt-4 space-y-3">{data.payments.map((p: any) => <div key={p.id} className="rounded-xl border border-slate-200 p-3 flex flex-wrap items-center gap-3"><div className="flex-1"><p className="font-semibold">{rupiah(p.amount)} · {p.status}</p><p className="text-xs text-slate-400">{p.paymentKind}</p></div>{p.proofUrl && <a href={p.proofUrl} target="_blank" className="text-xs text-blue-600 underline">Lihat bukti</a>}{p.status === "submitted" && <><Button size="sm" disabled={busy} onClick={() => reviewPayment(p.id, true)}>Setujui</Button><Button size="sm" variant="outline" disabled={busy} onClick={() => reviewPayment(p.id, false)}>Tolak</Button></>}</div>)}</div>
         </section>
 
