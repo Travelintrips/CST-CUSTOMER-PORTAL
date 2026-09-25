@@ -711,11 +711,15 @@ export function MarketplaceOperationsTab() {
                         </div>
                       );
                     }
-                    if (hasShipment && selectedPo.status === "ready_to_ship" && payment?.requiresClearanceBeforeHandover && payment.paymentStatus !== "paid") {
+                    if (hasShipment && selectedPo.status === "ready_to_ship" && payment?.requiresClearanceBeforeHandover && !payment.handoverPaymentSatisfied) {
                       return (
                         <div className="mt-2">
                           <p className="font-semibold text-indigo-950">{payment.paymentStatus === "proof_submitted" ? "Admin · Verifikasi pembayaran" : "Customer · Lakukan pembayaran"}</p>
-                          <p className="mt-1 text-sm text-indigo-800">Terms mewajibkan lunas sebelum handover. Setelah status pembayaran Lunas, vendor dapat menyerahkan/mengirim barang.</p>
+                          <p className="mt-1 text-sm text-indigo-800">
+                            {payment.paymentTermCode === "dp_after_receipt"
+                              ? `Terms mewajibkan DP minimum sebelum handover. Masih kurang ${fmtMoney(payment.requiredBeforeHandoverRemaining, payment.currency)}.`
+                              : "Terms mewajibkan lunas sebelum handover. Setelah pembayaran terpenuhi, vendor dapat menyerahkan/mengirim barang."}
+                          </p>
                         </div>
                       );
                     }
