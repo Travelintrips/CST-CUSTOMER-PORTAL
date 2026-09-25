@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { useLocation, Link } from "wouter";
+import { useLocation, Link, useSearch } from "wouter";
 import { isAuthenticated } from "@/lib/auth";
 import { useQuery } from "@tanstack/react-query";
 import { Receipt, CreditCard, Clock, CheckCircle2, AlertCircle, ArrowRight, ArrowLeft } from "lucide-react";
@@ -64,6 +64,8 @@ const STATUS_LABEL: Record<string, string> = {
 
 export default function PortalInvoice() {
   const [, setLocation] = useLocation();
+  const search = useSearch();
+  const requestedInvoiceId = Number(new URLSearchParams(search).get("invoice") ?? 0);
   const authed = isAuthenticated();
   const { t, locale } = useLanguage();
   const [selected, setSelected] = useState<InvoiceDetail | null>(null);
@@ -86,6 +88,13 @@ export default function PortalInvoice() {
     enabled: authed,
     staleTime: 60_000,
   });
+
+  useEffect(() => {
+    if (!authed || !Number.isInteger(requestedInvoiceId) || requestedInvoiceId <= 0) return;
+    if (selected?.id === requestedInvoiceId || detailLoading === requestedInvoiceId) return;
+    if (!invoices.some((invoice) => invoice.id === requestedInvoiceId)) return;
+    void openDetail(requestedInvoiceId);
+  }, [authed, requestedInvoiceId, invoices, selected?.id, detailLoading]);
 
   if (!authed) return null;
 
@@ -256,7 +265,7 @@ export default function PortalInvoice() {
               </div>
               <button
                 type="button"
-                onClick={() => { setSelected(null); setPaymentMessage(""); }}
+                onClick={() => { setSelected(null); setPaymentMessage(""); setLocation("/portal-invoice"); }}
                 className="text-sm text-slate-500 hover:text-slate-800"
               >
                 Tutup
