@@ -50,11 +50,76 @@ function ensureConfigured(sendJson, response) {
   return key;
 }
 
-export async function handleGoogleMapsRoute({ request, response, url, sendJson }) {
+async function optimizeDeliveryRoute({ origin, stops, key }) {
+  const remaining = stops.map((stop, index) => ({ ...stop, originalIndex: index }));
+  const ordered = [];
+  let currentOrigin = origin;
+  let totalDistanceMetres = 0;
+  let totalDurationSeconds = 0;
+
+  while (remaining.length > 0) {
+    const params = new URLSearchParams({
+      origins: currentOrigin,
+      destinations: remaining.map((stop) => stop.address).join("|"),
+      key,
+      language: "id",
+      units: "metric",
+      mode: "driving",
+    });
+
+    const data = await fetchGoogleJson(
+      `https://maps.googleapis.com/maps/api/distancematrix/json?${params.toString()}`,
+      10_000,
+    );
+    const elements = data?.rows?.[0]?.elements;
+    if (data?.status !== "OK" || !Array.isArray(elements) || elements.length !== remaining.length) {
+      const error = new Error("Google Distance Matrix tidak dapat menghitung urutan rute.");
+      error.statusCode = 502;
+      throw error;
+    }
+
+    let bestIndex = -1;
+    let bestDistance = Number.POSITIVE_INFINITY;
+    for (let i = 0; i < elements.length; i += 1) {
+      const element = elements[i];
+      const distance = Number(element?.distance?.value);
+      if (element?.status === "OK" && Number.isFinite(distance) && distance < bestDistance) {
+        bestIndex = i;
+        bestDistance = distance;
+      }
+    }
+
+    if (bestIndex < 0) {
+      const error = new Error("Sebagian alamat tidak dapat dihitung oleh Google Maps.");
+      error.statusCode = 422;
+      throw error;
+    }
+
+    const [selected] = remaining.splice(bestIndex, 1);
+    const selectedElement = elements[bestIndex];
+    totalDistanceMetres += Number(selectedElement?.distance?.value) || 0;
+    totalDurationSeconds += Number(selectedElement?.duration?.value) || 0;
+    ordered.push({
+      ...selected,
+      distanceFromPreviousKm: Math.round((bestDistance / 1000) * 10) / 10,
+      durationFromPreviousText: selectedElement?.duration?.text ?? null,
+    });
+    currentOrigin = selected.address;
+  }
+
+  return {
+    orderedStops: ordered,
+    totalDistanceKm: Math.round((totalDistanceMetres / 1000) * 10) / 10,
+    totalDurationSeconds,
+  };
+}
+
+export async function handleGoogleMapsRoute({ request, response, url, sendJson, body = {} }) {
   const { pathname, searchParams } = url;
   if (!pathname.startsWith("/api/places/")) return false;
 
-  if (request.method !== "GET") {
+  const isOptimizeRoute = pathname === "/api/places/optimize-route";
+  if ((!isOptimizeRoute && request.method !== "GET") || (isOptimizeRoute && request.method !== "POST")) {
     sendJson(response, 405, { error: "Method not allowed." });
     return true;
   }
@@ -66,6 +131,41 @@ export async function handleGoogleMapsRoute({ request, response, url, sendJson }
 
   const key = ensureConfigured(sendJson, response);
   if (!key) return true;
+
+  if (pathname === "/api/places/optimize-route") {
+    const origin = String(body?.origin ?? "").trim();
+    const rawStops = Array.isArray(body?.stops) ? body.stops : [];
+    if (!origin || origin.length > 512) {
+      sendJson(response, 400, { error: "Alamat pickup wajib diisi." });
+      return true;
+    }
+    if (rawStops.length < 2 || rawStops.length > 21) {
+      sendJson(response, 400, { error: "Optimasi rute membutuhkan 2 sampai 21 alamat pengantaran." });
+      return true;
+    }
+
+    const stops = rawStops.map((stop, index) => ({
+      id: String(stop?.id ?? index),
+      address: String(stop?.address ?? "").trim(),
+      area: String(stop?.area ?? "").trim(),
+      pic: String(stop?.pic ?? "").trim(),
+      phone: String(stop?.phone ?? "").trim(),
+    }));
+    if (stops.some((stop) => !stop.address || stop.address.length > 512)) {
+      sendJson(response, 400, { error: "Semua alamat pengantaran wajib diisi sebelum optimasi rute." });
+      return true;
+    }
+
+    try {
+      const optimized = await optimizeDeliveryRoute({ origin, stops, key });
+      sendJson(response, 200, optimized, { "Cache-Control": "no-store" });
+    } catch (error) {
+      const status = Number(error?.statusCode) || 502;
+      console.error("[customer-portal-api] route optimization error", error?.message ?? error);
+      sendJson(response, status, { error: error?.message ?? "Gagal mengoptimalkan rute." });
+    }
+    return true;
+  }
 
   if (pathname === "/api/places/autocomplete") {
     const input = (searchParams.get("input") ?? "").trim();
