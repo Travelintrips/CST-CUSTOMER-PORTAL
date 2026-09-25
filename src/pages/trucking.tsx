@@ -227,6 +227,8 @@ function getVehicleMeta(id: string, locale: string): VehicleMetaEntry {
 
 // ─── Data ─────────────────────────────────────────────────────────────────────
 
+const PASSENGER_VEHICLE_IDS = new Set(["mobil", "mobil-xl"]);
+
 const VEHICLES: Vehicle[] = [
   { id: "mobil",          name: "Mobil",         description: "", panjang: 300,  lebar: 130, tinggi: 130, kapasitasKg: 400,   volumeM3: 0.5,  hargaDasar: 250_000,   icon: <TruckSVG size="sm" variant="mobil" /> },
   { id: "mobil-xl",       name: "Mobil XL",      description: "", panjang: 350,  lebar: 150, tinggi: 150, kapasitasKg: 600,   volumeM3: 0.8,  hargaDasar: 350_000,   icon: <TruckSVG size="sm" variant="mobil-xl" /> },
@@ -244,8 +246,8 @@ const VEHICLES: Vehicle[] = [
 
 // ─── Vehicle descriptions (translated object) ─────────────────────────────────
 const VEHICLE_DESCRIPTIONS: Record<string, Record<string, string>> = {
-  "mobil":         { "id-ID": "Cocok untuk pengiriman kecil dalam kota",                           "en-US": "Suitable for small city deliveries",                       "zh-CN": "适合小型城市配送",                              "fr-FR": "Adapté aux petites livraisons en ville",                       "ar-SA": "مناسب للتوصيل الصغير داخل المدينة" },
-  "mobil-xl":      { "id-ID": "Kapasitas lebih besar untuk barang medium",                         "en-US": "Larger capacity for medium-sized items",                   "zh-CN": "更大容量适合中型货物",                           "fr-FR": "Plus grande capacité pour articles de taille moyenne",          "ar-SA": "سعة أكبر للبضائع المتوسطة" },
+  "mobil":         { "id-ID": "Mobil penumpang untuk perjalanan pickup dan pengantaran",            "en-US": "Passenger car for pickup and drop-off trips",               "zh-CN": "用于接送行程的乘用车",                            "fr-FR": "Voiture particulière pour trajets de prise en charge",         "ar-SA": "سيارة ركاب لرحلات الاستلام والتوصيل" },
+  "mobil-xl":      { "id-ID": "Mobil penumpang berukuran lebih besar untuk perjalanan",             "en-US": "Larger passenger car for pickup and drop-off trips",        "zh-CN": "更大型的乘用车用于接送行程",                       "fr-FR": "Voiture particulière plus grande pour les trajets",            "ar-SA": "سيارة ركاب أكبر لرحلات الاستلام والتوصيل" },
   "van":           { "id-ID": "Ideal untuk barang banyak dan tertutup",                            "en-US": "Ideal for large quantities of enclosed goods",             "zh-CN": "适合大量封闭货物",                               "fr-FR": "Idéal pour grandes quantités de marchandises fermées",          "ar-SA": "مثالي لكميات كبيرة من البضائع المغلقة" },
   "pickup-kecil":  { "id-ID": "Bak terbuka, cocok untuk material",                                "en-US": "Open bed, great for building materials",                   "zh-CN": "开放式货床，适合建筑材料",                        "fr-FR": "Plateau ouvert, idéal pour les matériaux de construction",      "ar-SA": "صندوق مفتوح، مناسب لمواد البناء" },
   "box-kecil":     { "id-ID": "Box tertutup untuk barang sensitif",                               "en-US": "Fully enclosed box for sensitive goods",                   "zh-CN": "全封闭厢式适合敏感货物",                          "fr-FR": "Boîte entièrement fermée pour marchandises sensibles",          "ar-SA": "صندوق مغلق تماماً للبضائع الحساسة" },
@@ -298,6 +300,7 @@ const ADDON_LIST = [
   { key: "asuransi",       label: "Asuransi",       labelKey: "truckingPage.addonAsuransiLabel",       price: 100_000, desc: "+Rp 100.000" },
   { key: "ferry",          label: "Ferry / Penyeberangan",  labelKey: "truckingPage.addonFerryLabel",          price: 500_000, desc: "+Rp 500.000" },
   { key: "tol",            label: "Tol (actual cost)",      labelKey: "truckingPage.addonTolLabel",            price: 0,       desc: "Actual cost" },
+  { key: "parkir",         label: "Parkir (actual cost)",   labelKey: "truckingPage.addonParkingLabel",        price: 0,       desc: "Actual cost" },
   { key: "multiDrop",      label: "Multi-drop",             labelKey: "truckingPage.addonMultiDropLabel",      price: 50_000,  desc: "+Rp 50.000/titik" },
   { key: "urgentDelivery", label: "Urgent Delivery",        labelKey: "truckingPage.addonUrgentLabel",         price: 200_000, desc: "+Rp 200.000" },
   { key: "overnight",      label: "Overnight / Sewa Seharian", labelKey: "truckingPage.addonOvernightLabel",   price: 0,       desc: "Harga seharian" },
@@ -344,9 +347,11 @@ function formatRp(n: number) {
 // ─── Sub-components ───────────────────────────────────────────────────────────
 
 function VehicleCard({ v, selected, onClick, imageUrl }: { v: Vehicle; selected: boolean; onClick: () => void; imageUrl?: string }) {
-  const cap = v.kapasitasKg >= 1000
-    ? `${(v.kapasitasKg / 1000).toFixed(0)}t`
-    : `${v.kapasitasKg}kg`;
+  const cap = PASSENGER_VEHICLE_IDS.has(v.id)
+    ? "Penumpang"
+    : v.kapasitasKg >= 1000
+      ? `${(v.kapasitasKg / 1000).toFixed(0)}t`
+      : `${v.kapasitasKg}kg`;
 
   return (
     <button
@@ -472,6 +477,7 @@ export default function TruckingPage() {
   const { t, locale } = useLanguage();
   const [, setLocation] = useLocation();
   const [selectedVehicle, setSelectedVehicle] = useState<Vehicle>(VEHICLES[7]);
+  const isPassengerVehicle = PASSENGER_VEHICLE_IDS.has(selectedVehicle.id);
 
   const { data: vehicleImages = {} } = useQuery<Record<string, string>>({
     queryKey: ["/api/settings/vehicle-images"],
@@ -533,7 +539,7 @@ export default function TruckingPage() {
 
   const [addons, setAddons] = useState<Record<AddonKey, boolean>>({
     bantuanMuat: false, bantuanBongkar: false, asuransi: false,
-    ferry: false, tol: false, multiDrop: false, urgentDelivery: false, overnight: false,
+    ferry: false, tol: false, parkir: false, multiDrop: false, urgentDelivery: false, overnight: false,
   });
 
   const [showEstimasi, setShowEstimasi]       = useState(false);
@@ -694,12 +700,15 @@ export default function TruckingPage() {
           delivery_address:      alamatDel,
           is_different_province: areaPickup !== areaDel,
           is_different_island:   areaPickup !== areaDel,
-          with_loading_helper:   addons.bantuanMuat,
-          with_unloading_helper: addons.bantuanBongkar,
+          with_loading_helper:   isPassengerVehicle ? false : addons.bantuanMuat,
+          with_unloading_helper: isPassengerVehicle ? false : addons.bantuanBongkar,
           extra_drops:           extraDropCount,
           delivery_stops:        normalizedDeliveryStops,
-          overnight_nights:      addons.overnight ? 1 : 0,
-          is_urgent:             addons.urgentDelivery,
+          overnight_nights:      isPassengerVehicle ? 0 : (addons.overnight ? 1 : 0),
+          is_urgent:             isPassengerVehicle ? false : addons.urgentDelivery,
+          is_passenger_vehicle:  isPassengerVehicle,
+          include_toll:          Boolean(addons.tol),
+          include_parking:       Boolean(addons.parkir),
           cargo_value:           0,
           jumlah_trip:           jumlahTrip,
         }),
@@ -752,16 +761,27 @@ export default function TruckingPage() {
           jadwalType,
           tanggalPickup:        jadwalType === "nanti" ? tanggal : undefined,
           jamPickup:            jadwalType === "nanti" ? jam : undefined,
-          jenisBarang:          jenisBarang || undefined,
-          beratKg:              berat ? parseFloat(berat) : undefined,
-          jumlahKoli:           jumlahKoli ? parseInt(jumlahKoli) : undefined,
-          volumeM3:             volume ? parseFloat(volume) : undefined,
+          jenisBarang:          isPassengerVehicle ? undefined : (jenisBarang || undefined),
+          beratKg:              isPassengerVehicle ? undefined : (berat ? parseFloat(berat) : undefined),
+          jumlahKoli:           isPassengerVehicle ? undefined : (jumlahKoli ? parseInt(jumlahKoli) : undefined),
+          volumeM3:             isPassengerVehicle ? undefined : (volume ? parseFloat(volume) : undefined),
           catatan:              catatan || undefined,
           jumlahTrip,
           deliveryStops: normalizedDeliveryStops,
           addons: {
-            ...addons,
-            multiDrop: extraDropCount > 0,
+            ...(isPassengerVehicle
+              ? {
+                  bantuanMuat: false,
+                  bantuanBongkar: false,
+                  asuransi: false,
+                  ferry: false,
+                  tol: Boolean(addons.tol),
+                  parkir: Boolean(addons.parkir),
+                  multiDrop: extraDropCount > 0,
+                  urgentDelivery: false,
+                  overnight: false,
+                }
+              : { ...addons, parkir: false, multiDrop: extraDropCount > 0 }),
             routeOptimization: {
               mode: routeMode,
               optimized: routeMode === "optimized" && isRouteOptimizationCurrent,
@@ -795,18 +815,18 @@ export default function TruckingPage() {
 
   // ── Calculation ─────────────────────────────────────────────────────────────
 
-  const biayaDasar = addons.overnight
+  const biayaDasar = !isPassengerVehicle && addons.overnight
     ? selectedVehicle.hargaDasar * 3
     : selectedVehicle.hargaDasar;
 
   const biayaPerTrip  = biayaDasar * jumlahTrip;
   const biayaTambahan =
-    (addons.bantuanMuat    ? 150_000 : 0) +
-    (addons.bantuanBongkar ? 150_000 : 0) +
-    (addons.asuransi       ? 100_000 : 0) +
-    (addons.ferry          ? 500_000 : 0) +
+    (!isPassengerVehicle && addons.bantuanMuat    ? 150_000 : 0) +
+    (!isPassengerVehicle && addons.bantuanBongkar ? 150_000 : 0) +
+    (!isPassengerVehicle && addons.asuransi       ? 100_000 : 0) +
+    (!isPassengerVehicle && addons.ferry          ? 500_000 : 0) +
     (extraDropCount * 50_000 * jumlahTrip) +
-    (addons.urgentDelivery ? 200_000 : 0);
+    (!isPassengerVehicle && addons.urgentDelivery ? 200_000 : 0);
 
   const totalEstimasi = biayaPerTrip + biayaTambahan;
 
@@ -816,16 +836,22 @@ export default function TruckingPage() {
 
   // ── Spec items ──────────────────────────────────────────────────────────────
   const sl = SPEC_LABELS[locale] ?? SPEC_LABELS["en-US"];
-  const specs = [
-    { label: sl.panjang,   value: `${selectedVehicle.panjang} cm`,  icon: <Ruler className="h-4 w-4" />,  color: "bg-blue-50 text-blue-500" },
-    { label: sl.lebar,     value: `${selectedVehicle.lebar} cm`,    icon: <Ruler className="h-4 w-4" />,  color: "bg-violet-50 text-violet-500" },
-    { label: sl.tinggi,    value: `${selectedVehicle.tinggi} cm`,   icon: <Ruler className="h-4 w-4" />,  color: "bg-indigo-50 text-indigo-500" },
-    { label: sl.kapasitas, value: selectedVehicle.kapasitasKg >= 1000
-        ? `${(selectedVehicle.kapasitasKg / 1000).toFixed(1)} ton`
-        : `${selectedVehicle.kapasitasKg.toLocaleString("id-ID")} kg`,
-      icon: <Weight className="h-4 w-4" />, color: "bg-emerald-50 text-emerald-500" },
-    { label: sl.volume,    value: `${selectedVehicle.volumeM3} m³`, icon: <Boxes className="h-4 w-4" />, color: "bg-amber-50 text-amber-500" },
-  ];
+  const specs = isPassengerVehicle
+    ? [
+        { label: "Jenis Layanan", value: "Mobil Penumpang", icon: <Users className="h-4 w-4" />, color: "bg-blue-50 text-blue-500" },
+        { label: sl.panjang, value: `${selectedVehicle.panjang} cm`, icon: <Ruler className="h-4 w-4" />, color: "bg-violet-50 text-violet-500" },
+        { label: sl.lebar, value: `${selectedVehicle.lebar} cm`, icon: <Ruler className="h-4 w-4" />, color: "bg-indigo-50 text-indigo-500" },
+      ]
+    : [
+        { label: sl.panjang,   value: `${selectedVehicle.panjang} cm`,  icon: <Ruler className="h-4 w-4" />,  color: "bg-blue-50 text-blue-500" },
+        { label: sl.lebar,     value: `${selectedVehicle.lebar} cm`,    icon: <Ruler className="h-4 w-4" />,  color: "bg-violet-50 text-violet-500" },
+        { label: sl.tinggi,    value: `${selectedVehicle.tinggi} cm`,   icon: <Ruler className="h-4 w-4" />,  color: "bg-indigo-50 text-indigo-500" },
+        { label: sl.kapasitas, value: selectedVehicle.kapasitasKg >= 1000
+            ? `${(selectedVehicle.kapasitasKg / 1000).toFixed(1)} ton`
+            : `${selectedVehicle.kapasitasKg.toLocaleString("id-ID")} kg`,
+          icon: <Weight className="h-4 w-4" />, color: "bg-emerald-50 text-emerald-500" },
+        { label: sl.volume,    value: `${selectedVehicle.volumeM3} m³`, icon: <Boxes className="h-4 w-4" />, color: "bg-amber-50 text-amber-500" },
+      ];
 
   // ─────────────────────────────────────────────────────────────────────────────
 
@@ -1497,8 +1523,8 @@ export default function TruckingPage() {
                   </div>
                 </div>
 
-                {/* 4. Detail Barang */}
-                <div>
+                {/* 4. Detail Barang - hanya kendaraan barang */}
+                {!isPassengerVehicle && <div>
                   <SectionTitle icon={<Boxes className="h-4 w-4" />}>{t("truckingPage.itemDetail")}</SectionTitle>
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                     <FormField label={t("truckingPage.itemType")} required>
@@ -1525,7 +1551,22 @@ export default function TruckingPage() {
                       </FormField>
                     </div>
                   </div>
-                </div>
+                </div>}
+
+                {isPassengerVehicle && (
+                  <div className="rounded-2xl border border-blue-100 bg-blue-50/40 p-4">
+                    <div className="flex items-start gap-3">
+                      <Users className="mt-0.5 h-5 w-5 text-blue-600" />
+                      <div>
+                        <p className="text-[13px] font-black text-slate-800">Layanan Mobil Penumpang</p>
+                        <p className="mt-1 text-[11px] leading-relaxed text-slate-500">
+                          Tidak memerlukan detail barang, berat, koli, atau volume. Perhitungan fokus pada rute pickup,
+                          tujuan pengantaran, jumlah perjalanan, serta biaya tol dan parkir sesuai biaya aktual.
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                )}
 
                 {/* 5. Jumlah Trip */}
                 <div>
@@ -1543,7 +1584,11 @@ export default function TruckingPage() {
                 <div>
                   <SectionTitle icon={<CheckCircle2 className="h-4 w-4" />}>{t("truckingPage.addons")}</SectionTitle>
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                    {ADDON_LIST.filter(({ key }) => key !== "multiDrop").map(({ key, labelKey, desc }) => (
+                    {ADDON_LIST.filter(({ key }) => {
+                      if (key === "multiDrop") return false;
+                      if (isPassengerVehicle) return key === "tol" || key === "parkir";
+                      return key !== "parkir";
+                    }).map(({ key, labelKey, desc, label }) => (
                       <label key={key}
                         className={cn(
                           "flex items-center justify-between gap-3 border-2 rounded-2xl px-4 py-3 cursor-pointer transition-all duration-200",
@@ -1557,7 +1602,9 @@ export default function TruckingPage() {
                             onCheckedChange={() => toggleAddon(key)}
                             className="border-slate-300 data-[state=checked]:bg-blue-600 data-[state=checked]:border-blue-600"
                           />
-                          <span className="text-[13px] font-semibold text-slate-700">{t(labelKey)}</span>
+                          <span className="text-[13px] font-semibold text-slate-700">
+                            {key === "parkir" ? label : t(labelKey)}
+                          </span>
                         </div>
                         <span className={cn(
                           "text-[11px] font-semibold shrink-0",
@@ -1568,7 +1615,9 @@ export default function TruckingPage() {
                   </div>
                   <div className="flex items-center gap-2 mt-3 text-[11px] text-slate-400">
                     <Info className="h-3.5 w-3.5 shrink-0" />
-                    {t("truckingPage.addonsNote")}
+                    {isPassengerVehicle
+                      ? "Tol dan parkir mengikuti biaya aktual perjalanan dan tidak dimasukkan sebagai nominal tetap di estimasi awal."
+                      : t("truckingPage.addonsNote")}
                   </div>
                 </div>
 
@@ -1663,14 +1712,25 @@ export default function TruckingPage() {
                             {e.surcharge_breakdown.inter_island > 0 && (
                               <BRow label={t("truckingPage.rowSurchargePulau")} value={formatRp(e.surcharge_breakdown.inter_island)} />
                             )}
-                            <BRow label={t("truckingPage.rowBiayaMuat")}    value={formatRp(e.extras_breakdown.loading_helper)}   dim={e.extras_breakdown.loading_helper === 0} />
-                            <BRow label={t("truckingPage.rowBiayaBongkar")} value={formatRp(e.extras_breakdown.unloading_helper)} dim={e.extras_breakdown.unloading_helper === 0} />
-                            <BRow label={t("truckingPage.rowFerry")}         value={formatRp(e.extras_breakdown.ferry)}            dim={e.extras_breakdown.ferry === 0} />
-                            <BRow label={t("truckingPage.rowTol")}           value={e.extras_breakdown.toll > 0 ? formatRp(e.extras_breakdown.toll) : t("truckingPage.tolActualCost")} dim={e.extras_breakdown.toll === 0} />
-                            <BRow label={t("truckingPage.rowMultidrop")}    value={formatRp(e.extras_breakdown.multidrop)}  dim={e.extras_breakdown.multidrop === 0} />
-                            <BRow label={t("truckingPage.rowOvernight")}     value={formatRp(e.extras_breakdown.overnight)}  dim={e.extras_breakdown.overnight === 0} />
-                            <BRow label={t("truckingPage.rowAsuransi")}      value={e.extras_breakdown.insurance > 0 ? formatRp(e.extras_breakdown.insurance) : "—"} dim={e.extras_breakdown.insurance === 0} />
-                            <BRow label={t("truckingPage.rowUrgent")}        value={formatRp(e.extras_breakdown.urgent)}     dim={e.extras_breakdown.urgent === 0} />
+                            {!isPassengerVehicle && (
+                              <>
+                                <BRow label={t("truckingPage.rowBiayaMuat")}    value={formatRp(e.extras_breakdown.loading_helper)}   dim={e.extras_breakdown.loading_helper === 0} />
+                                <BRow label={t("truckingPage.rowBiayaBongkar")} value={formatRp(e.extras_breakdown.unloading_helper)} dim={e.extras_breakdown.unloading_helper === 0} />
+                                <BRow label={t("truckingPage.rowFerry")}         value={formatRp(e.extras_breakdown.ferry)}            dim={e.extras_breakdown.ferry === 0} />
+                              </>
+                            )}
+                            <BRow label={t("truckingPage.rowTol")} value={addons.tol ? t("truckingPage.tolActualCost") : "—"} dim={!addons.tol} />
+                            {isPassengerVehicle && (
+                              <BRow label="Parkir" value={addons.parkir ? "Actual cost" : "—"} dim={!addons.parkir} />
+                            )}
+                            <BRow label={t("truckingPage.rowMultidrop")} value={formatRp(e.extras_breakdown.multidrop)} dim={e.extras_breakdown.multidrop === 0} />
+                            {!isPassengerVehicle && (
+                              <>
+                                <BRow label={t("truckingPage.rowOvernight")} value={formatRp(e.extras_breakdown.overnight)} dim={e.extras_breakdown.overnight === 0} />
+                                <BRow label={t("truckingPage.rowAsuransi")} value={e.extras_breakdown.insurance > 0 ? formatRp(e.extras_breakdown.insurance) : "—"} dim={e.extras_breakdown.insurance === 0} />
+                                <BRow label={t("truckingPage.rowUrgent")} value={formatRp(e.extras_breakdown.urgent)} dim={e.extras_breakdown.urgent === 0} />
+                              </>
+                            )}
                           </div>
                           <div className="border-t-2 border-blue-200 pt-4 flex items-end justify-between">
                             <p className="text-[12px] text-slate-500 font-bold">{t("truckingPage.totalEstimasi")}</p>

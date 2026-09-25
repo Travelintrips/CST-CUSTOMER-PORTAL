@@ -1980,6 +1980,8 @@ async function getOwnedLogisticOrder(user, orderNumber) {
   return result.rows[0] ?? null;
 }
 
+const PASSENGER_TRUCKING_VEHICLE_IDS = new Set(["mobil", "mobil-xl"]);
+
 const TRUCKING_VEHICLE_RATE_KEYS = {
   mobil: "pickup",
   "mobil-xl": "pickup",
@@ -2048,9 +2050,12 @@ async function calculateCanonicalTruckingEstimate(body) {
     throw error;
   }
   const tripCount = Math.max(1, Math.min(100, Math.trunc(Number(body.jumlah_trip) || 1)));
-  const loading = body.with_loading_helper ? Number(rates.get("loadingFee") ?? 0) : 0;
-  const unloading = body.with_unloading_helper ? Number(rates.get("unloadingFee") ?? 0) : 0;
-  const overnight = Math.max(0, Number(body.overnight_nights) || 0) * Number(rates.get("overnightFee") ?? 0);
+  const isPassengerVehicle = PASSENGER_TRUCKING_VEHICLE_IDS.has(vehicleType);
+  const loading = !isPassengerVehicle && body.with_loading_helper ? Number(rates.get("loadingFee") ?? 0) : 0;
+  const unloading = !isPassengerVehicle && body.with_unloading_helper ? Number(rates.get("unloadingFee") ?? 0) : 0;
+  const overnight = !isPassengerVehicle
+    ? Math.max(0, Number(body.overnight_nights) || 0) * Number(rates.get("overnightFee") ?? 0)
+    : 0;
   const extraDrops = Math.max(0, Math.min(20, Math.trunc(Number(body.extra_drops) || 0)));
   const multidropFeePerDrop = Number(
     rates.get("multidropFeePerDrop")
@@ -2068,6 +2073,7 @@ async function calculateCanonicalTruckingEstimate(body) {
       loading_helper: loading,
       unloading_helper: unloading,
       toll: 0,
+      parking: 0,
       ferry: 0,
       waiting: 0,
       multidrop: multidropPerTrip * tripCount,
@@ -2075,6 +2081,11 @@ async function calculateCanonicalTruckingEstimate(body) {
       urgent: 0,
       insurance: 0,
       total: (loading + unloading + overnight + multidropPerTrip) * tripCount,
+    },
+    service_mode: isPassengerVehicle ? "passenger" : "cargo",
+    actual_costs: {
+      toll: Boolean(body.include_toll),
+      parking: Boolean(body.include_parking),
     },
     extra_drops: extraDrops,
     multidrop_fee_per_drop: multidropFeePerDrop,
@@ -2098,17 +2109,37 @@ async function handleTruckingBooking(request, response, user, body) {
   }
   const tripCount = Math.max(1, Math.min(100, Math.trunc(Number(body.jumlahTrip) || 1)));
   const deliveryStops = normalizeTruckingDeliveryStops(body.deliveryStops);
+  const isPassengerVehicle = PASSENGER_TRUCKING_VEHICLE_IDS.has(String(body.vehicleType));
   const addons = body.addons && typeof body.addons === "object" ? body.addons : {};
-  const storedAddons = {
-    ...addons,
-    multiDrop: deliveryStops.length > 0,
-    deliveryStops,
-  };
+  const storedAddons = isPassengerVehicle
+    ? {
+        bantuanMuat: false,
+        bantuanBongkar: false,
+        asuransi: false,
+        ferry: false,
+        tol: Boolean(addons.tol),
+        parkir: Boolean(addons.parkir),
+        multiDrop: deliveryStops.length > 0,
+        urgentDelivery: false,
+        overnight: false,
+        deliveryStops,
+        routeOptimization: addons.routeOptimization ?? null,
+        serviceMode: "passenger",
+      }
+    : {
+        ...addons,
+        parkir: false,
+        multiDrop: deliveryStops.length > 0,
+        deliveryStops,
+        serviceMode: "cargo",
+      };
   const canonicalPricing = await calculateCanonicalTruckingEstimate({
     vehicle_type: body.vehicleType,
-    with_loading_helper: Boolean(addons.bantuanMuat),
-    with_unloading_helper: Boolean(addons.bantuanBongkar),
-    overnight_nights: addons.overnight ? 1 : 0,
+    with_loading_helper: !isPassengerVehicle && Boolean(addons.bantuanMuat),
+    with_unloading_helper: !isPassengerVehicle && Boolean(addons.bantuanBongkar),
+    overnight_nights: !isPassengerVehicle && addons.overnight ? 1 : 0,
+    include_toll: Boolean(addons.tol),
+    include_parking: isPassengerVehicle && Boolean(addons.parkir),
     extra_drops: deliveryStops.length,
     jumlah_trip: tripCount,
   });
@@ -2132,7 +2163,10 @@ async function handleTruckingBooking(request, response, user, body) {
       String(body.areaPickup), String(body.alamatPickup), String(body.picPickup), String(body.hpPickup),
       String(body.areaDelivery), String(body.alamatDelivery), String(body.picPenerima), String(body.hpPenerima),
       body.jadwalType === "nanti" ? "nanti" : "sekarang", body.tanggalPickup ?? null, body.jamPickup ?? null,
-      body.jenisBarang ?? null, body.beratKg ?? null, body.jumlahKoli ?? null, body.volumeM3 ?? null,
+      isPassengerVehicle ? null : (body.jenisBarang ?? null),
+      isPassengerVehicle ? null : (body.beratKg ?? null),
+      isPassengerVehicle ? null : (body.jumlahKoli ?? null),
+      isPassengerVehicle ? null : (body.volumeM3 ?? null),
       body.catatan ?? null, tripCount,
       JSON.stringify(storedAddons), canonicalEstimate.total_estimate,
       canonicalEstimate.distance_km ?? null, canonicalEstimate.total_estimate,

@@ -98,6 +98,19 @@ describe("standalone Customer Portal API boundary", () => {
     expect(preview).toContain("waypointQuery");
   });
 
+  it("separates passenger-car and cargo trucking calculator flows", () => {
+    const page = readFileSync(join(process.cwd(), "src/pages/trucking.tsx"), "utf8");
+    const server = readFileSync(join(process.cwd(), "server/index.mjs"), "utf8");
+    expect(page).toContain('PASSENGER_VEHICLE_IDS = new Set(["mobil", "mobil-xl"])');
+    expect(page).toContain("Layanan Mobil Penumpang");
+    expect(page).toContain('key === "tol" || key === "parkir"');
+    expect(page).toContain("isPassengerVehicle ? undefined");
+    expect(server).toContain('PASSENGER_TRUCKING_VEHICLE_IDS = new Set(["mobil", "mobil-xl"])');
+    expect(server).toContain('serviceMode: "passenger"');
+    expect(server).toContain("include_parking");
+    expect(server).toContain("isPassengerVehicle ? null : (body.beratKg ?? null)");
+  });
+
   it("keeps trucking booking writes on the standalone Customer Portal API", () => {
     const page = readFileSync(join(process.cwd(), "src/pages/trucking.tsx"), "utf8");
     const server = readFileSync(join(process.cwd(), "server/index.mjs"), "utf8");
