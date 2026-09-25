@@ -9,7 +9,7 @@ import {
   Phone, User, AlarmClock, Boxes, Send, Loader2,
   PartyPopper, Star, Navigation, Headphones, BadgeCheck,
   Timer, MessageCircle, Weight, Ruler, Zap, Award,
-  ArrowRight, TrendingUp, Globe, Lock,
+  ArrowRight, TrendingUp, Globe, Lock, CircleParking,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
