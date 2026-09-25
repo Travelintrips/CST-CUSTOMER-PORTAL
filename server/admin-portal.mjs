@@ -1151,7 +1151,8 @@ async function loadServiceRows() {
   const mapped = [
     ...rfqs.rows.map((row) => ({ service_key: "marketplace", service_label: SERVICE_LABELS.marketplace, id: Number(row.id), reference: row.rfq_number ?? `RFQ-${row.id}`, status: row.status ?? row.approval_status ?? "submitted", status_known: Boolean(row.status ?? row.approval_status), company_id: row.company_id, portal_customer_id: row.portal_customer_id, created_at: row.created_at, updated_at: row.updated_at ?? row.created_at, summary: row.delivery_address ?? row.notes ?? "", management_path: `/admin?tab=service-operations`, available_actions: actionList(row), record: row, ...customerFields(row) })),
     ...logistic.rows.map((row) => {
-      const baseActions = actionList({ ...row, status: row.operational_status ?? row.admin_approval_status ?? row.status });
+      const baseActions = actionList({ ...row, status: row.operational_status ?? row.admin_approval_status ?? row.status })
+        .filter((action) => action !== "approve");
       const quoteActions = !["approved","rejected","cancelled","completed"].includes(String(row.customer_quote_status ?? "").toLowerCase())
         ? ["send_quote"]
         : [];
