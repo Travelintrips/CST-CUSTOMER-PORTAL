@@ -615,8 +615,8 @@ export default function TruckingPage() {
       setRouteOptimizationError("Tambahkan minimal satu alamat pengantaran tambahan untuk optimasi rute.");
       return;
     }
-    if (allStops.some((stop) => !stop.area || !stop.address || !stop.pic || !stop.phone)) {
-      setRouteOptimizationError("Lengkapi seluruh alamat, area, PIC, dan nomor HP sebelum optimasi rute.");
+    if (allStops.some((stop) => !stop.address)) {
+      setRouteOptimizationError("Lengkapi seluruh alamat pengantaran sebelum optimasi rute.");
       return;
     }
 
@@ -1447,7 +1447,16 @@ export default function TruckingPage() {
 
                 {/* Mini Map */}
                 {(alamatPickup || alamatDel) && (
-                  <RouteMapPreview origin={alamatPickup} destination={alamatDel} />
+                  <RouteMapPreview
+                    origin={alamatPickup}
+                    destination={currentOrderedAddresses.at(-1) ?? alamatDel}
+                    waypoints={currentOrderedAddresses.slice(0, -1)}
+                    distanceKmOverride={
+                      routeMode === "optimized" && isRouteOptimizationCurrent
+                        ? routeSummary?.totalDistanceKm ?? null
+                        : null
+                    }
+                  />
                 )}
 
                 {/* 3. Jadwal */}
