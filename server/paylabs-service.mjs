@@ -564,7 +564,11 @@ async function truckingPaymentTotals(booking, client = query) {
         and status='paid'::payment_status`,
     [booking.id],
   )).rows[0] ?? {};
-  const totalAmount = Number(booking.final_price ?? booking.estimasi_total ?? 0);
+  const quotedAmount = Number(booking.final_price ?? booking.estimasi_total ?? 0);
+  const actualCosts = Number(booking.actual_toll ?? 0)
+    + Number(booking.actual_parking ?? 0)
+    + Number(booking.actual_extra_cost ?? 0);
+  const totalAmount = quotedAmount + actualCosts;
   const receivedAmount = Number(manual.paid_amount ?? 0) + Number(gateway.paid_amount ?? 0);
   return {
     totalAmount,
@@ -1193,12 +1197,20 @@ export async function handlePaylabsWebhook({ request, response, body, rawBodyTex
       const paymentStatus = totals.remainingAmount <= 0.005 ? "paid" : "partially_paid";
       let nextStatus = booking.status;
       if (booking.status === "waiting_payment" && totals.receivedAmount + 0.005 >= initialRequired) nextStatus = "confirmed";
-      if (["delivered","balance_due"].includes(booking.status) && totals.remainingAmount <= 0.005) nextStatus = "completed";
+      if (["delivered","balance_due","completed"].includes(booking.status) && totals.remainingAmount > 0.005) nextStatus = "balance_due";
+      if (
+        (booking.delivered_at || ["delivered","balance_due","completed"].includes(booking.status))
+        && totals.remainingAmount <= 0.005
+      ) nextStatus = "completed";
       await client.query(
         `update public.trucking_booking_requests
           set paid_amount=$2,remaining_amount=$3,payment_status=$4,status=$5,
               confirmed_at=case when $5='confirmed' then coalesce(confirmed_at,now()) else confirmed_at end,
-              completed_at=case when $5='completed' then coalesce(completed_at,now()) else completed_at end,
+              completed_at=case
+                when $5='completed' then coalesce(completed_at,now())
+                when $5='balance_due' then null
+                else completed_at
+              end,
               updated_at=now()
           where id=$1`,
         [booking.id, totals.receivedAmount, totals.remainingAmount, paymentStatus, nextStatus],
