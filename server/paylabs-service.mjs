@@ -3,6 +3,7 @@ import { pool, query } from "./db.mjs";
 import {
   buildPaylabsSignaturePayload,
   formatPaylabsTimestamp,
+  isPaylabsTimestampFresh,
   isTrustedPaylabsPaymentUrl,
   normalizePaylabsPem,
   resolvePaylabsWebhookStatus,
@@ -184,7 +185,7 @@ function serializePayment(row) {
 async function latestMarketplacePayment(poId, client = query) {
   const result = await client(
     `select *
-       from public.payments
+       from public.mkt_gateway_payments
       where ref_kind='purchase'::payment_ref_kind
         and ref_id=$1
         and provider='paylabs'::payment_provider
@@ -207,7 +208,7 @@ async function marketplacePaymentTotals(po, client = query) {
   )).rows[0] ?? {};
   const gateway = (await run(
     `select coalesce(sum(amount),0) as paid_amount
-       from public.payments
+       from public.mkt_gateway_payments
       where ref_kind='purchase'::payment_ref_kind
         and ref_id=$1
         and provider='paylabs'::payment_provider
@@ -326,7 +327,7 @@ export async function createMarketplacePaylabsLink({ po, request, requestedMetho
     const paymentAmount = Number(parsedRequested.toFixed(2));
 
     await client.query(
-      `update public.payments
+      `update public.mkt_gateway_payments
           set status='expired'::payment_status, updated_at=now()
         where ref_kind='purchase'::payment_ref_kind
           and ref_id=$1
@@ -338,7 +339,7 @@ export async function createMarketplacePaylabsLink({ po, request, requestedMetho
 
     const existing = (await client.query(
       `select *
-         from public.payments
+         from public.mkt_gateway_payments
         where ref_kind='purchase'::payment_ref_kind
           and ref_id=$1
           and provider='paylabs'::payment_provider
@@ -356,7 +357,7 @@ export async function createMarketplacePaylabsLink({ po, request, requestedMetho
 
     if (existing) {
       await client.query(
-        `update public.payments
+        `update public.mkt_gateway_payments
             set status='failed'::payment_status,
                 raw=coalesce(raw,'{}'::jsonb) || '{"reason":"stale_pending_without_url"}'::jsonb,
                 updated_at=now()
@@ -367,7 +368,7 @@ export async function createMarketplacePaylabsLink({ po, request, requestedMetho
 
     const merchantTradeNo = shortTradeNo(po.id);
     const inserted = (await client.query(
-      `insert into public.payments
+      `insert into public.mkt_gateway_payments
          (company_id,ref_kind,ref_id,ref_doc_number,amount,status,provider,
           payment_method,provider_merchant_trade_no,expired_at,raw)
        values ($1,'purchase'::payment_ref_kind,$2,$3,$4,'pending'::payment_status,
@@ -417,7 +418,7 @@ export async function createMarketplacePaylabsLink({ po, request, requestedMetho
       signature = rsaSign(signaturePayload, credentials.privateKey);
     } catch {
       await client.query(
-        `update public.payments set status='failed'::payment_status,
+        `update public.mkt_gateway_payments set status='failed'::payment_status,
           raw=raw || '{"reason":"signing_failed"}'::jsonb, updated_at=now() where id=$1`,
         [inserted.id],
       );
@@ -443,7 +444,7 @@ export async function createMarketplacePaylabsLink({ po, request, requestedMetho
       payload = await response.json().catch(() => ({}));
     } catch (error) {
       await client.query(
-        `update public.payments
+        `update public.mkt_gateway_payments
             set status='failed'::payment_status,
                 raw=raw || $2::jsonb,
                 updated_at=now()
@@ -457,7 +458,7 @@ export async function createMarketplacePaylabsLink({ po, request, requestedMetho
     const paymentUrl = payload?.url ?? payload?.h5Url ?? payload?.paymentUrl ?? null;
     if (!response.ok || String(payload?.errCode ?? "0") !== "0" || !isTrustedPaylabsPaymentUrl(paymentUrl)) {
       await client.query(
-        `update public.payments
+        `update public.mkt_gateway_payments
             set status='failed'::payment_status,
                 provider_order_id=$2,
                 raw=raw || $3::jsonb,
@@ -479,7 +480,7 @@ export async function createMarketplacePaylabsLink({ po, request, requestedMetho
     }
 
     payment = (await client.query(
-      `update public.payments
+      `update public.mkt_gateway_payments
           set provider_order_id=$1,
               payment_url=$2,
               raw=raw || $3::jsonb,
@@ -725,6 +726,10 @@ export async function handlePaylabsWebhook({ request, response, body, rawBodyTex
     sendJson(response, 401, { errCode: "401", errMsg: "Invalid signature" });
     return true;
   }
+  if (!isPaylabsTimestampFresh(timestamp)) {
+    sendJson(response, 401, { errCode: "401", errMsg: "Stale signature timestamp" });
+    return true;
+  }
 
   const credentials = await allVerificationCredentials();
   const payloadCandidates = [
@@ -760,7 +765,7 @@ export async function handlePaylabsWebhook({ request, response, body, rawBodyTex
     await client.query("begin");
     const payment = (await client.query(
       `select *
-         from public.payments
+         from public.mkt_gateway_payments
         where provider_merchant_trade_no=$1
           and provider='paylabs'::payment_provider
         limit 1
@@ -788,7 +793,7 @@ export async function handlePaylabsWebhook({ request, response, body, rawBodyTex
     const wasPaid = payment.status === "paid";
     const paidAt = targetStatus === "paid" ? (payment.paid_at ?? new Date()) : payment.paid_at;
     const updated = (await client.query(
-      `update public.payments
+      `update public.mkt_gateway_payments
           set status=$1::payment_status,
               payment_method=coalesce($2,payment_method),
               provider_order_id=coalesce($3,provider_order_id),

@@ -711,11 +711,15 @@ export function MarketplaceOperationsTab() {
                         </div>
                       );
                     }
-                    if (hasShipment && selectedPo.status === "ready_to_ship" && payment?.requiresClearanceBeforeHandover && payment.paymentStatus !== "paid") {
+                    if (hasShipment && selectedPo.status === "ready_to_ship" && payment?.requiresClearanceBeforeHandover && !payment.handoverPaymentSatisfied) {
                       return (
                         <div className="mt-2">
                           <p className="font-semibold text-indigo-950">{payment.paymentStatus === "proof_submitted" ? "Admin · Verifikasi pembayaran" : "Customer · Lakukan pembayaran"}</p>
-                          <p className="mt-1 text-sm text-indigo-800">Terms mewajibkan lunas sebelum handover. Setelah status pembayaran Lunas, vendor dapat menyerahkan/mengirim barang.</p>
+                          <p className="mt-1 text-sm text-indigo-800">
+                            {payment.paymentTermCode === "dp_after_receipt"
+                              ? `Terms mewajibkan DP minimum sebelum handover. Masih kurang ${fmtMoney(payment.requiredBeforeHandoverRemaining, payment.currency)}.`
+                              : "Terms mewajibkan lunas sebelum handover. Setelah pembayaran terpenuhi, vendor dapat menyerahkan/mengirim barang."}
+                          </p>
                         </div>
                       );
                     }
@@ -981,7 +985,8 @@ export function MarketplaceOperationsTab() {
                   {payment?.paidAmount === 0
                     && payment?.paymentStatus !== "paid"
                     && !payment?.proofLocked
-                    && !payment?.paylabs?.hasPendingPayment && (
+                    && !payment?.paylabs?.hasPendingPayment
+                    && (!payment?.paymentTermCode || ["pending", "confirmed", "issued", "revision_requested", "vendor_rejected"].includes(selectedPo.status)) && (
                     <div className="space-y-2 rounded-md border bg-white p-3">
                       <p className="text-xs font-semibold text-slate-700">Atur syarat pembayaran</p>
                       <div className="grid gap-2 md:grid-cols-[240px_140px_auto]">
@@ -1028,6 +1033,15 @@ export function MarketplaceOperationsTab() {
                       {paymentTermDraft === "dp_after_receipt" && (
                         <p className="text-xs text-slate-500">Vendor boleh handover setelah DP minimum terpenuhi. Sisa wajib dilunasi setelah customer menerima barang sebelum PO ditutup.</p>
                       )}
+                    </div>
+                  )}
+
+                  {payment?.paidAmount === 0
+                    && payment?.paymentTermCode
+                    && !["pending", "confirmed", "issued", "revision_requested", "vendor_rejected"].includes(selectedPo.status)
+                    && payment?.paymentStatus !== "paid" && (
+                    <div className="rounded-md border border-slate-200 bg-slate-50 p-3 text-xs text-slate-700">
+                      Payment terms dikunci karena vendor sudah menerima PO. Perubahan terms harus melalui revisi/amendment PO.
                     </div>
                   )}
 

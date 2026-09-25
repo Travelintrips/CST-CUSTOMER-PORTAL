@@ -168,7 +168,7 @@ async function paymentTotals(po, db = query) {
   const gateway = (await db(
     `select coalesce(sum(case when status='paid'::payment_status then amount else 0 end),0) as paid_amount,
             coalesce(sum(case when status='pending'::payment_status and (expired_at is null or expired_at > now()) then amount else 0 end),0) as pending_amount
-       from public.payments
+       from public.mkt_gateway_payments
       where ref_kind='purchase'::payment_ref_kind
         and ref_id=$1
         and provider='paylabs'::payment_provider`,
@@ -203,6 +203,22 @@ function requiredBeforeHandover(po, totals) {
   }
   return 0;
 }
+
+async function assertHandoverPaymentSatisfied(po, db) {
+  const code = po.payment_term_code ?? normalizePaymentTerm(po.payment_terms_snapshot);
+  if (!code) {
+    fail(409, "Syarat pembayaran belum ditetapkan. Handover/pengiriman diblokir.");
+  }
+  if (!["prepaid", "dp_after_receipt"].includes(code)) return;
+  const totals = await paymentTotals(po, db);
+  const requiredAmount = requiredBeforeHandover(po, totals);
+  const remaining = Math.max(requiredAmount - totals.receivedAmount, 0);
+  if (remaining > 0.005) {
+    const label = code === "dp_after_receipt" ? "DP minimum" : "pelunasan";
+    fail(409, `${label} belum terpenuhi. Masih kurang Rp ${remaining.toLocaleString("id-ID")} sebelum handover/pengiriman.`);
+  }
+}
+
 
 async function paymentView(po, db = query) {
   const code = po.payment_term_code ?? normalizePaymentTerm(po.payment_terms_snapshot);
@@ -612,11 +628,31 @@ async function createShipment({ poId, body, request, user, isAdmin }) {
     if (!lines.length) fail(409, "PO belum memiliki line item.");
     const requestedItems = Array.isArray(body.items) && body.items.length ? body.items : lines;
     const lineMap = new Map(lines.map((line) => [Number(line.id), line]));
+    const allocatedRows = (await db(
+      `select si.po_line_id, coalesce(sum(si.qty),0) as allocated_qty
+         from public.mkt_po_shipment_items si
+         join public.mkt_po_shipments s on s.id=si.shipment_id
+        where s.po_id=$1 and s.shipment_status <> 'cancelled'
+        group by si.po_line_id`,
+      [po.id],
+    )).rows;
+    const allocatedMap = new Map(
+      allocatedRows.map((row) => [Number(row.po_line_id), Number(row.allocated_qty ?? 0)]),
+    );
+    const requestedByLine = new Map();
     for (const item of requestedItems) {
-      const line = lineMap.get(integer(item.poLineId ?? item.id, "PO line"));
+      const poLineId = integer(item.poLineId ?? item.id, "PO line");
+      const line = lineMap.get(poLineId);
       if (!line) fail(404, "PO line bukan bagian dari PO ini.");
       const qty = decimal(item.qty ?? line.qty, "Qty shipment", { positive: true });
-      if (qty > Number(line.qty)) fail(409, "Qty shipment melebihi qty PO.");
+      requestedByLine.set(poLineId, Number(requestedByLine.get(poLineId) ?? 0) + qty);
+    }
+    for (const [poLineId, requestedQty] of requestedByLine) {
+      const line = lineMap.get(poLineId);
+      const allocatedQty = Number(allocatedMap.get(poLineId) ?? 0);
+      if (allocatedQty + requestedQty > Number(line.qty) + 0.000001) {
+        fail(409, "Akumulasi qty shipment melebihi qty PO.");
+      }
     }
     const nextNumber = (await db(
       `select count(*)::int as count from public.mkt_po_shipments where po_id=$1`,
@@ -794,6 +830,11 @@ async function appendShipmentEvent({ shipmentId, body, request, user, isAdmin })
   if (!targetStatus) fail(400, "Tipe event shipment tidak valid.");
 
   return withTransaction(async (db) => {
+    const preflight = await loadShipment(shipmentId, user, { client: db, isAdmin });
+    if (["departed", "handed_over"].includes(eventType)) {
+      const po = await loadPo(preflight.po_id, user, { client: db, forUpdate: true, isAdmin });
+      await assertHandoverPaymentSatisfied(po, db);
+    }
     let shipment = await loadShipment(shipmentId, user, { client: db, forUpdate: true, isAdmin });
     const existing = (await db(
       `select * from public.mkt_po_shipment_events where shipment_id=$1 and idempotency_key=$2 limit 1`,
@@ -1036,6 +1077,60 @@ async function goodsReceipts(shipmentId, user, isAdmin, client = query) {
   return data;
 }
 
+async function activatePostReceiptPaymentDue(db, poId) {
+  const state = (await db(
+    `with active_shipments as (
+         select id
+           from public.mkt_po_shipments
+          where po_id=$1 and shipment_status <> 'cancelled'
+       ),
+       accepted_by_item as (
+         select gri.shipment_item_id, coalesce(sum(gri.accepted_qty),0) as accepted_qty
+           from public.mkt_po_goods_receipt_items gri
+           join public.mkt_po_goods_receipts gr on gr.id=gri.goods_receipt_id
+           join active_shipments s on s.id=gr.shipment_id
+          group by gri.shipment_item_id
+       ),
+       shipped_by_line as (
+         select si.po_line_id, coalesce(sum(si.qty),0) as shipped_qty
+           from public.mkt_po_shipment_items si
+           join active_shipments s on s.id=si.shipment_id
+          group by si.po_line_id
+       )
+       select
+         exists(select 1 from active_shipments) as has_shipments,
+         not exists(
+           select 1
+             from public.mkt_po_shipment_items si
+             join active_shipments s on s.id=si.shipment_id
+             left join accepted_by_item a on a.shipment_item_id=si.id
+            where coalesce(a.accepted_qty,0) < si.qty
+         ) as all_shipment_items_accepted,
+         not exists(
+           select 1
+             from public.mkt_purchase_order_lines pol
+             left join shipped_by_line sh on sh.po_line_id=pol.id
+            where pol.po_id=$1 and coalesce(sh.shipped_qty,0) <> pol.qty
+         ) as all_po_qty_allocated`,
+    [poId],
+  )).rows[0] ?? {};
+  if (!state.has_shipments || !state.all_shipment_items_accepted || !state.all_po_qty_allocated) return false;
+  await db(
+    `update public.mkt_purchase_orders
+        set payment_due_at=case payment_term_code
+          when 'dp_after_receipt' then coalesce(payment_due_at, now())
+          when 'net_7' then coalesce(payment_due_at, now() + interval '7 days')
+          when 'net_14' then coalesce(payment_due_at, now() + interval '14 days')
+          when 'net_30' then coalesce(payment_due_at, now() + interval '30 days')
+          else payment_due_at
+        end,
+        updated_at=now()
+      where id=$1`,
+    [poId],
+  );
+  return true;
+}
+
 async function createGoodsReceipt({ shipmentId, body, request, user, isAdmin }) {
   const key = idempotencyKey(request, body);
   if (!key) fail(400, "Idempotency-Key wajib diisi untuk goods receipt.");
@@ -1149,21 +1244,6 @@ async function createGoodsReceipt({ shipmentId, body, request, user, isAdmin }) 
         key,
       ],
     );
-    if (receiptType === "full") {
-      await db(
-        `update public.mkt_purchase_orders
-            set payment_due_at=case payment_term_code
-              when 'dp_after_receipt' then coalesce(payment_due_at, now())
-              when 'net_7' then coalesce(payment_due_at, now() + interval '7 days')
-              when 'net_14' then coalesce(payment_due_at, now() + interval '14 days')
-              when 'net_30' then coalesce(payment_due_at, now() + interval '30 days')
-              else payment_due_at
-            end,
-            updated_at=now()
-          where id=$1`,
-        [shipment.po_id],
-      );
-    }
     for (const item of items) {
       const receivedQty = decimal(item.receivedQty, "Received qty");
       const acceptedQty = decimal(item.acceptedQty ?? receivedQty, "Accepted qty");
@@ -1183,6 +1263,8 @@ async function createGoodsReceipt({ shipmentId, body, request, user, isAdmin }) 
         ],
       );
     }
+    await activatePostReceiptPaymentDue(db, shipment.po_id);
+
     const nextShipmentStatus = receiptType === "full"
       ? "delivered"
       : receiptType === "partial" ? "partially_delivered" : "rejected_goods";
@@ -1325,6 +1407,19 @@ async function setPoPaymentTerms({ poId, body, user }) {
 
   return withTransaction(async (db) => {
     const po = await loadPo(poId, user, { client: db, forUpdate: true, isAdmin: true });
+    const currentCode = po.payment_term_code ?? normalizePaymentTerm(po.payment_terms_snapshot);
+    const currentDpPercent = normalizeDpPercent(po.payment_dp_percent);
+    const termsChanged = Boolean(
+      currentCode
+      && (currentCode !== code
+        || (code === "dp_after_receipt" && currentDpPercent !== dpPercent)),
+    );
+    if (
+      termsChanged
+      && !["pending", "confirmed", "issued", "revision_requested", "vendor_rejected"].includes(po.status)
+    ) {
+      fail(409, "Syarat pembayaran tidak dapat diubah setelah vendor menerima PO. Gunakan proses revisi/amendment PO.");
+    }
     const totals = await paymentTotals(po, db);
     if (totals.receivedAmount > 0.005) {
       fail(409, "Syarat pembayaran tidak dapat diubah setelah ada pembayaran yang sudah disetujui.");
@@ -1334,7 +1429,7 @@ async function setPoPaymentTerms({ poId, body, user }) {
       [po.id],
     )).rows[0];
     const pendingPaylabs = (await db(
-      `select id from public.payments
+      `select id from public.mkt_gateway_payments
         where ref_kind='purchase'::payment_ref_kind
           and ref_id=$1
           and provider='paylabs'::payment_provider
@@ -1788,6 +1883,9 @@ async function transitionPo({ poId, action, body, request, user, isAdmin }) {
     if (po.status === target) return { status: target, alreadyProcessed: true };
     if (!PO_TRANSITIONS[po.status]?.has(target)) {
       fail(409, `PO tidak dapat berpindah dari ${po.status} ke ${target}.`);
+    }
+    if (["in_transit", "delivered"].includes(target)) {
+      await assertHandoverPaymentSatisfied(po, db);
     }
     if (target === "completed") {
       const completed = await maybeCompletePo(db, po.id, user, isAdmin);

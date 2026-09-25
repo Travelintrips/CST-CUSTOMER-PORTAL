@@ -59,58 +59,100 @@ async function resolvePhone(db, row) {
 }
 
 export async function processMarketplaceWhatsAppQueue({ limit = 20 } = {}) {
-  if (!clean(process.env.FONNTE_TOKEN)) return { processed: 0, sent: 0, failed: 0, skipped: "not_configured" };
+  if (!clean(process.env.FONNTE_TOKEN)) {
+    return { processed: 0, sent: 0, failed: 0, skipped: "not_configured" };
+  }
   const client = await pool.connect();
-  const cutoff = new Date(Date.now() - 5 * 60 * 1000);
   const batch = Math.min(50, Math.max(1, Number(limit) || 20));
   let rows = [];
+  let sent = 0;
+  let failed = 0;
   try {
     await client.query("begin");
     const result = await client.query(
       `select id,event_type,recipient_type,recipient_id,recipient_phone,rfq_id,vendor_quote_id,
-              purchase_order_id,payload_json,deduplication_key,created_at
+              purchase_order_id,payload_json,deduplication_key,status,attempt_count,max_attempts,
+              next_retry_at,created_at
          from public.mkt_notification_queue
         where channel='whatsapp'
-          and processed_at is null
-          and created_at >= $1
+          and status='pending'
+          and coalesce(next_retry_at,created_at) <= now()
         order by id
-        limit $2
+        limit $1
         for update skip locked`,
-      [cutoff, batch],
+      [batch],
     );
     rows = result.rows;
     for (const row of rows) {
+      const attempt = Number(row.attempt_count ?? 0) + 1;
+      const maxAttempts = Math.max(1, Number(row.max_attempts ?? 3));
       const phone = await resolvePhone((sql, values) => client.query(sql, values), row);
       if (!phone) {
-        await client.query("update public.mkt_notification_queue set processed_at=now() where id=$1 and processed_at is null", [row.id]);
+        const errorMessage = "Nomor penerima WhatsApp tidak tersedia.";
+        const exhausted = attempt >= maxAttempts;
+        await client.query(
+          `update public.mkt_notification_queue
+              set status=$2,
+                  attempt_count=$3,
+                  last_error=$4,
+                  next_retry_at=case when $2='pending' then now() + interval '2 minutes' else null end,
+                  updated_at=now()
+            where id=$1 and status='pending'`,
+          [row.id, exhausted ? "exhausted" : "pending", attempt, errorMessage],
+        );
         await client.query(
           "insert into public.wa_send_logs (phone,message_type,status,error_message,created_at) values ($1,$2,'failed',$3,now())",
-          ["-", row.event_type, "Nomor penerima WhatsApp tidak tersedia."],
+          ["-", row.event_type, errorMessage],
         );
+        failed += 1;
         continue;
       }
       try {
         await sendFonnteMessage({ phone, message: marketplaceMessage(row) });
-        await client.query("update public.mkt_notification_queue set processed_at=now() where id=$1 and processed_at is null", [row.id]);
+        await client.query(
+          `update public.mkt_notification_queue
+              set status='sent',
+                  attempt_count=$2,
+                  sent_at=coalesce(sent_at,now()),
+                  last_error=null,
+                  next_retry_at=null,
+                  updated_at=now()
+            where id=$1 and status='pending'`,
+          [row.id, attempt],
+        );
         await client.query(
           "insert into public.wa_send_logs (phone,message_type,status,error_message,created_at) values ($1,$2,'sent',null,now())",
           [phone, row.event_type],
         );
+        sent += 1;
       } catch (error) {
-        await client.query("update public.mkt_notification_queue set processed_at=now() where id=$1 and processed_at is null", [row.id]);
+        const errorMessage = clean(error?.message) || "Gagal mengirim WhatsApp";
+        const exhausted = attempt >= maxAttempts;
+        await client.query(
+          `update public.mkt_notification_queue
+              set status=$2,
+                  attempt_count=$3,
+                  last_error=$4,
+                  next_retry_at=case when $2='pending' then now() + interval '2 minutes' else null end,
+                  updated_at=now()
+            where id=$1 and status='pending'`,
+          [row.id, exhausted ? "exhausted" : "pending", attempt, errorMessage],
+        );
         await client.query(
           "insert into public.wa_send_logs (phone,message_type,status,error_message,created_at) values ($1,$2,'failed',$3,now())",
-          [phone, row.event_type, clean(error?.message) || "Gagal mengirim WhatsApp"],
+          [phone, row.event_type, errorMessage],
         );
+        failed += 1;
       }
     }
     await client.query("commit");
   } catch (error) {
     await client.query("rollback").catch(() => {});
     throw error;
-  } finally { client.release(); }
-  const sent = rows.length ? (await query("select count(*)::int as count from public.wa_send_logs where created_at >= $1 and status='sent'", [cutoff])).rows[0]?.count ?? 0 : 0;
-  return { processed: rows.length, sent: Number(sent), failed: Math.max(0, rows.length - Number(sent)) };
+  } finally {
+    client.release();
+  }
+  return { processed: rows.length, sent, failed };
 }
 
 export async function retryWhatsAppLog(id) {

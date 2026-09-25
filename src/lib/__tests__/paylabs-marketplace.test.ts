@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 import {
   buildPaylabsSignaturePayload,
   formatPaylabsTimestamp,
+  isPaylabsTimestampFresh,
   isTrustedPaylabsPaymentUrl,
   mapPaylabsStatus,
   normalizePaylabsPem,
@@ -37,6 +38,13 @@ describe("Paylabs marketplace payment contract", () => {
     expect(mapPaylabsStatus("EXPIRED")).toBe("expired");
     expect(mapPaylabsStatus("CANCELLED")).toBe("cancelled");
     expect(mapPaylabsStatus("FAILED")).toBe("failed");
+  });
+
+  it("accepts only fresh callback timestamps within the replay window", () => {
+    const now = Date.parse("2026-09-25T09:00:00Z");
+    expect(isPaylabsTimestampFresh("2026-09-25T15:59:30+07:00", now)).toBe(true);
+    expect(isPaylabsTimestampFresh("2026-09-25T15:50:00+07:00", now)).toBe(false);
+    expect(isPaylabsTimestampFresh("not-a-timestamp", now)).toBe(false);
   });
 
   it("allows only HTTPS Paylabs payment URLs", () => {
