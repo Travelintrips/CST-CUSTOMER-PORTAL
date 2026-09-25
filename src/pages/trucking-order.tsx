@@ -126,13 +126,22 @@ export default function TruckingOrderPage() {
     return <div className="min-h-screen bg-slate-50 flex items-center justify-center p-6 text-sm text-slate-500">{error ?? "Memuat booking..."}</div>;
   }
 
+  const isPassenger = data.serviceMode === "passenger";
+  const statusLabel = isPassenger && data.status === "vehicle_assigned"
+    ? "Mobil & Driver Ditugaskan"
+    : isPassenger && data.status === "delivered"
+      ? "Seluruh Tujuan Selesai"
+      : STATUS_LABEL[data.status] ?? data.status;
+
   return (
     <div className="min-h-screen bg-slate-50 py-8 px-4">
       <div className="mx-auto max-w-4xl space-y-5">
         <div className="rounded-2xl bg-white border border-slate-200 p-5">
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div>
-              <p className="text-xs text-slate-400 uppercase font-bold tracking-wider">Booking Trucking</p>
+              <p className="text-xs text-slate-400 uppercase font-bold tracking-wider">
+                {isPassenger ? "Booking Mobil Penumpang" : "Booking Trucking"}
+              </p>
               <h1 className="text-2xl font-black text-slate-900 mt-1">{data.bookingNumber}</h1>
               <p className="text-sm text-slate-500 mt-1">{data.vehicleName} · {data.tripCount} trip</p>
               {data.invoiceNumber && <p className="text-xs text-slate-400 mt-1">Invoice: {data.invoiceNumber}</p>}
@@ -141,7 +150,7 @@ export default function TruckingOrderPage() {
             <div className="flex flex-wrap gap-2 items-center">
               {data.invoiceNumber && <Button size="sm" variant="outline" onClick={() => window.print()}>Cetak Invoice</Button>}
               {data.receiptNumber && <Button size="sm" variant="outline" onClick={() => window.print()}>Cetak Kwitansi</Button>}
-              <Badge className="text-xs">{STATUS_LABEL[data.status] ?? data.status}</Badge>
+              <Badge className="text-xs">{statusLabel}</Badge>
             </div>
           </div>
         </div>
@@ -158,8 +167,12 @@ export default function TruckingOrderPage() {
                   <div className={`h-6 w-6 rounded-full flex items-center justify-center text-[10px] font-bold ${stop.status === "delivered" ? "bg-emerald-100 text-emerald-700" : "bg-blue-100 text-blue-700"}`}>{stop.sequenceNo}</div>
                   <div className="flex-1">
                     <p>{stop.address}</p>
-                    <p className="text-xs text-slate-400">{stop.status === "delivered" ? "Terkirim" : "Menunggu"}</p>
-                    {stop.podUrl && <a className="text-xs text-blue-600 underline" href={stop.podUrl} target="_blank">Lihat POD</a>}
+                    <p className="text-xs text-slate-400">
+                      {stop.status === "delivered"
+                        ? (isPassenger ? "Drop-off selesai" : "Terkirim")
+                        : "Menunggu"}
+                    </p>
+                    {!isPassenger && stop.podUrl && <a className="text-xs text-blue-600 underline" href={stop.podUrl} target="_blank">Lihat POD</a>}
                   </div>
                 </div>
               ))}
@@ -250,11 +263,13 @@ export default function TruckingOrderPage() {
 
         {data.assignment?.driverName && (
           <div className="rounded-2xl bg-white border border-slate-200 p-5">
-            <h2 className="font-black flex items-center gap-2"><Truck className="h-4 w-4" /> Armada</h2>
+            <h2 className="font-black flex items-center gap-2">
+              <Truck className="h-4 w-4" /> {isPassenger ? "Mobil & Driver" : "Armada"}
+            </h2>
             <div className="mt-3 text-sm grid sm:grid-cols-3 gap-3">
               <div><p className="text-xs text-slate-400">Driver</p><p className="font-semibold">{data.assignment.driverName}</p></div>
               <div><p className="text-xs text-slate-400">Nomor Polisi</p><p className="font-semibold">{data.assignment.vehiclePlate}</p></div>
-              <div><p className="text-xs text-slate-400">Status</p><p className="font-semibold">{STATUS_LABEL[data.status] ?? data.status}</p></div>
+              <div><p className="text-xs text-slate-400">Status</p><p className="font-semibold">{statusLabel}</p></div>
             </div>
           </div>
         )}
