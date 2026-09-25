@@ -1127,7 +1127,7 @@ async function loadServiceRows() {
               customer_name, email, phone, company_name, company_id, portal_customer_id,
               origin, destination, created_at, updated_at, notes,
               final_selling_price, quotation_sent_at, customer_quote_status,
-              terms_conditions, quote_notes, payment_status, grand_total
+              terms_conditions, quote_notes, payment_status, payment_proof_url, grand_total
          from public.logistic_orders order by created_at desc limit 500`,
     ),
     query(
@@ -1156,6 +1156,9 @@ async function loadServiceRows() {
       const quoteActions = !["approved","rejected","cancelled","completed"].includes(String(row.customer_quote_status ?? "").toLowerCase())
         ? ["send_quote"]
         : [];
+      const paymentActions = row.payment_status === "proof_submitted"
+        ? ["verify_payment", "reject_payment"]
+        : [];
       return {
         service_key: "logistic-order",
         service_label: SERVICE_LABELS["logistic-order"],
@@ -1171,7 +1174,7 @@ async function loadServiceRows() {
         updated_at: row.updated_at ?? row.created_at,
         summary: `${row.origin ?? ""} → ${row.destination ?? ""}`.trim(),
         management_path: `/admin?tab=service-operations`,
-        available_actions: [...new Set([...baseActions, ...quoteActions])],
+        available_actions: [...new Set([...baseActions, ...quoteActions, ...paymentActions])],
         record: row,
         ...customerFields(row),
       };
@@ -1536,7 +1539,7 @@ async function handleServiceOperations(ctx) {
     if (!row) return adminError(ctx, 404, "Transaksi canonical tidak ditemukan.");
     const action = text((ctx.body ?? {}).action);
     const reason = text((ctx.body ?? {}).reason) || null;
-    if (!["approve", "request_revision", "reject", "contact", "send_quote"].includes(action)) return adminError(ctx, 400, "Action tidak valid.");
+    if (!["approve", "request_revision", "reject", "contact", "send_quote", "verify_payment", "reject_payment"].includes(action)) return adminError(ctx, 400, "Action tidak valid.");
     if (action === "contact") {
       const rawPhone = String(row.phone ?? row.customer_phone ?? row.buyer_phone ?? "").trim();
       let phone = rawPhone.replace(/\D/g, "");
@@ -1544,6 +1547,57 @@ async function handleServiceOperations(ctx) {
       else if (phone.startsWith("8")) phone = `62${phone}`;
       if (!phone) return adminError(ctx, 400, "Nomor customer tidak tersedia.");
       ctx.sendJson(response, 200, { contactUrl: `https://wa.me/${phone}` });
+      return;
+    }
+    if (action === "verify_payment" || action === "reject_payment") {
+      if (row.service_key !== "logistic-order") return adminError(ctx, 400, "Action pembayaran hanya untuk order logistik.");
+      const logistic = row.record;
+      if (logistic.payment_status !== "proof_submitted") {
+        return adminError(ctx, 409, "Tidak ada bukti pembayaran yang menunggu verifikasi.");
+      }
+      const rejected = action === "reject_payment";
+      if (rejected && !reason) return adminError(ctx, 400, "Alasan penolakan bukti pembayaran wajib diisi.");
+      await query(
+        `update public.logistic_orders
+            set payment_status=$1,
+                operational_status=case
+                  when $1='paid' and (operational_status is null or operational_status in ('pending','pending_review','quoted','confirmed'))
+                    then 'payment_confirmed'
+                  else operational_status
+                end,
+                status=case
+                  when $1='paid' and status in ('New Order','Order Received','quoted','confirmed')
+                    then 'Payment Confirmed'
+                  else status
+                end,
+                payment_proof_url=case when $1='rejected' then null else payment_proof_url end,
+                quote_notes=case
+                  when $1='rejected' then concat_ws(E'\\n', quote_notes, 'Payment rejected: ' || $2)
+                  else quote_notes
+                end,
+                updated_at=now()
+          where id=$3`,
+        [rejected ? "rejected" : "paid", reason, row.id],
+      );
+      if (row.portal_customer_id) {
+        await query(
+          `insert into public.portal_customer_notifications
+             (portal_customer_id,event_key,type,title,message,payload,is_read,created_at)
+           values ($1,$2,$3,$4,$5,$6::jsonb,false,now())
+           on conflict (portal_customer_id,event_key) do nothing`,
+          [
+            Number(row.portal_customer_id),
+            `logistic:payment-review:${row.id}:${rejected ? "rejected" : "paid"}`,
+            rejected ? "logistic_payment_rejected" : "logistic_payment_paid",
+            rejected ? "Bukti pembayaran perlu diperbaiki" : "Pembayaran telah diverifikasi",
+            rejected
+              ? `${row.reference}: bukti pembayaran ditolak. ${reason}`
+              : `${row.reference}: pembayaran telah diverifikasi oleh CST.`,
+            JSON.stringify({ orderNumber: row.reference, status: rejected ? "rejected" : "paid", reason }),
+          ],
+        ).catch(() => {});
+      }
+      ctx.sendJson(response, 200, { ok: true, action, status: rejected ? "rejected" : "paid", service: row.service_key, id: row.id });
       return;
     }
     if (action === "send_quote") {
