@@ -98,6 +98,17 @@ describe("standalone Customer Portal API boundary", () => {
     expect(preview).toContain("waypointQuery");
   });
 
+  it("keeps passenger vehicle content free of cargo-only services", () => {
+    const page = readFileSync(join(process.cwd(), "src/pages/trucking.tsx"), "utf8");
+    expect(page).toContain("Perjalanan dalam kota");
+    expect(page).toContain("Perjalanan rombongan kecil");
+    expect(page).toContain("Kalkulator Tarif Perjalanan");
+    expect(page).toContain("Identitas pemesan menggunakan akun yang sedang login");
+    expect(page).toContain('["Tol (actual cost)", "Parkir (actual cost)", "Multi-destination"]');
+    expect(page).toContain("Rute & tracking perjalanan");
+    expect(page).toContain("isPassengerVehicle ? \"Cek Tarif Perjalanan\"");
+  });
+
   it("removes cargo-only messaging from passenger vehicles", () => {
     const page = readFileSync(join(process.cwd(), "src/pages/trucking.tsx"), "utf8");
     expect(page).toContain("Tol & parkir sesuai biaya aktual");
