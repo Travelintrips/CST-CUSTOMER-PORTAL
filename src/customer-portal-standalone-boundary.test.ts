@@ -98,6 +98,14 @@ describe("standalone Customer Portal API boundary", () => {
     expect(preview).toContain("waypointQuery");
   });
 
+  it("removes cargo-only messaging from passenger vehicles", () => {
+    const page = readFileSync(join(process.cwd(), "src/pages/trucking.tsx"), "utf8");
+    expect(page).toContain("Tol & parkir sesuai biaya aktual");
+    expect(page).toContain("Cek Tarif Perjalanan");
+    expect(page).toContain("Pesan Mobil");
+    expect(page).toContain('isPassengerVehicle ? (["dasar"] as const)');
+  });
+
   it("separates passenger-car and cargo trucking calculator flows", () => {
     const page = readFileSync(join(process.cwd(), "src/pages/trucking.tsx"), "utf8");
     const server = readFileSync(join(process.cwd(), "server/index.mjs"), "utf8");
