@@ -23,7 +23,7 @@ export function MobileBottomNav() {
   const guestItems = [
     { href: "/",            icon: Home,        label: "Beranda",    match: (p: string) => p === "/" },
     { href: "/marketplace", icon: Store,       label: "Marketplace", match: (p: string) => p.startsWith("/marketplace") },
-    { href: "/services",    icon: Ship,        label: "Layanan",    match: (p: string) => p.startsWith("/services") || p === "/freight-forwarding" || p === "/pabean" || p === "/trucking" },
+    { href: "/jasa",        icon: Ship,        label: "Layanan",    match: (p: string) => p.startsWith("/jasa") || p.startsWith("/services") || p === "/freight-forwarding" || p === "/pabean" || p === "/trucking" },
     { href: "/track",       icon: MapPin,      label: "Lacak",      match: (p: string) => p === "/track" },
     { href: "/login",       icon: User,        label: "Masuk",      match: (p: string) => p === "/login" || p === "/register" },
   ];
