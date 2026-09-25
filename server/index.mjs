@@ -32,7 +32,7 @@ import {
 } from "./admin-portal.mjs";
 import { checkStorageReadiness, signedDocumentUrl, signedPaymentProofUrl, uploadPaymentProof } from "./storage.mjs";
 import { handleMarketplaceRoute } from "./marketplace-service.mjs";
-import { handlePaylabsAdminRoute, handlePaylabsWebhook } from "./paylabs-service.mjs";
+import { createLogisticPaylabsLink, handlePaylabsAdminRoute, handlePaylabsWebhook } from "./paylabs-service.mjs";
 import { processMarketplaceWhatsAppQueue } from "./whatsapp-service.mjs";
 import {
   handleAdminInvoices,
@@ -2570,13 +2570,24 @@ async function handleLogisticCustomerRoutes(request, response, url, user, body =
       sendError(response, 404, "Order logistik tidak ditemukan.");
       return true;
     }
+    if (row.customer_quote_status !== "approved") {
+      sendError(response, 409, "Quotation harus disetujui sebelum membuat pembayaran Paylabs.");
+      return true;
+    }
+    const result = await createLogisticPaylabsLink({
+      order: row,
+      request,
+      requestedMethod: body?.paymentMethod ?? null,
+      customerName: row.customer_name ?? user.name,
+      customerPhone: row.phone ?? user.phone,
+    });
     sendJson(response, 200, {
-      paymentUrl: null,
-      amount: Number(row.grand_total ?? 0),
-      expiredAt: null,
-      configured: false,
-      reused: false,
-      message: "Payment gateway belum dikonfigurasi untuk Customer Portal standalone.",
+      paymentUrl: result.payment?.paymentUrl ?? null,
+      amount: Number(result.payment?.amount ?? row.final_selling_price ?? row.final_price ?? row.grand_total ?? 0),
+      expiredAt: result.payment?.expiredAt ?? null,
+      configured: true,
+      reused: Boolean(result.reused),
+      sandboxMode: Boolean(result.sandboxMode),
     });
     return true;
   }

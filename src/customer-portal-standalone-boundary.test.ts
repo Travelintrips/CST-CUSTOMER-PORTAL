@@ -1,3 +1,32 @@
+describe("logistic Paylabs settlement", () => {
+  it("creates hosted Paylabs payments only after quote approval and settles by webhook", () => {
+    const payments = readFileSync(join(process.cwd(), "server/paylabs-service.mjs"), "utf8");
+    const server = readFileSync(join(process.cwd(), "server/index.mjs"), "utf8");
+    const customer = readFileSync(join(process.cwd(), "src/pages/logistic-order-success.tsx"), "utf8");
+    const env = readFileSync(join(process.cwd(), ".env.example"), "utf8");
+
+    expect(payments).toContain("createLogisticPaylabsLink");
+    expect(payments).toContain("ref_kind='logistic'::payment_ref_kind");
+    expect(payments).toContain('payment.ref_kind === "logistic"');
+    expect(payments).toContain('customer_quote_status !== "approved"');
+    expect(payments).toContain("LOGISTIC_PROVIDER_COMPANY_ID ?? 1");
+    expect(payments).toContain("payment_status='paid'");
+    expect(payments).toContain("PAYLABS_GATEWAY");
+    expect(payments).toContain("PAYLABS_SANDBOX_MODE");
+
+    expect(server).toContain("createLogisticPaylabsLink");
+    expect(server).toContain('orderNumberMatch?.[2] === "create-paylabs-link"');
+    expect(server).toContain('row.customer_quote_status !== "approved"');
+
+    expect(customer).toContain('order.paymentStatus !== "paid"');
+    expect(customer).toContain("Pembayaran telah diterima");
+    expect(customer).toContain("window.setInterval(async () =>");
+
+    expect(env).toContain("LOGISTIC_PROVIDER_COMPANY_ID=1");
+    expect(env).toContain("PAYLABS_SANDBOX_MODE=false");
+  });
+});
+
 describe("logistic quotation approval lifecycle", () => {
   it("requires admin quotation before customer approval and payment", () => {
     const adminApi = readFileSync(join(process.cwd(), "server/admin-portal.mjs"), "utf8");
