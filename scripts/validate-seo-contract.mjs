@@ -23,22 +23,14 @@ if (expectedOriginCount !== locs.length) {
   throw new Error("Sitemap contains a URL outside https://cstlogistic.co.id");
 }
 
-const missingSeo = [];
-const missingPrerender = [];
-
 function hasRouteKey(source, path) {
-  const escaped = path.replace(/[.*+?^{}()|[\]\\]/g, "\\for (const path of locs) {
-  const routeKey = JSON.stringify(path);
-  if (!seoConfig.includes(`${routeKey}: {`)) missingSeo.push(path);
-  if (!prerender.includes(`${routeKey}: {`)) missingPrerender.push(path);
-}");
-  return new RegExp(`["']${escaped}["']\\\\s*:\\s*\\{`).test(source);
+  const doubleQuoted = `${JSON.stringify(path)}: {`;
+  const singleQuoted = `'${path.replaceAll("'", "\\'")}': {`;
+  return source.includes(doubleQuoted) || source.includes(singleQuoted);
 }
 
-for (const path of locs) {
-  if (!hasRouteKey(seoConfig, path)) missingSeo.push(path);
-  if (!hasRouteKey(prerender, path)) missingPrerender.push(path);
-}
+const missingSeo = locs.filter((path) => !hasRouteKey(seoConfig, path));
+const missingPrerender = locs.filter((path) => !hasRouteKey(prerender, path));
 
 if (missingSeo.length || missingPrerender.length) {
   if (missingSeo.length) {
