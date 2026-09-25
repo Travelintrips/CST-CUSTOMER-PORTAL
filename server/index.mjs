@@ -819,7 +819,7 @@ async function handlePortalOrderFeed(request, response) {
   if (!user) return;
   const companyIds = await getAccessibleCompanyIds(user);
   const params = [user.id, user.email, companyIds];
-  const [crmResult, logisticResult, productResult, rfqResult, truckingResult] = await Promise.all([
+  const [crmResult, logisticResult, productResult, rfqResult, truckingResult, airFreightResult, oceanFreightResult] = await Promise.all([
     query(
       `select o.id, coalesce(o.id::text, '') as doc_number, o.status,
               coalesce(o.grand_total, o.total_amount, o.total, 0) as grand_total,
@@ -873,6 +873,32 @@ async function handlePortalOrderFeed(request, response) {
         limit 100`,
       params,
     ),
+    query(
+      `select a.id,a.order_number,a.status,a.tracking_status,a.created_at,
+              a.origin_airport,a.destination_airport,
+              coalesce(a.grand_total,a.final_price_idr,a.estimated_price_idr,0) as grand_total
+         from public.air_freight_orders a
+        where a.portal_customer_id=$1
+           or a.customer_id=$1
+           or lower(coalesce(a.customer_email,''))=lower($2)
+           or a.company_id=any($3::int[])
+        order by a.created_at desc
+        limit 100`,
+      params,
+    ),
+    query(
+      `select o.id,o.order_number,o.status,o.tracking_status,o.created_at,
+              o.origin_port,o.destination_port,
+              coalesce(o.grand_total,o.final_price_idr,o.estimated_price_idr,0) as grand_total
+         from public.ocean_freight_orders o
+        where o.portal_customer_id=$1
+           or o.customer_id=$1
+           or lower(coalesce(o.customer_email,''))=lower($2)
+           or o.company_id=any($3::int[])
+        order by o.created_at desc
+        limit 100`,
+      params,
+    ),
   ]);
 
   sendJson(response, 200, {
@@ -917,6 +943,26 @@ async function handlePortalOrderFeed(request, response) {
       vehicleName: row.vehicle_name,
       pickup: row.alamat_pickup,
       delivery: row.alamat_delivery,
+    })),
+    airFreightOrders: airFreightResult.rows.map((row) => ({
+      id: Number(row.id),
+      orderNumber: row.order_number,
+      status: row.status,
+      trackingStatus: row.tracking_status,
+      grandTotal: Number(row.grand_total ?? 0),
+      createdAt: row.created_at,
+      origin: row.origin_airport,
+      destination: row.destination_airport,
+    })),
+    oceanFreightOrders: oceanFreightResult.rows.map((row) => ({
+      id: Number(row.id),
+      orderNumber: row.order_number,
+      status: row.status,
+      trackingStatus: row.tracking_status,
+      grandTotal: Number(row.grand_total ?? 0),
+      createdAt: row.created_at,
+      origin: row.origin_port,
+      destination: row.destination_port,
     })),
   });
 }
@@ -1232,7 +1278,7 @@ async function handlePortalDashboardStats(request, response) {
   if (!user) return;
   const companyIds = await getAccessibleCompanyIds(user);
   const params = [user.id, user.email, companyIds];
-  const [logistic, product, service, invoices] = await Promise.all([
+  const [logistic, product, service, trucking, airFreight, oceanFreight, invoices] = await Promise.all([
     query(
       `select count(*)::int as total,
               count(*) filter (where status not in ('Completed','Cancelled','completed','cancelled','delivered'))::int as active,
@@ -1265,6 +1311,38 @@ async function handlePortalDashboardStats(request, response) {
       params,
     ),
     query(
+      `select count(*)::int as total,
+              count(*) filter (where status not in ('completed','cancelled'))::int as active,
+              count(*) filter (where status = 'completed')::int as completed
+         from public.trucking_booking_requests
+        where portal_customer_id = $1
+           or customer_id = $1
+           or company_id = any($3::int[])`,
+      params,
+    ),
+    query(
+      `select count(*)::int as total,
+              count(*) filter (where coalesce(tracking_status,status) not in ('completed','delivered','cancelled'))::int as active,
+              count(*) filter (where coalesce(tracking_status,status) in ('completed','delivered'))::int as completed
+         from public.air_freight_orders
+        where portal_customer_id = $1
+           or customer_id = $1
+           or lower(coalesce(customer_email,'')) = lower($2)
+           or company_id = any($3::int[])`,
+      params,
+    ),
+    query(
+      `select count(*)::int as total,
+              count(*) filter (where coalesce(tracking_status,status) not in ('completed','delivered','cancelled'))::int as active,
+              count(*) filter (where coalesce(tracking_status,status) in ('completed','delivered'))::int as completed
+         from public.ocean_freight_orders
+        where portal_customer_id = $1
+           or customer_id = $1
+           or lower(coalesce(customer_email,'')) = lower($2)
+           or company_id = any($3::int[])`,
+      params,
+    ),
+    query(
       `select count(*) filter (where payment_status <> 'paid')::int as outstanding_count,
               coalesce(sum(greatest(grand_total - amount_paid, 0))
                 filter (where payment_status <> 'paid'), 0) as outstanding_amount
@@ -1274,14 +1352,25 @@ async function handlePortalDashboardStats(request, response) {
       [user.id, companyIds],
     ),
   ]);
-  const rows = [logistic.rows[0], product.rows[0], service.rows[0]];
+  const rows = [
+    logistic.rows[0],
+    product.rows[0],
+    service.rows[0],
+    trucking.rows[0],
+    airFreight.rows[0],
+    oceanFreight.rows[0],
+  ];
   sendJson(response, 200, {
     totalOrders: rows.reduce((sum, row) => sum + Number(row?.total ?? 0), 0),
     activeOrders: rows.reduce((sum, row) => sum + Number(row?.active ?? 0), 0),
     completedOrders: rows.reduce((sum, row) => sum + Number(row?.completed ?? 0), 0),
     invoiceOutstandingCount: Number(invoices.rows[0]?.outstanding_count ?? 0),
     invoiceOutstandingAmount: Number(invoices.rows[0]?.outstanding_amount ?? 0),
-    trackingActive: Number(logistic.rows[0]?.active ?? 0),
+    trackingActive:
+      Number(logistic.rows[0]?.active ?? 0)
+      + Number(trucking.rows[0]?.active ?? 0)
+      + Number(airFreight.rows[0]?.active ?? 0)
+      + Number(oceanFreight.rows[0]?.active ?? 0),
   });
 }
 

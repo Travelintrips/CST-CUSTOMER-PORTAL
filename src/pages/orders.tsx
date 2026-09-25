@@ -148,6 +148,26 @@ interface PortalOrderFeed {
     pickup: string | null;
     delivery: string | null;
   }>;
+  airFreightOrders: Array<{
+    id: number;
+    orderNumber: string;
+    status: string;
+    trackingStatus: string | null;
+    grandTotal: number;
+    createdAt: string;
+    origin: string | null;
+    destination: string | null;
+  }>;
+  oceanFreightOrders: Array<{
+    id: number;
+    orderNumber: string;
+    status: string;
+    trackingStatus: string | null;
+    grandTotal: number;
+    createdAt: string;
+    origin: string | null;
+    destination: string | null;
+  }>;
 }
 
 export default function Orders() {
@@ -259,6 +279,36 @@ export default function Orders() {
     trackUrl: o.trackingToken ? `/track-produk/${o.trackingToken}` : null,
   }));
 
+  const airFreightOrdersMapped = (orderFeed?.airFreightOrders ?? []).map((o) => ({
+    _key: `air-${o.id}`,
+    _id: o.id,
+    _type: "air-freight" as const,
+    _cancellable: false,
+    displayNumber: o.orderNumber,
+    subtitle: `Air Freight • ${o.origin ?? ""} → ${o.destination ?? ""}`,
+    status: o.trackingStatus || o.status,
+    displayStatus: localeStatus(o.trackingStatus || o.status),
+    statusColor: STATUS_COLOR[o.trackingStatus || o.status] ?? "bg-sky-100 text-sky-800",
+    grandTotal: o.grandTotal,
+    createdAt: o.createdAt,
+    trackUrl: `/air-freight/track/${encodeURIComponent(o.orderNumber)}`,
+  }));
+
+  const oceanFreightOrdersMapped = (orderFeed?.oceanFreightOrders ?? []).map((o) => ({
+    _key: `ocean-${o.id}`,
+    _id: o.id,
+    _type: "ocean-freight" as const,
+    _cancellable: false,
+    displayNumber: o.orderNumber,
+    subtitle: `Sea Freight • ${o.origin ?? ""} → ${o.destination ?? ""}`,
+    status: o.trackingStatus || o.status,
+    displayStatus: localeStatus(o.trackingStatus || o.status),
+    statusColor: STATUS_COLOR[o.trackingStatus || o.status] ?? "bg-cyan-100 text-cyan-800",
+    grandTotal: o.grandTotal,
+    createdAt: o.createdAt,
+    trackUrl: `/ocean-freight/track/${encodeURIComponent(o.orderNumber)}`,
+  }));
+
   const truckingOrdersMapped = (orderFeed?.truckingOrders ?? []).map((o) => ({
     _key: `truck-${o.id}`,
     _id: o.id,
@@ -293,7 +343,7 @@ export default function Orders() {
     trackUrl: `/marketplace/my-rfqs/${o.rfqId}`,
   }));
 
-  const allOrders = [...truckingOrdersMapped, ...logisticOrders, ...crmOrders, ...productOrdersMapped, ...marketplaceRfqsMapped].sort(
+  const allOrders = [...airFreightOrdersMapped, ...oceanFreightOrdersMapped, ...truckingOrdersMapped, ...logisticOrders, ...crmOrders, ...productOrdersMapped, ...marketplaceRfqsMapped].sort(
     (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
   );
 
@@ -339,12 +389,18 @@ export default function Orders() {
     crm: "bg-slate-50 text-slate-600",
     product: "bg-emerald-50 text-emerald-700",
     marketplace: "bg-orange-50 text-orange-700",
+    trucking: "bg-indigo-50 text-indigo-700",
+    "air-freight": "bg-sky-50 text-sky-700",
+    "ocean-freight": "bg-cyan-50 text-cyan-700",
   };
   const TYPE_LABEL: Record<string, string> = {
     logistic: t("orders.typeLogistic"),
     crm: t("orders.typeCrm"),
     product: t("orders.typeProduct"),
     marketplace: "Marketplace / RFQ",
+    trucking: "Transportasi Domestik",
+    "air-freight": "Air Freight",
+    "ocean-freight": "Sea Freight",
   };
 
   return (
