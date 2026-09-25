@@ -18,6 +18,7 @@ import {
   createMarketplacePaylabsLink,
   getMarketplacePaylabsState,
 } from "./paylabs-service.mjs";
+import { getMarketplaceWhatsAppQueueStats } from "./whatsapp-service.mjs";
 
 const SHIPMENT_EVENT_STATUS = {
   packing: "packing",
@@ -1991,6 +1992,11 @@ async function handlePortalOperations({ request, response, pathname, body, user,
 }
 
 async function handleAdminOperations({ request, response, pathname, body, user, sendJson }) {
+  if (request.method === "GET" && pathname === "/api/mkt/admin/notification-queue/stats") {
+    sendJson(response, 200, { ok: true, data: await getMarketplaceWhatsAppQueueStats() });
+    return true;
+  }
+
   const poPayment = pathname.match(/^\/api\/mkt\/admin\/purchase-orders\/(\d+)\/payment$/);
   if (request.method === "GET" && poPayment) {
     const po = await loadPo(poPayment[1], user, { isAdmin: true });
