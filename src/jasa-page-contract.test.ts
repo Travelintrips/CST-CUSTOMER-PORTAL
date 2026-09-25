@@ -3,6 +3,18 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
 describe("jasa service hub contract", () => {
+  it("routes public navigation directly to the jasa hub", () => {
+    const home = readFileSync(join(process.cwd(), "src/pages/home.tsx"), "utf8");
+    const mobile = readFileSync(join(process.cwd(), "src/components/layout/MobileBottomNav.tsx"), "utf8");
+    const verify = readFileSync(join(process.cwd(), ".github/workflows/production-verify.yml"), "utf8");
+
+    expect(home).not.toContain('href: "/services"');
+    expect(home).toContain('href: "/jasa"');
+    expect(mobile).toContain('{ href: "/jasa",        icon: Ship,        label: "Layanan"');
+    expect(verify).toContain('test "$url_count" = "15"');
+    expect(verify).toContain("Public sitemap is live with 15 canonical URLs and /jasa as the service hub.");
+  });
+
   it("keeps /jasa as the canonical service hub", () => {
     const app = readFileSync(join(process.cwd(), "src/App.tsx"), "utf8");
     const seo = readFileSync(join(process.cwd(), "src/config/seo.ts"), "utf8");
