@@ -98,6 +98,9 @@ const EscrowConfirmPage         = lazy(() => import("@/pages/escrow-confirm"));
 const ProductApprovePage        = lazy(() => import("@/pages/product-approve"));
 const ShipmentSelectionPage     = lazy(() => import("@/pages/shipment-selection"));
 const TruckingPage              = lazy(() => import("@/pages/trucking"));
+const TruckingOrderPage         = lazy(() => import("@/pages/trucking-order"));
+const AdminTruckingPage         = lazy(() => import("@/pages/admin-trucking"));
+const TruckingDriverPage        = lazy(() => import("@/pages/trucking-driver"));
 const PortalDokumenPage         = lazy(() => import("@/pages/portal-dokumen"));
 const PortalInvoicePage         = lazy(() => import("@/pages/portal-invoice"));
 const CompanyProfilePage        = lazy(() => import("@/pages/company-profile"));
@@ -159,6 +162,7 @@ const NO_SHELL_PREFIXES = [
   "/vendor-po-accept",
   "/customer-feedback", "/purchase-request", "/vendor-invoice", "/goods-receipt",
   "/driver-progress",
+  "/trucking/driver",
   "/payment-proof",
   "/track-produk",
   "/product-approve",
@@ -454,6 +458,10 @@ function AppShell() {
         <Route path="/mkt-vendor-po/:token" component={MktVendorPoPage} />
         <Route path="/marketplace/:id" component={MarketplaceDetail} />
         <Route path="/trucking" component={TruckingPage} />
+        <Route path="/trucking/orders/:bookingNumber">{() => <ProtectedRoute component={TruckingOrderPage} />}</Route>
+        <Route path="/trucking/driver/:token" component={TruckingDriverPage} />
+        <Route path="/admin/trucking">{() => <ProtectedRoute component={AdminTruckingPage} adminOnly />}</Route>
+        <Route path="/admin/trucking/:bookingNumber">{() => <ProtectedRoute component={AdminTruckingPage} adminOnly />}</Route>
         <Route path="/portal-dokumen">{() => <ProtectedRoute component={PortalDokumenPage} />}</Route>
         <Route path="/portal-invoice">{() => <ProtectedRoute component={PortalInvoicePage} />}</Route>
         <Route path="/company-profile">{() => <ProtectedRoute component={CompanyProfilePage} />}</Route>
