@@ -843,6 +843,22 @@ export async function driverUpdateTrucking({ token, body }) {
         [booking.id, action],
       );
       await appendEvent(client, booking.id, action, { type: "driver", name: booking.driver_name }, text(body?.notes));
+      const transitionMessage = action === "driver_to_pickup"
+        ? `Driver sedang menuju lokasi pickup untuk ${booking.booking_number}.`
+        : action === "picked_up"
+          ? `Pickup ${booking.booking_number} telah selesai.`
+          : `${booking.booking_number} sedang dalam perjalanan.`;
+      await notifyPortalCustomer(client, booking.portal_customer_id ?? booking.customer_id, {
+        eventKey: `trucking:driver:${booking.id}:${action}`,
+        type: `trucking_${action}`,
+        title: action === "driver_to_pickup"
+          ? "Driver menuju pickup"
+          : action === "picked_up"
+            ? "Pickup selesai"
+            : "Perjalanan dimulai",
+        message: transitionMessage,
+        payload: { bookingNumber: booking.booking_number, status: action },
+      });
       await client.query("commit");
       return { ok: true, status: action };
     }
@@ -875,21 +891,35 @@ export async function driverUpdateTrucking({ token, body }) {
       );
       await appendEvent(client, booking.id, "stop_delivered", { type: "driver", name: booking.driver_name },
         `Pengantaran ${stop.sequence_no} selesai.`, { stopId: Number(stop.id), sequenceNo: Number(stop.sequence_no) });
+      await notifyPortalCustomer(client, booking.portal_customer_id ?? booking.customer_id, {
+        eventKey: `trucking:stop:${booking.id}:${stop.id}:delivered`,
+        type: "trucking_stop_delivered",
+        title: `Pengantaran ${stop.sequence_no} selesai`,
+        message: `${booking.booking_number}: tujuan ${stop.sequence_no} telah selesai.`,
+        payload: {
+          bookingNumber: booking.booking_number,
+          stopId: Number(stop.id),
+          sequenceNo: Number(stop.sequence_no),
+        },
+      });
 
       const remaining = Number((await client.query(
         `select count(*)::int as count from public.trucking_booking_stops
           where booking_id=$1 and status<>'delivered'`,
         [booking.id],
       )).rows[0]?.count ?? 0);
+      let resultStatus = "in_transit";
       if (remaining === 0) {
         const totals = await truckingPaymentTotals(booking, client);
         const nextStatus = totals.remainingAmount <= 0.005 ? "completed" : "balance_due";
+        resultStatus = nextStatus;
         await client.query(
           `update public.trucking_booking_requests
             set status=$2,delivered_at=coalesce(delivered_at,now()),
                 completed_at=case when $2='completed' then now() else completed_at end,
                 paid_amount=$3,remaining_amount=$4,
                 payment_status=case when $4<=0.005 then 'paid' else 'partially_paid' end,
+                receipt_number=case when $4<=0.005 then coalesce(receipt_number,'RCT-' || booking_number) else receipt_number end,
                 updated_at=now()
             where id=$1`,
           [booking.id, nextStatus, totals.receivedAmount, totals.remainingAmount],
@@ -898,9 +928,22 @@ export async function driverUpdateTrucking({ token, body }) {
           nextStatus === "completed"
             ? "Seluruh tujuan dan pembayaran selesai."
             : "Seluruh tujuan selesai. Menunggu pelunasan.");
+        await notifyPortalCustomer(client, booking.portal_customer_id ?? booking.customer_id, {
+          eventKey: `trucking:delivery-final:${booking.id}:${nextStatus}`,
+          type: nextStatus === "completed" ? "trucking_completed" : "trucking_balance_due",
+          title: nextStatus === "completed" ? "Perjalanan trucking selesai" : "Pengantaran selesai — pelunasan diperlukan",
+          message: nextStatus === "completed"
+            ? `${booking.booking_number} telah selesai dan seluruh pembayaran lunas.`
+            : `${booking.booking_number} telah menyelesaikan seluruh tujuan. Sisa tagihan Rp${totals.remainingAmount.toLocaleString("id-ID")}.`,
+          payload: {
+            bookingNumber: booking.booking_number,
+            status: nextStatus,
+            remainingAmount: totals.remainingAmount,
+          },
+        });
       }
       await client.query("commit");
-      return { ok: true, status: remaining === 0 ? "delivered" : "in_transit" };
+      return { ok: true, status: resultStatus };
     }
 
     fail(400, "Action driver tidak didukung.");
