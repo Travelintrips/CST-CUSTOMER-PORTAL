@@ -57,6 +57,14 @@ export default function TruckingOrderPage() {
 
   useEffect(() => { void load().catch((e) => setError(e.message)); }, [bookingNumber]);
 
+  useEffect(() => {
+    if (!data || ["completed", "cancelled"].includes(data.status)) return;
+    const timer = window.setInterval(() => {
+      void load().catch(() => {});
+    }, 15_000);
+    return () => window.clearInterval(timer);
+  }, [bookingNumber, data?.status]);
+
   const initialRequired = Number(data?.totals?.initialRequiredAmount ?? 0);
   const paid = Number(data?.totals?.receivedAmount ?? 0);
   const initialRemaining = Math.max(0, initialRequired - paid);
