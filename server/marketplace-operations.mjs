@@ -168,7 +168,7 @@ async function paymentTotals(po, db = query) {
   const gateway = (await db(
     `select coalesce(sum(case when status='paid'::payment_status then amount else 0 end),0) as paid_amount,
             coalesce(sum(case when status='pending'::payment_status and (expired_at is null or expired_at > now()) then amount else 0 end),0) as pending_amount
-       from public.payments
+       from public.mkt_gateway_payments
       where ref_kind='purchase'::payment_ref_kind
         and ref_id=$1
         and provider='paylabs'::payment_provider`,
@@ -1411,7 +1411,7 @@ async function setPoPaymentTerms({ poId, body, user }) {
       [po.id],
     )).rows[0];
     const pendingPaylabs = (await db(
-      `select id from public.payments
+      `select id from public.mkt_gateway_payments
         where ref_kind='purchase'::payment_ref_kind
           and ref_id=$1
           and provider='paylabs'::payment_provider
