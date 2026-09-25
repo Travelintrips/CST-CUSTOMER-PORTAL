@@ -499,27 +499,11 @@ async function writeActivity(db, {
   );
 }
 
-async function queueNotification(db, {
-  eventType,
-  po,
-  payload = {},
-  key,
-}) {
-  await bestEffortNotificationWrite(db, () => db(
-    `insert into public.mkt_notification_queue
-       (event_type, channel, recipient_type, recipient_id, rfq_id,
-        purchase_order_id, payload_json, deduplication_key)
-     values ($1,'internal','customer',$2,$3,$4,$5::jsonb,$6)
-     on conflict do nothing`,
-    [
-      eventType,
-      po.portal_customer_id ?? null,
-      po.rfq_id,
-      po.id,
-      JSON.stringify({ poId: Number(po.id), poNumber: po.po_number, ...payload }),
-      key,
-    ],
-  ));
+async function queueNotification() {
+  // In-app marketplace notifications are persisted by notifyMarketplaceEvent().
+  // Do not create an "internal" row in mkt_notification_queue: that queue is
+  // reserved for durable WhatsApp delivery and has no internal-channel worker.
+  return true;
 }
 
 async function notifyMarketplaceEvent(db, { eventType, po, payload = {}, key }) {
