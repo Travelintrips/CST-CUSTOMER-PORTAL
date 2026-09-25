@@ -119,6 +119,16 @@ interface PortalOrderFeed {
   }>;
   productOrders: ProductOrder[];
   marketplaceRfqs: MarketplaceRfq[];
+  truckingOrders: Array<{
+    id: number;
+    bookingNumber: string;
+    status: string;
+    grandTotal: number;
+    createdAt: string;
+    vehicleName: string;
+    pickup: string | null;
+    delivery: string | null;
+  }>;
 }
 
 export default function Orders() {
@@ -230,6 +240,21 @@ export default function Orders() {
     trackUrl: o.trackingToken ? `/track-produk/${o.trackingToken}` : null,
   }));
 
+  const truckingOrdersMapped = (orderFeed?.truckingOrders ?? []).map((o) => ({
+    _key: `truck-${o.id}`,
+    _id: o.id,
+    _type: "trucking" as const,
+    _cancellable: false,
+    displayNumber: o.bookingNumber,
+    subtitle: `${o.vehicleName} • ${o.pickup ?? ""} → ${o.delivery ?? ""}`,
+    status: o.status,
+    displayStatus: localeStatus(o.status),
+    statusColor: STATUS_COLOR[o.status] ?? "bg-blue-100 text-blue-800",
+    grandTotal: o.grandTotal,
+    createdAt: o.createdAt,
+    trackUrl: `/trucking/orders/${encodeURIComponent(o.bookingNumber)}`,
+  }));
+
   const marketplaceRfqsMapped = (orderFeed?.marketplaceRfqs ?? []).map((o) => ({
     _key: `mkt-rfq-${o.rfqId}`,
     _id: o.rfqId,
@@ -249,7 +274,7 @@ export default function Orders() {
     trackUrl: `/marketplace/my-rfqs/${o.rfqId}`,
   }));
 
-  const allOrders = [...logisticOrders, ...crmOrders, ...productOrdersMapped, ...marketplaceRfqsMapped].sort(
+  const allOrders = [...truckingOrdersMapped, ...logisticOrders, ...crmOrders, ...productOrdersMapped, ...marketplaceRfqsMapped].sort(
     (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
   );
 
