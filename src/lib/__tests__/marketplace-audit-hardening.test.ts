@@ -20,6 +20,7 @@ describe("marketplace audit hardening contract", () => {
     const source = read("server/marketplace-operations.mjs");
     expect(source).toContain("async function assertHandoverPaymentSatisfied");
     expect(source).toContain('["in_transit", "delivered"].includes(target)');
+    expect(source).toContain('["departed", "handed_over"].includes(eventType)');
     expect(source).toContain("requiredAmount - totals.receivedAmount");
   });
 
@@ -50,6 +51,7 @@ describe("marketplace audit hardening contract", () => {
       "server/paylabs-service.mjs",
       "server/marketplace-service.mjs",
       "server/marketplace-operations.mjs",
+      "server/admin-portal.mjs",
     ]) {
       const source = read(file);
       expect(source).not.toContain("public.payments");
