@@ -41,6 +41,7 @@ import {
   handleCustomerPayments,
 } from "./billing-operations.mjs";
 import { handleFreightRoute } from "./freight-operations.mjs";
+import { handleGoogleMapsRoute } from "./google-maps-service.mjs";
 import { handleToolRoute } from "./tool-operations.mjs";
 import {
   handleCapabilities,
@@ -3048,6 +3049,11 @@ async function route(request, response) {
   enforceRequestPolicy(request);
   for (const [name, value] of Object.entries(corsHeaders(request))) {
     response.setHeader(name, value);
+  }
+
+  if (pathname.startsWith("/api/places/")) {
+    await handleGoogleMapsRoute({ request, response, url, sendJson });
+    return;
   }
 
   if (request.method === "GET" && pathname === "/api/healthz") {
