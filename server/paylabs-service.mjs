@@ -1187,6 +1187,15 @@ export async function handlePaylabsWebhook({ request, response, body, rawBodyTex
         sendJson(response, 404, { errCode: "404", errMsg: "Trucking booking not found" });
         return true;
       }
+      await client.query(
+        `update public.trucking_payments
+            set status='rejected',
+                rejection_reason='Pembayaran diselesaikan melalui Paylabs; bukti transfer trucking manual tidak diproses.',
+                reviewed_at=now(),
+                updated_at=now()
+          where booking_id=$1 and status='submitted'`,
+        [booking.id],
+      );
       const totals = await truckingPaymentTotals(booking, client);
       const terms = booking.payment_terms && typeof booking.payment_terms === "object"
         ? booking.payment_terms
