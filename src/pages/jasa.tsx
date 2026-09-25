@@ -8,7 +8,7 @@ import {
   MapPin, Package, Building2, Globe, Search, ChevronRight,
   ArrowRight, Clock, Users, Warehouse, Plus, X,
   MessageSquare, PhoneCall, BookOpen, Calculator, FileCheck,
-  ShieldCheck, Star, TrendingUp,
+  ShieldCheck, CheckCircle2, Network,
 } from "lucide-react";
 import { useListPortalServices } from "@shared/api-client-react";
 import { Button } from "@/components/ui/button";
@@ -89,7 +89,7 @@ const MAIN_CATEGORIES: MainCategory[] = [
     services: [
       { serviceCode: "sea_freight", title: "Sea Freight", titleId: "Kargo Laut", desc: "Pengiriman kargo via laut FCL & LCL.", href: "/ocean-freight-booking", icon: Ship, eta: "7–30 hari", categoryKeys: ["sea_freight"] },
       { serviceCode: "air_freight", title: "Air Freight", titleId: "Kargo Udara", desc: "Pengiriman kargo ekspres via udara.", href: "/air-freight-booking", icon: Plane, eta: "1–3 hari", categoryKeys: ["air_freight"] },
-      { serviceCode: "trucking", title: "Domestik", titleId: "Pengiriman Dalam Negeri", desc: "Distribusi kargo antar kota dan antar pulau.", href: "/trucking", icon: Truck, eta: "1–5 hari", categoryKeys: ["trucking"] },
+      { serviceCode: "trucking", title: "Transportasi & Distribusi Domestik", titleId: "Transportasi & Distribusi Dalam Negeri", desc: "Transportasi penumpang serta distribusi barang domestik dengan pilihan mobil penumpang hingga armada kargo.", href: "/trucking", icon: Truck, eta: "Sesuai rute", categoryKeys: ["trucking"] },
     ],
   },
   {
@@ -402,14 +402,6 @@ export default function Jasa() {
             filter: "brightness(0.45) saturate(1.1)",
           }}
         />
-        <div
-          className="absolute inset-0 bg-cover bg-center"
-          style={{
-            backgroundImage: `url('${CUSTOMER_ASSETS.portOperations}')`,
-            transform: "scale(1.04)",
-            filter: "brightness(0.45) saturate(1.1)",
-          }}
-        />
 
         {/* Gradient overlays — left dark for readability, soft vignette bottom */}
         <div className="absolute inset-0 bg-gradient-to-r from-slate-950/95 via-slate-900/75 to-slate-900/20" />
@@ -442,7 +434,7 @@ export default function Jasa() {
               {/* Brand accent line + label */}
               <div className="flex items-center gap-3 mb-4">
                 <div className="h-0.5 w-8 bg-sky-400 rounded-full" />
-                <span className="text-sky-400 text-[11px] font-bold uppercase tracking-[0.18em]">B2B Marketplace and Logistic</span>
+                <span className="text-sky-400 text-[11px] font-bold uppercase tracking-[0.18em]">CST Logistic · PT Cahaya Sejati Teknologi</span>
               </div>
 
               <h1 className="text-3xl md:text-[2.6rem] font-black text-white leading-[1.15] mb-4 tracking-tight">
@@ -461,15 +453,15 @@ export default function Jasa() {
               </h1>
 
               <p className="text-white/55 text-[14px] mb-8 leading-relaxed max-w-md">
-                {t("jasa.heroSubtitle", "Ekspor, impor, kepabeanan, dan pengiriman domestik — semua dalam satu platform terintegrasi.")}
+                {t("jasa.heroSubtitle", "Freight forwarding, kepabeanan, transportasi penumpang, distribusi barang, dan layanan logistik tambahan dalam satu portal.")}
               </p>
 
               {/* Trust stats */}
               <div className="flex items-center gap-6 mb-9">
                 {[
-                  { val: "500+", label: t("jasa.statActiveClients", "Klien Aktif") },
-                  { val: "50+",  label: t("jasa.statDestinations", "Negara Tujuan") },
-                  { val: "10+",  label: t("jasa.statExperience", "Tahun Pengalaman") },
+                  { val: String(canonicalServices.length || "—"), label: "Layanan Aktif" },
+                  { val: String(MAIN_CATEGORIES.length), label: "Kategori Utama" },
+                  { val: String(totalVendorItems || "—"), label: "Penawaran Vendor" },
                 ].map(({ val, label }, i) => (
                   <div key={i} className="flex items-center gap-4">
                     {i > 0 && <div className="w-px h-8 bg-white/20" />}
@@ -506,9 +498,9 @@ export default function Jasa() {
             {/* Right — trust badges column */}
             <div className="hidden md:flex flex-col gap-3 shrink-0 w-52">
               {[
-                { icon: ShieldCheck, text: t("jasa.badgePPJK", "Berizin Resmi PPJK"),   sub: t("jasa.badgePPJKSub", "Terdaftar Bea & Cukai") },
-                { icon: Star,        text: t("jasa.badgeRating", "Rating 4.9 / 5.0"),    sub: t("jasa.badgeRatingSub", "Dari 1.200+ ulasan") },
-                { icon: TrendingUp,  text: t("jasa.badgeDelivery", "On-Time Delivery"),  sub: t("jasa.badgeDeliverySub", "98.5% ketepatan waktu") },
+                { icon: ShieldCheck, text: "Layanan Kepabeanan", sub: "PPJK, customs clearance & konsultasi" },
+                { icon: CheckCircle2, text: "Master Layanan Aktif", sub: "Dikelola dari katalog layanan CST" },
+                { icon: Network, text: "Marketplace Vendor", sub: "Penawaran vendor tampil per kategori" },
               ].map(({ icon: Icon, text, sub }) => (
                 <div
                   key={text}
@@ -533,9 +525,9 @@ export default function Jasa() {
       <div className="md:hidden bg-slate-900 border-b border-white/5">
         <div className="max-w-5xl mx-auto px-4 py-3 flex items-center gap-4 overflow-x-auto scrollbar-none">
           {[
-            { icon: ShieldCheck, text: t("jasa.badgePPJKMobile", "Berizin PPJK"),          sub: t("jasa.badgePPJKSub", "Terdaftar Bea & Cukai") },
-            { icon: Star,        text: t("jasa.badgeRatingMobile", "Rating 4.9/5.0"),       sub: t("jasa.badgeRatingSub", "1.200+ ulasan") },
-            { icon: TrendingUp,  text: t("jasa.badgeDeliveryMobile", "On-Time 98.5%"),      sub: t("jasa.badgeTimeMobile", "Ketepatan waktu") },
+            { icon: ShieldCheck, text: "Kepabeanan", sub: "PPJK & customs clearance" },
+            { icon: CheckCircle2, text: "Layanan Aktif", sub: "Katalog CST" },
+            { icon: Network, text: "Vendor", sub: "Penawaran marketplace" },
           ].map(({ icon: Icon, text, sub }) => (
             <div key={text} className="flex items-center gap-2 shrink-0">
               <div className="w-7 h-7 rounded-lg bg-sky-500/20 flex items-center justify-center shrink-0">
@@ -743,17 +735,6 @@ export default function Jasa() {
               })}
             </div>
 
-            {/* ── Search results ─────────────────────────────────────────── */}
-            {searchQuery && totalVendorItems > 0 && (
-              <div className="mt-10">
-                <h2 className="text-[16px] font-bold text-slate-800 mb-4">{t("jasa.searchResultsTitle")} ({totalVendorItems})</h2>
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
-                  {allItems.filter(matchSearch).map((item) => (
-                    <VendorItemCard key={`${item.source}-${item.id}`} item={item} />
-                  ))}
-                </div>
-              </div>
-            )}
           </>
         ) : (
 
@@ -788,9 +769,9 @@ export default function Jasa() {
               {[
                 { icon: Globe,   title: t("jasa.bulkFullForwardingTitle"), photoKey: "Full Forwarding",   descKey: "jasa.bulkFullForwardingDesc" },
                 { icon: Ship,    title: t("jasa.bulkSeaFreightBundleTitle"), photoKey: "Sea Freight Bundle", descKey: "jasa.bulkSeaFreightBundleDesc" },
-                { icon: Package, title: t("jasa.bulkWarehouseTitle"), photoKey: t("jasa.bulkWarehouseTitle"), descKey: "jasa.bulkWarehouseDesc" },
-              ].map(({ icon: Icon, title, descKey }) => {
-                const photo = BUNDLE_PHOTOS[title];
+                { icon: Package, title: t("jasa.bulkWarehouseTitle"), photoKey: "Warehousing+Distribusi", descKey: "jasa.bulkWarehouseDesc" },
+              ].map(({ icon: Icon, title, photoKey, descKey }) => {
+                const photo = BUNDLE_PHOTOS[photoKey];
                 return (
                   <Link key={title} href="/contact">
                   <div className="group relative rounded-2xl overflow-hidden border border-slate-200 shadow-sm hover:shadow-xl hover:-translate-y-1 transition-all duration-300 cursor-pointer">
