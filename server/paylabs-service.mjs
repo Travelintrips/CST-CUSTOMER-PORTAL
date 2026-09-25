@@ -673,6 +673,7 @@ export async function createTruckingPaylabsLink({
       return { reused: true, payment: serializePayment(existing), sandboxMode: credentials.sandboxMode };
     }
 
+    const providerCompanyId = Number(process.env.TRUCKING_PROVIDER_COMPANY_ID ?? 1);
     const merchantTradeNo = shortTruckingTradeNo(booking.id);
     const inserted = (await client.query(
       `insert into public.mkt_gateway_payments
@@ -682,7 +683,7 @@ export async function createTruckingPaylabsLink({
                'paylabs'::payment_provider,$5,$6,$7,$8::jsonb)
        returning *`,
       [
-        booking.company_id ?? 1,
+        providerCompanyId,
         booking.id,
         booking.booking_number,
         paymentAmount,
