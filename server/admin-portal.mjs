@@ -1530,7 +1530,12 @@ async function handleServiceOperations(ctx) {
         },
       };
     }
-    ctx.sendJson(response, 200, { service: row.service_key, id: row.id, record: row.record, history, projection });
+    let detailRecord = row.record;
+    if (row.service_key === "logistic-order" && row.record.payment_proof_url) {
+      const paymentProofSignedUrl = await signedDocumentUrl(row.record.payment_proof_url).catch(() => null);
+      detailRecord = { ...row.record, payment_proof_signed_url: paymentProofSignedUrl };
+    }
+    ctx.sendJson(response, 200, { service: row.service_key, id: row.id, record: detailRecord, history, projection });
     return;
   }
   if (request.method === "POST" && actionMatch) {
