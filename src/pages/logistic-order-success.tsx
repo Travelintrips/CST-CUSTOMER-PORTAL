@@ -540,8 +540,8 @@ export default function OrderSuccessPage() {
             </>
           ) : (
             <div className="rounded-lg bg-blue-50 border border-blue-200 p-3 text-xs text-blue-700 space-y-0.5">
-              <p className="font-semibold">{t("logisticOrderSuccess.priceByVendor", "Harga Akan Diberikan oleh Vendor")}</p>
-              <p>{t("logisticOrderSuccess.priceByVendorDesc", "Vendor akan membalas pesanan Anda dengan penawaran harga. Tim kami akan segera menghubungi Anda.")}</p>
+              <p className="font-semibold">Menunggu quotation CST</p>
+              <p>Estimasi pada form bersifat referensi. Harga final akan muncul setelah detail permohonan direview oleh tim CST.</p>
             </div>
           )}
         </div>
