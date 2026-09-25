@@ -106,8 +106,12 @@ function configuredKey(raw) {
 
 async function activeCredentials(client = query) {
   const cfg = await loadConfiguration(client);
+  const explicitSandbox = text(process.env.PAYLABS_SANDBOX_MODE);
+  const productionRuntime = process.env.NODE_ENV === "production" || process.env.APP_ENV === "production";
   const sandboxMode = cfg?.sandbox_mode == null
-    ? true
+    ? explicitSandbox == null
+      ? !productionRuntime
+      : explicitSandbox.toLowerCase() === "true"
     : Boolean(cfg.sandbox_mode);
   const fallback = envCredentialSet(sandboxMode);
 
