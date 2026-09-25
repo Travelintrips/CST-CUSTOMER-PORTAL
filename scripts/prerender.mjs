@@ -68,11 +68,12 @@ const routes = {
     isHomepage:    true,
   },
   '/services': {
-    title:         'Layanan Logistik Terintegrasi | CST Logistic',
-    description:   'Layanan logistik terintegrasi meliputi PPJK, customs clearance, freight forwarding, trucking, ocean freight, dan ekspor impor.',
-    canonical:     `${BASE_URL}/services`,
-    ogTitle:       'Layanan Logistik Terintegrasi | CST Logistic',
-    ogDescription: 'PPJK, customs clearance, freight forwarding, trucking, ocean freight, dan ekspor impor terintegrasi untuk bisnis Anda.',
+    title:         'Layanan Logistik & Transportasi | CST Logistic',
+    description:   'Katalog layanan telah dipusatkan di halaman Jasa CST Logistic: freight forwarding, kepabeanan, transportasi penumpang, distribusi barang, dan layanan logistik tambahan.',
+    canonical:     `${BASE_URL}/jasa`,
+    ogTitle:       'Layanan Logistik & Transportasi | CST Logistic',
+    ogDescription: 'Freight forwarding, kepabeanan, transportasi penumpang, distribusi barang, dan layanan logistik tambahan CST.',
+    noindex:       true,
   },
   '/freight-forwarding': {
     title:         'Freight Forwarding Udara & Laut | CST Logistic',
@@ -110,11 +111,11 @@ const routes = {
     ogDescription: 'Sea freight internasional FCL & LCL ke 150+ pelabuhan. Jadwal reguler, harga kompetitif untuk kargo bisnis Anda.',
   },
   '/jasa': {
-    title:         `Jasa & Vendor Logistik B2B — ${SITE_NAME}`,
-    description:   'Temukan berbagai vendor dan jasa logistik terverifikasi di platform B2B kami: freight, customs, trucking, pergudangan, dan lebih banyak lagi.',
+    title:         'Jasa Logistik & Transportasi | CST Logistic',
+    description:   'Layanan CST Logistic mencakup sea freight, air freight, kepabeanan, transportasi penumpang, distribusi barang, handling, storage, EMKL, dan asuransi kargo.',
     canonical:     `${BASE_URL}/jasa`,
-    ogTitle:       'Jasa & Vendor Logistik B2B',
-    ogDescription: 'Vendor dan jasa logistik terverifikasi: freight, customs, trucking, pergudangan, dan layanan bisnis lainnya.',
+    ogTitle:       'Jasa Logistik & Transportasi | CST Logistic',
+    ogDescription: 'Sea freight, air freight, kepabeanan, transportasi penumpang, distribusi barang, handling, storage, EMKL, dan layanan logistik tambahan.',
   },
   '/marketplace': {
     title:         `Marketplace B2B Logistik Indonesia — ${SITE_NAME}`,
@@ -265,6 +266,38 @@ function buildJsonLdBlock(route, cfg) {
     </script>`;
 }
 
+function buildStaticBody(route, cfg) {
+  const serviceLinks = route === '/jasa'
+    ? `<h2>Layanan Utama</h2>
+       <ul>
+         <li><a href="/ocean-freight-booking">Sea Freight / Ocean Freight</a></li>
+         <li><a href="/air-freight-booking">Air Freight</a></li>
+         <li><a href="/trucking">Transportasi Penumpang & Distribusi Barang Domestik</a></li>
+         <li><a href="/custom-clearance">Custom Clearance</a></li>
+         <li><a href="/pabean">Konsultan Pabean</a></li>
+       </ul>
+       <h2>Layanan Tambahan</h2>
+       <p>Handling, port charges, storage/demurrage, EMKL, dan asuransi kargo tersedia sesuai kebutuhan operasional.</p>`
+    : '';
+
+  return `<div class="seo-static">
+    <nav aria-label="Navigasi utama">
+      <a href="/">Beranda</a>
+      <a href="/jasa">Jasa</a>
+      <a href="/marketplace">Marketplace</a>
+      <a href="/contact">Kontak</a>
+    </nav>
+    <main>
+      <h1>${esc(cfg.title)}</h1>
+      <p>${esc(cfg.description)}</p>
+      ${serviceLinks}
+    </main>
+    <footer>
+      <p>&copy; 2026 PT Cahaya Sejati Teknologi. Seluruh hak cipta dilindungi.</p>
+    </footer>
+  </div>`;
+}
+
 // ── Main ─────────────────────────────────────────────────────────────────────
 
 // Read the built index.html (Vite replaces /src/main.tsx with hashed bundle)
@@ -286,6 +319,10 @@ if (!template.includes('<!-- SEO:JSONLD:START -->')) {
   console.error('ERROR: <!-- SEO:JSONLD:START --> marker not found in index.html.');
   process.exit(1);
 }
+if (!template.includes('<!-- SEO:STATIC:START -->')) {
+  console.error('ERROR: <!-- SEO:STATIC:START --> marker not found in index.html.');
+  process.exit(1);
+}
 
 let generated = 0;
 let skipped   = 0;
@@ -299,6 +336,7 @@ for (const [routePath, cfg] of Object.entries(routes)) {
     // Replace both marker sections
     let html = replaceMarker(template, 'SEO:META',   metaBlock);
     html     = replaceMarker(html,     'SEO:JSONLD', jsonLdBlock);
+    html     = replaceMarker(html,     'SEO:STATIC', buildStaticBody(routePath, cfg));
 
     // Determine output path
     // /          → dist/public/index.html  (overwrite — already homepage)
