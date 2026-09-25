@@ -58,6 +58,38 @@ jobs:
           echo "All 10 canonical services are live."
 
 
+      - name: Verify public sitemap
+        shell: bash
+        run: |
+          set -euo pipefail
+          url="https://cstlogistic.co.id/sitemap.xml"
+          code="$(curl --silent --show-error --dump-header /tmp/sitemap-headers --output /tmp/sitemap.xml --write-out '%{http_code}' \
+            --max-time 20 \
+            -H 'User-Agent: Googlebot' \
+            "$url")"
+          content_type="$(awk -F': ' 'tolower($1)=="content-type" {gsub("\r","",$2); print tolower($2)}' /tmp/sitemap-headers | tail -n1)"
+
+          echo "sitemap_http=$code content_type=${content_type:-missing}"
+          test "$code" = "200"
+          case "$content_type" in
+            application/xml*|text/xml*) ;;
+            *)
+              echo "Unexpected sitemap Content-Type: ${content_type:-missing}"
+              cat /tmp/sitemap-headers
+              exit 1
+              ;;
+          esac
+
+          grep -Fq '<urlset' /tmp/sitemap.xml
+          grep -Fq '<loc>https://cstlogistic.co.id/kalkulator-impor</loc>' /tmp/sitemap.xml
+          grep -Fq '<loc>https://cstlogistic.co.id/translation-hub</loc>' /tmp/sitemap.xml
+
+          url_count="$(grep -o '<url>' /tmp/sitemap.xml | wc -l | tr -d ' ')"
+          echo "sitemap_url_count=$url_count"
+          test "$url_count" = "16"
+
+          echo "Public sitemap is live with 16 canonical URLs."
+
       - name: Verify Paylabs routes are locally owned and fail closed
         shell: bash
         run: |
