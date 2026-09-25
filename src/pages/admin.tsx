@@ -181,6 +181,11 @@ export default function AdminPage() {
                     <span className="ml-auto bg-amber-500 text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full min-w-5 text-center">{pendingPortalWorkload}</span>
                   )}
                 </button>
+                <button type="button" onClick={() => window.location.assign("/admin/trucking")}
+                  className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md text-xs lg:text-[13px] font-medium text-slate-300 hover:text-white hover:bg-slate-800 transition">
+                  <Truck className="h-4 w-4 shrink-0" strokeWidth={2} />
+                  <span className="flex-1 text-left">Operasional Trucking</span>
+                </button>
                 <button type="button" aria-current={activeTab === "customer-billing" ? "page" : undefined}
                   onClick={() => { setActiveTab("customer-billing"); setMobileNavOpen(false); }}
                   className={sidebarBtnCls("customer-billing")}>
@@ -294,6 +299,10 @@ export default function AdminPage() {
                       <span className="ml-auto bg-amber-500 text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full min-w-5 text-center">{pendingPortalWorkload}</span>
                     )}
                   </TabsTrigger>
+                  <button type="button" onClick={() => window.location.assign("/admin/trucking")} className={TABS_TRIGGER_CLS}>
+                    <Truck className="h-4 w-4 shrink-0" strokeWidth={2} />
+                    <span className="flex-1 text-left">Operasional Trucking</span>
+                  </button>
                   <TabsTrigger value="customer-billing" className={TABS_TRIGGER_CLS}><CreditCard className="h-4 w-4 shrink-0" strokeWidth={2} />Invoice & Payment</TabsTrigger>
                   <TabsTrigger value="payment-history" className={TABS_TRIGGER_CLS}><History className="h-4 w-4 shrink-0" strokeWidth={2} />Riwayat Pembayaran</TabsTrigger>
                   <p className="px-2.5 pt-2.5 pb-1 text-[9px] font-semibold tracking-widest text-slate-600 uppercase select-none">{t("adminPage.nav.sectionWebsite", "Website & Konten")}</p>
