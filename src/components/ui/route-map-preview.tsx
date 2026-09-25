@@ -4,21 +4,42 @@ import { MapPin, Route, Clock, Loader2, Navigation } from "lucide-react";
 interface Props {
   origin: string;
   destination: string;
+  waypoints?: string[];
+  distanceKmOverride?: number | null;
 }
 
 const GMAPS_KEY = (import.meta.env.VITE_GOOGLE_MAPS_API_KEY as string) ?? "";
 
-export function RouteMapPreview({ origin, destination }: Props) {
+export function RouteMapPreview({
+  origin,
+  destination,
+  waypoints = [],
+  distanceKmOverride = null,
+}: Props) {
   const [distanceKm, setDistanceKm] = useState<number | null>(null);
   const [durationText, setDurationText] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
+  const validWaypoints = waypoints.map((value) => value.trim()).filter((value) => value.length > 3);
+  const waypointsKey = validWaypoints.join("|");
   const isReady = origin.trim().length > 3 && destination.trim().length > 3;
 
   useEffect(() => {
     if (!isReady) {
       setDistanceKm(null);
       setDurationText(null);
+      return;
+    }
+    if (distanceKmOverride != null) {
+      setDistanceKm(distanceKmOverride);
+      setDurationText(null);
+      setLoading(false);
+      return;
+    }
+    if (validWaypoints.length > 0) {
+      setDistanceKm(null);
+      setDurationText(null);
+      setLoading(false);
       return;
     }
     // Controller lives at effect scope so cleanup can abort even before timer fires
@@ -42,15 +63,18 @@ export function RouteMapPreview({ origin, destination }: Props) {
       clearTimeout(timer);
       controller.abort();
     };
-  }, [origin, destination, isReady]);
+  }, [origin, destination, isReady, distanceKmOverride, waypointsKey]);
 
   if (!isReady) return null;
 
+  const waypointQuery = validWaypoints.length
+    ? `&waypoints=${encodeURIComponent(validWaypoints.join("|"))}`
+    : "";
   const embedUrl = GMAPS_KEY
-    ? `https://www.google.com/maps/embed/v1/directions?key=${GMAPS_KEY}&origin=${encodeURIComponent(origin.trim())}&destination=${encodeURIComponent(destination.trim())}&mode=driving&language=id`
+    ? `https://www.google.com/maps/embed/v1/directions?key=${GMAPS_KEY}&origin=${encodeURIComponent(origin.trim())}&destination=${encodeURIComponent(destination.trim())}${waypointQuery}&mode=driving&language=id`
     : null;
 
-  const mapsLink = `https://www.google.com/maps/dir/?api=1&origin=${encodeURIComponent(origin.trim())}&destination=${encodeURIComponent(destination.trim())}&travelmode=driving`;
+  const mapsLink = `https://www.google.com/maps/dir/?api=1&origin=${encodeURIComponent(origin.trim())}&destination=${encodeURIComponent(destination.trim())}${waypointQuery}&travelmode=driving`;
 
   return (
     <div className="rounded-xl border border-slate-200 overflow-hidden bg-slate-50 mt-3">
@@ -60,6 +84,11 @@ export function RouteMapPreview({ origin, destination }: Props) {
         <Navigation className="h-3 w-3 text-slate-400 shrink-0" />
         <MapPin className="h-3.5 w-3.5 text-red-500 shrink-0" />
         <span className="truncate max-w-[160px] text-slate-600 text-xs">{destination.trim()}</span>
+        {validWaypoints.length > 0 && (
+          <span className="rounded-full bg-blue-50 px-2 py-0.5 text-[10px] font-semibold text-blue-600">
+            +{validWaypoints.length} titik antara
+          </span>
+        )}
         <span className="ml-auto flex items-center gap-2 flex-wrap">
           {loading && <Loader2 className="h-3.5 w-3.5 animate-spin text-slate-400" />}
           {!loading && distanceKm != null && (
