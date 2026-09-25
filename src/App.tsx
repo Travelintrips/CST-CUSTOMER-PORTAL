@@ -195,6 +195,7 @@ const NO_AUTH_CHECK_PREFIXES = [
   "/vendor-po-accept",
   "/customer-feedback", "/purchase-request", "/vendor-invoice", "/goods-receipt",
   "/driver-progress",
+  "/trucking/driver",
   "/payment-proof",
   "/track-produk",
   "/product-approve",
