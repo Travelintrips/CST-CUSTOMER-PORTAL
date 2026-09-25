@@ -32,7 +32,7 @@ import {
 } from "./admin-portal.mjs";
 import { checkStorageReadiness, signedDocumentUrl, signedPaymentProofUrl, uploadPaymentProof } from "./storage.mjs";
 import { handleMarketplaceRoute } from "./marketplace-service.mjs";
-import { createLogisticPaylabsLink, handlePaylabsAdminRoute, handlePaylabsWebhook } from "./paylabs-service.mjs";
+import { createLogisticPaylabsLink, getLogisticPaylabsState, handlePaylabsAdminRoute, handlePaylabsWebhook } from "./paylabs-service.mjs";
 import { processMarketplaceWhatsAppQueue } from "./whatsapp-service.mjs";
 import {
   handleAdminInvoices,
@@ -968,6 +968,18 @@ async function handlePortalOrderFeed(request, response) {
 }
 
 function mapPortalOrder(row) {
+  const [paylabs, manualPaymentAccount] = await Promise.all([
+    getLogisticPaylabsState(row).catch(() => ({
+      configured: false,
+      sandboxMode: false,
+      activeMethods: [],
+      latestPayment: null,
+      hasPendingPayment: false,
+      canCreate: false,
+    })),
+    logisticManualPaymentAccount(),
+  ]);
+
   return {
     id: Number(row.id),
     docNumber: row.doc_number ?? String(row.id),
@@ -2029,6 +2041,34 @@ async function getLogisticItems(orderId) {
   return result.rows.map(logisticItemResponse);
 }
 
+
+async function logisticManualPaymentAccount() {
+  const providerCompanyId = Number(process.env.LOGISTIC_PROVIDER_COMPANY_ID ?? 1);
+  const result = await query(
+    `select a.bank_name,a.account_number,
+            coalesce(nullif(a.account_holder,''),coalesce(c.company_name,c.legal_name,c.name)) as account_holder,
+            coalesce(nullif(a.currency_code,''),nullif(a.currency,''),'IDR') as currency
+       from public.company_bank_accounts a
+       left join public.companies c on c.id=a.company_id
+      where a.company_id=$1
+        and coalesce(a.is_active,true)=true
+        and lower(coalesce(a.account_type,''))='bank'
+        and nullif(trim(coalesce(a.account_number,'')),'') is not null
+      order by coalesce(a.is_default,false) desc,a.id
+      limit 1`,
+    [providerCompanyId],
+  ).catch(() => ({ rows: [] }));
+  const row = result.rows[0];
+  return row
+    ? {
+        bankName: row.bank_name,
+        accountNumber: row.account_number,
+        accountHolder: row.account_holder,
+        currency: row.currency ?? "IDR",
+      }
+    : null;
+}
+
 async function logisticOrderResponse(row, items = []) {
   let paymentProofUrl = null;
   if (row.payment_proof_url) {
@@ -2089,6 +2129,8 @@ async function logisticOrderResponse(row, items = []) {
     eta: row.eta ?? null,
     paymentStatus: row.payment_status ?? null,
     paymentProofUrl,
+    paylabs,
+    manualPaymentAccount,
     items,
   };
 }
@@ -2547,6 +2589,23 @@ async function handleLogisticCustomerRoutes(request, response, url, user, body =
       sendError(response, 404, "Order logistik tidak ditemukan.");
       return true;
     }
+    if (row.customer_quote_status !== "approved") {
+      sendError(response, 409, "Quotation harus disetujui sebelum mengunggah bukti pembayaran.");
+      return true;
+    }
+    if (row.payment_status === "paid") {
+      sendError(response, 409, "Order ini sudah lunas.");
+      return true;
+    }
+    await query(
+      `update public.mkt_gateway_payments
+          set status='expired'::payment_status,updated_at=now()
+        where ref_kind='logistic'::payment_ref_kind
+          and ref_id=$1
+          and provider='paylabs'::payment_provider
+          and status='pending'::payment_status`,
+      [row.id],
+    );
     const proofUrl = String(body.proofUrl ?? "").trim();
     const expectedProofPrefix = `customers/${Number(user.id)}/`;
     if (!proofUrl || !proofUrl.startsWith(expectedProofPrefix)) {
