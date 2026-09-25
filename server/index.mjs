@@ -4006,12 +4006,25 @@ let whatsappTimer = null;
 server.listen(PORT, "0.0.0.0", () => {
   console.log(`[customer-portal-api] listening on :${PORT} (${APP_ENV})`);
   if (IS_PRODUCTION && process.env.CUSTOMER_PORTAL_WA_WORKER_ENABLED !== "false") {
-    const run = () => processMarketplaceWhatsAppQueue().catch((error) => {
-      console.error("[customer-portal-api] WhatsApp worker failed", error?.message ?? error);
-    });
-    whatsappTimer = setInterval(run, 60_000);
+    const run = async () => {
+      try {
+        const result = await processMarketplaceWhatsAppQueue();
+        if (result?.skipped) {
+          console.warn("[customer-portal-api] WhatsApp worker skipped", { reason: result.skipped });
+        } else if (Number(result?.processed ?? 0) > 0 || Number(result?.failed ?? 0) > 0) {
+          console.info("[customer-portal-api] WhatsApp worker cycle", {
+            processed: Number(result?.processed ?? 0),
+            sent: Number(result?.sent ?? 0),
+            failed: Number(result?.failed ?? 0),
+          });
+        }
+      } catch (error) {
+        console.error("[customer-portal-api] WhatsApp worker failed", error?.message ?? error);
+      }
+    };
+    whatsappTimer = setInterval(() => void run(), 60_000);
     whatsappTimer.unref?.();
-    setTimeout(run, 5_000).unref?.();
+    setTimeout(() => void run(), 5_000).unref?.();
   }
 });
 
