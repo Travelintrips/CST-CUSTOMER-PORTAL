@@ -3,9 +3,9 @@ import { staticAsset } from "@/lib/staticAssets";
 
 const BASE_URL = COMPANY_CONFIG.domain;
 const OG_IMAGE = staticAsset("images/og-cover.webp");
+const SITE_NAME = "CST Logistic";
 const OG_IMAGE_ALT =
-  `${COMPANY_CONFIG.brandName} — Layanan ekspor impor, freight forwarding, dan logistik terpadu Indonesia`;
-const SITE_NAME = COMPANY_CONFIG.brandName;
+  "CST Logistic — PT Cahaya Sejati Teknologi, layanan logistik dan transportasi Indonesia";
 
 export interface PageSeoConfig {
   title: string;
