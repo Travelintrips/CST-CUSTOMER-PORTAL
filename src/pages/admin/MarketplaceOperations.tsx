@@ -985,7 +985,8 @@ export function MarketplaceOperationsTab() {
                   {payment?.paidAmount === 0
                     && payment?.paymentStatus !== "paid"
                     && !payment?.proofLocked
-                    && !payment?.paylabs?.hasPendingPayment && (
+                    && !payment?.paylabs?.hasPendingPayment
+                    && (!payment?.paymentTermCode || ["pending", "confirmed", "issued", "revision_requested", "vendor_rejected"].includes(selectedPo.status)) && (
                     <div className="space-y-2 rounded-md border bg-white p-3">
                       <p className="text-xs font-semibold text-slate-700">Atur syarat pembayaran</p>
                       <div className="grid gap-2 md:grid-cols-[240px_140px_auto]">
@@ -1032,6 +1033,15 @@ export function MarketplaceOperationsTab() {
                       {paymentTermDraft === "dp_after_receipt" && (
                         <p className="text-xs text-slate-500">Vendor boleh handover setelah DP minimum terpenuhi. Sisa wajib dilunasi setelah customer menerima barang sebelum PO ditutup.</p>
                       )}
+                    </div>
+                  )}
+
+                  {payment?.paidAmount === 0
+                    && payment?.paymentTermCode
+                    && !["pending", "confirmed", "issued", "revision_requested", "vendor_rejected"].includes(selectedPo.status)
+                    && payment?.paymentStatus !== "paid" && (
+                    <div className="rounded-md border border-slate-200 bg-slate-50 p-3 text-xs text-slate-700">
+                      Payment terms dikunci karena vendor sudah menerima PO. Perubahan terms harus melalui revisi/amendment PO.
                     </div>
                   )}
 
