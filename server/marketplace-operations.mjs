@@ -1402,6 +1402,19 @@ async function setPoPaymentTerms({ poId, body, user }) {
 
   return withTransaction(async (db) => {
     const po = await loadPo(poId, user, { client: db, forUpdate: true, isAdmin: true });
+    const currentCode = po.payment_term_code ?? normalizePaymentTerm(po.payment_terms_snapshot);
+    const currentDpPercent = normalizeDpPercent(po.payment_dp_percent);
+    const termsChanged = Boolean(
+      currentCode
+      && (currentCode !== code
+        || (code === "dp_after_receipt" && currentDpPercent !== dpPercent)),
+    );
+    if (
+      termsChanged
+      && !["pending", "confirmed", "issued", "revision_requested", "vendor_rejected"].includes(po.status)
+    ) {
+      fail(409, "Syarat pembayaran tidak dapat diubah setelah vendor menerima PO. Gunakan proses revisi/amendment PO.");
+    }
     const totals = await paymentTotals(po, db);
     if (totals.receivedAmount > 0.005) {
       fail(409, "Syarat pembayaran tidak dapat diubah setelah ada pembayaran yang sudah disetujui.");
