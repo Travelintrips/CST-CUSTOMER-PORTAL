@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Link, useParams } from "wouter";
+import { Link, useLocation, useParams } from "wouter";
 import {
   Ship, Plane, Truck, ClipboardList, FileCheck, BookOpen,
   ChevronRight, Search, SlidersHorizontal, ArrowUpDown,
@@ -205,6 +205,7 @@ function VendorItemCard({ item, accentColor }: { item: ServiceHubItem; accentCol
 
 export default function JasaKategori() {
   const { categoryId } = useParams<{ categoryId: string }>();
+  const [, setLocation] = useLocation();
   const { t } = useLanguage();
 
   const cat = CATEGORIES.find((c) => c.id === categoryId);
@@ -215,7 +216,13 @@ export default function JasaKategori() {
   const [activeSubFilter, setActiveSubFilter] = useState<string>("semua");
   const [showFilters, setShowFilters] = useState(false);
 
-  useEffect(() => { window.scrollTo(0, 0); }, [categoryId]);
+  useEffect(() => {
+    if (categoryId === "additional") {
+      setLocation("/jasa");
+      return;
+    }
+    window.scrollTo(0, 0);
+  }, [categoryId, setLocation]);
 
   const { data: marketplaceRaw, isLoading: mktLoading } = useQuery<unknown[]>({
     queryKey: ["jasaKategoriMarketplace"],
