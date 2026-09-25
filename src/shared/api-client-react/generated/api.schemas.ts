@@ -2347,6 +2347,11 @@ export interface LogisticOrder {
   approvedVendorName?: string | null;
   finalSellingPrice?: number | null;
   quotationSentAt?: string | null;
+  customerQuoteStatus?: string | null;
+  termsConditions?: string | null;
+  quoteNotes?: string | null;
+  paymentStatus?: string | null;
+  paymentProofUrl?: string | null;
   createdAt: string;
   updatedAt: string;
 }
