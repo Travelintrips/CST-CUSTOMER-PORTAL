@@ -340,6 +340,23 @@ export default function OrderSuccessPage() {
     }
   }
 
+  useEffect(() => {
+    if (!order || order.paymentStatus === "paid" || order.customerQuoteStatus !== "approved") return;
+    const timer = window.setInterval(async () => {
+      try {
+        const response = await fetch(`/api/logistic/orders/${encodeURIComponent(order.orderNumber)}`, {
+          credentials: "include",
+          cache: "no-store",
+        });
+        if (!response.ok) return;
+        const fresh = await response.json() as LogisticOrderDetail;
+        setOrder(fresh);
+        localStorage.setItem("last_order", JSON.stringify(fresh));
+      } catch { /* keep current state */ }
+    }, 15_000);
+    return () => window.clearInterval(timer);
+  }, [order?.orderNumber, order?.paymentStatus, order?.customerQuoteStatus]);
+
   if (!order) {
     return (
       <div className="min-h-screen bg-background flex items-center justify-center">
@@ -549,6 +566,15 @@ export default function OrderSuccessPage() {
                 Minta Revisi
               </Button>
             </div>
+          </div>
+        )}
+
+        {order.paymentStatus === "paid" && (
+          <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3">
+            <p className="text-sm font-semibold text-emerald-900">Pembayaran telah diterima</p>
+            <p className="text-xs text-emerald-700 mt-1">
+              Pembayaran order {order.orderNumber} sudah dikonfirmasi. Tim CST akan melanjutkan proses operasional.
+            </p>
           </div>
         )}
 
