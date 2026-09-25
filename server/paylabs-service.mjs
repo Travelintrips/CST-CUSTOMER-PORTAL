@@ -405,6 +405,7 @@ export async function createMarketplacePaylabsLink({ po, request, requestedMetho
       productName: `Pembayaran ${po.po_number}`,
       payer: text(po.buyer_name, "Customer"),
       phoneNumber: customerPhone,
+      paymentType: method.code,
       notifyUrl,
       redirectUrl,
       ...(credentials.storeId ? { storeId: credentials.storeId } : {}),
