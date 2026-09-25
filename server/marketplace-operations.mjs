@@ -830,6 +830,11 @@ async function appendShipmentEvent({ shipmentId, body, request, user, isAdmin })
   if (!targetStatus) fail(400, "Tipe event shipment tidak valid.");
 
   return withTransaction(async (db) => {
+    const preflight = await loadShipment(shipmentId, user, { client: db, isAdmin });
+    if (["departed", "handed_over"].includes(eventType)) {
+      const po = await loadPo(preflight.po_id, user, { client: db, forUpdate: true, isAdmin });
+      await assertHandoverPaymentSatisfied(po, db);
+    }
     let shipment = await loadShipment(shipmentId, user, { client: db, forUpdate: true, isAdmin });
     const existing = (await db(
       `select * from public.mkt_po_shipment_events where shipment_id=$1 and idempotency_key=$2 limit 1`,
