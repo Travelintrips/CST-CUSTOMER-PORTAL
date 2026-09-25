@@ -40,6 +40,15 @@ const STATUS_COLOR: Record<string, string> = {
   invoiced:         "bg-indigo-100 text-indigo-800",
   paid:             "bg-teal-100 text-teal-800",
   "in-progress":    "bg-sky-100 text-sky-800",
+  pending_review: "bg-amber-100 text-amber-800",
+  waiting_customer_approval: "bg-orange-100 text-orange-800",
+  waiting_payment: "bg-yellow-100 text-yellow-800",
+  confirmed: "bg-blue-100 text-blue-800",
+  vehicle_assigned: "bg-indigo-100 text-indigo-800",
+  driver_to_pickup: "bg-cyan-100 text-cyan-800",
+  picked_up: "bg-sky-100 text-sky-800",
+  in_transit: "bg-purple-100 text-purple-800",
+  balance_due: "bg-orange-100 text-orange-800",
 };
 
 // Extend shared logistic status maps with product-order-specific statuses
@@ -47,6 +56,16 @@ const LOGISTIC_STATUS_COLOR: Record<string, string> = { ..._LOGISTIC_STATUS_COLO
 
 const LOGISTIC_STATUS_ID: Record<string, string> = {
   ..._LOGISTIC_STATUS_ID,
+  pending_review: "Menunggu Review CST",
+  waiting_customer_approval: "Menunggu Persetujuan Anda",
+  waiting_payment: "Menunggu Pembayaran",
+  confirmed: "Dikonfirmasi",
+  vehicle_assigned: "Armada Ditugaskan",
+  driver_to_pickup: "Driver Menuju Pickup",
+  picked_up: "Sudah Pickup",
+  in_transit: "Dalam Perjalanan",
+  balance_due: "Menunggu Pelunasan",
+  completed: "Selesai",
 };
 
 const PRODUCT_ORDER_STATUS_COLOR: Record<string, string> = {
@@ -119,6 +138,16 @@ interface PortalOrderFeed {
   }>;
   productOrders: ProductOrder[];
   marketplaceRfqs: MarketplaceRfq[];
+  truckingOrders: Array<{
+    id: number;
+    bookingNumber: string;
+    status: string;
+    grandTotal: number;
+    createdAt: string;
+    vehicleName: string;
+    pickup: string | null;
+    delivery: string | null;
+  }>;
 }
 
 export default function Orders() {
@@ -230,6 +259,21 @@ export default function Orders() {
     trackUrl: o.trackingToken ? `/track-produk/${o.trackingToken}` : null,
   }));
 
+  const truckingOrdersMapped = (orderFeed?.truckingOrders ?? []).map((o) => ({
+    _key: `truck-${o.id}`,
+    _id: o.id,
+    _type: "trucking" as const,
+    _cancellable: false,
+    displayNumber: o.bookingNumber,
+    subtitle: `${o.vehicleName} • ${o.pickup ?? ""} → ${o.delivery ?? ""}`,
+    status: o.status,
+    displayStatus: localeStatus(o.status),
+    statusColor: STATUS_COLOR[o.status] ?? "bg-blue-100 text-blue-800",
+    grandTotal: o.grandTotal,
+    createdAt: o.createdAt,
+    trackUrl: `/trucking/orders/${encodeURIComponent(o.bookingNumber)}`,
+  }));
+
   const marketplaceRfqsMapped = (orderFeed?.marketplaceRfqs ?? []).map((o) => ({
     _key: `mkt-rfq-${o.rfqId}`,
     _id: o.rfqId,
@@ -249,7 +293,7 @@ export default function Orders() {
     trackUrl: `/marketplace/my-rfqs/${o.rfqId}`,
   }));
 
-  const allOrders = [...logisticOrders, ...crmOrders, ...productOrdersMapped, ...marketplaceRfqsMapped].sort(
+  const allOrders = [...truckingOrdersMapped, ...logisticOrders, ...crmOrders, ...productOrdersMapped, ...marketplaceRfqsMapped].sort(
     (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
   );
 

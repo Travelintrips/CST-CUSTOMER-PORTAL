@@ -42,6 +42,22 @@ import {
 } from "./billing-operations.mjs";
 import { handleFreightRoute } from "./freight-operations.mjs";
 import { handleGoogleMapsRoute } from "./google-maps-service.mjs";
+import {
+  adminActualCosts,
+  adminAssignTrucking,
+  adminListTrucking,
+  adminReviewTrucking,
+  adminReviewTruckingPayment,
+  adminTruckingDetail,
+  customerApproveTrucking,
+  customerCreateTruckingPaylabs,
+  customerManualTruckingPayment,
+  customerTruckingOrder,
+  driverTruckingDetail,
+  driverUpdateTrucking,
+  driverUploadTruckingPod,
+  initializeTruckingLifecycleByBookingNumber,
+} from "./trucking-lifecycle.mjs";
 import { handleToolRoute } from "./tool-operations.mjs";
 import {
   handleCapabilities,
@@ -803,7 +819,7 @@ async function handlePortalOrderFeed(request, response) {
   if (!user) return;
   const companyIds = await getAccessibleCompanyIds(user);
   const params = [user.id, user.email, companyIds];
-  const [crmResult, logisticResult, productResult, rfqResult] = await Promise.all([
+  const [crmResult, logisticResult, productResult, rfqResult, truckingResult] = await Promise.all([
     query(
       `select o.id, coalesce(o.id::text, '') as doc_number, o.status,
               coalesce(o.grand_total, o.total_amount, o.total, 0) as grand_total,
@@ -845,6 +861,18 @@ async function handlePortalOrderFeed(request, response) {
         limit 100`,
       params,
     ),
+    query(
+      `select t.id,t.booking_number,t.status,t.created_at,t.vehicle_name,
+              t.alamat_pickup,t.alamat_delivery,
+              coalesce(t.final_price,t.estimasi_total,0) as grand_total
+         from public.trucking_booking_requests t
+        where t.portal_customer_id=$1
+           or t.customer_id=$1
+           or t.company_id=any($3::int[])
+        order by t.created_at desc
+        limit 100`,
+      params,
+    ),
   ]);
 
   sendJson(response, 200, {
@@ -879,6 +907,16 @@ async function handlePortalOrderFeed(request, response) {
       rfqStatus: row.rfq_status,
       approvalStatus: row.approval_status,
       createdAt: row.created_at,
+    })),
+    truckingOrders: truckingResult.rows.map((row) => ({
+      id: Number(row.id),
+      bookingNumber: row.booking_number,
+      status: row.status,
+      grandTotal: Number(row.grand_total ?? 0),
+      createdAt: row.created_at,
+      vehicleName: row.vehicle_name,
+      pickup: row.alamat_pickup,
+      delivery: row.alamat_delivery,
     })),
   });
 }
@@ -2108,6 +2146,12 @@ async function handleTruckingBooking(request, response, user, body) {
     return;
   }
   const tripCount = Math.max(1, Math.min(100, Math.trunc(Number(body.jumlahTrip) || 1)));
+  const rawIdempotencyKey = String(body.idempotencyKey ?? "").trim();
+  if (!rawIdempotencyKey || rawIdempotencyKey.length > 128) {
+    sendError(response, 400, "Idempotency key booking tidak valid.");
+    return;
+  }
+  const idempotencyKey = `trucking:${user.id}:${rawIdempotencyKey}`;
   const deliveryStops = normalizeTruckingDeliveryStops(body.deliveryStops);
   const isPassengerVehicle = PASSENGER_TRUCKING_VEHICLE_IDS.has(String(body.vehicleType));
   const addons = body.addons && typeof body.addons === "object" ? body.addons : {};
@@ -2153,11 +2197,14 @@ async function handleTruckingBooking(request, response, user, body) {
        pic_penerima, hp_penerima, jadwal_type, tanggal_pickup, jam_pickup, jenis_barang,
        berat_kg, jumlah_koli, volume_m3, catatan, jumlah_trip, addons, estimasi_total,
        estimated_distance_km, estimated_price, pricing_breakdown, candidate_vendor_ids,
-       selected_vendor_id, source, status
+       selected_vendor_id, source, status, idempotency_key
      ) values (
        $1,$2,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,
-       $22,$23::jsonb,$24,$25,$26,$27::jsonb,$28::jsonb,$29,'customer_portal','pending_review'
-     ) returning booking_number, status`,
+       $22,$23::jsonb,$24,$25,$26,$27::jsonb,$28::jsonb,$29,'customer_portal','pending_review',$30
+     )
+     on conflict (idempotency_key) where idempotency_key is not null
+     do update set updated_at=now()
+     returning booking_number, status`,
     [
       bookingNumber, user.id, companyIds[0] ?? null, String(body.vehicleType), String(body.vehicleName),
       String(body.areaPickup), String(body.alamatPickup), String(body.picPickup), String(body.hpPickup),
@@ -2172,7 +2219,12 @@ async function handleTruckingBooking(request, response, user, body) {
       canonicalEstimate.distance_km ?? null, canonicalEstimate.total_estimate,
       JSON.stringify(canonicalEstimate), JSON.stringify(null),
       Number.isInteger(Number(body.selectedVendorId)) && Number(body.selectedVendorId) > 0 ? Number(body.selectedVendorId) : null,
+      idempotencyKey,
     ],
+  );
+  await initializeTruckingLifecycleByBookingNumber(
+    result.rows[0].booking_number,
+    { type: "customer", id: user.id, name: user.name },
   );
   sendJson(response, 201, { bookingNumber: result.rows[0].booking_number, status: result.rows[0].status });
 }
@@ -3620,6 +3672,115 @@ async function route(request, response) {
     await handleServiceProfile(request, response, url, user);
     return;
   }
+  const customerTruckingOrderMatch = pathname.match(/^\/api\/portal\/trucking\/orders\/([^/]+)(?:\/(approve|payments\/manual|payments\/paylabs))?$/);
+  if (customerTruckingOrderMatch) {
+    const user = await requireUser(request, response);
+    if (!user) return;
+    const companyIds = await getAccessibleCompanyIds(user);
+    const bookingNumber = decodeURIComponent(customerTruckingOrderMatch[1]);
+    const action = customerTruckingOrderMatch[2] ?? null;
+    if (!action && request.method === "GET") {
+      sendJson(response, 200, await customerTruckingOrder({ bookingNumber, user, companyIds }));
+      return;
+    }
+    if (action === "approve" && request.method === "POST") {
+      const body = await readJson(request);
+      sendJson(response, 200, await customerApproveTrucking({ bookingNumber, user, companyIds, body }));
+      return;
+    }
+    if (action === "payments/manual" && request.method === "POST") {
+      const form = await readMultipartForm(request);
+      sendJson(response, 201, await customerManualTruckingPayment({ bookingNumber, user, companyIds, form }));
+      return;
+    }
+    if (action === "payments/paylabs" && request.method === "POST") {
+      const body = await readJson(request);
+      sendJson(response, 200, await customerCreateTruckingPaylabs({ bookingNumber, user, companyIds, request, body }));
+      return;
+    }
+    sendError(response, 405, "Method tidak didukung.");
+    return;
+  }
+
+  const adminTruckingPaymentMatch = pathname.match(/^\/api\/portal\/admin\/trucking\/([^/]+)\/payments\/(\d+)\/review$/);
+  if (adminTruckingPaymentMatch) {
+    const admin = await requireAdmin(request, response);
+    if (!admin) return;
+    if (request.method !== "POST") { sendError(response, 405, "Method tidak didukung."); return; }
+    const body = await readJson(request);
+    sendJson(response, 200, await adminReviewTruckingPayment({
+      bookingNumber: decodeURIComponent(adminTruckingPaymentMatch[1]),
+      paymentId: Number(adminTruckingPaymentMatch[2]),
+      admin,
+      body,
+    }));
+    return;
+  }
+
+  const adminTruckingMatch = pathname.match(/^\/api\/portal\/admin\/trucking(?:\/([^/]+))?(?:\/(review|assign|actual-costs))?$/);
+  if (adminTruckingMatch) {
+    const admin = await requireAdmin(request, response);
+    if (!admin) return;
+    const bookingNumber = adminTruckingMatch[1] ? decodeURIComponent(adminTruckingMatch[1]) : null;
+    const action = adminTruckingMatch[2] ?? null;
+    if (!bookingNumber && request.method === "GET") {
+      sendJson(response, 200, await adminListTrucking({
+        status: url.searchParams.get("status"),
+        limit: url.searchParams.get("limit"),
+      }));
+      return;
+    }
+    if (bookingNumber && !action && request.method === "GET") {
+      sendJson(response, 200, await adminTruckingDetail({ bookingNumber }));
+      return;
+    }
+    if (bookingNumber && action === "review" && request.method === "POST") {
+      const body = await readJson(request);
+      sendJson(response, 200, await adminReviewTrucking({ bookingNumber, admin, body }));
+      return;
+    }
+    if (bookingNumber && action === "assign" && request.method === "POST") {
+      const body = await readJson(request);
+      sendJson(response, 200, await adminAssignTrucking({ bookingNumber, admin, body }));
+      return;
+    }
+    if (bookingNumber && action === "actual-costs" && request.method === "POST") {
+      const body = await readJson(request);
+      sendJson(response, 200, await adminActualCosts({ bookingNumber, admin, body }));
+      return;
+    }
+    sendError(response, 405, "Method tidak didukung.");
+    return;
+  }
+
+  const driverTruckingPodMatch = pathname.match(/^\/api\/trucking\/driver\/([^/]+)\/stops\/(\d+)\/pod$/);
+  if (driverTruckingPodMatch) {
+    if (request.method !== "POST") { sendError(response, 405, "Method tidak didukung."); return; }
+    const form = await readMultipartForm(request);
+    sendJson(response, 201, await driverUploadTruckingPod({
+      token: decodeURIComponent(driverTruckingPodMatch[1]),
+      stopId: Number(driverTruckingPodMatch[2]),
+      form,
+    }));
+    return;
+  }
+
+  const driverTruckingMatch = pathname.match(/^\/api\/trucking\/driver\/([^/]+)$/);
+  if (driverTruckingMatch) {
+    const token = decodeURIComponent(driverTruckingMatch[1]);
+    if (request.method === "GET") {
+      sendJson(response, 200, await driverTruckingDetail({ token }));
+      return;
+    }
+    if (request.method === "POST") {
+      const body = await readJson(request);
+      sendJson(response, 200, await driverUpdateTrucking({ token, body }));
+      return;
+    }
+    sendError(response, 405, "Method tidak didukung.");
+    return;
+  }
+
   if (pathname === "/api/portal/trucking/estimate") {
     const body = request.method === "POST" ? await readJson(request) : {};
     await handleTruckingEstimate(request, response, body);

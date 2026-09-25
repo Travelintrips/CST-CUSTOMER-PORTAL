@@ -119,6 +119,90 @@ describe("standalone Customer Portal API boundary", () => {
     expect(server).toContain("isPassengerVehicle ? null : (body.beratKg ?? null)");
   });
 
+  it("implements trucking end-to-end lifecycle inside the standalone portal", () => {
+    const server = readFileSync(join(process.cwd(), "server/index.mjs"), "utf8");
+    const lifecycle = readFileSync(join(process.cwd(), "server/trucking-lifecycle.mjs"), "utf8");
+    const payments = readFileSync(join(process.cwd(), "server/paylabs-service.mjs"), "utf8");
+    const storage = readFileSync(join(process.cwd(), "server/storage.mjs"), "utf8");
+    const app = readFileSync(join(process.cwd(), "src/App.tsx"), "utf8");
+    const customer = readFileSync(join(process.cwd(), "src/pages/trucking-order.tsx"), "utf8");
+    const admin = readFileSync(join(process.cwd(), "src/pages/admin-trucking.tsx"), "utf8");
+    const driver = readFileSync(join(process.cwd(), "src/pages/trucking-driver.tsx"), "utf8");
+
+    expect(server).toContain("/api/portal/trucking/orders/");
+    expect(server).toContain("/api/portal/admin/trucking");
+    expect(server).toContain("/api/trucking/driver/");
+    expect(lifecycle).toContain("waiting_customer_approval");
+    expect(lifecycle).toContain("waiting_payment");
+    expect(lifecycle).toContain("vehicle_assigned");
+    expect(lifecycle).toContain("driver_to_pickup");
+    expect(lifecycle).toContain("picked_up");
+    expect(lifecycle).toContain("in_transit");
+    expect(lifecycle).toContain("balance_due");
+    expect(lifecycle).toContain("completed");
+    expect(lifecycle).toContain("trucking_booking_stops");
+    expect(lifecycle).toContain("trucking_status_events");
+    expect(lifecycle).toContain("trucking_payments");
+    expect(lifecycle).toContain('serviceMode !== "passenger" && !stop.pod_path');
+    expect(lifecycle).toContain("totals.remainingAmount <= 0.005");
+    expect(payments).toContain("createTruckingPaylabsLink");
+    expect(payments).toContain("ref_kind='trucking'::payment_ref_kind");
+    expect(storage).toContain("uploadTruckingPaymentProof");
+    expect(storage).toContain("uploadTruckingPod");
+    expect(app).toContain('/trucking/orders/:bookingNumber');
+    expect(app).toContain('/trucking/driver/:token');
+    expect(app).toContain('/admin/trucking/:bookingNumber');
+    expect(customer).toContain("Setujui & Lanjut Pembayaran");
+    expect(customer).toContain("Bayar via Paylabs");
+    expect(customer).toContain("Upload Bukti");
+    expect(admin).toContain("Kirim Harga ke Customer");
+    expect(admin).toContain("Assign Armada");
+    expect(driver).toContain("Berangkat ke Pickup");
+    expect(driver).toContain("Konfirmasi Drop-off Selesai");
+  });
+
+  it("uses CST provider banking for trucking payments without customer-company leakage", () => {
+    const lifecycle = readFileSync(join(process.cwd(), "server/trucking-lifecycle.mjs"), "utf8");
+    const payments = readFileSync(join(process.cwd(), "server/paylabs-service.mjs"), "utf8");
+    const envExample = readFileSync(join(process.cwd(), ".env.example"), "utf8");
+    expect(lifecycle).toContain("TRUCKING_PROVIDER_COMPANY_ID");
+    expect(lifecycle).toContain("company_bank_accounts");
+    expect(lifecycle).toContain("manualPaymentAccount");
+    expect(payments).toContain("const providerCompanyId = Number(process.env.TRUCKING_PROVIDER_COMPANY_ID ?? 1)");
+    expect(payments).toContain("providerCompanyId,");
+    expect(envExample).toContain("TRUCKING_PROVIDER_COMPANY_ID=1");
+  });
+
+  it("guards trucking booking and payment idempotency", () => {
+    const page = readFileSync(join(process.cwd(), "src/pages/trucking.tsx"), "utf8");
+    const server = readFileSync(join(process.cwd(), "server/index.mjs"), "utf8");
+    const lifecycle = readFileSync(join(process.cwd(), "server/trucking-lifecycle.mjs"), "utf8");
+    const payments = readFileSync(join(process.cwd(), "server/paylabs-service.mjs"), "utf8");
+
+    expect(page).toContain("bookingRequestKey");
+    expect(page).toContain("idempotencyKey:");
+    expect(server).toContain("on conflict (idempotency_key)");
+    expect(lifecycle).toContain("Masih ada bukti pembayaran yang menunggu verifikasi.");
+    expect(lifecycle).toContain("status='expired'::payment_status");
+    expect(payments).toContain("Pembayaran diselesaikan melalui Paylabs; bukti transfer trucking manual tidak diproses.");
+  });
+
+  it("keeps trucking fulfillment and proof files private", () => {
+    const storage = readFileSync(join(process.cwd(), "server/storage.mjs"), "utf8");
+    expect(storage).toContain("trucking-payment-proofs/booking-");
+    expect(storage).toContain("trucking-pod/booking-");
+    expect(storage).toContain("signedTruckingPaymentProofUrl");
+    expect(storage).toContain("signedTruckingPodUrl");
+    expect(storage).toContain("ensurePrivateBucket(storage)");
+  });
+
+  it("keeps trucking customer reads ownership scoped and driver fulfillment token scoped", () => {
+    const lifecycle = readFileSync(join(process.cwd(), "server/trucking-lifecycle.mjs"), "utf8");
+    expect(lifecycle).toContain("assertOwner(booking, user, companyIds)");
+    expect(lifecycle).toContain("where driver_token=$1");
+    expect(lifecycle).toContain("Tujuan harus diselesaikan sesuai urutan rute.");
+  });
+
   it("keeps trucking booking writes on the standalone Customer Portal API", () => {
     const page = readFileSync(join(process.cwd(), "src/pages/trucking.tsx"), "utf8");
     const server = readFileSync(join(process.cwd(), "server/index.mjs"), "utf8");

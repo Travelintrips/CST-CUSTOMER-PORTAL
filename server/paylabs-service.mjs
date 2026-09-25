@@ -532,6 +532,255 @@ export async function createMarketplacePaylabsLink({ po, request, requestedMetho
   return { reused: false, payment: serializePayment(payment), sandboxMode: credentials.sandboxMode };
 }
 
+
+async function latestTruckingPayment(bookingId, client = query) {
+  const result = await client(
+    `select *
+       from public.mkt_gateway_payments
+      where ref_kind='trucking'::payment_ref_kind
+        and ref_id=$1
+        and provider='paylabs'::payment_provider
+      order by created_at desc,id desc
+      limit 1`,
+    [bookingId],
+  );
+  return result.rows[0] ?? null;
+}
+
+async function truckingPaymentTotals(booking, client = query) {
+  const run = typeof client === "function" ? client : (sql, values) => client.query(sql, values);
+  const manual = (await run(
+    `select coalesce(sum(amount),0) as paid_amount
+       from public.trucking_payments
+      where booking_id=$1 and status='approved'`,
+    [booking.id],
+  )).rows[0] ?? {};
+  const gateway = (await run(
+    `select coalesce(sum(amount),0) as paid_amount
+       from public.mkt_gateway_payments
+      where ref_kind='trucking'::payment_ref_kind
+        and ref_id=$1
+        and provider='paylabs'::payment_provider
+        and status='paid'::payment_status`,
+    [booking.id],
+  )).rows[0] ?? {};
+  const quotedAmount = Number(booking.final_price ?? booking.estimasi_total ?? 0);
+  const actualCosts = Number(booking.actual_toll ?? 0)
+    + Number(booking.actual_parking ?? 0)
+    + Number(booking.actual_extra_cost ?? 0);
+  const totalAmount = quotedAmount + actualCosts;
+  const receivedAmount = Number(manual.paid_amount ?? 0) + Number(gateway.paid_amount ?? 0);
+  return {
+    totalAmount,
+    receivedAmount,
+    remainingAmount: Math.max(totalAmount - receivedAmount, 0),
+  };
+}
+
+export async function getTruckingPaylabsState(booking, client = query) {
+  const [credentials, methods, latest] = await Promise.all([
+    activeCredentials(client),
+    activeMethods(client),
+    latestTruckingPayment(booking.id, client),
+  ]);
+  const pending = latest?.status === "pending"
+    && latest?.expired_at
+    && new Date(latest.expired_at).getTime() > Date.now();
+  return {
+    configured: credentials.configured,
+    sandboxMode: credentials.sandboxMode,
+    activeMethods: methods,
+    latestPayment: serializePayment(latest),
+    hasPendingPayment: Boolean(pending),
+    canCreate: credentials.configured
+      && methods.length > 0
+      && booking.payment_status !== "paid"
+      && booking.payment_status !== "proof_submitted"
+      && !pending,
+  };
+}
+
+function shortTruckingTradeNo(bookingId) {
+  return `TRK${bookingId}${Date.now().toString().slice(-13)}`.slice(0, 30);
+}
+
+export async function createTruckingPaylabsLink({
+  booking,
+  request,
+  requestedMethod,
+  requestedAmount,
+  customerName,
+  customerPhone,
+}) {
+  const credentials = await activeCredentials();
+  if (!credentials.configured) fail(503, "Paylabs belum dikonfigurasi lengkap pada Admin > Paylabs Setting.");
+  if (booking.payment_status === "paid") fail(409, "Booking ini sudah lunas.");
+  if (booking.payment_status === "proof_submitted") {
+    fail(409, "Bukti transfer manual sedang menunggu verifikasi.");
+  }
+
+  const methods = await activeMethods();
+  const method = methods.find((item) => item.code === requestedMethod);
+  if (!method) fail(400, "Metode Paylabs tidak aktif atau tidak valid.");
+  const normalizedCustomerPhone = normalizePhone(customerPhone);
+  if (!normalizedCustomerPhone) fail(409, "Nomor telepon customer belum tersedia.");
+
+  const client = await pool.connect();
+  let payment = null;
+  try {
+    await client.query("begin");
+    await client.query("select pg_advisory_xact_lock($1,$2)", [481517, Number(booking.id)]);
+    const lockedBooking = (await client.query(
+      `select * from public.trucking_booking_requests where id=$1 for update`,
+      [booking.id],
+    )).rows[0];
+    if (!lockedBooking) fail(404, "Booking trucking tidak ditemukan.");
+    const totals = await truckingPaymentTotals(lockedBooking, client);
+    if (totals.remainingAmount <= 0.005) fail(409, "Booking ini sudah lunas.");
+
+    const pendingManual = (await client.query(
+      `select id from public.trucking_payments
+        where booking_id=$1 and status='submitted' limit 1`,
+      [booking.id],
+    )).rows[0];
+    if (pendingManual) fail(409, "Bukti transfer manual sedang menunggu verifikasi.");
+
+    const parsedRequested = requestedAmount == null || requestedAmount === ""
+      ? totals.remainingAmount
+      : Number(requestedAmount);
+    if (!Number.isFinite(parsedRequested) || parsedRequested <= 0) fail(400, "Nominal pembayaran Paylabs tidak valid.");
+    if (parsedRequested > totals.remainingAmount + 0.005) fail(409, "Nominal pembayaran melebihi sisa tagihan.");
+    const paymentAmount = Number(parsedRequested.toFixed(2));
+
+    await client.query(
+      `update public.mkt_gateway_payments
+          set status='expired'::payment_status,updated_at=now()
+        where ref_kind='trucking'::payment_ref_kind and ref_id=$1
+          and provider='paylabs'::payment_provider
+          and status='pending'::payment_status and expired_at<=now()`,
+      [booking.id],
+    );
+    const existing = (await client.query(
+      `select * from public.mkt_gateway_payments
+        where ref_kind='trucking'::payment_ref_kind and ref_id=$1
+          and provider='paylabs'::payment_provider
+          and status='pending'::payment_status and expired_at>now()
+        order by created_at desc,id desc limit 1`,
+      [booking.id],
+    )).rows[0];
+    if (existing?.payment_url && isTrustedPaylabsPaymentUrl(existing.payment_url)) {
+      await client.query("commit");
+      return { reused: true, payment: serializePayment(existing), sandboxMode: credentials.sandboxMode };
+    }
+
+    const providerCompanyId = Number(process.env.TRUCKING_PROVIDER_COMPANY_ID ?? 1);
+    const merchantTradeNo = shortTruckingTradeNo(booking.id);
+    const inserted = (await client.query(
+      `insert into public.mkt_gateway_payments
+         (company_id,ref_kind,ref_id,ref_doc_number,amount,status,provider,payment_method,
+          provider_merchant_trade_no,expired_at,raw)
+       values ($1,'trucking'::payment_ref_kind,$2,$3,$4,'pending'::payment_status,
+               'paylabs'::payment_provider,$5,$6,$7,$8::jsonb)
+       returning *`,
+      [
+        providerCompanyId,
+        booking.id,
+        booking.booking_number,
+        paymentAmount,
+        method.code,
+        merchantTradeNo,
+        new Date(Date.now() + PAYMENT_TTL_MS),
+        JSON.stringify({ source: "trucking", sandboxMode: credentials.sandboxMode, installmentAmount: paymentAmount }),
+      ],
+    )).rows[0];
+
+    const reqId = requestId();
+    const timestamp = formatPaylabsTimestamp();
+    const baseUrl = requestOrigin(request);
+    const notifyUrl = `${baseUrl}/api/payments/paylabs/webhook`;
+    const redirectUrl = `${baseUrl}/trucking/orders/${encodeURIComponent(booking.booking_number)}`;
+    const providerBody = {
+      merchantId: credentials.merchantId,
+      merchantTradeNo,
+      requestId: reqId,
+      amount: paymentAmount.toFixed(2),
+      productName: `Pembayaran ${booking.booking_number}`,
+      payer: text(customerName, "Customer"),
+      phoneNumber: normalizedCustomerPhone,
+      paymentType: method.code,
+      notifyUrl,
+      redirectUrl,
+      ...(credentials.storeId ? { storeId: credentials.storeId } : {}),
+    };
+    const bodyJson = JSON.stringify(providerBody);
+    const endpoint = new URL(credentials.apiUrl).pathname;
+    const signaturePayload = buildPaylabsSignaturePayload("POST", endpoint, bodyJson, timestamp);
+    let signature;
+    try {
+      signature = rsaSign(signaturePayload, credentials.privateKey);
+    } catch {
+      await client.query(
+        `update public.mkt_gateway_payments set status='failed'::payment_status,
+          raw=raw || '{"reason":"signing_failed"}'::jsonb,updated_at=now() where id=$1`,
+        [inserted.id],
+      );
+      await client.query("commit");
+      fail(500, "Konfigurasi private key Paylabs tidak valid.");
+    }
+
+    let response;
+    let payload;
+    try {
+      response = await fetch(credentials.apiUrl, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-TIMESTAMP": timestamp,
+          "X-SIGNATURE": signature,
+          "X-PARTNER-ID": credentials.merchantId,
+          "X-REQUEST-ID": reqId,
+        },
+        body: bodyJson,
+        signal: AbortSignal.timeout(15_000),
+      });
+      payload = await response.json().catch(() => ({}));
+    } catch (error) {
+      await client.query(
+        `update public.mkt_gateway_payments
+          set status='failed'::payment_status,raw=raw || $2::jsonb,updated_at=now() where id=$1`,
+        [inserted.id, JSON.stringify({ reason: "provider_request_failed", message: String(error?.message ?? error).slice(0, 300) })],
+      );
+      await client.query("commit");
+      fail(502, "Paylabs tidak dapat dihubungi. Silakan coba lagi.");
+    }
+
+    const paymentUrl = payload?.url ?? payload?.h5Url ?? payload?.paymentUrl ?? null;
+    if (!response.ok || String(payload?.errCode ?? "0") !== "0" || !isTrustedPaylabsPaymentUrl(paymentUrl)) {
+      await client.query(
+        `update public.mkt_gateway_payments
+          set status='failed'::payment_status,provider_order_id=$2,raw=raw || $3::jsonb,updated_at=now() where id=$1`,
+        [inserted.id, text(payload?.platformTradeNo), JSON.stringify({ reason: "provider_rejected", errCode: payload?.errCode ?? null, errMsg: payload?.errMsg ?? null })],
+      );
+      await client.query("commit");
+      fail(502, text(payload?.errMsg, "Paylabs gagal membuat tautan pembayaran."));
+    }
+
+    payment = (await client.query(
+      `update public.mkt_gateway_payments
+        set provider_order_id=$1,payment_url=$2,raw=raw || $3::jsonb,updated_at=now()
+        where id=$4 returning *`,
+      [text(payload?.platformTradeNo), paymentUrl, JSON.stringify({ requestId: reqId, providerOrderId: payload?.platformTradeNo ?? null }), inserted.id],
+    )).rows[0];
+    await client.query("commit");
+  } catch (error) {
+    try { await client.query("rollback"); } catch {}
+    throw error;
+  } finally {
+    client.release();
+  }
+  return { reused: false, payment: serializePayment(payment), sandboxMode: credentials.sandboxMode };
+}
+
 async function updatePaymentMethod(code, body) {
   const exists = (await query(
     `select id from public.paylabs_payment_methods where code=$1 limit 1`,
@@ -927,6 +1176,109 @@ export async function handlePaylabsWebhook({ request, response, body, rawBodyTex
           `po-payment-paylabs-notify:${updated.id}:paid`,
         ],
       ).catch(() => {});
+    }
+
+    if (targetStatus === "paid" && !wasPaid && payment.ref_kind === "trucking") {
+      const booking = (await client.query(
+        `select * from public.trucking_booking_requests where id=$1 limit 1 for update`,
+        [payment.ref_id],
+      )).rows[0];
+      if (!booking) {
+        await client.query("rollback");
+        sendJson(response, 404, { errCode: "404", errMsg: "Trucking booking not found" });
+        return true;
+      }
+      await client.query(
+        `update public.trucking_payments
+            set status='rejected',
+                rejection_reason='Pembayaran diselesaikan melalui Paylabs; bukti transfer trucking manual tidak diproses.',
+                reviewed_at=now(),
+                updated_at=now()
+          where booking_id=$1 and status='submitted'`,
+        [booking.id],
+      );
+      const totals = await truckingPaymentTotals(booking, client);
+      const terms = booking.payment_terms && typeof booking.payment_terms === "object"
+        ? booking.payment_terms
+        : { type: "full", dp_percent: 100 };
+      const initialRequired = terms.type === "dp"
+        ? Number(booking.final_price ?? booking.estimasi_total ?? 0) * Number(terms.dp_percent ?? 50) / 100
+        : Number(booking.final_price ?? booking.estimasi_total ?? 0);
+      const paymentStatus = totals.remainingAmount <= 0.005 ? "paid" : "partially_paid";
+      let nextStatus = booking.status;
+      if (booking.status === "waiting_payment" && totals.receivedAmount + 0.005 >= initialRequired) nextStatus = "confirmed";
+      if (["delivered","balance_due","completed"].includes(booking.status) && totals.remainingAmount > 0.005) nextStatus = "balance_due";
+      if (
+        (booking.delivered_at || ["delivered","balance_due","completed"].includes(booking.status))
+        && totals.remainingAmount <= 0.005
+      ) nextStatus = "completed";
+      await client.query(
+        `update public.trucking_booking_requests
+          set paid_amount=$2,remaining_amount=$3,payment_status=$4,status=$5,
+              confirmed_at=case when $5='confirmed' then coalesce(confirmed_at,now()) else confirmed_at end,
+              completed_at=case
+                when $5='completed' then coalesce(completed_at,now())
+                when $5='balance_due' then null
+                else completed_at
+              end,
+              receipt_number=case
+                when $4='paid' then coalesce(receipt_number,'RCT-' || booking_number)
+                else null
+              end,
+              updated_at=now()
+          where id=$1`,
+        [booking.id, totals.receivedAmount, totals.remainingAmount, paymentStatus, nextStatus],
+      );
+      await client.query(
+        `insert into public.trucking_status_events
+          (booking_id,status,actor_type,actor_name,notes,metadata)
+         values ($1,$2,'system','Paylabs',$3,$4::jsonb)`,
+        [
+          booking.id,
+          nextStatus === booking.status ? "payment_received" : nextStatus,
+          `Pembayaran Paylabs Rp${Number(payment.amount).toLocaleString("id-ID")} diterima.`,
+          JSON.stringify({ paymentId: Number(updated.id), receivedAmount: totals.receivedAmount, remainingAmount: totals.remainingAmount }),
+        ],
+      );
+      const customerId = booking.portal_customer_id ?? booking.customer_id;
+      if (customerId) {
+        const notificationType = nextStatus === "completed"
+          ? "trucking_completed"
+          : nextStatus === "confirmed"
+            ? "trucking_confirmed"
+            : "trucking_payment_received";
+        const notificationTitle = nextStatus === "completed"
+          ? "Booking trucking selesai"
+          : nextStatus === "confirmed"
+            ? "Pembayaran awal terpenuhi"
+            : "Pembayaran Paylabs diterima";
+        const notificationMessage = nextStatus === "completed"
+          ? `${booking.booking_number} telah selesai dan seluruh tagihan lunas.`
+          : nextStatus === "confirmed"
+            ? `${booking.booking_number} sudah dikonfirmasi dan siap untuk assignment armada.`
+            : `Pembayaran ${booking.booking_number} diterima. Sisa tagihan Rp${totals.remainingAmount.toLocaleString("id-ID")}.`;
+        await client.query(
+          `insert into public.portal_customer_notifications
+             (portal_customer_id,event_key,type,title,message,payload,is_read,created_at)
+           values ($1,$2,$3,$4,$5,$6::jsonb,false,now())
+           on conflict (portal_customer_id,event_key) do nothing`,
+          [
+            Number(customerId),
+            `trucking:paylabs:${updated.id}:paid`,
+            notificationType,
+            notificationTitle,
+            notificationMessage,
+            JSON.stringify({
+              bookingNumber: booking.booking_number,
+              paymentId: Number(updated.id),
+              paymentAmount: Number(payment.amount),
+              receivedAmount: totals.receivedAmount,
+              remainingAmount: totals.remainingAmount,
+              status: nextStatus,
+            }),
+          ],
+        ).catch(() => {});
+      }
     }
 
     await client.query("commit");
