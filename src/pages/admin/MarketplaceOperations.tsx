@@ -161,6 +161,20 @@ type Shipment = {
 
 type ShipmentItem = { id: number; poLineId: number; qty: string | number; uom: string | null };
 
+type NotificationQueueStats = {
+  configured: boolean;
+  workerEnabled: boolean;
+  pending: number;
+  sending: number;
+  retrying: number;
+  exhausted: number;
+  sent: number;
+  stuckOver10m: number;
+  oldestActionable: string | null;
+  lastSentAt: string | null;
+  lastQueueUpdateAt: string | null;
+};
+
 type ApiResult<T> = { ok: boolean; data?: T; error?: string; message?: string };
 
 async function api<T>(path: string, init?: RequestInit): Promise<T> {
@@ -231,16 +245,19 @@ export function MarketplaceOperationsTab() {
   const [eventType, setEventType] = useState("departed");
   const [eventNote, setEventNote] = useState("");
   const [podFile, setPodFile] = useState<File | null>(null);
+  const [queueStats, setQueueStats] = useState<NotificationQueueStats | null>(null);
 
   const refresh = async () => {
     setLoading(true);
     try {
-      const [rfqRows, poRows] = await Promise.all([
+      const [rfqRows, poRows, waStats] = await Promise.all([
         api<Rfq[]>("/api/mkt/admin/rfqs"),
         api<PurchaseOrder[]>("/api/mkt/admin/purchase-orders?limit=200"),
+        api<NotificationQueueStats>("/api/mkt/admin/notification-queue/stats"),
       ]);
       setRfqs(rfqRows);
       setPurchaseOrders(poRows);
+      setQueueStats(waStats);
     } catch (error) {
       toast({ title: "Marketplace gagal dimuat", description: (error as Error).message, variant: "destructive" });
     } finally {
@@ -540,10 +557,45 @@ export function MarketplaceOperationsTab() {
             <RefreshCw className={loading ? "h-4 w-4 animate-spin" : "h-4 w-4"} /> Refresh
           </button>
         </CardHeader>
-        <CardContent className="grid grid-cols-3 gap-3">
-          <div className="rounded-lg border bg-slate-50 p-3"><p className="text-xs text-slate-500">RFQ aktif</p><p className="text-2xl font-bold">{rfqSummary.pending}</p></div>
-          <div className="rounded-lg border bg-amber-50 p-3"><p className="text-xs text-slate-500">Menunggu customer</p><p className="text-2xl font-bold">{rfqSummary.review}</p></div>
-          <div className="rounded-lg border bg-indigo-50 p-3"><p className="text-xs text-slate-500">PO berjalan</p><p className="text-2xl font-bold">{rfqSummary.activePo}</p></div>
+        <CardContent className="space-y-3">
+          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+            <div className="rounded-lg border bg-slate-50 p-3"><p className="text-xs text-slate-500">RFQ aktif</p><p className="text-2xl font-bold">{rfqSummary.pending}</p></div>
+            <div className="rounded-lg border bg-amber-50 p-3"><p className="text-xs text-slate-500">Menunggu customer</p><p className="text-2xl font-bold">{rfqSummary.review}</p></div>
+            <div className="rounded-lg border bg-indigo-50 p-3"><p className="text-xs text-slate-500">PO berjalan</p><p className="text-2xl font-bold">{rfqSummary.activePo}</p></div>
+            <div className={`rounded-lg border p-3 ${
+              !queueStats?.configured || !queueStats?.workerEnabled || (queueStats?.stuckOver10m ?? 0) > 0
+                ? "border-amber-200 bg-amber-50"
+                : "border-emerald-200 bg-emerald-50"
+            }`}>
+              <p className="text-xs text-slate-500">WhatsApp Marketplace</p>
+              <p className="mt-1 text-sm font-semibold">
+                {!queueStats
+                  ? "Memuat…"
+                  : !queueStats.configured
+                    ? "Fonnte belum dikonfigurasi"
+                    : !queueStats.workerEnabled
+                      ? "Worker dinonaktifkan"
+                      : queueStats.stuckOver10m > 0
+                        ? `${queueStats.stuckOver10m} antrean tertahan >10m`
+                        : "Worker siap"}
+              </p>
+              {queueStats && (
+                <p className="mt-1 text-xs text-slate-600">
+                  Pending {queueStats.pending} · Retry {queueStats.retrying} · Sending {queueStats.sending}
+                </p>
+              )}
+            </div>
+          </div>
+          {queueStats && (queueStats.stuckOver10m > 0 || !queueStats.configured || !queueStats.workerEnabled) && (
+            <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800">
+              {!queueStats.configured
+                ? "FONNTE_TOKEN belum tersedia pada runtime Customer Portal; notifikasi WhatsApp Marketplace tidak akan dikirim."
+                : !queueStats.workerEnabled
+                  ? "CUSTOMER_PORTAL_WA_WORKER_ENABLED sedang nonaktif."
+                  : `Ada ${queueStats.stuckOver10m} antrean WhatsApp aktif yang berumur lebih dari 10 menit. Periksa worker/runtime sebelum melanjutkan transaksi baru.`}
+              {queueStats.oldestActionable ? ` Antrean aktif tertua: ${fmtDate(queueStats.oldestActionable)}.` : ""}
+            </div>
+          )}
         </CardContent>
       </Card>
 
