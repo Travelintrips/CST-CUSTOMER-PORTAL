@@ -3,6 +3,17 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
 describe("jasa service hub contract", () => {
+  it("hides additional logistics services from the customer-facing hub", () => {
+    const page = readFileSync(join(process.cwd(), "src/pages/jasa.tsx"), "utf8");
+    const category = readFileSync(join(process.cwd(), "src/pages/jasa-kategori.tsx"), "utf8");
+
+    expect(page).toContain('const VISIBLE_MAIN_CATEGORIES = MAIN_CATEGORIES.filter((category) => category.id !== "additional")');
+    expect(page).toContain("{VISIBLE_MAIN_CATEGORIES.map((cat) => {");
+    expect(page).toContain("String(VISIBLE_MAIN_CATEGORIES.length)");
+    expect(category).toContain('if (categoryId === "additional")');
+    expect(category).toContain('setLocation("/jasa")');
+  });
+
   it("routes additional logistics services into quotation requests", () => {
     const shared = readFileSync(join(process.cwd(), "src/lib/jasa-shared.ts"), "utf8");
     const cart = readFileSync(join(process.cwd(), "src/pages/service-cart.tsx"), "utf8");
