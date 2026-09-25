@@ -1222,7 +1222,7 @@ export async function handlePaylabsWebhook({ request, response, body, rawBodyTex
               end,
               receipt_number=case
                 when $4='paid' then coalesce(receipt_number,'RCT-' || booking_number)
-                else receipt_number
+                else null
               end,
               updated_at=now()
           where id=$1`,
