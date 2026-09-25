@@ -2070,6 +2070,9 @@ async function logisticOrderResponse(row, items = []) {
     approvedVendorId: row.approved_vendor_id == null ? null : Number(row.approved_vendor_id),
     finalSellingPrice: row.final_selling_price == null ? null : Number(row.final_selling_price),
     quotationSentAt: row.quotation_sent_at ?? null,
+    customerQuoteStatus: row.customer_quote_status ?? null,
+    termsConditions: row.terms_conditions ?? null,
+    quoteNotes: row.quote_notes ?? null,
     createdAt: row.created_at,
     updatedAt: row.updated_at ?? row.created_at,
     transportMode: row.transport_mode ?? null,
@@ -2360,7 +2363,7 @@ async function handleCompanyPickupAddress(request, response, user) {
 }
 
 async function handleLogisticCustomerRoutes(request, response, url, user, body = {}) {
-  const orderNumberMatch = url.pathname.match(/^\/api\/logistic\/orders\/([^/]+)(?:\/(payment-proof|create-paylabs-link))?$/);
+  const orderNumberMatch = url.pathname.match(/^\/api\/logistic\/orders\/([^/]+)(?:\/(payment-proof|create-paylabs-link|quote-response))?$/);
   const trackMatch = url.pathname.match(/^\/api\/logistic\/orders\/track\/([^/]+)$/);
 
   if (request.method === "POST" && url.pathname === "/api/logistic/orders") {
@@ -2480,6 +2483,60 @@ async function handleLogisticCustomerRoutes(request, response, url, user, body =
       return true;
     }
     sendJson(response, 200, await logisticOrderResponse(row, await getLogisticItems(row.id)));
+    return true;
+  }
+
+  if (request.method === "POST" && orderNumberMatch?.[2] === "quote-response") {
+    const orderNumber = decodeURIComponent(orderNumberMatch[1]);
+    const row = await getOwnedLogisticOrder(user, orderNumber);
+    if (!row) {
+      sendError(response, 404, "Order logistik tidak ditemukan.");
+      return true;
+    }
+    if (row.customer_quote_status !== "pending_customer_approval" || Number(row.final_selling_price ?? row.final_price ?? 0) <= 0) {
+      sendError(response, 409, "Quotation ini tidak sedang menunggu persetujuan customer.");
+      return true;
+    }
+    const approved = body?.approved === true;
+    const note = String(body?.note ?? "").trim() || null;
+    if (!approved && !note) {
+      sendError(response, 400, "Alasan revisi quotation wajib diisi.");
+      return true;
+    }
+    const updated = await query(
+      `update public.logistic_orders
+          set customer_quote_status=$1,
+              customer_confirm_status=$1,
+              customer_confirmed_at=case when $1='approved' then now() else customer_confirmed_at end,
+              admin_approval_status=case when $1='approved' then 'approved' else 'revision_requested' end,
+              operational_status=case when $1='approved' then coalesce(operational_status,'confirmed') else operational_status end,
+              quote_notes=case
+                when $1='revision_requested' then concat_ws(E'\\n', quote_notes, 'Customer revision: ' || $2)
+                else quote_notes
+              end,
+              updated_at=now()
+        where id=$3
+        returning *`,
+      [approved ? "approved" : "revision_requested", note, row.id],
+    );
+    await query(
+      `insert into public.portal_customer_notifications
+         (portal_customer_id,event_key,type,title,message,payload,is_read,created_at)
+       select id,$1,$2,$3,$4,$5::jsonb,false,now()
+         from public.portal_customers
+        where role='admin'
+       on conflict (portal_customer_id,event_key) do nothing`,
+      [
+        `logistic:quote-response:${row.id}:${approved ? "approved" : "revision"}`,
+        approved ? "logistic_quote_approved" : "logistic_quote_revision_requested",
+        approved ? "Quotation logistic disetujui customer" : "Customer meminta revisi quotation",
+        approved
+          ? `${row.order_number} telah menyetujui quotation.`
+          : `${row.order_number} meminta revisi quotation: ${note}`,
+        JSON.stringify({ orderNumber: row.order_number, approved, note }),
+      ],
+    ).catch(() => {});
+    sendJson(response, 200, await logisticOrderResponse(updated.rows[0], await getLogisticItems(row.id)));
     return true;
   }
 
