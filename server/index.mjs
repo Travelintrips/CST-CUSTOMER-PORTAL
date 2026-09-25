@@ -2034,7 +2034,7 @@ const TRUCKING_VEHICLE_RATE_KEYS = {
   "truk-trailer": "Trailer 40FT",
 };
 
-function normalizeTruckingDeliveryStops(value) {
+function normalizeTruckingDeliveryStops(value, { requireContact = true, fallbackName = "", fallbackPhone = "" } = {}) {
   if (!Array.isArray(value)) return [];
   if (value.length > 20) {
     const error = new Error("Maksimal 20 alamat pengantaran tambahan per booking.");
@@ -2045,10 +2045,14 @@ function normalizeTruckingDeliveryStops(value) {
     const normalized = {
       area: String(stop?.area ?? "").trim(),
       address: String(stop?.address ?? "").trim(),
-      pic: String(stop?.pic ?? "").trim(),
-      phone: String(stop?.phone ?? "").trim(),
+      pic: requireContact ? String(stop?.pic ?? "").trim() : String(fallbackName ?? "").trim(),
+      phone: requireContact ? String(stop?.phone ?? "").trim() : String(fallbackPhone ?? "").trim(),
     };
-    if (!normalized.area || !normalized.address || !normalized.pic || !normalized.phone) {
+    if (
+      !normalized.area
+      || !normalized.address
+      || (requireContact && (!normalized.pic || !normalized.phone))
+    ) {
       const error = new Error(`Data pengantaran tambahan ${index + 2} belum lengkap.`);
       error.statusCode = 400;
       throw error;
@@ -2140,7 +2144,10 @@ async function handleTruckingEstimate(request, response, body) {
 }
 async function handleTruckingBooking(request, response, user, body) {
   if (request.method !== "POST") { sendError(response, 405, "Method tidak didukung."); return; }
-  const required = ["vehicleType","vehicleName","areaPickup","alamatPickup","picPickup","hpPickup","areaDelivery","alamatDelivery","picPenerima","hpPenerima"];
+  const isPassengerVehicle = PASSENGER_TRUCKING_VEHICLE_IDS.has(String(body.vehicleType));
+  const required = isPassengerVehicle
+    ? ["vehicleType","vehicleName","areaPickup","alamatPickup","areaDelivery","alamatDelivery"]
+    : ["vehicleType","vehicleName","areaPickup","alamatPickup","picPickup","hpPickup","areaDelivery","alamatDelivery","picPenerima","hpPenerima"];
   if (required.some((key) => !String(body[key] ?? "").trim())) {
     sendError(response, 400, "Data booking trucking belum lengkap.");
     return;
@@ -2152,8 +2159,13 @@ async function handleTruckingBooking(request, response, user, body) {
     return;
   }
   const idempotencyKey = `trucking:${user.id}:${rawIdempotencyKey}`;
-  const deliveryStops = normalizeTruckingDeliveryStops(body.deliveryStops);
-  const isPassengerVehicle = PASSENGER_TRUCKING_VEHICLE_IDS.has(String(body.vehicleType));
+  const passengerContactName = String(user.name ?? user.email ?? "Customer").trim();
+  const passengerContactPhone = String(user.phone ?? "").trim();
+  const deliveryStops = normalizeTruckingDeliveryStops(body.deliveryStops, {
+    requireContact: !isPassengerVehicle,
+    fallbackName: passengerContactName,
+    fallbackPhone: passengerContactPhone,
+  });
   const addons = body.addons && typeof body.addons === "object" ? body.addons : {};
   const storedAddons = isPassengerVehicle
     ? {
@@ -2207,8 +2219,14 @@ async function handleTruckingBooking(request, response, user, body) {
      returning booking_number, status`,
     [
       bookingNumber, user.id, companyIds[0] ?? null, String(body.vehicleType), String(body.vehicleName),
-      String(body.areaPickup), String(body.alamatPickup), String(body.picPickup), String(body.hpPickup),
-      String(body.areaDelivery), String(body.alamatDelivery), String(body.picPenerima), String(body.hpPenerima),
+      String(body.areaPickup),
+      String(body.alamatPickup),
+      isPassengerVehicle ? passengerContactName : String(body.picPickup),
+      isPassengerVehicle ? passengerContactPhone : String(body.hpPickup),
+      String(body.areaDelivery),
+      String(body.alamatDelivery),
+      isPassengerVehicle ? passengerContactName : String(body.picPenerima),
+      isPassengerVehicle ? passengerContactPhone : String(body.hpPenerima),
       body.jadwalType === "nanti" ? "nanti" : "sekarang", body.tanggalPickup ?? null, body.jamPickup ?? null,
       isPassengerVehicle ? null : (body.jenisBarang ?? null),
       isPassengerVehicle ? null : (body.beratKg ?? null),
