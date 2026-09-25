@@ -795,6 +795,46 @@ export async function createTruckingPaylabsLink({
 }
 
 
+
+async function latestLogisticPayment(orderId, client = query) {
+  const run = typeof client === "function" ? client : (sql, values) => client.query(sql, values);
+  return (await run(
+    `select *
+       from public.mkt_gateway_payments
+      where ref_kind='logistic'::payment_ref_kind
+        and ref_id=$1
+        and provider='paylabs'::payment_provider
+      order by created_at desc,id desc
+      limit 1`,
+    [orderId],
+  )).rows[0] ?? null;
+}
+
+export async function getLogisticPaylabsState(order, client = query) {
+  const [credentials, methods, latest] = await Promise.all([
+    activeCredentials(client),
+    activeMethods(client),
+    latestLogisticPayment(order.id, client),
+  ]);
+  const pending = latest?.status === "pending"
+    && latest?.expired_at
+    && new Date(latest.expired_at).getTime() > Date.now();
+  return {
+    configured: credentials.configured,
+    sandboxMode: credentials.sandboxMode,
+    activeMethods: methods,
+    latestPayment: serializePayment(latest),
+    hasPendingPayment: Boolean(pending),
+    canCreate:
+      credentials.configured
+      && methods.length > 0
+      && order.customer_quote_status === "approved"
+      && order.payment_status !== "paid"
+      && order.payment_status !== "proof_submitted"
+      && !pending,
+  };
+}
+
 function shortLogisticTradeNo(orderId) {
   return `LOG${orderId}${Date.now().toString().slice(-13)}`.slice(0, 30);
 }
