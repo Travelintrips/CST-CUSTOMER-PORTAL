@@ -580,8 +580,8 @@ export default function TruckingPage() {
     .map((stop) => ({
       area: stop.area.trim(),
       address: stop.address.trim(),
-      pic: stop.pic.trim(),
-      phone: stop.phone.trim(),
+      pic: isPassengerVehicle ? "" : stop.pic.trim(),
+      phone: isPassengerVehicle ? "" : stop.phone.trim(),
     }))
     .filter((stop) => stop.area || stop.address || stop.pic || stop.phone);
 
@@ -735,10 +735,16 @@ export default function TruckingPage() {
     setSubmitError(null);
     try {
       const incompleteExtraStop = normalizedDeliveryStops.find(
-        (stop) => !stop.area || !stop.address || !stop.pic || !stop.phone,
+        (stop) => isPassengerVehicle
+          ? !stop.area || !stop.address
+          : !stop.area || !stop.address || !stop.pic || !stop.phone,
       );
       if (incompleteExtraStop) {
-        throw new Error("Setiap alamat pengantaran tambahan wajib memiliki area, alamat, PIC penerima, dan nomor HP.");
+        throw new Error(
+          isPassengerVehicle
+            ? "Setiap alamat pengantaran tambahan wajib memiliki area dan alamat."
+            : "Setiap alamat pengantaran tambahan wajib memiliki area, alamat, PIC penerima, dan nomor HP.",
+        );
       }
       if (routeMode === "optimized" && extraDropCount > 0 && !isRouteOptimizationCurrent) {
         throw new Error("Urutan rute berubah atau belum dioptimalkan. Klik Optimalkan Rute terlebih dahulu.");
@@ -754,12 +760,12 @@ export default function TruckingPage() {
           vehicleName:          selectedVehicle.name,
           areaPickup,
           alamatPickup,
-          picPickup,
-          hpPickup,
+          picPickup:            isPassengerVehicle ? undefined : picPickup,
+          hpPickup:             isPassengerVehicle ? undefined : hpPickup,
           areaDelivery:         areaDel,
           alamatDelivery:       alamatDel,
-          picPenerima,
-          hpPenerima,
+          picPenerima:          isPassengerVehicle ? undefined : picPenerima,
+          hpPenerima:           isPassengerVehicle ? undefined : hpPenerima,
           jadwalType,
           tanggalPickup:        jadwalType === "nanti" ? tanggal : undefined,
           jamPickup:            jadwalType === "nanti" ? jam : undefined,
@@ -1269,22 +1275,26 @@ export default function TruckingPage() {
                         className={INPUT_CLS}
                       />
                     </FormField>
-                    <FormField label={t("truckingPage.picPickup")} required>
-                      <div className="relative">
-                        <User className="absolute left-3 top-2.5 h-4 w-4 text-slate-300 pointer-events-none" />
-                        <Input value={picPickup} onChange={(e) => setPicPickup(e.target.value)}
-                          placeholder={t("truckingPage.phPicPickup")}
-                          className={cn(INPUT_CLS, "pl-9")} />
-                      </div>
-                    </FormField>
-                    <FormField label={t("truckingPage.hpPickup")} required>
-                      <div className="relative">
-                        <Phone className="absolute left-3 top-2.5 h-4 w-4 text-slate-300 pointer-events-none" />
-                        <Input type="tel" value={hpPickup} onChange={(e) => setHpPickup(e.target.value)}
-                          placeholder="08xx-xxxx-xxxx"
-                          className={cn(INPUT_CLS, "pl-9")} />
-                      </div>
-                    </FormField>
+                    {!isPassengerVehicle && (
+                      <>
+                        <FormField label={t("truckingPage.picPickup")} required>
+                          <div className="relative">
+                            <User className="absolute left-3 top-2.5 h-4 w-4 text-slate-300 pointer-events-none" />
+                            <Input value={picPickup} onChange={(e) => setPicPickup(e.target.value)}
+                              placeholder={t("truckingPage.phPicPickup")}
+                              className={cn(INPUT_CLS, "pl-9")} />
+                          </div>
+                        </FormField>
+                        <FormField label={t("truckingPage.hpPickup")} required>
+                          <div className="relative">
+                            <Phone className="absolute left-3 top-2.5 h-4 w-4 text-slate-300 pointer-events-none" />
+                            <Input type="tel" value={hpPickup} onChange={(e) => setHpPickup(e.target.value)}
+                              placeholder="08xx-xxxx-xxxx"
+                              className={cn(INPUT_CLS, "pl-9")} />
+                          </div>
+                        </FormField>
+                      </>
+                    )}
                   </div>
                 </div>
 
@@ -1304,22 +1314,26 @@ export default function TruckingPage() {
                         className={INPUT_CLS}
                       />
                     </FormField>
-                    <FormField label={t("truckingPage.picReceiver")} required>
-                      <div className="relative">
-                        <User className="absolute left-3 top-2.5 h-4 w-4 text-slate-300 pointer-events-none" />
-                        <Input value={picPenerima} onChange={(e) => setPicPenerima(e.target.value)}
-                          placeholder={t("truckingPage.phPicReceiver")}
-                          className={cn(INPUT_CLS, "pl-9")} />
-                      </div>
-                    </FormField>
-                    <FormField label={t("truckingPage.hpReceiver")} required>
-                      <div className="relative">
-                        <Phone className="absolute left-3 top-2.5 h-4 w-4 text-slate-300 pointer-events-none" />
-                        <Input type="tel" value={hpPenerima} onChange={(e) => setHpPenerima(e.target.value)}
-                          placeholder="08xx-xxxx-xxxx"
-                          className={cn(INPUT_CLS, "pl-9")} />
-                      </div>
-                    </FormField>
+                    {!isPassengerVehicle && (
+                      <>
+                        <FormField label={t("truckingPage.picReceiver")} required>
+                          <div className="relative">
+                            <User className="absolute left-3 top-2.5 h-4 w-4 text-slate-300 pointer-events-none" />
+                            <Input value={picPenerima} onChange={(e) => setPicPenerima(e.target.value)}
+                              placeholder={t("truckingPage.phPicReceiver")}
+                              className={cn(INPUT_CLS, "pl-9")} />
+                          </div>
+                        </FormField>
+                        <FormField label={t("truckingPage.hpReceiver")} required>
+                          <div className="relative">
+                            <Phone className="absolute left-3 top-2.5 h-4 w-4 text-slate-300 pointer-events-none" />
+                            <Input type="tel" value={hpPenerima} onChange={(e) => setHpPenerima(e.target.value)}
+                              placeholder="08xx-xxxx-xxxx"
+                              className={cn(INPUT_CLS, "pl-9")} />
+                          </div>
+                        </FormField>
+                      </>
+                    )}
                   </div>
 
                   {deliveryStops.length > 0 && (
@@ -1357,29 +1371,33 @@ export default function TruckingPage() {
                                 className={INPUT_CLS}
                               />
                             </FormField>
-                            <FormField label="Nama PIC Penerima" required>
-                              <div className="relative">
-                                <User className="absolute left-3 top-2.5 h-4 w-4 text-slate-300 pointer-events-none" />
-                                <Input
-                                  value={stop.pic}
-                                  onChange={(e) => updateDeliveryStop(stop.id, { pic: e.target.value })}
-                                  placeholder={t("truckingPage.phPicReceiver")}
-                                  className={cn(INPUT_CLS, "pl-9")}
-                                />
-                              </div>
-                            </FormField>
-                            <FormField label="No. HP Penerima" required>
-                              <div className="relative">
-                                <Phone className="absolute left-3 top-2.5 h-4 w-4 text-slate-300 pointer-events-none" />
-                                <Input
-                                  type="tel"
-                                  value={stop.phone}
-                                  onChange={(e) => updateDeliveryStop(stop.id, { phone: e.target.value })}
-                                  placeholder="08xx-xxxx-xxxx"
-                                  className={cn(INPUT_CLS, "pl-9")}
-                                />
-                              </div>
-                            </FormField>
+                            {!isPassengerVehicle && (
+                              <>
+                                <FormField label="Nama PIC Penerima" required>
+                                  <div className="relative">
+                                    <User className="absolute left-3 top-2.5 h-4 w-4 text-slate-300 pointer-events-none" />
+                                    <Input
+                                      value={stop.pic}
+                                      onChange={(e) => updateDeliveryStop(stop.id, { pic: e.target.value })}
+                                      placeholder={t("truckingPage.phPicReceiver")}
+                                      className={cn(INPUT_CLS, "pl-9")}
+                                    />
+                                  </div>
+                                </FormField>
+                                <FormField label="No. HP Penerima" required>
+                                  <div className="relative">
+                                    <Phone className="absolute left-3 top-2.5 h-4 w-4 text-slate-300 pointer-events-none" />
+                                    <Input
+                                      type="tel"
+                                      value={stop.phone}
+                                      onChange={(e) => updateDeliveryStop(stop.id, { phone: e.target.value })}
+                                      placeholder="08xx-xxxx-xxxx"
+                                      className={cn(INPUT_CLS, "pl-9")}
+                                    />
+                                  </div>
+                                </FormField>
+                              </>
+                            )}
                           </div>
                         </div>
                       ))}
