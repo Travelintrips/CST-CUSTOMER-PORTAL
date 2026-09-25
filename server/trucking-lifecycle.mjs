@@ -158,8 +158,36 @@ function assertOwner(booking, user, companyIds = []) {
   if (!owns) fail(404, "Booking trucking tidak ditemukan.");
 }
 
+
+async function truckingManualPaymentAccount() {
+  const providerCompanyId = Number(process.env.TRUCKING_PROVIDER_COMPANY_ID ?? 1);
+  const result = await query(
+    `select a.bank_name,a.account_number,
+            coalesce(nullif(a.account_holder,''),coalesce(c.company_name,c.legal_name,c.name)) as account_holder,
+            coalesce(nullif(a.currency_code,''),nullif(a.currency,''),'IDR') as currency
+       from public.company_bank_accounts a
+       left join public.companies c on c.id=a.company_id
+      where a.company_id=$1
+        and coalesce(a.is_active,true)=true
+        and lower(coalesce(a.account_type,''))='bank'
+        and nullif(trim(coalesce(a.account_number,'')),'') is not null
+      order by coalesce(a.is_default,false) desc,a.id
+      limit 1`,
+    [providerCompanyId],
+  ).catch(() => ({ rows: [] }));
+  const row = result.rows[0];
+  return row
+    ? {
+        bankName: row.bank_name,
+        accountNumber: row.account_number,
+        accountHolder: row.account_holder,
+        currency: row.currency ?? "IDR",
+      }
+    : null;
+}
+
 async function serializeBooking(booking, { includePrivate = false } = {}) {
-  const [stopsResult, paymentsResult, eventsResult, paylabsState, totals] = await Promise.all([
+  const [stopsResult, paymentsResult, eventsResult, paylabsState, totals, manualPaymentAccount] = await Promise.all([
     query(
       `select * from public.trucking_booking_stops
         where booking_id=$1 order by sequence_no,id`,
@@ -179,6 +207,7 @@ async function serializeBooking(booking, { includePrivate = false } = {}) {
       configured: false, activeMethods: [], latestPayment: null, canCreate: false,
     })),
     truckingPaymentTotals(booking),
+    truckingManualPaymentAccount(),
   ]);
 
   const stops = await Promise.all(stopsResult.rows.map(async (stop) => ({
@@ -276,6 +305,7 @@ async function serializeBooking(booking, { includePrivate = false } = {}) {
       createdAt: event.created_at,
     })),
     paylabs: paylabsState,
+    manualPaymentAccount,
     createdAt: booking.created_at,
     updatedAt: booking.updated_at,
     completedAt: booking.completed_at,
