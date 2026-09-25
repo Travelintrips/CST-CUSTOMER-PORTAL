@@ -219,6 +219,8 @@ async function serializeBooking(booking, { includePrivate = false } = {}) {
     paymentTerms: normalizedPaymentTerms(booking.payment_terms),
     paymentStatus: booking.payment_status,
     paymentDueAt: booking.payment_due_at,
+    invoiceNumber: booking.invoice_number ?? null,
+    receiptNumber: booking.receipt_number ?? null,
     totals,
     customerApprovalStatus: booking.customer_approval_status,
     customerApprovedAt: booking.customer_approved_at,
@@ -429,7 +431,7 @@ export async function customerCreateTruckingPaylabs({ bookingNumber, user, compa
     requestedMethod: body?.paymentMethod,
     requestedAmount: body?.amount,
     customerName: user.name,
-    customerPhone: user.phone,
+    customerPhone: user.phone ?? booking.hp_pickup,
   });
 }
 
@@ -498,6 +500,7 @@ export async function adminReviewTrucking({ bookingNumber, admin, body }) {
       `update public.trucking_booking_requests
         set final_price=$2,payment_terms=$3::jsonb,payment_due_at=$4,
             customer_approval_status='pending',status='waiting_customer_approval',
+            invoice_number=coalesce(invoice_number,'INV-' || booking_number),
             admin_notes=$5,remaining_amount=$2,updated_at=now()
         where id=$1`,
       [booking.id, finalPrice, JSON.stringify(terms), dueAt, text(body?.adminNotes)],
@@ -542,6 +545,7 @@ async function refreshPaymentState(client, booking, actor) {
       set paid_amount=$2,remaining_amount=$3,payment_status=$4,status=$5,
           confirmed_at=case when $5='confirmed' then coalesce(confirmed_at,now()) else confirmed_at end,
           completed_at=case when $5='completed' then coalesce(completed_at,now()) else completed_at end,
+          receipt_number=case when $4='paid' then coalesce(receipt_number,'RCT-' || booking_number) else receipt_number end,
           updated_at=now()
       where id=$1`,
     [booking.id, totals.receivedAmount, totals.remainingAmount, paymentStatus, nextStatus],
