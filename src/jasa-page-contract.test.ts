@@ -1,0 +1,72 @@
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+import { describe, expect, it } from "vitest";
+
+describe("jasa service hub contract", () => {
+  it("keeps /jasa as the canonical service hub", () => {
+    const app = readFileSync(join(process.cwd(), "src/App.tsx"), "utf8");
+    const seo = readFileSync(join(process.cwd(), "src/config/seo.ts"), "utf8");
+    const sitemap = readFileSync(join(process.cwd(), "public/sitemap.xml"), "utf8");
+
+    expect(app).toContain('<Route path="/services">{() => { setLocation("/jasa"); return null; }}</Route>');
+    expect(seo).toContain('canonical: `${BASE_URL}/jasa`');
+    expect(seo).toContain('"/services": {');
+    expect(seo).toContain("noindex: true");
+    expect(sitemap).toContain("https://cstlogistic.co.id/jasa");
+    expect(sitemap).not.toContain("https://cstlogistic.co.id/services</loc>");
+  });
+
+  it("does not publish unsupported marketing statistics on the jasa hero", () => {
+    const page = readFileSync(join(process.cwd(), "src/pages/jasa.tsx"), "utf8");
+
+    expect(page).not.toContain('val: "500+"');
+    expect(page).not.toContain('val: "50+"');
+    expect(page).not.toContain('val: "10+"');
+    expect(page).not.toContain("Rating 4.9 / 5.0");
+    expect(page).not.toContain("98.5% ketepatan waktu");
+    expect(page).toContain("Layanan Aktif");
+    expect(page).toContain("Kategori Utama");
+    expect(page).toContain("Penawaran Vendor");
+  });
+
+  it("keeps passenger and cargo trucking represented in the service master copy", () => {
+    const page = readFileSync(join(process.cwd(), "src/pages/jasa.tsx"), "utf8");
+    const migration = readFileSync(
+      join(process.cwd(), "supabase/migrations/20260925223000_align_jasa_trucking_service_catalog.sql"),
+      "utf8",
+    );
+
+    expect(page).toContain("Transportasi & Distribusi Domestik");
+    expect(page).toContain("Transportasi penumpang serta distribusi barang domestik");
+    expect(migration).toContain("where service_code='trucking'");
+    expect(migration).toContain("mobil penumpang hingga armada kargo");
+  });
+
+  it("uses route-specific prerendered static content", () => {
+    const html = readFileSync(join(process.cwd(), "index.html"), "utf8");
+    const prerender = readFileSync(join(process.cwd(), "scripts/prerender.mjs"), "utf8");
+
+    expect(html).toContain("<!-- SEO:STATIC:START -->");
+    expect(html).toContain("© 2026 PT Cahaya Sejati Teknologi");
+    expect(prerender).toContain("function buildStaticBody");
+    expect(prerender).toContain("replaceMarker(html,     'SEO:STATIC'");
+    expect(prerender).toContain("Transportasi Penumpang & Distribusi Barang Domestik");
+  });
+
+  it("keeps core CST services visible if catalog APIs degrade", () => {
+    const page = readFileSync(join(process.cwd(), "src/pages/jasa.tsx"), "utf8");
+
+    expect(page).toContain('table: "service_catalog"');
+    expect(page).toContain("if (!master && !presentation.href) return null");
+    expect(page).toContain("master?.name ?? presentation.title");
+    expect(page).toContain("Sebagian data katalog sedang tidak tersedia");
+  });
+
+  it("uses stable photo keys for localized bulk-package titles", () => {
+    const page = readFileSync(join(process.cwd(), "src/pages/jasa.tsx"), "utf8");
+
+    expect(page).toContain('photoKey: "Warehousing+Distribusi"');
+    expect(page).toContain("const photo = BUNDLE_PHOTOS[photoKey]");
+    expect(page).not.toContain("const photo = BUNDLE_PHOTOS[title]");
+  });
+});

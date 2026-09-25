@@ -3,9 +3,9 @@ import { staticAsset } from "@/lib/staticAssets";
 
 const BASE_URL = COMPANY_CONFIG.domain;
 const OG_IMAGE = staticAsset("images/og-cover.webp");
+const SITE_NAME = "CST Logistic";
 const OG_IMAGE_ALT =
-  `${COMPANY_CONFIG.brandName} — Layanan ekspor impor, freight forwarding, dan logistik terpadu Indonesia`;
-const SITE_NAME = COMPANY_CONFIG.brandName;
+  "CST Logistic — PT Cahaya Sejati Teknologi, layanan logistik dan transportasi Indonesia";
 
 export interface PageSeoConfig {
   title: string;
@@ -29,31 +29,32 @@ const routes: Record<string, PageSeoConfig> = {
     ogType: "website",
   },
   "/services": {
-    title: `Layanan Logistik Lengkap — ${SITE_NAME}`,
+    title: "Layanan Logistik & Transportasi | CST Logistic",
     description:
-      "Temukan semua layanan logistik: freight forwarding udara & laut, customs clearance PPJK, trucking, pergudangan, dan solusi ekspor impor terintegrasi.",
-    canonical: `${BASE_URL}/services`,
-    ogTitle: "Layanan Logistik Lengkap — B2B Marketplace and Logistic",
+      "Katalog layanan telah dipusatkan di halaman Jasa CST Logistic: freight forwarding, kepabeanan, transportasi penumpang, distribusi barang, dan layanan logistik tambahan.",
+    canonical: `${BASE_URL}/jasa`,
+    ogTitle: "Layanan Logistik & Transportasi | CST Logistic",
     ogDescription:
-      "Freight forwarding udara & laut, customs clearance PPJK, trucking, pergudangan, dan ekspor impor terintegrasi untuk bisnis Anda.",
+      "Freight forwarding, kepabeanan, transportasi penumpang, distribusi barang, dan layanan logistik tambahan CST.",
+    noindex: true,
   },
   "/freight-forwarding": {
     title: `Freight Forwarding Udara & Laut — ${SITE_NAME}`,
     description:
-      "Layanan freight forwarding internasional: air freight 1–5 hari dan sea freight FCL/LCL ke 150+ pelabuhan dunia. Harga transparan, terjadwal, terpercaya.",
+      "Layanan freight forwarding internasional melalui air freight dan sea freight FCL/LCL untuk kebutuhan ekspor, impor, dan distribusi bisnis.",
     canonical: `${BASE_URL}/freight-forwarding`,
     ogTitle: "Freight Forwarding Udara & Laut Indonesia",
     ogDescription:
-      "Air freight 1–5 hari dan sea freight FCL/LCL ke 150+ pelabuhan dunia. Freight forwarding internasional yang terpercaya.",
+      "Air freight dan sea freight FCL/LCL untuk kebutuhan ekspor, impor, dan distribusi bisnis.",
   },
   "/pabean": {
     title: `Customs Clearance & Kepabeanan PPJK — ${SITE_NAME}`,
     description:
-      "Layanan customs clearance resmi PPJK: pengurusan dokumen bea cukai, klasifikasi HS Code, bea masuk & pajak impor, koordinasi Direktorat Bea dan Cukai.",
+      "Layanan kepabeanan dan konsultasi PPJK: pengurusan dokumen, klasifikasi HS Code, bea masuk, pajak impor, dan koordinasi proses clearance.",
     canonical: `${BASE_URL}/pabean`,
     ogTitle: "Customs Clearance & Kepabeanan PPJK",
     ogDescription:
-      "Pengurusan bea cukai resmi PPJK: dokumen, HS Code, bea masuk, koordinasi Dirjen Bea Cukai. Cepat dan terpercaya.",
+      "Pengurusan kepabeanan, dokumen, HS Code, bea masuk, pajak impor, dan konsultasi proses clearance.",
   },
   "/custom-clearance": {
     title: `Custom Clearance Indonesia — ${SITE_NAME}`,
@@ -65,31 +66,31 @@ const routes: Record<string, PageSeoConfig> = {
       "Jasa custom clearance impor & ekspor: dokumen, HS Code, bea masuk, koordinasi kepabeanan yang efisien.",
   },
   "/trucking": {
-    title: `Layanan Trucking & Distribusi Darat Indonesia — ${SITE_NAME}`,
+    title: `Transportasi Penumpang & Distribusi Darat — ${SITE_NAME}`,
     description:
-      "Trucking dan distribusi darat ke seluruh Indonesia. Armada modern dengan tracking real-time. Cocok untuk pengiriman B2B skala besar maupun UMKM.",
+      "Layanan transportasi penumpang dan distribusi barang domestik dengan pilihan Mobil, Mobil XL, Van, Pickup, Box, Engkel, CDD, Fuso, Tronton, dan armada lainnya.",
     canonical: `${BASE_URL}/trucking`,
-    ogTitle: "Trucking & Distribusi Darat Indonesia",
+    ogTitle: "Transportasi Penumpang & Distribusi Darat",
     ogDescription:
-      "Trucking ke seluruh Indonesia dengan armada modern dan tracking real-time. Pengiriman tepat waktu untuk bisnis Anda.",
+      "Pilih mobil penumpang atau armada barang sesuai kebutuhan perjalanan dan distribusi domestik Anda.",
   },
   "/ocean-freight": {
     title: `Ocean Freight / Sea Freight FCL & LCL — ${SITE_NAME}`,
     description:
-      "Pengiriman laut internasional FCL (Full Container Load) dan LCL (Less than Container Load) ke 150+ pelabuhan dunia. Jadwal reguler, harga kompetitif.",
+      "Pengiriman laut internasional dengan pilihan FCL (Full Container Load) dan LCL (Less than Container Load) untuk kebutuhan ekspor dan impor.",
     canonical: `${BASE_URL}/ocean-freight`,
-    ogTitle: "Ocean Freight FCL & LCL — B2B Marketplace and Logistic",
+    ogTitle: "Ocean Freight FCL & LCL",
     ogDescription:
-      "Sea freight internasional FCL & LCL ke 150+ pelabuhan. Jadwal reguler, harga kompetitif untuk kargo bisnis Anda.",
+      "Sea freight internasional FCL & LCL untuk kebutuhan ekspor dan impor kargo bisnis.",
   },
   "/jasa": {
-    title: `Jasa & Vendor Logistik B2B — ${SITE_NAME}`,
+    title: "Jasa Logistik & Transportasi | CST Logistic",
     description:
-      "Temukan berbagai vendor dan jasa logistik terverifikasi di platform B2B kami: freight, customs, trucking, pergudangan, dan lebih banyak lagi.",
+      "Layanan CST Logistic mencakup sea freight, air freight, kepabeanan, transportasi penumpang, distribusi barang, handling, storage, EMKL, dan asuransi kargo.",
     canonical: `${BASE_URL}/jasa`,
-    ogTitle: "Jasa & Vendor Logistik B2B",
+    ogTitle: "Jasa Logistik & Transportasi | CST Logistic",
     ogDescription:
-      "Vendor dan jasa logistik terverifikasi: freight, customs, trucking, pergudangan, dan layanan bisnis lainnya.",
+      "Sea freight, air freight, kepabeanan, transportasi penumpang, distribusi barang, handling, storage, EMKL, dan layanan logistik tambahan.",
   },
   "/marketplace": {
     title: `Marketplace B2B Logistik Indonesia — ${SITE_NAME}`,
@@ -185,7 +186,7 @@ const routes: Record<string, PageSeoConfig> = {
     canonical: `${BASE_URL}/contact`,
     ogTitle: "Hubungi Kami — B2B Marketplace and Logistic",
     ogDescription:
-      "Konsultasi gratis layanan ekspor impor, freight forwarding, customs clearance, dan logistik terpadu untuk bisnis Anda.",
+      "Konsultasi layanan ekspor impor, freight forwarding, customs clearance, dan logistik terpadu untuk bisnis Anda.",
   },
   "/privacy-policy": {
     title: `Kebijakan Privasi — ${SITE_NAME}`,

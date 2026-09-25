@@ -26,7 +26,6 @@ import {
 
 // ── Lazy-loaded pages (each becomes its own JS chunk) ────────────────────────
 const Home                      = lazy(() => import("@/pages/home"));
-const Services                  = lazy(() => import("@/pages/services"));
 const Products                  = lazy(() => import("@/pages/products"));
 const Marketplace               = lazy(() => import("@/pages/marketplace"));
 const Jasa                      = lazy(() => import("@/pages/jasa"));
@@ -369,7 +368,7 @@ function AppShell() {
     <Suspense fallback={<PageFallback />}>
       <Switch>
         <Route path="/" component={Home} />
-        <Route path="/services" component={Services} />
+        <Route path="/services">{() => { setLocation("/jasa"); return null; }}</Route>
         <Route path="/services/:categoryId" component={JasaKategori} />
         <Route path="/marketplace" component={Marketplace} />
         <Route path="/products">{() => { setLocation("/marketplace"); return null; }}</Route>

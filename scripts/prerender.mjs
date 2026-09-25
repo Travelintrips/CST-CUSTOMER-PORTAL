@@ -56,8 +56,8 @@ const SUPABASE_ORIGIN = String(
 const OG_IMAGE    = SUPABASE_ORIGIN
   ? `${SUPABASE_ORIGIN}/storage/v1/object/public/public-assets/portal-assets/static/customer-portal/images/og-cover.webp`
   : '';
-const OG_IMG_ALT  = 'B2B Marketplace and Logistic — Layanan ekspor impor, freight forwarding, dan logistik terpadu Indonesia';
-const SITE_NAME   = 'B2B Marketplace and Logistic';
+const OG_IMG_ALT  = 'CST Logistic — PT Cahaya Sejati Teknologi, layanan logistik dan transportasi Indonesia';
+const SITE_NAME   = 'CST Logistic';
 
 const routes = {
   '/': {
@@ -68,25 +68,26 @@ const routes = {
     isHomepage:    true,
   },
   '/services': {
-    title:         'Layanan Logistik Terintegrasi | CST Logistic',
-    description:   'Layanan logistik terintegrasi meliputi PPJK, customs clearance, freight forwarding, trucking, ocean freight, dan ekspor impor.',
-    canonical:     `${BASE_URL}/services`,
-    ogTitle:       'Layanan Logistik Terintegrasi | CST Logistic',
-    ogDescription: 'PPJK, customs clearance, freight forwarding, trucking, ocean freight, dan ekspor impor terintegrasi untuk bisnis Anda.',
+    title:         'Layanan Logistik & Transportasi | CST Logistic',
+    description:   'Katalog layanan telah dipusatkan di halaman Jasa CST Logistic: freight forwarding, kepabeanan, transportasi penumpang, distribusi barang, dan layanan logistik tambahan.',
+    canonical:     `${BASE_URL}/jasa`,
+    ogTitle:       'Layanan Logistik & Transportasi | CST Logistic',
+    ogDescription: 'Freight forwarding, kepabeanan, transportasi penumpang, distribusi barang, dan layanan logistik tambahan CST.',
+    noindex:       true,
   },
   '/freight-forwarding': {
     title:         'Freight Forwarding Udara & Laut | CST Logistic',
-    description:   'Layanan freight forwarding udara dan laut, FCL, LCL, air freight, ocean freight, ekspor impor, dan pengiriman internasional.',
+    description:   'Layanan freight forwarding internasional melalui air freight dan sea freight FCL/LCL untuk kebutuhan ekspor, impor, dan distribusi bisnis.',
     canonical:     `${BASE_URL}/freight-forwarding`,
     ogTitle:       'Freight Forwarding Udara & Laut | CST Logistic',
-    ogDescription: 'Freight forwarding udara dan laut, FCL, LCL, air freight, ocean freight, dan pengiriman internasional yang terpercaya.',
+    ogDescription: 'Air freight dan sea freight FCL/LCL untuk kebutuhan ekspor, impor, dan distribusi bisnis.',
   },
   '/pabean': {
     title:         'Jasa PPJK & Kepabeanan Indonesia | CST Logistic',
-    description:   'CST Logistic menyediakan jasa PPJK, pengurusan kepabeanan, dokumen ekspor impor, HS Code, Bea Cukai, dan customs clearance Indonesia.',
+    description:   'Layanan kepabeanan dan konsultasi PPJK untuk dokumen ekspor impor, HS Code, bea masuk, pajak impor, dan proses customs clearance.',
     canonical:     `${BASE_URL}/pabean`,
     ogTitle:       'Jasa PPJK & Kepabeanan Indonesia | CST Logistic',
-    ogDescription: 'Jasa PPJK, pengurusan kepabeanan, dokumen ekspor impor, HS Code, Bea Cukai, dan customs clearance Indonesia.',
+    ogDescription: 'Pengurusan kepabeanan, dokumen ekspor impor, HS Code, bea masuk, pajak impor, dan customs clearance.',
   },
   '/custom-clearance': {
     title:         'Jasa Customs Clearance Indonesia | CST Logistic',
@@ -96,25 +97,25 @@ const routes = {
     ogDescription: 'Customs clearance ekspor dan impor: pengurusan dokumen Bea Cukai, perizinan, HS Code, dan penyelesaian kepabeanan.',
   },
   '/trucking': {
-    title:         `Layanan Trucking & Distribusi Darat Indonesia — ${SITE_NAME}`,
-    description:   'Trucking dan distribusi darat ke seluruh Indonesia. Armada modern dengan tracking real-time. Cocok untuk pengiriman B2B skala besar maupun UMKM.',
+    title:         `Transportasi Penumpang & Distribusi Darat — ${SITE_NAME}`,
+    description:   'Layanan transportasi penumpang dan distribusi barang domestik dengan pilihan mobil penumpang hingga armada kargo.',
     canonical:     `${BASE_URL}/trucking`,
-    ogTitle:       'Trucking & Distribusi Darat Indonesia',
-    ogDescription: 'Trucking ke seluruh Indonesia dengan armada modern dan tracking real-time. Pengiriman tepat waktu untuk bisnis Anda.',
+    ogTitle:       'Transportasi Penumpang & Distribusi Darat',
+    ogDescription: 'Pilih mobil penumpang atau armada barang sesuai kebutuhan perjalanan dan distribusi domestik Anda.',
   },
   '/ocean-freight': {
     title:         `Ocean Freight / Sea Freight FCL & LCL — ${SITE_NAME}`,
-    description:   'Pengiriman laut internasional FCL (Full Container Load) dan LCL (Less than Container Load) ke 150+ pelabuhan dunia. Jadwal reguler, harga kompetitif.',
+    description:   'Pengiriman laut internasional dengan pilihan FCL (Full Container Load) dan LCL (Less than Container Load) untuk kebutuhan ekspor dan impor.',
     canonical:     `${BASE_URL}/ocean-freight`,
-    ogTitle:       'Ocean Freight FCL & LCL — B2B Marketplace and Logistic',
-    ogDescription: 'Sea freight internasional FCL & LCL ke 150+ pelabuhan. Jadwal reguler, harga kompetitif untuk kargo bisnis Anda.',
+    ogTitle:       'Ocean Freight FCL & LCL',
+    ogDescription: 'Sea freight internasional FCL & LCL untuk kebutuhan ekspor dan impor kargo bisnis.',
   },
   '/jasa': {
-    title:         `Jasa & Vendor Logistik B2B — ${SITE_NAME}`,
-    description:   'Temukan berbagai vendor dan jasa logistik terverifikasi di platform B2B kami: freight, customs, trucking, pergudangan, dan lebih banyak lagi.',
+    title:         'Jasa Logistik & Transportasi | CST Logistic',
+    description:   'Layanan CST Logistic mencakup sea freight, air freight, kepabeanan, transportasi penumpang, distribusi barang, handling, storage, EMKL, dan asuransi kargo.',
     canonical:     `${BASE_URL}/jasa`,
-    ogTitle:       'Jasa & Vendor Logistik B2B',
-    ogDescription: 'Vendor dan jasa logistik terverifikasi: freight, customs, trucking, pergudangan, dan layanan bisnis lainnya.',
+    ogTitle:       'Jasa Logistik & Transportasi | CST Logistic',
+    ogDescription: 'Sea freight, air freight, kepabeanan, transportasi penumpang, distribusi barang, handling, storage, EMKL, dan layanan logistik tambahan.',
   },
   '/marketplace': {
     title:         `Marketplace B2B Logistik Indonesia — ${SITE_NAME}`,
@@ -265,6 +266,38 @@ function buildJsonLdBlock(route, cfg) {
     </script>`;
 }
 
+function buildStaticBody(route, cfg) {
+  const serviceLinks = route === '/jasa'
+    ? `<h2>Layanan Utama</h2>
+       <ul>
+         <li><a href="/ocean-freight-booking">Sea Freight / Ocean Freight</a></li>
+         <li><a href="/air-freight-booking">Air Freight</a></li>
+         <li><a href="/trucking">Transportasi Penumpang & Distribusi Barang Domestik</a></li>
+         <li><a href="/custom-clearance">Custom Clearance</a></li>
+         <li><a href="/pabean">Konsultan Pabean</a></li>
+       </ul>
+       <h2>Layanan Tambahan</h2>
+       <p>Handling, port charges, storage/demurrage, EMKL, dan asuransi kargo tersedia sesuai kebutuhan operasional.</p>`
+    : '';
+
+  return `<div class="seo-static">
+    <nav aria-label="Navigasi utama">
+      <a href="/">Beranda</a>
+      <a href="/jasa">Jasa</a>
+      <a href="/marketplace">Marketplace</a>
+      <a href="/contact">Kontak</a>
+    </nav>
+    <main>
+      <h1>${esc(cfg.title)}</h1>
+      <p>${esc(cfg.description)}</p>
+      ${serviceLinks}
+    </main>
+    <footer>
+      <p>&copy; 2026 PT Cahaya Sejati Teknologi. Seluruh hak cipta dilindungi.</p>
+    </footer>
+  </div>`;
+}
+
 // ── Main ─────────────────────────────────────────────────────────────────────
 
 // Read the built index.html (Vite replaces /src/main.tsx with hashed bundle)
@@ -286,6 +319,10 @@ if (!template.includes('<!-- SEO:JSONLD:START -->')) {
   console.error('ERROR: <!-- SEO:JSONLD:START --> marker not found in index.html.');
   process.exit(1);
 }
+if (!template.includes('<!-- SEO:STATIC:START -->')) {
+  console.error('ERROR: <!-- SEO:STATIC:START --> marker not found in index.html.');
+  process.exit(1);
+}
 
 let generated = 0;
 let skipped   = 0;
@@ -299,6 +336,7 @@ for (const [routePath, cfg] of Object.entries(routes)) {
     // Replace both marker sections
     let html = replaceMarker(template, 'SEO:META',   metaBlock);
     html     = replaceMarker(html,     'SEO:JSONLD', jsonLdBlock);
+    html     = replaceMarker(html,     'SEO:STATIC', buildStaticBody(routePath, cfg));
 
     // Determine output path
     // /          → dist/public/index.html  (overwrite — already homepage)
