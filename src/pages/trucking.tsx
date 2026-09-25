@@ -1784,10 +1784,16 @@ export default function TruckingPage() {
                         </div>
                       ))}
                     </div>
-                    <Button type="button" onClick={() => setLocation("/")}
-                      className="w-full h-11 bg-blue-600 hover:bg-blue-700 text-white rounded-xl font-bold text-sm">
-                      {t("truckingPage.kembali")}
-                    </Button>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                      <Button type="button" onClick={() => setLocation(`/trucking/orders/${encodeURIComponent(bookingNumber)}`)}
+                        className="w-full h-11 bg-blue-600 hover:bg-blue-700 text-white rounded-xl font-bold text-sm">
+                        Lihat Status & Pembayaran
+                      </Button>
+                      <Button type="button" variant="outline" onClick={() => setLocation("/")}
+                        className="w-full h-11 rounded-xl font-bold text-sm">
+                        {t("truckingPage.kembali")}
+                      </Button>
+                    </div>
                   </div>
                 )}
               </div>
