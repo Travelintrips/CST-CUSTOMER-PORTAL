@@ -78,6 +78,18 @@
     <priority>0.7</priority>
   </url>
   <url>
+    <loc>https://cstlogistic.co.id/kalkulator-impor</loc>
+    <lastmod>2026-09-25</lastmod>
+    <changefreq>weekly</changefreq>
+    <priority>0.8</priority>
+  </url>
+  <url>
+    <loc>https://cstlogistic.co.id/translation-hub</loc>
+    <lastmod>2026-09-25</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>0.6</priority>
+  </url>
+  <url>
     <loc>https://cstlogistic.co.id/track</loc>
     <lastmod>2026-07-29</lastmod>
     <changefreq>monthly</changefreq>
