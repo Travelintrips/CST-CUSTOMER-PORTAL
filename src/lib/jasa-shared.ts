@@ -91,9 +91,18 @@ const image = (path: string) =>
   );
 
 export const SERVICE_PHOTOS: Record<string, string> = {
+  sea_freight:        image("sea-freight.png"),
+  air_freight:        image("air-freight.png"),
+  trucking:           image("banner-trucking-container.png"),
+  customs_clearance:  image("customs.png"),
+  ppjk_consulting:    image("customs-document.png"),
+  emkl:               image("sea-freight.png"),
+
+  // Backward-compatible title aliases for older callers.
   "Sea Freight":             image("sea-freight.png"),
   "Air Freight":             image("air-freight.png"),
   "Domestik":                image("banner-trucking-container.png"),
+  "Transportasi & Distribusi Domestik": image("banner-trucking-container.png"),
   "Custom Clearance Proses": image("customs.png"),
   "Konsultan Pabean":        image("customs-document.png"),
   "EMKL":                     image("sea-freight.png"),
