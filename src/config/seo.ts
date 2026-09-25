@@ -29,13 +29,14 @@ const routes: Record<string, PageSeoConfig> = {
     ogType: "website",
   },
   "/services": {
-    title: `Layanan Logistik Lengkap — ${SITE_NAME}`,
+    title: "Layanan Logistik & Transportasi | CST Logistic",
     description:
-      "Temukan semua layanan logistik: freight forwarding udara & laut, customs clearance PPJK, trucking, pergudangan, dan solusi ekspor impor terintegrasi.",
-    canonical: `${BASE_URL}/services`,
-    ogTitle: "Layanan Logistik Lengkap — B2B Marketplace and Logistic",
+      "Katalog layanan telah dipusatkan di halaman Jasa CST Logistic: freight forwarding, kepabeanan, transportasi penumpang, distribusi barang, dan layanan logistik tambahan.",
+    canonical: `${BASE_URL}/jasa`,
+    ogTitle: "Layanan Logistik & Transportasi | CST Logistic",
     ogDescription:
-      "Freight forwarding udara & laut, customs clearance PPJK, trucking, pergudangan, dan ekspor impor terintegrasi untuk bisnis Anda.",
+      "Freight forwarding, kepabeanan, transportasi penumpang, distribusi barang, dan layanan logistik tambahan CST.",
+    noindex: true,
   },
   "/freight-forwarding": {
     title: `Freight Forwarding Udara & Laut — ${SITE_NAME}`,
@@ -83,13 +84,13 @@ const routes: Record<string, PageSeoConfig> = {
       "Sea freight internasional FCL & LCL ke 150+ pelabuhan. Jadwal reguler, harga kompetitif untuk kargo bisnis Anda.",
   },
   "/jasa": {
-    title: `Jasa & Vendor Logistik B2B — ${SITE_NAME}`,
+    title: "Jasa Logistik & Transportasi | CST Logistic",
     description:
-      "Temukan berbagai vendor dan jasa logistik terverifikasi di platform B2B kami: freight, customs, trucking, pergudangan, dan lebih banyak lagi.",
+      "Layanan CST Logistic mencakup sea freight, air freight, kepabeanan, transportasi penumpang, distribusi barang, handling, storage, EMKL, dan asuransi kargo.",
     canonical: `${BASE_URL}/jasa`,
-    ogTitle: "Jasa & Vendor Logistik B2B",
+    ogTitle: "Jasa Logistik & Transportasi | CST Logistic",
     ogDescription:
-      "Vendor dan jasa logistik terverifikasi: freight, customs, trucking, pergudangan, dan layanan bisnis lainnya.",
+      "Sea freight, air freight, kepabeanan, transportasi penumpang, distribusi barang, handling, storage, EMKL, dan layanan logistik tambahan.",
   },
   "/marketplace": {
     title: `Marketplace B2B Logistik Indonesia — ${SITE_NAME}`,
