@@ -369,7 +369,7 @@ function AppShell() {
     <Suspense fallback={<PageFallback />}>
       <Switch>
         <Route path="/" component={Home} />
-        <Route path="/services" component={Services} />
+        <Route path="/services">{() => { setLocation("/jasa"); return null; }}</Route>
         <Route path="/services/:categoryId" component={JasaKategori} />
         <Route path="/marketplace" component={Marketplace} />
         <Route path="/products">{() => { setLocation("/marketplace"); return null; }}</Route>
