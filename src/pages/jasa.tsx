@@ -30,7 +30,7 @@ import {
 } from "@/lib/jasa-shared";
 import PageSeo from "@/components/PageSeo";
 
-import { staticAsset, CUSTOMER_ASSETS } from "@/lib/staticAssets";
+import { CUSTOMER_ASSETS } from "@/lib/staticAssets";
 
 const BUNDLE_PHOTOS: Record<string, { primary: string; fallback: string }> = {
   "Full Forwarding": {
