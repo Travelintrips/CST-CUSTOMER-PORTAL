@@ -30,12 +30,21 @@ import {
 } from "@/lib/jasa-shared";
 import PageSeo from "@/components/PageSeo";
 
-import { staticAsset, CUSTOMER_ASSETS } from "@/lib/staticAssets";
+import { CUSTOMER_ASSETS } from "@/lib/staticAssets";
 
-const BUNDLE_PHOTOS: Record<string, string> = {
-  "Full Forwarding":         staticAsset("images/air-freight.png"),
-  "Sea Freight Bundle":      staticAsset("images/sea-freight.png"),
-  "Warehousing+Distribusi":  staticAsset("images/banner-trucking-container.png"),
+const BUNDLE_PHOTOS: Record<string, { primary: string; fallback: string }> = {
+  "Full Forwarding": {
+    primary: CUSTOMER_ASSETS.airFreight,
+    fallback: CUSTOMER_ASSETS.marketplaceHero,
+  },
+  "Sea Freight Bundle": {
+    primary: CUSTOMER_ASSETS.seaFreight,
+    fallback: CUSTOMER_ASSETS.portOperations,
+  },
+  "Warehousing+Distribusi": {
+    primary: CUSTOMER_ASSETS.warehouse,
+    fallback: CUSTOMER_ASSETS.portOperations,
+  },
 };
 
 interface SubService {
@@ -786,10 +795,20 @@ export default function Jasa() {
                     <div className="relative h-36 overflow-hidden">
                       {photo ? (
                         <img
-                          src={photo}
+                          src={photo.primary}
                           alt={title}
                           className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-700"
                           style={{ filter: "brightness(0.45) saturate(1.05)" }}
+                          onError={(event) => {
+                            const image = event.currentTarget;
+                            if (image.dataset.fallbackApplied === "true") {
+                              image.style.display = "none";
+                              return;
+                            }
+                            image.dataset.fallbackApplied = "true";
+                            image.src = photo.fallback;
+                          }}
+                          loading="lazy"
                         />
                       ) : (
                         <div className="w-full h-full bg-gradient-to-br from-blue-700 to-sky-500" />

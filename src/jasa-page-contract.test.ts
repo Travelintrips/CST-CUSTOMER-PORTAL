@@ -74,6 +74,14 @@ describe("jasa service hub contract", () => {
     expect(page).toContain("Sebagian data katalog sedang tidak tersedia");
   });
 
+  it("falls back to a second known asset if a bundle image fails", () => {
+    const page = readFileSync(join(process.cwd(), "src/pages/jasa.tsx"), "utf8");
+    expect(page).toContain("primary: CUSTOMER_ASSETS.warehouse");
+    expect(page).toContain("fallback: CUSTOMER_ASSETS.portOperations");
+    expect(page).toContain('image.dataset.fallbackApplied === "true"');
+    expect(page).toContain("image.src = photo.fallback");
+  });
+
   it("uses stable photo keys for localized bulk-package titles", () => {
     const page = readFileSync(join(process.cwd(), "src/pages/jasa.tsx"), "utf8");
 
