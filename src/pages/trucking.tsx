@@ -329,6 +329,14 @@ interface EstimasiApiResult {
   candidates: EstimasiCandidate[];
 }
 
+interface DeliveryStop {
+  id: string;
+  area: string;
+  address: string;
+  pic: string;
+  phone: string;
+}
+
 function formatRp(n: number) {
   return new Intl.NumberFormat("id-ID", { style: "currency", currency: "IDR", maximumFractionDigits: 0 }).format(n);
 }
@@ -501,6 +509,7 @@ export default function TruckingPage() {
   const [alamatDel,    setAlamatDel]    = useState("");
   const [picPenerima,  setPicPenerima]  = useState("");
   const [hpPenerima,   setHpPenerima]   = useState("");
+  const [deliveryStops, setDeliveryStops] = useState<DeliveryStop[]>([]);
 
   const [jadwalType, setJadwalType]     = useState<"sekarang" | "nanti">("sekarang");
   const [tanggal,    setTanggal]        = useState("");
@@ -537,6 +546,32 @@ export default function TruckingPage() {
     setAddons((p) => ({ ...p, [key]: !p[key] }));
   }
 
+  function addDeliveryStop() {
+    setDeliveryStops((stops) => [
+      ...stops,
+      { id: crypto.randomUUID(), area: areaDel, address: "", pic: "", phone: "" },
+    ]);
+  }
+
+  function updateDeliveryStop(id: string, patch: Partial<DeliveryStop>) {
+    setDeliveryStops((stops) => stops.map((stop) => stop.id === id ? { ...stop, ...patch } : stop));
+  }
+
+  function removeDeliveryStop(id: string) {
+    setDeliveryStops((stops) => stops.filter((stop) => stop.id !== id));
+  }
+
+  const normalizedDeliveryStops = deliveryStops
+    .map((stop) => ({
+      area: stop.area.trim(),
+      address: stop.address.trim(),
+      pic: stop.pic.trim(),
+      phone: stop.phone.trim(),
+    }))
+    .filter((stop) => stop.area || stop.address || stop.pic || stop.phone);
+
+  const extraDropCount = normalizedDeliveryStops.length;
+
   async function fetchEstimasi() {
     if (!areaPickup || !areaDel) {
       setEstimasiApiError("Pilih area pickup dan delivery terlebih dahulu.");
@@ -561,7 +596,8 @@ export default function TruckingPage() {
           is_different_island:   areaPickup !== areaDel,
           with_loading_helper:   addons.bantuanMuat,
           with_unloading_helper: addons.bantuanBongkar,
-          extra_drops:           addons.multiDrop ? 1 : 0,
+          extra_drops:           extraDropCount,
+          delivery_stops:        normalizedDeliveryStops,
           overnight_nights:      addons.overnight ? 1 : 0,
           is_urgent:             addons.urgentDelivery,
           cargo_value:           0,
@@ -588,6 +624,12 @@ export default function TruckingPage() {
     setSubmitting(true);
     setSubmitError(null);
     try {
+      const incompleteExtraStop = normalizedDeliveryStops.find(
+        (stop) => !stop.area || !stop.address || !stop.pic || !stop.phone,
+      );
+      if (incompleteExtraStop) {
+        throw new Error("Setiap alamat pengantaran tambahan wajib memiliki area, alamat, PIC penerima, dan nomor HP.");
+      }
       const cheapest = estimasiData?.cheapest ?? null;
       const res = await fetch("/api/portal/trucking/bookings", {
         method: "POST",
@@ -613,7 +655,8 @@ export default function TruckingPage() {
           volumeM3:             volume ? parseFloat(volume) : undefined,
           catatan:              catatan || undefined,
           jumlahTrip,
-          addons,
+          deliveryStops: normalizedDeliveryStops,
+          addons: { ...addons, multiDrop: extraDropCount > 0 },
           estimasiTotal:        cheapest?.estimate?.total_estimate ?? 0,
           estimatedDistanceKm:  cheapest?.estimate?.distance_km,
           estimatedPrice:       cheapest?.estimate?.total_estimate,
@@ -648,7 +691,7 @@ export default function TruckingPage() {
     (addons.bantuanBongkar ? 150_000 : 0) +
     (addons.asuransi       ? 100_000 : 0) +
     (addons.ferry          ? 500_000 : 0) +
-    (addons.multiDrop      ?  50_000 : 0) +
+    (extraDropCount * 50_000 * jumlahTrip) +
     (addons.urgentDelivery ? 200_000 : 0);
 
   const totalEstimasi = biayaPerTrip + biayaTambahan;
@@ -1136,6 +1179,84 @@ export default function TruckingPage() {
                       </div>
                     </FormField>
                   </div>
+
+                  {deliveryStops.length > 0 && (
+                    <div className="mt-4 space-y-3">
+                      {deliveryStops.map((stop, index) => (
+                        <div key={stop.id} className="rounded-2xl border border-blue-100 bg-blue-50/30 p-4">
+                          <div className="mb-3 flex items-center justify-between gap-3">
+                            <div>
+                              <p className="text-[12px] font-black text-slate-700">Pengantaran {index + 2}</p>
+                              <p className="text-[10px] text-slate-400">Titik tambahan dalam rangkaian perjalanan yang sama</p>
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => removeDeliveryStop(stop.id)}
+                              className="inline-flex items-center gap-1.5 rounded-lg border border-red-100 bg-white px-2.5 py-1.5 text-[11px] font-semibold text-red-500 hover:bg-red-50"
+                            >
+                              <MinusCircle className="h-3.5 w-3.5" />
+                              Hapus
+                            </button>
+                          </div>
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                            <FormField label="Area Delivery" required>
+                              <SelectField
+                                value={stop.area}
+                                onChange={(value) => updateDeliveryStop(stop.id, { area: value })}
+                                placeholder={t("truckingPage.phAreaDelivery")}
+                                options={AREAS}
+                              />
+                            </FormField>
+                            <FormField label={`Alamat Pengantaran ${index + 2}`} required>
+                              <GooglePlacesAutocomplete
+                                value={stop.address}
+                                onChange={(value) => updateDeliveryStop(stop.id, { address: value })}
+                                placeholder={t("truckingPage.phAddrDelivery")}
+                                className={INPUT_CLS}
+                              />
+                            </FormField>
+                            <FormField label="Nama PIC Penerima" required>
+                              <div className="relative">
+                                <User className="absolute left-3 top-2.5 h-4 w-4 text-slate-300 pointer-events-none" />
+                                <Input
+                                  value={stop.pic}
+                                  onChange={(e) => updateDeliveryStop(stop.id, { pic: e.target.value })}
+                                  placeholder={t("truckingPage.phPicReceiver")}
+                                  className={cn(INPUT_CLS, "pl-9")}
+                                />
+                              </div>
+                            </FormField>
+                            <FormField label="No. HP Penerima" required>
+                              <div className="relative">
+                                <Phone className="absolute left-3 top-2.5 h-4 w-4 text-slate-300 pointer-events-none" />
+                                <Input
+                                  type="tel"
+                                  value={stop.phone}
+                                  onChange={(e) => updateDeliveryStop(stop.id, { phone: e.target.value })}
+                                  placeholder="08xx-xxxx-xxxx"
+                                  className={cn(INPUT_CLS, "pl-9")}
+                                />
+                              </div>
+                            </FormField>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  <button
+                    type="button"
+                    onClick={addDeliveryStop}
+                    className="mt-4 inline-flex h-10 items-center gap-2 rounded-xl border-2 border-dashed border-blue-200 bg-blue-50/40 px-4 text-[12px] font-bold text-blue-600 transition hover:border-blue-400 hover:bg-blue-50"
+                  >
+                    <PlusCircle className="h-4 w-4" />
+                    Tambah Alamat Pengantaran
+                  </button>
+                  <p className="mt-2 text-[11px] text-slate-400">
+                    {extraDropCount > 0
+                      ? `${extraDropCount} titik tambahan aktif. Biaya multi-drop dihitung per titik tambahan.`
+                      : "Gunakan bila satu pickup perlu mengantar ke lebih dari satu alamat."}
+                  </p>
                 </div>
 
                 {/* Mini Map */}
@@ -1216,7 +1337,10 @@ export default function TruckingPage() {
                   <SectionTitle icon={<Truck className="h-4 w-4" />}>{t("truckingPage.tripQty")}</SectionTitle>
                   <div className="flex items-center gap-4">
                     <Counter value={jumlahTrip} onChange={setJumlahTrip} min={1} />
-                    <p className="text-[12px] text-slate-400">{t("truckingPage.minimalTrip").replace("{name}", selectedVehicle.name)}</p>
+                    <div>
+                      <p className="text-[12px] text-slate-400">{t("truckingPage.minimalTrip").replace("{name}", selectedVehicle.name)}</p>
+                      <p className="mt-1 text-[10px] text-slate-400">Jumlah trip = berapa kali kendaraan menjalankan rangkaian pickup → seluruh alamat pengantaran.</p>
+                    </div>
                   </div>
                 </div>
 
@@ -1224,7 +1348,7 @@ export default function TruckingPage() {
                 <div>
                   <SectionTitle icon={<CheckCircle2 className="h-4 w-4" />}>{t("truckingPage.addons")}</SectionTitle>
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                    {ADDON_LIST.map(({ key, labelKey, desc }) => (
+                    {ADDON_LIST.filter(({ key }) => key !== "multiDrop").map(({ key, labelKey, desc }) => (
                       <label key={key}
                         className={cn(
                           "flex items-center justify-between gap-3 border-2 rounded-2xl px-4 py-3 cursor-pointer transition-all duration-200",
