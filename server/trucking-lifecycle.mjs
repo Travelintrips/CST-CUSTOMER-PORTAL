@@ -391,6 +391,15 @@ export async function customerManualTruckingPayment({ bookingNumber, user, compa
 
   const file = form?.get?.("file");
   if (!file) fail(400, "Bukti pembayaran wajib diunggah.");
+  await query(
+    `update public.mkt_gateway_payments
+      set status='expired'::payment_status,updated_at=now()
+      where ref_kind='trucking'::payment_ref_kind
+        and ref_id=$1
+        and provider='paylabs'::payment_provider
+        and status='pending'::payment_status`,
+    [booking.id],
+  ).catch(() => {});
   const uploaded = await uploadTruckingPaymentProof({ bookingId: booking.id, file });
   const inserted = (await query(
     `insert into public.trucking_payments
@@ -561,6 +570,17 @@ export async function adminReviewTruckingPayment({ bookingNumber, paymentId, adm
     if (!payment) fail(404, "Pembayaran tidak ditemukan.");
     if (payment.status !== "submitted") fail(409, "Pembayaran sudah direview.");
     const approved = body?.approved === true;
+    if (approved) {
+      await client.query(
+        `update public.mkt_gateway_payments
+          set status='expired'::payment_status,updated_at=now()
+          where ref_kind='trucking'::payment_ref_kind
+            and ref_id=$1
+            and provider='paylabs'::payment_provider
+            and status='pending'::payment_status`,
+        [booking.id],
+      ).catch(() => {});
+    }
     await client.query(
       `update public.trucking_payments
         set status=$2,reviewed_by=$3,reviewed_at=now(),paid_at=case when $2='approved' then now() else paid_at end,
