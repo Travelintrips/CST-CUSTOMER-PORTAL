@@ -1,3 +1,17 @@
+describe("persistent customs and PPJK success flow", () => {
+  it("keeps the canonical order number in the success URL and reloads from the API", () => {
+    const customs = readFileSync(join(process.cwd(), "src/pages/custom-clearance.tsx"), "utf8");
+    const ppjk = readFileSync(join(process.cwd(), "src/pages/pabean.tsx"), "utf8");
+    const success = readFileSync(join(process.cwd(), "src/pages/logistic-order-success.tsx"), "utf8");
+
+    expect(customs).toContain("/logistic-order-success?order=");
+    expect(ppjk).toContain("/logistic-order-success?order=");
+    expect(success).toContain('new URLSearchParams(search).get("order")');
+    expect(success).toContain("/api/logistic/orders/");
+    expect(success).toContain("Menunggu quotation CST");
+  });
+});
+
 describe("unified customer order visibility", () => {
   it("includes trucking, air freight, and sea freight in orders and dashboard stats", () => {
     const server = readFileSync(join(process.cwd(), "server/index.mjs"), "utf8");
