@@ -781,6 +781,231 @@ export async function createTruckingPaylabsLink({
   return { reused: false, payment: serializePayment(payment), sandboxMode: credentials.sandboxMode };
 }
 
+
+function shortLogisticTradeNo(orderId) {
+  return `LOG${orderId}${Date.now().toString().slice(-13)}`.slice(0, 30);
+}
+
+export async function createLogisticPaylabsLink({
+  order,
+  request,
+  requestedMethod,
+  customerName,
+  customerPhone,
+}) {
+  const credentials = await activeCredentials();
+  if (!credentials.configured) fail(503, "Paylabs belum dikonfigurasi lengkap pada Admin > Paylabs Setting.");
+  if (order.customer_quote_status !== "approved") {
+    fail(409, "Quotation harus disetujui customer sebelum pembayaran Paylabs.");
+  }
+  if (order.payment_status === "paid") fail(409, "Order ini sudah lunas.");
+  if (order.payment_status === "proof_submitted") {
+    fail(409, "Bukti transfer manual sedang menunggu verifikasi.");
+  }
+
+  const totalAmount = Number(order.final_selling_price ?? order.final_price ?? order.grand_total ?? 0);
+  if (!Number.isFinite(totalAmount) || totalAmount <= 0) {
+    fail(409, "Harga final order belum tersedia.");
+  }
+
+  const methods = await activeMethods();
+  const method = requestedMethod
+    ? methods.find((item) => item.code === requestedMethod)
+    : methods[0];
+  if (!method) fail(400, "Metode Paylabs tidak aktif atau tidak tersedia.");
+
+  const normalizedCustomerPhone = normalizePhone(customerPhone);
+  if (!normalizedCustomerPhone) fail(409, "Nomor telepon customer belum tersedia.");
+
+  const client = await pool.connect();
+  let payment = null;
+  try {
+    await client.query("begin");
+    await client.query("select pg_advisory_xact_lock($1,$2)", [481519, Number(order.id)]);
+
+    const lockedOrder = (await client.query(
+      `select * from public.logistic_orders where id=$1 for update`,
+      [order.id],
+    )).rows[0];
+    if (!lockedOrder) fail(404, "Order logistik tidak ditemukan.");
+    if (lockedOrder.customer_quote_status !== "approved") {
+      fail(409, "Quotation belum disetujui customer.");
+    }
+    if (lockedOrder.payment_status === "paid") fail(409, "Order ini sudah lunas.");
+    if (lockedOrder.payment_status === "proof_submitted") {
+      fail(409, "Bukti transfer manual sedang menunggu verifikasi.");
+    }
+
+    const finalAmount = Number(
+      lockedOrder.final_selling_price ?? lockedOrder.final_price ?? lockedOrder.grand_total ?? 0,
+    );
+    if (!Number.isFinite(finalAmount) || finalAmount <= 0) fail(409, "Harga final order belum tersedia.");
+
+    await client.query(
+      `update public.mkt_gateway_payments
+          set status='expired'::payment_status,updated_at=now()
+        where ref_kind='logistic'::payment_ref_kind and ref_id=$1
+          and provider='paylabs'::payment_provider
+          and status='pending'::payment_status and expired_at<=now()`,
+      [order.id],
+    );
+
+    const existing = (await client.query(
+      `select * from public.mkt_gateway_payments
+        where ref_kind='logistic'::payment_ref_kind and ref_id=$1
+          and provider='paylabs'::payment_provider
+          and status='pending'::payment_status and expired_at>now()
+        order by created_at desc,id desc limit 1`,
+      [order.id],
+    )).rows[0];
+
+    if (existing?.payment_url && isTrustedPaylabsPaymentUrl(existing.payment_url)) {
+      await client.query("commit");
+      return { reused: true, payment: serializePayment(existing), sandboxMode: credentials.sandboxMode };
+    }
+
+    const providerCompanyId = Number(process.env.LOGISTIC_PROVIDER_COMPANY_ID ?? 1);
+    const merchantTradeNo = shortLogisticTradeNo(order.id);
+    const inserted = (await client.query(
+      `insert into public.mkt_gateway_payments
+         (company_id,ref_kind,ref_id,ref_doc_number,amount,status,provider,payment_method,
+          provider_merchant_trade_no,expired_at,raw)
+       values ($1,'logistic'::payment_ref_kind,$2,$3,$4,'pending'::payment_status,
+               'paylabs'::payment_provider,$5,$6,$7,$8::jsonb)
+       returning *`,
+      [
+        providerCompanyId,
+        order.id,
+        order.order_number,
+        finalAmount,
+        method.code,
+        merchantTradeNo,
+        new Date(Date.now() + PAYMENT_TTL_MS),
+        JSON.stringify({ source: "logistic_order", sandboxMode: credentials.sandboxMode }),
+      ],
+    )).rows[0];
+
+    const reqId = requestId();
+    const timestamp = formatPaylabsTimestamp();
+    const baseUrl = requestOrigin(request);
+    const notifyUrl = `${baseUrl}/api/payments/paylabs/webhook`;
+    const redirectUrl = `${baseUrl}/logistic-order-success?order=${encodeURIComponent(order.order_number)}`;
+    const providerBody = {
+      merchantId: credentials.merchantId,
+      merchantTradeNo,
+      requestId: reqId,
+      amount: finalAmount.toFixed(2),
+      productName: `Pembayaran ${order.order_number}`,
+      payer: text(customerName, "Customer"),
+      phoneNumber: normalizedCustomerPhone,
+      paymentType: method.code,
+      notifyUrl,
+      redirectUrl,
+      ...(credentials.storeId ? { storeId: credentials.storeId } : {}),
+    };
+
+    const bodyJson = JSON.stringify(providerBody);
+    const endpoint = new URL(credentials.apiUrl).pathname;
+    const signaturePayload = buildPaylabsSignaturePayload("POST", endpoint, bodyJson, timestamp);
+    let signature;
+    try {
+      signature = rsaSign(signaturePayload, credentials.privateKey);
+    } catch {
+      await client.query(
+        `update public.mkt_gateway_payments
+            set status='failed'::payment_status,
+                raw=raw || '{"reason":"signing_failed"}'::jsonb,updated_at=now()
+          where id=$1`,
+        [inserted.id],
+      );
+      await client.query("commit");
+      fail(500, "Konfigurasi private key Paylabs tidak valid.");
+    }
+
+    let response;
+    let payload;
+    try {
+      response = await fetch(credentials.apiUrl, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-TIMESTAMP": timestamp,
+          "X-SIGNATURE": signature,
+          "X-PARTNER-ID": credentials.merchantId,
+          "X-REQUEST-ID": reqId,
+        },
+        body: bodyJson,
+        signal: AbortSignal.timeout(15_000),
+      });
+      payload = await response.json().catch(() => ({}));
+    } catch (error) {
+      await client.query(
+        `update public.mkt_gateway_payments
+            set status='failed'::payment_status,
+                raw=raw || $2::jsonb,updated_at=now()
+          where id=$1`,
+        [
+          inserted.id,
+          JSON.stringify({
+            reason: "provider_request_failed",
+            message: String(error?.message ?? error).slice(0, 300),
+          }),
+        ],
+      );
+      await client.query("commit");
+      fail(502, "Paylabs tidak dapat dihubungi. Silakan coba lagi.");
+    }
+
+    const paymentUrl = payload?.url ?? payload?.h5Url ?? payload?.paymentUrl ?? null;
+    if (!response.ok || String(payload?.errCode ?? "0") !== "0" || !isTrustedPaylabsPaymentUrl(paymentUrl)) {
+      await client.query(
+        `update public.mkt_gateway_payments
+            set status='failed'::payment_status,
+                provider_order_id=$2,
+                raw=raw || $3::jsonb,
+                updated_at=now()
+          where id=$1`,
+        [
+          inserted.id,
+          text(payload?.platformTradeNo),
+          JSON.stringify({
+            reason: "provider_rejected",
+            errCode: payload?.errCode ?? null,
+            errMsg: payload?.errMsg ?? null,
+          }),
+        ],
+      );
+      await client.query("commit");
+      fail(502, text(payload?.errMsg, "Paylabs gagal membuat tautan pembayaran."));
+    }
+
+    payment = (await client.query(
+      `update public.mkt_gateway_payments
+          set provider_order_id=$1,payment_url=$2,raw=raw || $3::jsonb,updated_at=now()
+        where id=$4 returning *`,
+      [
+        text(payload?.platformTradeNo),
+        paymentUrl,
+        JSON.stringify({ requestId: reqId, providerOrderId: payload?.platformTradeNo ?? null }),
+        inserted.id,
+      ],
+    )).rows[0];
+
+    await client.query("commit");
+  } catch (error) {
+    try { await client.query("rollback"); } catch {}
+    throw error;
+  } finally {
+    client.release();
+  }
+
+  return {
+    reused: false,
+    payment: serializePayment(payment),
+    sandboxMode: credentials.sandboxMode,
+  };
+}
+
 async function updatePaymentMethod(code, body) {
   const exists = (await query(
     `select id from public.paylabs_payment_methods where code=$1 limit 1`,
@@ -1176,6 +1401,69 @@ export async function handlePaylabsWebhook({ request, response, body, rawBodyTex
           `po-payment-paylabs-notify:${updated.id}:paid`,
         ],
       ).catch(() => {});
+    }
+
+    if (targetStatus === "paid" && !wasPaid && payment.ref_kind === "logistic") {
+      const order = (await client.query(
+        `select * from public.logistic_orders where id=$1 limit 1 for update`,
+        [payment.ref_id],
+      )).rows[0];
+      if (!order) {
+        await client.query("rollback");
+        sendJson(response, 404, { errCode: "404", errMsg: "Logistic order not found" });
+        return true;
+      }
+
+      if (order.customer_quote_status !== "approved") {
+        await client.query("rollback");
+        sendJson(response, 409, { errCode: "409", errMsg: "Logistic quotation not approved" });
+        return true;
+      }
+
+      const finalAmount = Number(order.final_selling_price ?? order.final_price ?? order.grand_total ?? 0);
+      if (!Number.isFinite(finalAmount) || Math.abs(finalAmount - Number(payment.amount)) > 0.005) {
+        await client.query("rollback");
+        sendJson(response, 422, { errCode: "422", errMsg: "Logistic payment amount mismatch" });
+        return true;
+      }
+
+      await client.query(
+        `update public.logistic_orders
+            set payment_status='paid',
+                operational_status=case
+                  when operational_status is null or operational_status in ('pending','pending_review','quoted','confirmed')
+                    then 'payment_confirmed'
+                  else operational_status
+                end,
+                status=case
+                  when status in ('New Order','Order Received','quoted','confirmed')
+                    then 'Payment Confirmed'
+                  else status
+                end,
+                updated_at=now()
+          where id=$1`,
+        [order.id],
+      );
+
+      if (order.portal_customer_id) {
+        await client.query(
+          `insert into public.portal_customer_notifications
+             (portal_customer_id,event_key,type,title,message,payload,is_read,created_at)
+           values ($1,$2,'logistic_payment_paid','Pembayaran Paylabs diterima',$3,$4::jsonb,false,now())
+           on conflict (portal_customer_id,event_key) do nothing`,
+          [
+            Number(order.portal_customer_id),
+            `logistic:paylabs:${updated.id}:paid`,
+            `Pembayaran ${order.order_number} sebesar Rp${Number(payment.amount).toLocaleString("id-ID")} telah dikonfirmasi.`,
+            JSON.stringify({
+              orderNumber: order.order_number,
+              paymentId: Number(updated.id),
+              amount: Number(payment.amount),
+              paymentMethod,
+            }),
+          ],
+        ).catch(() => {});
+      }
     }
 
     if (targetStatus === "paid" && !wasPaid && payment.ref_kind === "trucking") {
