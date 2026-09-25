@@ -487,10 +487,10 @@ async function createPo(db, rfq, quote, user) {
   const vendor = (await db("select id, name, address from public.suppliers where id = $1", [quote.vendor_id])).rows[0];
   if (!vendor) fail(409, "Vendor quotation tidak ditemukan.");
   const total = details.lines.reduce((sum, line) => sum + Number(line.dealSubtotal ?? 0), 0);
-  const paymentTermCode = normalizePaymentTerm(quote.payment_terms);
+  const paymentTermCode = quote.payment_term_code ?? normalizePaymentTerm(quote.payment_terms);
   if (!paymentTermCode) fail(409, "Quotation belum memiliki syarat pembayaran yang valid.");
   const paymentDpPercent = paymentTermCode === "dp_after_receipt"
-    ? dpPercentFromTerm(quote.payment_terms)
+    ? (normalizeDpPercent(quote.payment_dp_percent) ?? dpPercentFromTerm(quote.payment_terms))
     : null;
   if (paymentTermCode === "dp_after_receipt" && !paymentDpPercent) {
     fail(409, "Quotation DP belum memiliki persentase DP yang valid.");
@@ -872,7 +872,7 @@ async function handleVendorQuote(request, response, pathname, body) {
     const lines = await rfqLines(query, quote.rfq_id);
     const details = await quoteDetail(query, quote.id);
     response._sendJson(200, { ok: true, data: {
-      quote: { ...details, id: Number(quote.id), rfqId: Number(quote.rfq_id), vendorId: Number(quote.vendor_id), status: quote.status === "invited" ? "opened" : quote.status, validUntil: quote.valid_until, openedAt: quote.opened_at, submittedAt: quote.submitted_at, quotationNumber: quote.quotation_number, quotationDate: quote.quotation_date, paymentTerms: quote.payment_terms, incoterm: quote.incoterm, deliveryLocation: quote.delivery_location, notes: quote.notes, requoteNotes: quote.requote_notes, requoteDeadline: quote.requote_deadline, requoteRound: quote.requote_round },
+      quote: { ...details, id: Number(quote.id), rfqId: Number(quote.rfq_id), vendorId: Number(quote.vendor_id), status: quote.status === "invited" ? "opened" : quote.status, validUntil: quote.valid_until, openedAt: quote.opened_at, submittedAt: quote.submitted_at, quotationNumber: quote.quotation_number, quotationDate: quote.quotation_date, paymentTerms: quote.payment_terms, paymentTermCode: quote.payment_term_code ?? normalizePaymentTerm(quote.payment_terms), paymentDpPercent: quote.payment_dp_percent == null ? null : Number(quote.payment_dp_percent), incoterm: quote.incoterm, deliveryLocation: quote.delivery_location, notes: quote.notes, requoteNotes: quote.requote_notes, requoteDeadline: quote.requote_deadline, requoteRound: quote.requote_round },
       vendor: { id: Number(quote.supplier_id), name: quote.supplier_name, phone: quote.supplier_phone, email: quote.supplier_email },
       rfq: { id: Number(quote.rfq_id), rfqNumber: quote.rfq_number, status: quote.rfq_status, buyerName: quote.buyer_name, buyerCompany: quote.buyer_company, notes: quote.rfq_notes, deliveryAddress: quote.delivery_address, destinationPlaceId: quote.destination_place_id, destinationLat: quote.destination_lat, destinationLng: quote.destination_lng, requiredDeliveryDate: quote.required_delivery_date, createdAt: quote.created_at },
       rfqLines: lines, quoteLines: details?.lines ?? [], meta: { canEdit: ["invited", "opened", "requote_requested"].includes(quote.status), canSubmit: ["invited", "opened", "requote_requested"].includes(quote.status), allowedCurrencies: ["IDR"] },
@@ -953,11 +953,25 @@ async function handleVendorQuote(request, response, pathname, body) {
     }
     await db(
       `update public.mkt_vendor_quotes
-          set notes=$1, payment_terms=$2, quotation_date=$3, quotation_number=coalesce(quotation_number,'QT-'||rfq_id::text||'-'||vendor_id::text),
-              status=case when $4 then 'submitted'::mkt_quote_status else status end,
-              submitted_at=case when $4 then now() else submitted_at end, updated_at=now()
-        where id=$5`,
-       [text(body.notes), requestedPaymentTerm ? paymentTermLabel(requestedPaymentTerm, requestedDpPercent) : text(body.paymentTerms), text(body.quotationDate), match[2] === "submit", lockedQuote.id],
+          set notes=$1,
+              payment_terms=$2,
+              payment_term_code=$3,
+              payment_dp_percent=$4,
+              quotation_date=$5,
+              quotation_number=coalesce(quotation_number,'QT-'||rfq_id::text||'-'||vendor_id::text),
+              status=case when $6 then 'submitted'::mkt_quote_status else status end,
+              submitted_at=case when $6 then now() else submitted_at end,
+              updated_at=now()
+        where id=$7`,
+       [
+         text(body.notes),
+         requestedPaymentTerm ? paymentTermLabel(requestedPaymentTerm, requestedDpPercent) : text(body.paymentTerms),
+         requestedPaymentTerm,
+         requestedDpPercent,
+         text(body.quotationDate),
+         match[2] === "submit",
+         lockedQuote.id,
+       ],
     );
     resultingStatus = match[2] === "submit" ? "submitted" : lockedQuote.status;
     if (match[2] === "submit") {
