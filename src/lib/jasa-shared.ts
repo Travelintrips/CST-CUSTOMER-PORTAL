@@ -41,6 +41,11 @@ export const CANONICAL_SERVICE_ROUTES: Record<string, string> = {
   trucking: "/trucking",
   customs_clearance: "/custom-clearance",
   ppjk_consulting: "/pabean",
+  handling: "/service-cart?service=handling",
+  port_charges: "/service-cart?service=port_charges",
+  storage_demurrage: "/service-cart?service=storage_demurrage",
+  emkl: "/service-cart?service=emkl",
+  cargo_insurance: "/service-cart?service=insurance",
 };
 
 export function normalizeCanonicalService(raw: unknown): CanonicalPortalService | null {
