@@ -1,3 +1,23 @@
+describe("unified customer order visibility", () => {
+  it("includes trucking, air freight, and sea freight in orders and dashboard stats", () => {
+    const server = readFileSync(join(process.cwd(), "server/index.mjs"), "utf8");
+    const orders = readFileSync(join(process.cwd(), "src/pages/orders.tsx"), "utf8");
+
+    expect(server).toContain("airFreightOrders:");
+    expect(server).toContain("oceanFreightOrders:");
+    expect(server).toContain("from public.air_freight_orders");
+    expect(server).toContain("from public.ocean_freight_orders");
+    expect(server).toContain("from public.trucking_booking_requests");
+
+    expect(orders).toContain("airFreightOrdersMapped");
+    expect(orders).toContain("oceanFreightOrdersMapped");
+    expect(orders).toContain('/air-freight/track/');
+    expect(orders).toContain('/ocean-freight/track/');
+    expect(orders).toContain('"air-freight": "Air Freight"');
+    expect(orders).toContain('"ocean-freight": "Sea Freight"');
+  });
+});
+
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
