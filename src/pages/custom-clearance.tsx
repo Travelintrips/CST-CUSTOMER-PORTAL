@@ -622,7 +622,8 @@ export default function CustomClearance() {
       onSuccess: (data: unknown) => {
         localStorage.setItem("last_order", JSON.stringify(data));
         toast({ title: t("customClearance.successMsg", "Permohonan Custom Clearance berhasil dikirim! Tim kami akan segera menghubungi Anda.") });
-        setLocation("/logistic-order-success");
+        const orderNumber = (data as { orderNumber?: string })?.orderNumber;
+        setLocation(orderNumber ? `/logistic-order-success?order=${encodeURIComponent(orderNumber)}` : "/logistic-order-success");
       },
       onError: (err: unknown) => {
         toast({ title: t("customClearance.errorMsg", "Gagal mengirim permohonan"), description: String(err), variant: "destructive" });

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, useCallback } from "react";
-import { useLocation } from "wouter";
+import { useLocation, useSearch } from "wouter";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
@@ -244,6 +244,8 @@ export default function OrderSuccessPage() {
   const { t } = useLanguage();
   const [order, setOrder] = useState<LogisticOrderDetail | null>(null);
   const [, setLocation] = useLocation();
+  const search = useSearch();
+  const requestedOrderNumber = new URLSearchParams(search).get("order");
   const [proofUploading, setProofUploading] = useState(false);
   const [proofUploaded, setProofUploaded] = useState(false);
   const [proofError, setProofError] = useState("");
@@ -251,12 +253,35 @@ export default function OrderSuccessPage() {
   const { copied: copiedOrder, copy: copyOrder } = useCopy();
 
   useEffect(() => {
-    try {
-      const stored = localStorage.getItem("last_order");
-      if (stored) setOrder(JSON.parse(stored));
-      if (localStorage.getItem("last_order_proof_uploaded") === "1") setProofUploaded(true);
-    } catch { /* ignore */ }
-  }, []);
+    let cancelled = false;
+
+    const load = async () => {
+      if (requestedOrderNumber) {
+        try {
+          const response = await fetch(`/api/logistic/orders/${encodeURIComponent(requestedOrderNumber)}`, {
+            credentials: "include",
+          });
+          if (response.ok) {
+            const fresh = await response.json() as LogisticOrderDetail;
+            if (!cancelled) {
+              setOrder(fresh);
+              localStorage.setItem("last_order", JSON.stringify(fresh));
+              return;
+            }
+          }
+        } catch { /* fallback to local copy */ }
+      }
+
+      try {
+        const stored = localStorage.getItem("last_order");
+        if (stored && !cancelled) setOrder(JSON.parse(stored));
+      } catch { /* ignore */ }
+    };
+
+    void load();
+    if (localStorage.getItem("last_order_proof_uploaded") === "1") setProofUploaded(true);
+    return () => { cancelled = true; };
+  }, [requestedOrderNumber]);
 
   async function handleProofUpload(file: File) {
     setProofError("");
@@ -515,8 +540,8 @@ export default function OrderSuccessPage() {
             </>
           ) : (
             <div className="rounded-lg bg-blue-50 border border-blue-200 p-3 text-xs text-blue-700 space-y-0.5">
-              <p className="font-semibold">{t("logisticOrderSuccess.priceByVendor", "Harga Akan Diberikan oleh Vendor")}</p>
-              <p>{t("logisticOrderSuccess.priceByVendorDesc", "Vendor akan membalas pesanan Anda dengan penawaran harga. Tim kami akan segera menghubungi Anda.")}</p>
+              <p className="font-semibold">Menunggu quotation CST</p>
+              <p>Estimasi pada form bersifat referensi. Harga final akan muncul setelah detail permohonan direview oleh tim CST.</p>
             </div>
           )}
         </div>
