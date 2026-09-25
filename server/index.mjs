@@ -2012,7 +2012,7 @@ async function calculateCanonicalTruckingEstimate(body) {
         and (rc.valid_to is null or rc.valid_to >= now())
         and (
           (rs.rate_key in ('vehicleRate','ratePerVehicle') and lower(regexp_replace(coalesce(rs.vehicle_type,''), '[^a-z0-9]', '', 'g')) = lower(regexp_replace($1, '[^a-z0-9]', '', 'g')))
-          or rs.rate_key in ('loadingFee','unloadingFee','overnightFee')
+          or rs.rate_key in ('loadingFee','unloadingFee','overnightFee','multidropFee','multidropFeePerDrop')
         )
       order by rc.updated_at desc nulls last, rc.id desc, rs.id desc`,
     [canonicalVehicle],
@@ -2028,13 +2028,33 @@ async function calculateCanonicalTruckingEstimate(body) {
   const loading = body.with_loading_helper ? Number(rates.get("loadingFee") ?? 0) : 0;
   const unloading = body.with_unloading_helper ? Number(rates.get("unloadingFee") ?? 0) : 0;
   const overnight = Math.max(0, Number(body.overnight_nights) || 0) * Number(rates.get("overnightFee") ?? 0);
-  const perTrip = base + loading + unloading + overnight;
+  const extraDrops = Math.max(0, Math.min(20, Math.trunc(Number(body.extra_drops) || 0)));
+  const multidropFeePerDrop = Number(
+    rates.get("multidropFeePerDrop")
+    ?? rates.get("multidropFee")
+    ?? 50_000,
+  );
+  const multidropPerTrip = extraDrops * multidropFeePerDrop;
+  const perTrip = base + loading + unloading + overnight + multidropPerTrip;
   const total = perTrip * tripCount;
   const estimate = {
     vehicle_type: vehicleType, distance_km: 0, distance_source: "unknown",
     price_per_km: 0, minimum_charge: base, base_price: base, base_after_minimum: base,
     surcharge_breakdown: { out_of_city: 0, inter_province: 0, inter_island: 0, total: 0 },
-    extras_breakdown: { loading_helper: loading, unloading_helper: unloading, toll: 0, ferry: 0, waiting: 0, multidrop: 0, overnight, urgent: 0, insurance: 0, total: (loading + unloading + overnight) * tripCount },
+    extras_breakdown: {
+      loading_helper: loading,
+      unloading_helper: unloading,
+      toll: 0,
+      ferry: 0,
+      waiting: 0,
+      multidrop: multidropPerTrip * tripCount,
+      overnight,
+      urgent: 0,
+      insurance: 0,
+      total: (loading + unloading + overnight + multidropPerTrip) * tripCount,
+    },
+    extra_drops: extraDrops,
+    multidrop_fee_per_drop: multidropFeePerDrop,
     trip_count: tripCount, per_trip_estimate: perTrip,
     total_estimate: total,
   };
@@ -2054,12 +2074,19 @@ async function handleTruckingBooking(request, response, user, body) {
     return;
   }
   const tripCount = Math.max(1, Math.min(100, Math.trunc(Number(body.jumlahTrip) || 1)));
+  const deliveryStops = normalizeTruckingDeliveryStops(body.deliveryStops);
   const addons = body.addons && typeof body.addons === "object" ? body.addons : {};
+  const storedAddons = {
+    ...addons,
+    multiDrop: deliveryStops.length > 0,
+    deliveryStops,
+  };
   const canonicalPricing = await calculateCanonicalTruckingEstimate({
     vehicle_type: body.vehicleType,
     with_loading_helper: Boolean(addons.bantuanMuat),
     with_unloading_helper: Boolean(addons.bantuanBongkar),
     overnight_nights: addons.overnight ? 1 : 0,
+    extra_drops: deliveryStops.length,
     jumlah_trip: tripCount,
   });
   const canonicalEstimate = canonicalPricing.cheapest.estimate;
@@ -2084,7 +2111,7 @@ async function handleTruckingBooking(request, response, user, body) {
       body.jadwalType === "nanti" ? "nanti" : "sekarang", body.tanggalPickup ?? null, body.jamPickup ?? null,
       body.jenisBarang ?? null, body.beratKg ?? null, body.jumlahKoli ?? null, body.volumeM3 ?? null,
       body.catatan ?? null, tripCount,
-      JSON.stringify(addons), canonicalEstimate.total_estimate,
+      JSON.stringify(storedAddons), canonicalEstimate.total_estimate,
       canonicalEstimate.distance_km ?? null, canonicalEstimate.total_estimate,
       JSON.stringify(canonicalEstimate), JSON.stringify(null),
       Number.isInteger(Number(body.selectedVendorId)) && Number(body.selectedVendorId) > 0 ? Number(body.selectedVendorId) : null,
