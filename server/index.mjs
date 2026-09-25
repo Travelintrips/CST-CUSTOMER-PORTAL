@@ -4135,6 +4135,120 @@ async function route(request, response) {
     if (user) await handleAdminCustomerStats({ request, response, url, user, sendJson, sendError });
     return;
   }
+  if (request.method === "GET" && pathname === "/api/portal/me/documents") {
+    const user = await requireUser(request, response);
+    if (!user) return;
+    const companyIds = await getAccessibleCompanyIds(user);
+
+    const [serviceDocs, logisticProofs, truckingPods, truckingProofs] = await Promise.all([
+      query(
+        `select d.id,d.document_type,d.file_name,d.file_url,d.verification_status,d.created_at,
+                r.request_number
+           from public.customer_service_request_documents d
+           join public.customer_service_requests r on r.id=d.request_id
+          where d.file_url is not null
+            and (
+              r.portal_customer_id=$1
+              or r.customer_id=$1
+              or r.company_id=any($2::int[])
+            )
+          order by d.created_at desc
+          limit 100`,
+        [user.id, companyIds],
+      ),
+      query(
+        `select id,order_number,payment_proof_url,payment_status,created_at
+           from public.logistic_orders
+          where payment_proof_url is not null
+            and (
+              portal_customer_id=$1
+              or company_id=any($2::int[])
+              or lower(email)=lower($3)
+            )
+          order by created_at desc
+          limit 100`,
+        [user.id, companyIds, user.email],
+      ),
+      query(
+        `select s.id,b.booking_number,s.sequence_no,s.address,s.pod_path,s.status,s.created_at
+           from public.trucking_booking_stops s
+           join public.trucking_booking_requests b on b.id=s.booking_id
+          where s.pod_path is not null
+            and (
+              b.portal_customer_id=$1
+              or b.customer_id=$1
+              or b.company_id=any($2::int[])
+            )
+          order by s.created_at desc
+          limit 100`,
+        [user.id, companyIds],
+      ),
+      query(
+        `select p.id,b.booking_number,p.proof_path,p.status,p.created_at
+           from public.trucking_payments p
+           join public.trucking_booking_requests b on b.id=p.booking_id
+          where p.proof_path is not null
+            and (
+              b.portal_customer_id=$1
+              or b.customer_id=$1
+              or b.company_id=any($2::int[])
+            )
+          order by p.created_at desc
+          limit 100`,
+        [user.id, companyIds],
+      ),
+    ]);
+
+    const sign = async (path) => {
+      if (!path) return null;
+      return signedDocumentUrl(path).catch(() => null);
+    };
+
+    const documents = (await Promise.all([
+      ...serviceDocs.rows.map(async (row) => ({
+        id: `service-request-${row.id}`,
+        type: "service_request_document",
+        title: row.file_name || row.document_type || "Dokumen Layanan",
+        reference: row.request_number || null,
+        status: row.verification_status || "pending",
+        createdAt: row.created_at,
+        url: await sign(row.file_url),
+      })),
+      ...logisticProofs.rows.map(async (row) => ({
+        id: `logistic-payment-${row.id}`,
+        type: "payment_proof",
+        title: "Bukti Pembayaran Logistic",
+        reference: row.order_number,
+        status: row.payment_status || "submitted",
+        createdAt: row.created_at,
+        url: await sign(row.payment_proof_url),
+      })),
+      ...truckingPods.rows.map(async (row) => ({
+        id: `trucking-pod-${row.id}`,
+        type: "pod",
+        title: `POD Tujuan ${row.sequence_no}`,
+        reference: row.booking_number,
+        status: row.status || "delivered",
+        createdAt: row.created_at,
+        subtitle: row.address || null,
+        url: await sign(row.pod_path),
+      })),
+      ...truckingProofs.rows.map(async (row) => ({
+        id: `trucking-payment-${row.id}`,
+        type: "payment_proof",
+        title: "Bukti Pembayaran Trucking",
+        reference: row.booking_number,
+        status: row.status || "submitted",
+        createdAt: row.created_at,
+        url: await sign(row.proof_path),
+      })),
+    ])).filter((item) => Boolean(item.url));
+
+    documents.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+    sendJson(response, 200, documents);
+    return;
+  }
+
   const customerInvoicePaymentMatch = pathname.match(/^\/api\/portal\/me\/invoices\/(\d+)\/payments$/);
   if (customerInvoicePaymentMatch && request.method === "POST") {
     const user = await requireUser(request, response);
