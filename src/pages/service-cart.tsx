@@ -32,6 +32,7 @@ type OrderMode = "ITEM_MANDIRI" | "PAKET_BORONGAN";
 type ServiceType =
   | "air_freight" | "ocean_freight" | "ppjk" | "forwarding"
   | "trucking" | "warehousing" | "handling" | "insurance"
+  | "port_charges" | "storage_demurrage" | "emkl"
   | "survey" | "project_cargo";
 
 interface ServiceItem {
@@ -138,9 +139,24 @@ const SERVICE_META: Record<ServiceType, {
     requiredDocs: ["DO", "Packing List"],
   },
   insurance: {
-    title: "Insurance", desc: "Asuransi kargo all-risk",
+    title: "Asuransi Kargo", desc: "Proteksi risiko kargo sesuai kebutuhan",
     icon: ShieldCheck, color: "text-red-600", bgColor: "bg-red-50 border-red-200",
     requiredDocs: ["Invoice", "Packing List"],
+  },
+  port_charges: {
+    title: "Port Charges", desc: "Koordinasi biaya operasional pelabuhan berdasarkan shipment",
+    icon: Ship, color: "text-teal-600", bgColor: "bg-teal-50 border-teal-200",
+    requiredDocs: ["B/L atau DO", "Invoice / Shipping Instruction"],
+  },
+  storage_demurrage: {
+    title: "Storage / Demurrage", desc: "Pengelolaan storage, demurrage, atau detention",
+    icon: Warehouse, color: "text-emerald-600", bgColor: "bg-emerald-50 border-emerald-200",
+    requiredDocs: ["B/L atau DO", "Container Number (jika ada)"],
+  },
+  emkl: {
+    title: "EMKL", desc: "Ekspedisi Muatan Kapal Laut dan koordinasi operasional pelabuhan",
+    icon: Ship, color: "text-cyan-700", bgColor: "bg-cyan-50 border-cyan-200",
+    requiredDocs: ["B/L atau DO", "Packing List"],
   },
   survey: {
     title: "Survey / Inspection", desc: "Pre-shipment & condition report",
@@ -530,6 +546,122 @@ function InsuranceForm({ data, onChange }: { data: Record<string, string | numbe
   );
 }
 
+function PortChargesForm({ data, onChange }: { data: Record<string, string | number | boolean>; onChange: (k: string, v: string | number | boolean) => void }) {
+  return (
+    <div className="grid grid-cols-2 gap-3">
+      <Field label="Pelabuhan" required>
+        <TextInput value={String(data.port_name ?? "")} onChange={(v) => onChange("port_name", v)} placeholder="e.g. Tanjung Priok" />
+      </Field>
+      <Field label="Konteks Biaya" required>
+        <SelectInput value={String(data.charge_context ?? "")} onChange={(v) => onChange("charge_context", v)} options={[
+          { v: "origin_export", l: "Origin / Export" },
+          { v: "destination_import", l: "Destination / Import" },
+          { v: "domestic_port", l: "Domestic Port" },
+        ]} />
+      </Field>
+      <Field label="Nomor B/L / DO">
+        <TextInput value={String(data.bl_do_number ?? "")} onChange={(v) => onChange("bl_do_number", v)} placeholder="Nomor referensi shipment" />
+      </Field>
+      <Field label="Container Number">
+        <TextInput value={String(data.container_number ?? "")} onChange={(v) => onChange("container_number", v)} placeholder="Opsional" />
+      </Field>
+      <Field label="Vessel / Voyage">
+        <TextInput value={String(data.vessel_voyage ?? "")} onChange={(v) => onChange("vessel_voyage", v)} placeholder="Opsional" />
+      </Field>
+      <Field label="Tanggal Kebutuhan">
+        <TextInput type="date" value={String(data.required_date ?? "")} onChange={(v) => onChange("required_date", v)} />
+      </Field>
+      <div className="col-span-2">
+        <Field label="Catatan Operasional">
+          <Textarea value={String(data.notes ?? "")} onChange={(e) => onChange("notes", e.target.value)} rows={3} placeholder="Jelaskan biaya/aktivitas pelabuhan yang perlu dikoordinasikan." />
+        </Field>
+      </div>
+    </div>
+  );
+}
+
+function StorageDemurrageForm({ data, onChange }: { data: Record<string, string | number | boolean>; onChange: (k: string, v: string | number | boolean) => void }) {
+  return (
+    <div className="grid grid-cols-2 gap-3">
+      <Field label="Jenis Kebutuhan" required>
+        <SelectInput value={String(data.charge_type ?? "")} onChange={(v) => onChange("charge_type", v)} options={[
+          { v: "storage", l: "Storage" },
+          { v: "demurrage", l: "Demurrage" },
+          { v: "detention", l: "Detention" },
+          { v: "storage_demurrage", l: "Storage + Demurrage" },
+        ]} />
+      </Field>
+      <Field label="Lokasi / Pelabuhan" required>
+        <TextInput value={String(data.location ?? "")} onChange={(v) => onChange("location", v)} placeholder="e.g. Tanjung Priok" />
+      </Field>
+      <Field label="Container Number">
+        <TextInput value={String(data.container_number ?? "")} onChange={(v) => onChange("container_number", v)} placeholder="Opsional" />
+      </Field>
+      <Field label="Tipe Container">
+        <SelectInput value={String(data.container_type ?? "")} onChange={(v) => onChange("container_type", v)} options={[
+          { v: "20GP", l: "20' GP" }, { v: "40GP", l: "40' GP" },
+          { v: "40HC", l: "40' HC" }, { v: "reefer", l: "Reefer" },
+          { v: "lcl", l: "LCL / Non-container" },
+        ]} />
+      </Field>
+      <Field label="Akhir Free Time">
+        <TextInput type="date" value={String(data.free_time_end ?? "")} onChange={(v) => onChange("free_time_end", v)} />
+      </Field>
+      <Field label="Estimasi Hari">
+        <TextInput type="number" value={String(data.estimated_days ?? "")} onChange={(v) => onChange("estimated_days", v)} placeholder="0" />
+      </Field>
+      <div className="col-span-2">
+        <Field label="Catatan">
+          <Textarea value={String(data.notes ?? "")} onChange={(e) => onChange("notes", e.target.value)} rows={3} placeholder="Informasi tambahan terkait storage, demurrage, atau detention." />
+        </Field>
+      </div>
+    </div>
+  );
+}
+
+function EmklForm({ data, onChange }: { data: Record<string, string | number | boolean>; onChange: (k: string, v: string | number | boolean) => void }) {
+  return (
+    <div className="grid grid-cols-2 gap-3">
+      <Field label="Arah Shipment" required>
+        <SelectInput value={String(data.shipment_direction ?? "")} onChange={(v) => onChange("shipment_direction", v)} options={[
+          { v: "export", l: "Export" },
+          { v: "import", l: "Import" },
+          { v: "domestic", l: "Domestik" },
+        ]} />
+      </Field>
+      <Field label="Pelabuhan" required>
+        <TextInput value={String(data.port_name ?? "")} onChange={(v) => onChange("port_name", v)} placeholder="e.g. Tanjung Priok" />
+      </Field>
+      <Field label="Nomor B/L / DO">
+        <TextInput value={String(data.bl_do_number ?? "")} onChange={(v) => onChange("bl_do_number", v)} placeholder="Opsional" />
+      </Field>
+      <Field label="Tipe Container">
+        <SelectInput value={String(data.container_type ?? "")} onChange={(v) => onChange("container_type", v)} options={[
+          { v: "20GP", l: "20' GP" }, { v: "40GP", l: "40' GP" },
+          { v: "40HC", l: "40' HC" }, { v: "lcl", l: "LCL" },
+        ]} />
+      </Field>
+      <Field label="Jumlah Container / Unit">
+        <TextInput type="number" value={String(data.quantity ?? "")} onChange={(v) => onChange("quantity", v)} placeholder="1" />
+      </Field>
+      <Field label="Komoditi">
+        <TextInput value={String(data.commodity ?? "")} onChange={(v) => onChange("commodity", v)} placeholder="Jenis barang" />
+      </Field>
+      <Field label="Lokasi Pickup">
+        <TextInput value={String(data.pickup_location ?? "")} onChange={(v) => onChange("pickup_location", v)} placeholder="Opsional" />
+      </Field>
+      <Field label="Lokasi Delivery">
+        <TextInput value={String(data.delivery_location ?? "")} onChange={(v) => onChange("delivery_location", v)} placeholder="Opsional" />
+      </Field>
+      <div className="col-span-2">
+        <Field label="Catatan Operasional">
+          <Textarea value={String(data.notes ?? "")} onChange={(e) => onChange("notes", e.target.value)} rows={3} placeholder="Jelaskan kebutuhan koordinasi EMKL." />
+        </Field>
+      </div>
+    </div>
+  );
+}
+
 function HandlingForm({ data, onChange }: { data: Record<string, string | number | boolean>; onChange: (k: string, v: string | number | boolean) => void }) {
   const { t } = useLanguage();
   return (
@@ -639,6 +771,9 @@ function ServiceForm({
   if (type === "warehousing") return <WarehousingForm data={data} onChange={onChange} />;
   if (type === "handling") return <HandlingForm data={data} onChange={onChange} />;
   if (type === "insurance") return <InsuranceForm data={data} onChange={onChange} />;
+  if (type === "port_charges") return <PortChargesForm data={data} onChange={onChange} />;
+  if (type === "storage_demurrage") return <StorageDemurrageForm data={data} onChange={onChange} />;
+  if (type === "emkl") return <EmklForm data={data} onChange={onChange} />;
   if (type === "survey") return <SurveyForm data={data} onChange={onChange} />;
   if (type === "project_cargo") return <ProjectCargoForm data={data} onChange={onChange} />;
   return null;
@@ -680,6 +815,11 @@ function StepBar({ current }: { current: Step }) {
 export default function ServiceCartPage() {
   const { t } = useLanguage();
   const [, navigate] = useLocation();
+  const requestedService = (() => {
+    if (typeof window === "undefined") return null;
+    const raw = new URLSearchParams(window.location.search).get("service");
+    return raw && raw in SERVICE_META ? raw as ServiceType : null;
+  })();
   const [, params] = useRoute("/service-cart/:requestId");
   const { toast } = useToast();
 
@@ -879,6 +1019,16 @@ export default function ServiceCartPage() {
     setShowItemEditor(true);
   };
 
+  const openRequestedService = () => {
+    if (!requestedService) return false;
+    setEditingItem(null);
+    setPendingType(requestedService);
+    setItemFormData({});
+    setItemTitle(SERVICE_META[requestedService].title);
+    setShowItemEditor(true);
+    return true;
+  };
+
   const openEditItem = (item: ServiceItem) => {
     setEditingItem(item);
     setPendingType(item.itemType);
@@ -985,6 +1135,11 @@ export default function ServiceCartPage() {
             </div>
           </div>
           <StepBar current="trade_type" />
+          {requestedService && (
+            <div className="mt-4 rounded-xl border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-800">
+              Permintaan dipilih: <strong>{SERVICE_META[requestedService].title}</strong>. Isi data awal, lalu form layanan akan dibuka otomatis.
+            </div>
+          )}
         </div>
 
         <div className="bg-white rounded-2xl border border-slate-200 p-6 space-y-4">
@@ -1204,7 +1359,11 @@ export default function ServiceCartPage() {
 
         <div className="grid grid-cols-2 gap-4">
           <button
-            onClick={() => { setOrderMode("ITEM_MANDIRI"); setStep("add_items"); }}
+            onClick={() => {
+              setOrderMode("ITEM_MANDIRI");
+              setStep("add_items");
+              window.setTimeout(() => { openRequestedService(); }, 0);
+            }}
             className="rounded-2xl border-2 border-slate-200 hover:border-blue-400 bg-white p-6 text-left transition-all group"
           >
             <div className="w-12 h-12 rounded-xl bg-blue-100 flex items-center justify-center mb-4 group-hover:bg-blue-200 transition-colors">

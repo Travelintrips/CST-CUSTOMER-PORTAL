@@ -76,7 +76,7 @@ const CATEGORIES: CategoryDef[] = [
     services: [
       { serviceCode: "sea_freight", title: "Sea Freight", desc: "Pengiriman kargo via laut FCL & LCL.", href: "/ocean-freight-booking", icon: Ship, eta: "7–30 hari", categoryKeys: ["sea_freight"] },
       { serviceCode: "air_freight", title: "Air Freight", desc: "Pengiriman kargo ekspres via udara.", href: "/air-freight-booking", icon: Plane, eta: "1–3 hari", categoryKeys: ["air_freight"] },
-      { serviceCode: "trucking", title: "Domestik", desc: "Distribusi kargo antar kota dan antar pulau.", href: "/trucking", icon: Truck, eta: "1–5 hari", categoryKeys: ["trucking"] },
+      { serviceCode: "trucking", title: "Transportasi & Distribusi Domestik", desc: "Transportasi penumpang serta distribusi barang domestik.", href: "/trucking", icon: Truck, eta: "Sesuai rute", categoryKeys: ["trucking"] },
     ],
   },
   {
@@ -453,7 +453,7 @@ export default function JasaKategori() {
                         </ul>
                       )}
                       <div className={`flex items-center gap-1.5 text-[12px] font-bold ${cat.textColor} group-hover:gap-3 transition-all mt-auto pt-2 border-t border-slate-100`}>
-                        {t("jasa.mulairequest")} <ChevronRight className="h-3.5 w-3.5" />
+                        {cat.id === "additional" ? "Minta Penawaran" : t("jasa.mulairequest")} <ChevronRight className="h-3.5 w-3.5" />
                       </div>
                     </div>
                   </div>

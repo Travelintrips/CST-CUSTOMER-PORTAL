@@ -3,6 +3,27 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
 describe("jasa service hub contract", () => {
+  it("routes additional logistics services into quotation requests", () => {
+    const shared = readFileSync(join(process.cwd(), "src/lib/jasa-shared.ts"), "utf8");
+    const cart = readFileSync(join(process.cwd(), "src/pages/service-cart.tsx"), "utf8");
+
+    expect(shared).toContain('handling: "/service-cart?service=handling"');
+    expect(shared).toContain('port_charges: "/service-cart?service=port_charges"');
+    expect(shared).toContain('storage_demurrage: "/service-cart?service=storage_demurrage"');
+    expect(shared).toContain('emkl: "/service-cart?service=emkl"');
+    expect(shared).toContain('cargo_insurance: "/service-cart?service=insurance"');
+
+    expect(cart).toContain('| "port_charges" | "storage_demurrage" | "emkl"');
+    expect(cart).toContain('title: "Port Charges"');
+    expect(cart).toContain('title: "Storage / Demurrage"');
+    expect(cart).toContain('title: "EMKL"');
+    expect(cart).toContain('function PortChargesForm');
+    expect(cart).toContain('function StorageDemurrageForm');
+    expect(cart).toContain('function EmklForm');
+    expect(cart).toContain('new URLSearchParams(window.location.search).get("service")');
+    expect(cart).toContain("form layanan akan dibuka otomatis");
+  });
+
   it("routes public navigation directly to the jasa hub", () => {
     const home = readFileSync(join(process.cwd(), "src/pages/home.tsx"), "utf8");
     const mobile = readFileSync(join(process.cwd(), "src/components/layout/MobileBottomNav.tsx"), "utf8");
