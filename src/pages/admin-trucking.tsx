@@ -95,6 +95,7 @@ export default function AdminTruckingPage() {
   }
 
   if (!data) return <div className="min-h-screen flex items-center justify-center">{error ?? "Memuat..."}</div>;
+  const isPassenger = data.serviceMode === "passenger";
 
   return (
     <div className="min-h-screen bg-slate-50 p-6">
@@ -122,12 +123,14 @@ export default function AdminTruckingPage() {
           </section>
 
           <section className="rounded-2xl bg-white border border-slate-200 p-5">
-            <h2 className="font-black">Assignment Armada</h2>
+            <h2 className="font-black">{isPassenger ? "Assignment Mobil & Driver" : "Assignment Armada"}</h2>
             <div className="mt-3 space-y-3">
               <Input value={driverName} onChange={(e) => setDriverName(e.target.value)} placeholder="Nama driver" />
               <Input value={driverPhone} onChange={(e) => setDriverPhone(e.target.value)} placeholder="No. HP driver" />
               <Input value={vehiclePlate} onChange={(e) => setVehiclePlate(e.target.value)} placeholder="Nomor polisi" />
-              <Button disabled={busy} onClick={() => post("assign", { driverName, driverPhone, vehiclePlate })}>Assign Armada</Button>
+              <Button disabled={busy} onClick={() => post("assign", { driverName, driverPhone, vehiclePlate })}>
+                {isPassenger ? "Assign Mobil & Driver" : "Assign Armada"}
+              </Button>
               {data.assignment?.driverToken && <p className="text-xs text-slate-500 break-all">Driver link: <a className="text-blue-600 underline" href={`/trucking/driver/${data.assignment.driverToken}`} target="_blank">{location.origin}/trucking/driver/{data.assignment.driverToken}</a></p>}
             </div>
           </section>
@@ -145,8 +148,8 @@ export default function AdminTruckingPage() {
         </section>
 
         <section className="rounded-2xl bg-white border border-slate-200 p-5">
-          <h2 className="font-black">Tujuan & POD</h2>
-          <div className="mt-3 space-y-3">{data.stops.map((s: any) => <div key={s.id} className="rounded-xl border border-slate-200 p-3"><p className="font-semibold">{s.sequenceNo}. {s.address}</p><p className="text-xs text-slate-400">{s.status}</p>{s.podUrl && <a className="text-xs text-blue-600 underline" href={s.podUrl} target="_blank">Lihat POD</a>}</div>)}</div>
+          <h2 className="font-black">{isPassenger ? "Tujuan & Drop-off" : "Tujuan & POD"}</h2>
+          <div className="mt-3 space-y-3">{data.stops.map((s: any) => <div key={s.id} className="rounded-xl border border-slate-200 p-3"><p className="font-semibold">{s.sequenceNo}. {s.address}</p><p className="text-xs text-slate-400">{s.status === "delivered" && isPassenger ? "drop-off selesai" : s.status}</p>{!isPassenger && s.podUrl && <a className="text-xs text-blue-600 underline" href={s.podUrl} target="_blank">Lihat POD</a>}</div>)}</div>
         </section>
       </div>
     </div>
