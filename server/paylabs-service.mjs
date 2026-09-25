@@ -1239,6 +1239,45 @@ export async function handlePaylabsWebhook({ request, response, body, rawBodyTex
           JSON.stringify({ paymentId: Number(updated.id), receivedAmount: totals.receivedAmount, remainingAmount: totals.remainingAmount }),
         ],
       );
+      const customerId = booking.portal_customer_id ?? booking.customer_id;
+      if (customerId) {
+        const notificationType = nextStatus === "completed"
+          ? "trucking_completed"
+          : nextStatus === "confirmed"
+            ? "trucking_confirmed"
+            : "trucking_payment_received";
+        const notificationTitle = nextStatus === "completed"
+          ? "Booking trucking selesai"
+          : nextStatus === "confirmed"
+            ? "Pembayaran awal terpenuhi"
+            : "Pembayaran Paylabs diterima";
+        const notificationMessage = nextStatus === "completed"
+          ? `${booking.booking_number} telah selesai dan seluruh tagihan lunas.`
+          : nextStatus === "confirmed"
+            ? `${booking.booking_number} sudah dikonfirmasi dan siap untuk assignment armada.`
+            : `Pembayaran ${booking.booking_number} diterima. Sisa tagihan Rp${totals.remainingAmount.toLocaleString("id-ID")}.`;
+        await client.query(
+          `insert into public.portal_customer_notifications
+             (portal_customer_id,event_key,type,title,message,payload,is_read,created_at)
+           values ($1,$2,$3,$4,$5,$6::jsonb,false,now())
+           on conflict (portal_customer_id,event_key) do nothing`,
+          [
+            Number(customerId),
+            `trucking:paylabs:${updated.id}:paid`,
+            notificationType,
+            notificationTitle,
+            notificationMessage,
+            JSON.stringify({
+              bookingNumber: booking.booking_number,
+              paymentId: Number(updated.id),
+              paymentAmount: Number(payment.amount),
+              receivedAmount: totals.receivedAmount,
+              remainingAmount: totals.remainingAmount,
+              status: nextStatus,
+            }),
+          ],
+        ).catch(() => {});
+      }
     }
 
     await client.query("commit");
