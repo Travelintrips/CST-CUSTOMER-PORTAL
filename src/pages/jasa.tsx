@@ -701,7 +701,7 @@ export default function Jasa() {
                                 )}
 
                                 <div className={`flex items-center gap-1.5 text-[12px] font-bold ${cat.textColor} group-hover:gap-3 transition-all mt-auto pt-2 border-t border-slate-100`}>
-                                  {t("jasa.mulairequest")} <ArrowRight className="h-3.5 w-3.5" />
+                                  {cat.id === "additional" ? "Minta Penawaran" : t("jasa.mulairequest")} <ArrowRight className="h-3.5 w-3.5" />
                                 </div>
                               </div>
                             </div>
