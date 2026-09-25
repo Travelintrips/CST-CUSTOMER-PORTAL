@@ -74,7 +74,9 @@ export async function truckingPaymentTotals(booking, client = query) {
     approvedManualTotal(booking.id, client),
     paidGatewayTotal(booking.id, client),
   ]);
-  const totalAmount = money(booking.final_price ?? booking.estimasi_total);
+  const quotedAmount = money(booking.final_price ?? booking.estimasi_total);
+  const actualCosts = money(booking.actual_toll) + money(booking.actual_parking) + money(booking.actual_extra_cost);
+  const totalAmount = money(quotedAmount + actualCosts);
   const receivedAmount = money(manual + gateway);
   return {
     totalAmount,
@@ -517,10 +519,13 @@ async function refreshPaymentState(client, booking, actor) {
   if (booking.status === "waiting_payment" && totals.receivedAmount + 0.005 >= initialRequired) {
     nextStatus = "confirmed";
   }
-  if (booking.status === "delivered" && totals.remainingAmount > 0.005) {
+  if (["delivered", "balance_due", "completed"].includes(booking.status) && totals.remainingAmount > 0.005) {
     nextStatus = "balance_due";
   }
-  if (["delivered", "balance_due"].includes(booking.status) && totals.remainingAmount <= 0.005) {
+  if (
+    (booking.delivered_at || ["delivered", "balance_due", "completed"].includes(booking.status))
+    && totals.remainingAmount <= 0.005
+  ) {
     nextStatus = "completed";
   }
   await client.query(
@@ -612,24 +617,43 @@ export async function adminAssignTrucking({ bookingNumber, admin, body }) {
 }
 
 export async function adminActualCosts({ bookingNumber, admin, body }) {
-  const booking = await bookingByNumber(bookingNumber);
-  if (!booking) fail(404, "Booking trucking tidak ditemukan.");
-  const toll = money(body?.toll);
-  const parking = money(body?.parking);
-  const extra = money(body?.extra);
-  await query(
-    `update public.trucking_booking_requests
-      set actual_toll=$2,actual_parking=$3,actual_extra_cost=$4,actual_extra_cost_notes=$5,updated_at=now()
-      where id=$1`,
-    [booking.id, toll, parking, extra, text(body?.notes)],
-  );
-  await query(
-    `insert into public.trucking_status_events
-       (booking_id,status,actor_type,actor_id,actor_name,notes,metadata)
-     values ($1,'actual_costs_updated','admin',$2,$3,$4,$5::jsonb)`,
-    [booking.id, String(admin.id), admin.name, "Biaya aktual perjalanan diperbarui.", JSON.stringify({ toll, parking, extra })],
-  );
-  return { ok: true };
+  const client = await pool.connect();
+  try {
+    await client.query("begin");
+    const booking = await bookingByNumber(bookingNumber, { forUpdate: true, client });
+    if (!booking) fail(404, "Booking trucking tidak ditemukan.");
+    const toll = money(body?.toll);
+    const parking = money(body?.parking);
+    const extra = money(body?.extra);
+    const updated = (await client.query(
+      `update public.trucking_booking_requests
+        set actual_toll=$2,actual_parking=$3,actual_extra_cost=$4,actual_extra_cost_notes=$5,updated_at=now()
+        where id=$1 returning *`,
+      [booking.id, toll, parking, extra, text(body?.notes)],
+    )).rows[0];
+    await appendEvent(
+      client,
+      booking.id,
+      "actual_costs_updated",
+      { type: "admin", id: admin.id, name: admin.name },
+      "Biaya aktual perjalanan diperbarui.",
+      { toll, parking, extra },
+    );
+    const refreshed = await refreshPaymentState(client, updated, { type: "system", name: "Payment Engine" });
+    if (refreshed.nextStatus === "balance_due") {
+      await client.query(
+        `update public.trucking_booking_requests set completed_at=null where id=$1`,
+        [booking.id],
+      );
+    }
+    await client.query("commit");
+    return { ok: true, ...refreshed };
+  } catch (error) {
+    try { await client.query("rollback"); } catch {}
+    throw error;
+  } finally {
+    client.release();
+  }
 }
 
 export async function driverTruckingDetail({ token }) {
@@ -644,6 +668,7 @@ export async function driverTruckingDetail({ token }) {
     bookingNumber: data.bookingNumber,
     status: data.status,
     vehicleName: data.vehicleName,
+    serviceMode: data.serviceMode,
     pickup: data.pickup,
     assignment: data.assignment,
     stops: data.stops,
@@ -735,7 +760,10 @@ export async function driverUpdateTrucking({ token, body }) {
         [booking.id],
       )).rows[0];
       if (!next || Number(next.id) !== Number(stop.id)) fail(409, "Tujuan harus diselesaikan sesuai urutan rute.");
-      if (!stop.pod_path) fail(409, "Upload POD sebelum menandai tujuan selesai.");
+      const serviceMode = booking.addons?.serviceMode ?? booking.addons?.service_mode ?? "cargo";
+      if (serviceMode !== "passenger" && !stop.pod_path) {
+        fail(409, "Upload POD sebelum menandai tujuan selesai.");
+      }
       await client.query(
         `update public.trucking_booking_stops
           set status='delivered',delivered_at=now(),updated_at=now()
