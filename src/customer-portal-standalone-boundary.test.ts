@@ -1,3 +1,36 @@
+describe("logistic production-ready payment fallback", () => {
+  it("exposes Paylabs readiness, canonical CST bank transfer, and admin proof verification", () => {
+    const payments = readFileSync(join(process.cwd(), "server/paylabs-service.mjs"), "utf8");
+    const server = readFileSync(join(process.cwd(), "server/index.mjs"), "utf8");
+    const customer = readFileSync(join(process.cwd(), "src/pages/logistic-order-success.tsx"), "utf8");
+    const adminApi = readFileSync(join(process.cwd(), "server/admin-portal.mjs"), "utf8");
+    const adminUi = readFileSync(join(process.cwd(), "src/pages/admin/ServiceOperationsTab.tsx"), "utf8");
+
+    expect(payments).toContain("getLogisticPaylabsState");
+    expect(server).toContain("logisticManualPaymentAccount");
+    expect(server).toContain("company_bank_accounts");
+    expect(server).toContain("paylabs,");
+    expect(server).toContain("manualPaymentAccount,");
+    expect(server).toContain("Quotation harus disetujui sebelum mengunggah bukti pembayaran");
+    expect(server).toContain("status='expired'::payment_status");
+
+    expect(customer).toContain("const quoteReadyForPayment");
+    expect(customer).toContain("const paylabsConfigured");
+    expect(customer).toContain("manualTransferAvailable");
+    expect(customer).toContain("Rekening tujuan");
+    expect(customer).toContain("Paylabs belum tersedia untuk transaksi ini");
+    expect(customer).toContain("Metode pembayaran belum tersedia");
+
+    expect(adminApi).toContain('"verify_payment"');
+    expect(adminApi).toContain('"reject_payment"');
+    expect(adminApi).toContain("payment_proof_signed_url");
+    expect(adminUi).toContain("Verifikasi Pembayaran Manual");
+    expect(adminUi).toContain("Lihat Bukti Pembayaran");
+    expect(adminUi).toContain("Verifikasi Pembayaran");
+    expect(adminUi).toContain("Tolak Bukti");
+  });
+});
+
 describe("logistic Paylabs settlement", () => {
   it("creates hosted Paylabs payments only after quote approval and settles by webhook", () => {
     const payments = readFileSync(join(process.cwd(), "server/paylabs-service.mjs"), "utf8");
