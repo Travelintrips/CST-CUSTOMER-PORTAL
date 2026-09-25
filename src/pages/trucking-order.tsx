@@ -147,9 +147,12 @@ export default function TruckingOrderPage() {
           <div className="rounded-2xl bg-white border border-slate-200 p-5">
             <div className="flex items-center gap-2 font-bold"><Wallet className="h-4 w-4 text-blue-600" /> Pembayaran</div>
             <div className="mt-4 grid grid-cols-2 gap-3 text-sm">
-              <div><p className="text-xs text-slate-400">Harga Final</p><p className="font-bold">{data.finalPrice ? rupiah(data.finalPrice) : "Menunggu review"}</p></div>
+              <div><p className="text-xs text-slate-400">Harga Dasar Final</p><p className="font-bold">{data.finalPrice ? rupiah(data.finalPrice) : "Menunggu review"}</p></div>
+              <div><p className="text-xs text-slate-400">Total Tagihan</p><p className="font-bold">{rupiah(data.totals.totalAmount)}</p></div>
               <div><p className="text-xs text-slate-400">Sudah Dibayar</p><p className="font-bold text-emerald-600">{rupiah(data.totals.receivedAmount)}</p></div>
               <div><p className="text-xs text-slate-400">Sisa Tagihan</p><p className="font-bold">{rupiah(data.totals.remainingAmount)}</p></div>
+              <div><p className="text-xs text-slate-400">Tol Aktual</p><p className="font-bold">{rupiah(data.actualCosts.toll)}</p></div>
+              <div><p className="text-xs text-slate-400">Parkir Aktual</p><p className="font-bold">{rupiah(data.actualCosts.parking)}</p></div>
               <div><p className="text-xs text-slate-400">Syarat Awal</p><p className="font-bold">{data.paymentTerms.type === "dp" ? `DP ${data.paymentTerms.dp_percent}%` : "Lunas"}</p></div>
             </div>
             {data.status === "waiting_payment" && initialRemaining > 0 && (
