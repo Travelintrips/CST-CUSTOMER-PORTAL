@@ -9,11 +9,21 @@ describe("marketplace audit hardening contract", () => {
   it("uses the canonical marketplace notification queue state machine", () => {
     const source = read("server/whatsapp-service.mjs");
     expect(source).not.toContain("processed_at");
-    expect(source).toContain("status='pending'");
+    expect(source).toContain("status in ('pending','failed','retrying')");
+    expect(source).toContain("status='sending'");
     expect(source).toContain("attempt_count");
     expect(source).toContain("max_attempts");
     expect(source).toContain("sent_at=coalesce(sent_at,now())");
     expect(source).toContain("next_retry_at");
+    expect(source).toContain("updated_at < now() - interval '10 minutes'");
+  });
+
+  it("keeps mkt_notification_queue WhatsApp-only", () => {
+    const service = read("server/marketplace-service.mjs");
+    const operations = read("server/marketplace-operations.mjs");
+    expect(service).not.toContain('for (const channel of ["internal", "whatsapp"])');
+    expect(service).toContain("values ($1,'whatsapp'");
+    expect(operations).not.toContain("values ($1,'internal'");
   });
 
   it("blocks admin handover until the required prepaid/DP threshold is satisfied", () => {
