@@ -246,8 +246,8 @@ const VEHICLES: Vehicle[] = [
 
 // ─── Vehicle descriptions (translated object) ─────────────────────────────────
 const VEHICLE_DESCRIPTIONS: Record<string, Record<string, string>> = {
-  "mobil":         { "id-ID": "Cocok untuk pengiriman kecil dalam kota",                           "en-US": "Suitable for small city deliveries",                       "zh-CN": "适合小型城市配送",                              "fr-FR": "Adapté aux petites livraisons en ville",                       "ar-SA": "مناسب للتوصيل الصغير داخل المدينة" },
-  "mobil-xl":      { "id-ID": "Kapasitas lebih besar untuk barang medium",                         "en-US": "Larger capacity for medium-sized items",                   "zh-CN": "更大容量适合中型货物",                           "fr-FR": "Plus grande capacité pour articles de taille moyenne",          "ar-SA": "سعة أكبر للبضائع المتوسطة" },
+  "mobil":         { "id-ID": "Mobil penumpang untuk perjalanan pickup dan pengantaran",            "en-US": "Passenger car for pickup and drop-off trips",               "zh-CN": "用于接送行程的乘用车",                            "fr-FR": "Voiture particulière pour trajets de prise en charge",         "ar-SA": "سيارة ركاب لرحلات الاستلام والتوصيل" },
+  "mobil-xl":      { "id-ID": "Mobil penumpang berukuran lebih besar untuk perjalanan",             "en-US": "Larger passenger car for pickup and drop-off trips",        "zh-CN": "更大型的乘用车用于接送行程",                       "fr-FR": "Voiture particulière plus grande pour les trajets",            "ar-SA": "سيارة ركاب أكبر لرحلات الاستلام والتوصيل" },
   "van":           { "id-ID": "Ideal untuk barang banyak dan tertutup",                            "en-US": "Ideal for large quantities of enclosed goods",             "zh-CN": "适合大量封闭货物",                               "fr-FR": "Idéal pour grandes quantités de marchandises fermées",          "ar-SA": "مثالي لكميات كبيرة من البضائع المغلقة" },
   "pickup-kecil":  { "id-ID": "Bak terbuka, cocok untuk material",                                "en-US": "Open bed, great for building materials",                   "zh-CN": "开放式货床，适合建筑材料",                        "fr-FR": "Plateau ouvert, idéal pour les matériaux de construction",      "ar-SA": "صندوق مفتوح، مناسب لمواد البناء" },
   "box-kecil":     { "id-ID": "Box tertutup untuk barang sensitif",                               "en-US": "Fully enclosed box for sensitive goods",                   "zh-CN": "全封闭厢式适合敏感货物",                          "fr-FR": "Boîte entièrement fermée pour marchandises sensibles",          "ar-SA": "صندوق مغلق تماماً للبضائع الحساسة" },
@@ -347,9 +347,11 @@ function formatRp(n: number) {
 // ─── Sub-components ───────────────────────────────────────────────────────────
 
 function VehicleCard({ v, selected, onClick, imageUrl }: { v: Vehicle; selected: boolean; onClick: () => void; imageUrl?: string }) {
-  const cap = v.kapasitasKg >= 1000
-    ? `${(v.kapasitasKg / 1000).toFixed(0)}t`
-    : `${v.kapasitasKg}kg`;
+  const cap = PASSENGER_VEHICLE_IDS.has(v.id)
+    ? "Penumpang"
+    : v.kapasitasKg >= 1000
+      ? `${(v.kapasitasKg / 1000).toFixed(0)}t`
+      : `${v.kapasitasKg}kg`;
 
   return (
     <button
@@ -834,16 +836,22 @@ export default function TruckingPage() {
 
   // ── Spec items ──────────────────────────────────────────────────────────────
   const sl = SPEC_LABELS[locale] ?? SPEC_LABELS["en-US"];
-  const specs = [
-    { label: sl.panjang,   value: `${selectedVehicle.panjang} cm`,  icon: <Ruler className="h-4 w-4" />,  color: "bg-blue-50 text-blue-500" },
-    { label: sl.lebar,     value: `${selectedVehicle.lebar} cm`,    icon: <Ruler className="h-4 w-4" />,  color: "bg-violet-50 text-violet-500" },
-    { label: sl.tinggi,    value: `${selectedVehicle.tinggi} cm`,   icon: <Ruler className="h-4 w-4" />,  color: "bg-indigo-50 text-indigo-500" },
-    { label: sl.kapasitas, value: selectedVehicle.kapasitasKg >= 1000
-        ? `${(selectedVehicle.kapasitasKg / 1000).toFixed(1)} ton`
-        : `${selectedVehicle.kapasitasKg.toLocaleString("id-ID")} kg`,
-      icon: <Weight className="h-4 w-4" />, color: "bg-emerald-50 text-emerald-500" },
-    { label: sl.volume,    value: `${selectedVehicle.volumeM3} m³`, icon: <Boxes className="h-4 w-4" />, color: "bg-amber-50 text-amber-500" },
-  ];
+  const specs = isPassengerVehicle
+    ? [
+        { label: "Jenis Layanan", value: "Mobil Penumpang", icon: <Users className="h-4 w-4" />, color: "bg-blue-50 text-blue-500" },
+        { label: sl.panjang, value: `${selectedVehicle.panjang} cm`, icon: <Ruler className="h-4 w-4" />, color: "bg-violet-50 text-violet-500" },
+        { label: sl.lebar, value: `${selectedVehicle.lebar} cm`, icon: <Ruler className="h-4 w-4" />, color: "bg-indigo-50 text-indigo-500" },
+      ]
+    : [
+        { label: sl.panjang,   value: `${selectedVehicle.panjang} cm`,  icon: <Ruler className="h-4 w-4" />,  color: "bg-blue-50 text-blue-500" },
+        { label: sl.lebar,     value: `${selectedVehicle.lebar} cm`,    icon: <Ruler className="h-4 w-4" />,  color: "bg-violet-50 text-violet-500" },
+        { label: sl.tinggi,    value: `${selectedVehicle.tinggi} cm`,   icon: <Ruler className="h-4 w-4" />,  color: "bg-indigo-50 text-indigo-500" },
+        { label: sl.kapasitas, value: selectedVehicle.kapasitasKg >= 1000
+            ? `${(selectedVehicle.kapasitasKg / 1000).toFixed(1)} ton`
+            : `${selectedVehicle.kapasitasKg.toLocaleString("id-ID")} kg`,
+          icon: <Weight className="h-4 w-4" />, color: "bg-emerald-50 text-emerald-500" },
+        { label: sl.volume,    value: `${selectedVehicle.volumeM3} m³`, icon: <Boxes className="h-4 w-4" />, color: "bg-amber-50 text-amber-500" },
+      ];
 
   // ─────────────────────────────────────────────────────────────────────────────
 
