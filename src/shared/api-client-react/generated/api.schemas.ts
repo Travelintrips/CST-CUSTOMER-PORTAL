@@ -2352,6 +2352,29 @@ export interface LogisticOrder {
   quoteNotes?: string | null;
   paymentStatus?: string | null;
   paymentProofUrl?: string | null;
+  paylabs?: {
+    configured: boolean;
+    sandboxMode: boolean;
+    canCreate: boolean;
+    hasPendingPayment: boolean;
+    activeMethods: Array<{
+      code: string;
+      label: string;
+      description?: string;
+    }>;
+    latestPayment?: {
+      status: string;
+      amount: number;
+      paymentUrl?: string | null;
+      expiredAt?: string | null;
+    } | null;
+  };
+  manualPaymentAccount?: {
+    bankName: string;
+    accountNumber: string;
+    accountHolder: string;
+    currency: string;
+  } | null;
   createdAt: string;
   updatedAt: string;
 }
