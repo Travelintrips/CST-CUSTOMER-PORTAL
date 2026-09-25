@@ -3102,7 +3102,10 @@ async function route(request, response) {
   }
 
   if (pathname.startsWith("/api/places/")) {
-    await handleGoogleMapsRoute({ request, response, url, sendJson });
+    const body = pathname === "/api/places/optimize-route" && request.method === "POST"
+      ? await readJson(request)
+      : {};
+    await handleGoogleMapsRoute({ request, response, url, sendJson, body });
     return;
   }
 

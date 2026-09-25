@@ -510,6 +510,14 @@ export default function TruckingPage() {
   const [picPenerima,  setPicPenerima]  = useState("");
   const [hpPenerima,   setHpPenerima]   = useState("");
   const [deliveryStops, setDeliveryStops] = useState<DeliveryStop[]>([]);
+  const [routeMode, setRouteMode] = useState<"manual" | "optimized">("manual");
+  const [routeOptimizing, setRouteOptimizing] = useState(false);
+  const [routeOptimizationError, setRouteOptimizationError] = useState<string | null>(null);
+  const [routeSummary, setRouteSummary] = useState<{
+    pickup: string;
+    orderedAddresses: string[];
+    totalDistanceKm: number;
+  } | null>(null);
 
   const [jadwalType, setJadwalType]     = useState<"sekarang" | "nanti">("sekarang");
   const [tanggal,    setTanggal]        = useState("");
@@ -571,10 +579,102 @@ export default function TruckingPage() {
     .filter((stop) => stop.area || stop.address || stop.pic || stop.phone);
 
   const extraDropCount = normalizedDeliveryStops.length;
+  const currentOrderedAddresses = [alamatDel.trim(), ...normalizedDeliveryStops.map((stop) => stop.address)];
+  const isRouteOptimizationCurrent = Boolean(
+    routeSummary
+    && routeSummary.pickup === alamatPickup.trim()
+    && routeSummary.orderedAddresses.length === currentOrderedAddresses.length
+    && routeSummary.orderedAddresses.every((address, index) => address === currentOrderedAddresses[index]),
+  );
+
+  async function optimizeDeliveryRoute() {
+    setRouteOptimizationError(null);
+    if (!alamatPickup.trim()) {
+      setRouteOptimizationError("Alamat pickup wajib diisi sebelum mengoptimalkan rute.");
+      return;
+    }
+
+    const allStops = [
+      {
+        id: "__primary__",
+        area: areaDel.trim(),
+        address: alamatDel.trim(),
+        pic: picPenerima.trim(),
+        phone: hpPenerima.trim(),
+      },
+      ...deliveryStops.map((stop) => ({
+        id: stop.id,
+        area: stop.area.trim(),
+        address: stop.address.trim(),
+        pic: stop.pic.trim(),
+        phone: stop.phone.trim(),
+      })),
+    ];
+
+    if (allStops.length < 2) {
+      setRouteOptimizationError("Tambahkan minimal satu alamat pengantaran tambahan untuk optimasi rute.");
+      return;
+    }
+    if (allStops.some((stop) => !stop.address)) {
+      setRouteOptimizationError("Lengkapi seluruh alamat pengantaran sebelum optimasi rute.");
+      return;
+    }
+
+    setRouteOptimizing(true);
+    try {
+      const res = await fetch("/api/places/optimize-route", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ origin: alamatPickup.trim(), stops: allStops }),
+      });
+      const data = await res.json() as {
+        error?: string;
+        orderedStops?: Array<DeliveryStop & {
+          distanceFromPreviousKm?: number;
+          durationFromPreviousText?: string | null;
+        }>;
+        totalDistanceKm?: number;
+      };
+      if (!res.ok || !Array.isArray(data.orderedStops) || data.orderedStops.length !== allStops.length) {
+        throw new Error(data.error ?? "Gagal mengoptimalkan rute pengantaran.");
+      }
+
+      const ordered = data.orderedStops;
+      const first = ordered[0];
+      setAreaDel(first.area);
+      setAlamatDel(first.address);
+      setPicPenerima(first.pic);
+      setHpPenerima(first.phone);
+      setDeliveryStops(
+        ordered.slice(1).map((stop) => ({
+          id: stop.id === "__primary__" ? crypto.randomUUID() : stop.id,
+          area: stop.area,
+          address: stop.address,
+          pic: stop.pic,
+          phone: stop.phone,
+        })),
+      );
+      setRouteSummary({
+        pickup: alamatPickup.trim(),
+        orderedAddresses: ordered.map((stop) => stop.address),
+        totalDistanceKm: Number(data.totalDistanceKm ?? 0),
+      });
+      setRouteMode("optimized");
+    } catch (error) {
+      setRouteOptimizationError(error instanceof Error ? error.message : "Gagal mengoptimalkan rute pengantaran.");
+    } finally {
+      setRouteOptimizing(false);
+    }
+  }
 
   async function fetchEstimasi() {
     if (!areaPickup || !areaDel) {
       setEstimasiApiError("Pilih area pickup dan delivery terlebih dahulu.");
+      setShowEstimasi(true);
+      return;
+    }
+    if (routeMode === "optimized" && extraDropCount > 0 && !isRouteOptimizationCurrent) {
+      setEstimasiApiError("Urutan rute berubah atau belum dioptimalkan. Klik Optimalkan Rute terlebih dahulu.");
       setShowEstimasi(true);
       return;
     }
@@ -630,6 +730,9 @@ export default function TruckingPage() {
       if (incompleteExtraStop) {
         throw new Error("Setiap alamat pengantaran tambahan wajib memiliki area, alamat, PIC penerima, dan nomor HP.");
       }
+      if (routeMode === "optimized" && extraDropCount > 0 && !isRouteOptimizationCurrent) {
+        throw new Error("Urutan rute berubah atau belum dioptimalkan. Klik Optimalkan Rute terlebih dahulu.");
+      }
       const cheapest = estimasiData?.cheapest ?? null;
       const res = await fetch("/api/portal/trucking/bookings", {
         method: "POST",
@@ -656,7 +759,18 @@ export default function TruckingPage() {
           catatan:              catatan || undefined,
           jumlahTrip,
           deliveryStops: normalizedDeliveryStops,
-          addons: { ...addons, multiDrop: extraDropCount > 0 },
+          addons: {
+            ...addons,
+            multiDrop: extraDropCount > 0,
+            routeOptimization: {
+              mode: routeMode,
+              optimized: routeMode === "optimized" && isRouteOptimizationCurrent,
+              totalDistanceKm: routeMode === "optimized" && isRouteOptimizationCurrent
+                ? routeSummary?.totalDistanceKm ?? null
+                : null,
+              orderedAddresses: currentOrderedAddresses,
+            },
+          },
           estimasiTotal:        cheapest?.estimate?.total_estimate ?? 0,
           estimatedDistanceKm:  cheapest?.estimate?.distance_km,
           estimatedPrice:       cheapest?.estimate?.total_estimate,
@@ -1257,11 +1371,92 @@ export default function TruckingPage() {
                       ? `${extraDropCount} titik tambahan aktif. Biaya multi-drop dihitung per titik tambahan.`
                       : "Gunakan bila satu pickup perlu mengantar ke lebih dari satu alamat."}
                   </p>
+
+                  {extraDropCount > 0 && (
+                    <div className="mt-4 rounded-2xl border border-slate-200 bg-slate-50/70 p-4">
+                      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                        <div>
+                          <p className="text-[12px] font-black text-slate-700">Urutan Rute Pengantaran</p>
+                          <p className="mt-1 text-[10px] text-slate-500">
+                            Pilih urutan manual atau susun otomatis berdasarkan jarak berkendara dari pickup ke titik berikutnya.
+                          </p>
+                        </div>
+                        <div className="inline-flex rounded-xl border border-slate-200 bg-white p-1">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setRouteMode("manual");
+                              setRouteOptimizationError(null);
+                            }}
+                            className={cn(
+                              "rounded-lg px-3 py-1.5 text-[11px] font-bold transition",
+                              routeMode === "manual"
+                                ? "bg-slate-800 text-white"
+                                : "text-slate-500 hover:bg-slate-50",
+                            )}
+                          >
+                            Sesuai Input
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setRouteMode("optimized")}
+                            className={cn(
+                              "rounded-lg px-3 py-1.5 text-[11px] font-bold transition",
+                              routeMode === "optimized"
+                                ? "bg-blue-600 text-white"
+                                : "text-slate-500 hover:bg-blue-50",
+                            )}
+                          >
+                            Optimalkan
+                          </button>
+                        </div>
+                      </div>
+
+                      {routeMode === "optimized" && (
+                        <div className="mt-3">
+                          <button
+                            type="button"
+                            onClick={optimizeDeliveryRoute}
+                            disabled={routeOptimizing}
+                            className="inline-flex h-10 items-center gap-2 rounded-xl bg-blue-600 px-4 text-[12px] font-bold text-white shadow-sm transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-60"
+                          >
+                            {routeOptimizing
+                              ? <Loader2 className="h-4 w-4 animate-spin" />
+                              : <Navigation className="h-4 w-4" />}
+                            {routeOptimizing ? "Menghitung Rute..." : "Optimalkan Rute"}
+                          </button>
+                          {isRouteOptimizationCurrent && routeSummary && (
+                            <p className="mt-2 text-[11px] font-semibold text-emerald-600">
+                              Rute sudah disusun. Estimasi rangkaian perjalanan: {routeSummary.totalDistanceKm.toLocaleString("id-ID")} km.
+                            </p>
+                          )}
+                          {!isRouteOptimizationCurrent && !routeOptimizing && (
+                            <p className="mt-2 text-[10px] text-amber-600">
+                              Klik Optimalkan Rute setelah semua alamat selesai diisi atau diubah.
+                            </p>
+                          )}
+                        </div>
+                      )}
+
+                      {routeOptimizationError && (
+                        <p className="mt-2 text-[11px] font-medium text-red-500">{routeOptimizationError}</p>
+                      )}
+                    </div>
+                  )}
                 </div>
 
                 {/* Mini Map */}
                 {(alamatPickup || alamatDel) && (
-                  <RouteMapPreview origin={alamatPickup} destination={alamatDel} />
+                  <RouteMapPreview
+                    origin={alamatPickup}
+                    destination={currentOrderedAddresses.at(-1) ?? alamatDel}
+                    waypoints={currentOrderedAddresses.slice(0, -1)}
+                    distanceKmOverride={
+                      routeMode === "optimized" && isRouteOptimizationCurrent
+                        ? routeSummary?.totalDistanceKm ?? null
+                        : null
+                    }
+                  />
                 )}
 
                 {/* 3. Jadwal */}
