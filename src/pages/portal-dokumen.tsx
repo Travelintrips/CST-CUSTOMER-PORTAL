@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { useLocation, Link } from "wouter";
 import { isAuthenticated } from "@/lib/auth";
 import { useQuery } from "@tanstack/react-query";
-import { FolderOpen, FileText, Search, ArrowLeft, Receipt, Truck, ExternalLink } from "lucide-react";
+import { FolderOpen, FileText, Search, ArrowLeft, Receipt, Truck, ExternalLink, Download } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
@@ -16,6 +16,17 @@ interface DocItem {
   dueDate: string | null;
   createdAt: string;
   orderNumber?: string;
+}
+
+interface OperationalDoc {
+  id: string;
+  type: "service_request_document" | "payment_proof" | "pod";
+  title: string;
+  reference: string | null;
+  subtitle?: string | null;
+  status: string;
+  createdAt: string;
+  url: string;
 }
 
 const STATUS_COLOR: Record<string, string> = {
@@ -39,7 +50,7 @@ export default function PortalDokumen() {
     if (!authed) setLocation("/login");
   }, [authed, setLocation]);
 
-  const { data: invoices = [], isLoading } = useQuery<DocItem[]>({
+  const { data: invoices = [], isLoading: invoicesLoading } = useQuery<DocItem[]>({
     queryKey: ["portal-documents"],
     queryFn: async () => {
       const r = await fetch("/api/portal/me/invoices", { credentials: "include" });
@@ -50,13 +61,32 @@ export default function PortalDokumen() {
     staleTime: 60_000,
   });
 
+  const { data: operationalDocs = [], isLoading: operationalLoading } = useQuery<OperationalDoc[]>({
+    queryKey: ["portal-operational-documents"],
+    queryFn: async () => {
+      const r = await fetch("/api/portal/me/documents", { credentials: "include", cache: "no-store" });
+      if (!r.ok) return [];
+      return r.json() as Promise<OperationalDoc[]>;
+    },
+    enabled: authed,
+    staleTime: 30_000,
+  });
+
   if (!authed) return null;
 
-  const filtered = invoices.filter(doc =>
-    !search.trim() ||
-    doc.invoiceNumber.toLowerCase().includes(search.toLowerCase()) ||
-    (doc.orderNumber ?? "").toLowerCase().includes(search.toLowerCase())
+  const normalizedSearch = search.trim().toLowerCase();
+  const filteredInvoices = invoices.filter(doc =>
+    !normalizedSearch ||
+    doc.invoiceNumber.toLowerCase().includes(normalizedSearch) ||
+    (doc.orderNumber ?? "").toLowerCase().includes(normalizedSearch)
   );
+  const filteredOperationalDocs = operationalDocs.filter(doc =>
+    !normalizedSearch ||
+    doc.title.toLowerCase().includes(normalizedSearch) ||
+    (doc.reference ?? "").toLowerCase().includes(normalizedSearch) ||
+    (doc.subtitle ?? "").toLowerCase().includes(normalizedSearch)
+  );
+  const isLoading = invoicesLoading || operationalLoading;
 
   const dateLocale = locale.startsWith("ar") ? "ar-SA" : locale.startsWith("zh") ? "zh-CN" : locale.startsWith("fr") ? "fr-FR" : "id-ID";
 
@@ -97,9 +127,9 @@ export default function PortalDokumen() {
           <div className="px-6 py-4 border-b border-slate-100 flex items-center gap-3">
             <FolderOpen className="h-5 w-5 text-sky-600" />
             <h2 className="font-semibold text-slate-800">{t("portalDokumen.transactionDocs")}</h2>
-            {invoices.length > 0 && (
+            {(invoices.length + operationalDocs.length) > 0 && (
               <span className="ml-auto text-xs text-slate-400">
-                {t("portalDokumen.documentsCount").replace("{n}", String(invoices.length))}
+                {t("portalDokumen.documentsCount").replace("{n}", String(invoices.length + operationalDocs.length))}
               </span>
             )}
           </div>
@@ -108,9 +138,9 @@ export default function PortalDokumen() {
             <div className="space-y-3 p-6">
               {[1, 2, 3].map(i => <div key={i} className="h-16 bg-slate-100 rounded-xl animate-pulse" />)}
             </div>
-          ) : filtered.length > 0 ? (
+          ) : filteredInvoices.length > 0 ? (
             <div className="divide-y divide-slate-100">
-              {filtered.map(doc => (
+              {filteredInvoices.map(doc => (
                 <div key={doc.id} className="flex items-center justify-between px-6 py-4 hover:bg-slate-50 transition-colors">
                   <div className="flex items-center gap-4">
                     <div className="w-10 h-10 rounded-xl bg-sky-50 flex items-center justify-center">
@@ -172,19 +202,63 @@ export default function PortalDokumen() {
           )}
         </div>
 
-        {/* Logistic docs info */}
-        <div className="mt-6 rounded-xl border border-slate-200 bg-white px-6 py-4">
-          <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-3">
-            {t("portalDokumen.logisticDocsTitle")}
-          </p>
-          <div className="flex flex-wrap gap-2">
-            {["Bill of Lading", "Packing List", "Customs Declaration", "Certificate of Origin", "POD"].map(doc => (
-              <span key={doc} className="px-3 py-1.5 rounded-full bg-slate-100 text-slate-500 text-xs font-medium inline-flex items-center gap-1">
-                <FileText className="h-3 w-3" />{doc}
-              </span>
-            ))}
+        <div className="mt-6 bg-white rounded-2xl border border-slate-200 overflow-hidden">
+          <div className="px-6 py-4 border-b border-slate-100 flex items-center gap-3">
+            <Truck className="h-5 w-5 text-indigo-600" />
+            <div>
+              <h2 className="font-semibold text-slate-800">Dokumen Operasional</h2>
+              <p className="text-xs text-slate-400">Dokumen yang benar-benar tersedia dari request layanan, pembayaran, dan perjalanan.</p>
+            </div>
+            {operationalDocs.length > 0 && (
+              <span className="ml-auto text-xs text-slate-400">{operationalDocs.length} file</span>
+            )}
           </div>
-          <p className="text-xs text-slate-400 mt-3">{t("portalDokumen.logisticDocsDesc")}</p>
+
+          {operationalLoading ? (
+            <div className="space-y-3 p-6">
+              {[1, 2].map(i => <div key={i} className="h-16 bg-slate-100 rounded-xl animate-pulse" />)}
+            </div>
+          ) : filteredOperationalDocs.length > 0 ? (
+            <div className="divide-y divide-slate-100">
+              {filteredOperationalDocs.map(doc => (
+                <div key={doc.id} className="flex items-center justify-between gap-4 px-6 py-4 hover:bg-slate-50 transition-colors">
+                  <div className="flex items-center gap-4 min-w-0">
+                    <div className="w-10 h-10 rounded-xl bg-indigo-50 flex items-center justify-center shrink-0">
+                      {doc.type === "pod"
+                        ? <Truck className="h-4 w-4 text-indigo-600" />
+                        : doc.type === "payment_proof"
+                          ? <Receipt className="h-4 w-4 text-indigo-600" />
+                          : <FileText className="h-4 w-4 text-indigo-600" />}
+                    </div>
+                    <div className="min-w-0">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <p className="font-semibold text-slate-800 text-sm truncate">{doc.title}</p>
+                        <Badge className="text-[11px] bg-slate-100 text-slate-600">{doc.status}</Badge>
+                      </div>
+                      {doc.reference && <p className="text-xs text-slate-400">Ref: {doc.reference}</p>}
+                      {doc.subtitle && <p className="text-xs text-slate-400 truncate">{doc.subtitle}</p>}
+                      <p className="text-xs text-slate-400">
+                        {new Date(doc.createdAt).toLocaleDateString(dateLocale, { day: "numeric", month: "long", year: "numeric" })}
+                      </p>
+                    </div>
+                  </div>
+                  <a href={doc.url} target="_blank" rel="noreferrer">
+                    <Button size="sm" variant="outline" className="gap-1.5 shrink-0">
+                      <Download className="h-3.5 w-3.5" /> Buka
+                    </Button>
+                  </a>
+                </div>
+              ))}
+            </div>
+          ) : operationalDocs.length > 0 ? (
+            <div className="py-10 text-center text-sm text-slate-400">Tidak ada dokumen operasional yang cocok dengan pencarian.</div>
+          ) : (
+            <div className="py-12 px-6 text-center">
+              <FileText className="mx-auto h-8 w-8 text-slate-300" />
+              <p className="mt-3 text-sm font-medium text-slate-600">Belum ada dokumen operasional</p>
+              <p className="mt-1 text-xs text-slate-400">File akan muncul otomatis setelah dokumen, bukti pembayaran, atau POD tersedia.</p>
+            </div>
+          )}
         </div>
 
       </div>
