@@ -117,6 +117,14 @@ describe("standalone Customer Portal API boundary", () => {
     expect(server).toContain('serviceMode: "passenger"');
     expect(server).toContain("include_parking");
     expect(server).toContain("isPassengerVehicle ? null : (body.beratKg ?? null)");
+    expect(page).toContain("!isPassengerVehicle && (");
+    expect(page).toContain("picPickup:            isPassengerVehicle ? undefined : picPickup");
+    expect(page).toContain("picPenerima:          isPassengerVehicle ? undefined : picPenerima");
+    expect(server).toContain('const required = isPassengerVehicle');
+    expect(server).toContain('fallbackName: passengerContactName');
+    expect(server).toContain('fallbackPhone: passengerContactPhone');
+    expect(server).toContain('isPassengerVehicle ? passengerContactName : String(body.picPickup)');
+    expect(server).toContain('isPassengerVehicle ? passengerContactName : String(body.picPenerima)');
   });
 
   it("implements trucking end-to-end lifecycle inside the standalone portal", () => {
