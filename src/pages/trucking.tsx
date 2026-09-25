@@ -9,7 +9,7 @@ import {
   Phone, User, AlarmClock, Boxes, Send, Loader2,
   PartyPopper, Star, Navigation, Headphones, BadgeCheck,
   Timer, MessageCircle, Weight, Ruler, Zap, Award,
-  ArrowRight, TrendingUp, Globe, Lock,
+  ArrowRight, TrendingUp, Globe, Lock, CircleParking,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -1808,7 +1808,7 @@ export default function TruckingPage() {
 
                 {/* Tab switcher */}
                 <div className="relative flex bg-white/8 border border-white/10 rounded-2xl p-1 mb-6 backdrop-blur-sm">
-                  {(["dasar", "seharian"] as const).map((tab) => (
+                  {(isPassengerVehicle ? (["dasar"] as const) : (["dasar", "seharian"] as const)).map((tab) => (
                     <button key={tab} type="button" onClick={() => setActiveTab(tab)}
                       className={cn(
                         "flex-1 py-2.5 text-[11px] font-black uppercase tracking-widest rounded-xl transition-all duration-200",
@@ -1839,13 +1839,21 @@ export default function TruckingPage() {
 
                 {/* Value props */}
                 <div className="relative mt-6 space-y-3 pt-5 border-t border-white/10">
-                  {[
-                    { icon: <Timer className="h-3.5 w-3.5" />,     text: t("truckingPage.estimasiDays").replace("{days}", vehicleMeta.deliveryDays), accent: "text-blue-300" },
-                    { icon: <Shield className="h-3.5 w-3.5" />,     text: t("truckingPage.cargoInsurance"),      accent: "text-emerald-300" },
-                    { icon: <BadgeCheck className="h-3.5 w-3.5" />, text: t("truckingPage.fleetVerified"),        accent: "text-violet-300" },
-                    { icon: <Navigation className="h-3.5 w-3.5" />, text: t("truckingPage.gpsTracking"),          accent: "text-indigo-300" },
-                    { icon: <Lock className="h-3.5 w-3.5" />,       text: t("truckingPage.encryptedTx"),                accent: "text-slate-300" },
-                  ].map(({ icon, text, accent }) => (
+                  {(isPassengerVehicle
+                    ? [
+                        { icon: <Timer className="h-3.5 w-3.5" />, text: "Pickup sesuai jadwal", accent: "text-blue-300" },
+                        { icon: <CircleParking className="h-3.5 w-3.5" />, text: "Tol & parkir sesuai biaya aktual", accent: "text-emerald-300" },
+                        { icon: <BadgeCheck className="h-3.5 w-3.5" />, text: t("truckingPage.fleetVerified"), accent: "text-violet-300" },
+                        { icon: <Navigation className="h-3.5 w-3.5" />, text: t("truckingPage.gpsTracking"), accent: "text-indigo-300" },
+                        { icon: <Lock className="h-3.5 w-3.5" />, text: t("truckingPage.encryptedTx"), accent: "text-slate-300" },
+                      ]
+                    : [
+                        { icon: <Timer className="h-3.5 w-3.5" />, text: t("truckingPage.estimasiDays").replace("{days}", vehicleMeta.deliveryDays), accent: "text-blue-300" },
+                        { icon: <Shield className="h-3.5 w-3.5" />, text: t("truckingPage.cargoInsurance"), accent: "text-emerald-300" },
+                        { icon: <BadgeCheck className="h-3.5 w-3.5" />, text: t("truckingPage.fleetVerified"), accent: "text-violet-300" },
+                        { icon: <Navigation className="h-3.5 w-3.5" />, text: t("truckingPage.gpsTracking"), accent: "text-indigo-300" },
+                        { icon: <Lock className="h-3.5 w-3.5" />, text: t("truckingPage.encryptedTx"), accent: "text-slate-300" },
+                      ]).map(({ icon, text, accent }) => (
                     <div key={text} className="flex items-center gap-3 text-[12.5px]">
                       <span className={`${accent} shrink-0 opacity-90`}>{icon}</span>
                       <span className="text-white/75 font-medium">{text}</span>
