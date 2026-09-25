@@ -26,10 +26,18 @@ if (expectedOriginCount !== locs.length) {
 const missingSeo = [];
 const missingPrerender = [];
 
-for (const path of locs) {
+function hasRouteKey(source, path) {
+  const escaped = path.replace(/[.*+?^{}()|[\]\\]/g, "\\for (const path of locs) {
   const routeKey = JSON.stringify(path);
   if (!seoConfig.includes(`${routeKey}: {`)) missingSeo.push(path);
   if (!prerender.includes(`${routeKey}: {`)) missingPrerender.push(path);
+}");
+  return new RegExp(`["']${escaped}["']\\\\s*:\\s*\\{`).test(source);
+}
+
+for (const path of locs) {
+  if (!hasRouteKey(seoConfig, path)) missingSeo.push(path);
+  if (!hasRouteKey(prerender, path)) missingPrerender.push(path);
 }
 
 if (missingSeo.length || missingPrerender.length) {
