@@ -2219,6 +2219,7 @@ async function handleTruckingBooking(request, response, user, body) {
       canonicalEstimate.distance_km ?? null, canonicalEstimate.total_estimate,
       JSON.stringify(canonicalEstimate), JSON.stringify(null),
       Number.isInteger(Number(body.selectedVendorId)) && Number(body.selectedVendorId) > 0 ? Number(body.selectedVendorId) : null,
+      idempotencyKey,
     ],
   );
   await initializeTruckingLifecycleByBookingNumber(
