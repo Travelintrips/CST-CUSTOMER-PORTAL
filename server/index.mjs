@@ -2589,6 +2589,23 @@ async function handleLogisticCustomerRoutes(request, response, url, user, body =
       sendError(response, 404, "Order logistik tidak ditemukan.");
       return true;
     }
+    if (row.customer_quote_status !== "approved") {
+      sendError(response, 409, "Quotation harus disetujui sebelum mengunggah bukti pembayaran.");
+      return true;
+    }
+    if (row.payment_status === "paid") {
+      sendError(response, 409, "Order ini sudah lunas.");
+      return true;
+    }
+    await query(
+      `update public.mkt_gateway_payments
+          set status='expired'::payment_status,updated_at=now()
+        where ref_kind='logistic'::payment_ref_kind
+          and ref_id=$1
+          and provider='paylabs'::payment_provider
+          and status='pending'::payment_status`,
+      [row.id],
+    );
     const proofUrl = String(body.proofUrl ?? "").trim();
     const expectedProofPrefix = `customers/${Number(user.id)}/`;
     if (!proofUrl || !proofUrl.startsWith(expectedProofPrefix)) {
