@@ -161,6 +161,18 @@ describe("standalone Customer Portal API boundary", () => {
     expect(driver).toContain("Konfirmasi Drop-off Selesai");
   });
 
+  it("uses CST provider banking for trucking payments without customer-company leakage", () => {
+    const lifecycle = readFileSync(join(process.cwd(), "server/trucking-lifecycle.mjs"), "utf8");
+    const payments = readFileSync(join(process.cwd(), "server/paylabs-service.mjs"), "utf8");
+    const envExample = readFileSync(join(process.cwd(), ".env.example"), "utf8");
+    expect(lifecycle).toContain("TRUCKING_PROVIDER_COMPANY_ID");
+    expect(lifecycle).toContain("company_bank_accounts");
+    expect(lifecycle).toContain("manualPaymentAccount");
+    expect(payments).toContain("const providerCompanyId = Number(process.env.TRUCKING_PROVIDER_COMPANY_ID ?? 1)");
+    expect(payments).toContain("providerCompanyId,");
+    expect(envExample).toContain("TRUCKING_PROVIDER_COMPANY_ID=1");
+  });
+
   it("guards trucking booking and payment idempotency", () => {
     const page = readFileSync(join(process.cwd(), "src/pages/trucking.tsx"), "utf8");
     const server = readFileSync(join(process.cwd(), "server/index.mjs"), "utf8");
