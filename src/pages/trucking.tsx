@@ -691,7 +691,7 @@ export default function TruckingPage() {
     (addons.bantuanBongkar ? 150_000 : 0) +
     (addons.asuransi       ? 100_000 : 0) +
     (addons.ferry          ? 500_000 : 0) +
-    (extraDropCount * 50_000) +
+    (extraDropCount * 50_000 * jumlahTrip) +
     (addons.urgentDelivery ? 200_000 : 0);
 
   const totalEstimasi = biayaPerTrip + biayaTambahan;
@@ -1337,7 +1337,10 @@ export default function TruckingPage() {
                   <SectionTitle icon={<Truck className="h-4 w-4" />}>{t("truckingPage.tripQty")}</SectionTitle>
                   <div className="flex items-center gap-4">
                     <Counter value={jumlahTrip} onChange={setJumlahTrip} min={1} />
-                    <p className="text-[12px] text-slate-400">{t("truckingPage.minimalTrip").replace("{name}", selectedVehicle.name)}</p>
+                    <div>
+                      <p className="text-[12px] text-slate-400">{t("truckingPage.minimalTrip").replace("{name}", selectedVehicle.name)}</p>
+                      <p className="mt-1 text-[10px] text-slate-400">Jumlah trip = berapa kali kendaraan menjalankan rangkaian pickup → seluruh alamat pengantaran.</p>
+                    </div>
                   </div>
                 </div>
 
