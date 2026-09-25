@@ -210,8 +210,20 @@ export default function TruckingOrderPage() {
               </div>
               <div className="space-y-3 border-t sm:border-t-0 sm:border-l border-slate-200 pt-4 sm:pt-0 sm:pl-4">
                 <p className="text-sm font-semibold">Transfer Manual</p>
-                <Input type="file" accept="image/jpeg,image/png,application/pdf" onChange={(e) => setProof(e.target.files?.[0] ?? null)} />
-                <Button className="w-full" variant="outline" disabled={busy || !proof} onClick={uploadProof}><Upload className="h-4 w-4 mr-2" /> Upload Bukti</Button>
+                {data.manualPaymentAccount ? (
+                  <div className="rounded-xl border border-blue-100 bg-blue-50/50 p-3 text-sm">
+                    <p className="text-xs text-slate-400">Rekening tujuan</p>
+                    <p className="mt-1 font-bold text-slate-800">{data.manualPaymentAccount.bankName}</p>
+                    <p className="text-lg font-black tracking-wide text-blue-700">{data.manualPaymentAccount.accountNumber}</p>
+                    <p className="text-xs text-slate-500">a.n. {data.manualPaymentAccount.accountHolder}</p>
+                  </div>
+                ) : (
+                  <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-700">
+                    Rekening transfer belum tersedia. Gunakan Paylabs atau hubungi CST.
+                  </div>
+                )}
+                <Input type="file" accept="image/jpeg,image/png,application/pdf" disabled={!data.manualPaymentAccount} onChange={(e) => setProof(e.target.files?.[0] ?? null)} />
+                <Button className="w-full" variant="outline" disabled={busy || !proof || !data.manualPaymentAccount} onClick={uploadProof}><Upload className="h-4 w-4 mr-2" /> Upload Bukti</Button>
                 <p className="text-xs text-slate-400">Bukti transfer akan diverifikasi admin sebelum pembayaran dihitung.</p>
               </div>
             </div>
