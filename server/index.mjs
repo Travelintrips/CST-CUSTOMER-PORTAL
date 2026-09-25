@@ -42,6 +42,22 @@ import {
 } from "./billing-operations.mjs";
 import { handleFreightRoute } from "./freight-operations.mjs";
 import { handleGoogleMapsRoute } from "./google-maps-service.mjs";
+import {
+  adminActualCosts,
+  adminAssignTrucking,
+  adminListTrucking,
+  adminReviewTrucking,
+  adminReviewTruckingPayment,
+  adminTruckingDetail,
+  customerApproveTrucking,
+  customerCreateTruckingPaylabs,
+  customerManualTruckingPayment,
+  customerTruckingOrder,
+  driverTruckingDetail,
+  driverUpdateTrucking,
+  driverUploadTruckingPod,
+  initializeTruckingLifecycleByBookingNumber,
+} from "./trucking-lifecycle.mjs";
 import { handleToolRoute } from "./tool-operations.mjs";
 import {
   handleCapabilities,
@@ -2174,6 +2190,10 @@ async function handleTruckingBooking(request, response, user, body) {
       Number.isInteger(Number(body.selectedVendorId)) && Number(body.selectedVendorId) > 0 ? Number(body.selectedVendorId) : null,
     ],
   );
+  await initializeTruckingLifecycleByBookingNumber(
+    result.rows[0].booking_number,
+    { type: "customer", id: user.id, name: user.name },
+  );
   sendJson(response, 201, { bookingNumber: result.rows[0].booking_number, status: result.rows[0].status });
 }
 
@@ -3620,6 +3640,115 @@ async function route(request, response) {
     await handleServiceProfile(request, response, url, user);
     return;
   }
+  const customerTruckingOrderMatch = pathname.match(/^\/api\/portal\/trucking\/orders\/([^/]+)(?:\/(approve|payments\/manual|payments\/paylabs))?$/);
+  if (customerTruckingOrderMatch) {
+    const user = await requireUser(request, response);
+    if (!user) return;
+    const companyIds = await getAccessibleCompanyIds(user);
+    const bookingNumber = decodeURIComponent(customerTruckingOrderMatch[1]);
+    const action = customerTruckingOrderMatch[2] ?? null;
+    if (!action && request.method === "GET") {
+      sendJson(response, 200, await customerTruckingOrder({ bookingNumber, user, companyIds }));
+      return;
+    }
+    if (action === "approve" && request.method === "POST") {
+      const body = await readJson(request);
+      sendJson(response, 200, await customerApproveTrucking({ bookingNumber, user, companyIds, body }));
+      return;
+    }
+    if (action === "payments/manual" && request.method === "POST") {
+      const form = await readMultipartForm(request);
+      sendJson(response, 201, await customerManualTruckingPayment({ bookingNumber, user, companyIds, form }));
+      return;
+    }
+    if (action === "payments/paylabs" && request.method === "POST") {
+      const body = await readJson(request);
+      sendJson(response, 200, await customerCreateTruckingPaylabs({ bookingNumber, user, companyIds, request, body }));
+      return;
+    }
+    sendError(response, 405, "Method tidak didukung.");
+    return;
+  }
+
+  const adminTruckingPaymentMatch = pathname.match(/^\/api\/portal\/admin\/trucking\/([^/]+)\/payments\/(\d+)\/review$/);
+  if (adminTruckingPaymentMatch) {
+    const admin = await requireAdmin(request, response);
+    if (!admin) return;
+    if (request.method !== "POST") { sendError(response, 405, "Method tidak didukung."); return; }
+    const body = await readJson(request);
+    sendJson(response, 200, await adminReviewTruckingPayment({
+      bookingNumber: decodeURIComponent(adminTruckingPaymentMatch[1]),
+      paymentId: Number(adminTruckingPaymentMatch[2]),
+      admin,
+      body,
+    }));
+    return;
+  }
+
+  const adminTruckingMatch = pathname.match(/^\/api\/portal\/admin\/trucking(?:\/([^/]+))?(?:\/(review|assign|actual-costs))?$/);
+  if (adminTruckingMatch) {
+    const admin = await requireAdmin(request, response);
+    if (!admin) return;
+    const bookingNumber = adminTruckingMatch[1] ? decodeURIComponent(adminTruckingMatch[1]) : null;
+    const action = adminTruckingMatch[2] ?? null;
+    if (!bookingNumber && request.method === "GET") {
+      sendJson(response, 200, await adminListTrucking({
+        status: url.searchParams.get("status"),
+        limit: url.searchParams.get("limit"),
+      }));
+      return;
+    }
+    if (bookingNumber && !action && request.method === "GET") {
+      sendJson(response, 200, await adminTruckingDetail({ bookingNumber }));
+      return;
+    }
+    if (bookingNumber && action === "review" && request.method === "POST") {
+      const body = await readJson(request);
+      sendJson(response, 200, await adminReviewTrucking({ bookingNumber, admin, body }));
+      return;
+    }
+    if (bookingNumber && action === "assign" && request.method === "POST") {
+      const body = await readJson(request);
+      sendJson(response, 200, await adminAssignTrucking({ bookingNumber, admin, body }));
+      return;
+    }
+    if (bookingNumber && action === "actual-costs" && request.method === "POST") {
+      const body = await readJson(request);
+      sendJson(response, 200, await adminActualCosts({ bookingNumber, admin, body }));
+      return;
+    }
+    sendError(response, 405, "Method tidak didukung.");
+    return;
+  }
+
+  const driverTruckingPodMatch = pathname.match(/^\/api\/trucking\/driver\/([^/]+)\/stops\/(\d+)\/pod$/);
+  if (driverTruckingPodMatch) {
+    if (request.method !== "POST") { sendError(response, 405, "Method tidak didukung."); return; }
+    const form = await readMultipartForm(request);
+    sendJson(response, 201, await driverUploadTruckingPod({
+      token: decodeURIComponent(driverTruckingPodMatch[1]),
+      stopId: Number(driverTruckingPodMatch[2]),
+      form,
+    }));
+    return;
+  }
+
+  const driverTruckingMatch = pathname.match(/^\/api\/trucking\/driver\/([^/]+)$/);
+  if (driverTruckingMatch) {
+    const token = decodeURIComponent(driverTruckingMatch[1]);
+    if (request.method === "GET") {
+      sendJson(response, 200, await driverTruckingDetail({ token }));
+      return;
+    }
+    if (request.method === "POST") {
+      const body = await readJson(request);
+      sendJson(response, 200, await driverUpdateTrucking({ token, body }));
+      return;
+    }
+    sendError(response, 405, "Method tidak didukung.");
+    return;
+  }
+
   if (pathname === "/api/portal/trucking/estimate") {
     const body = request.method === "POST" ? await readJson(request) : {};
     await handleTruckingEstimate(request, response, body);
