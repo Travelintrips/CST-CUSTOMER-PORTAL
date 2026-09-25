@@ -84,6 +84,20 @@ describe("standalone Customer Portal API boundary", () => {
     expect(page).toContain('"Idempotency-Key": `customer-po-shipment:${poId}:${shipmentRequestKey}`');
   });
 
+  it("optimizes multi-stop trucking routes inside the standalone portal", () => {
+    const page = readFileSync(join(process.cwd(), "src/pages/trucking.tsx"), "utf8");
+    const maps = readFileSync(join(process.cwd(), "server/google-maps-service.mjs"), "utf8");
+    const preview = readFileSync(join(process.cwd(), "src/components/ui/route-map-preview.tsx"), "utf8");
+    expect(page).toContain("/api/places/optimize-route");
+    expect(page).toContain('routeMode');
+    expect(page).toContain("Optimalkan Rute");
+    expect(maps).toContain('pathname === "/api/places/optimize-route"');
+    expect(maps).toContain("optimizeDeliveryRoute");
+    expect(maps).toContain("distanceFromPreviousKm");
+    expect(preview).toContain("waypoints");
+    expect(preview).toContain("waypointQuery");
+  });
+
   it("keeps trucking booking writes on the standalone Customer Portal API", () => {
     const page = readFileSync(join(process.cwd(), "src/pages/trucking.tsx"), "utf8");
     const server = readFileSync(join(process.cwd(), "server/index.mjs"), "utf8");
