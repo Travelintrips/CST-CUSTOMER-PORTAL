@@ -40,6 +40,13 @@ export function buildPaylabsSignaturePayload(method, endpoint, bodyJson, timesta
   return `${method}:${endpoint}:${bodyHash}:${timestamp}`;
 }
 
+export function isPaylabsTimestampFresh(timestamp, now = Date.now(), maxSkewMs = 5 * 60 * 1000) {
+  const parsed = Date.parse(String(timestamp ?? ""));
+  if (!Number.isFinite(parsed)) return false;
+  const skew = Math.abs(Number(now) - parsed);
+  return skew <= Math.max(0, Number(maxSkewMs) || 0);
+}
+
 export function mapPaylabsStatus(value) {
   const status = String(value ?? "").trim().toUpperCase();
   if (["02", "SUCCESS", "PAID", "SUCCESSFUL", "COMPLETED"].includes(status)) return "paid";
