@@ -169,7 +169,7 @@ export default function PortalDokumen() {
                       <p className="font-bold text-slate-800 text-sm">{idr(doc.amount)}</p>
                       <p className="text-xs text-slate-400">Commercial Invoice</p>
                     </div>
-                    <Link href="/portal-invoice">
+                    <Link href={`/portal-invoice?invoice=${doc.id}`}>
                       <Button size="sm" variant="ghost" className="gap-1.5 text-sky-600 hover:text-sky-700 hover:bg-sky-50">
                         <ExternalLink className="h-3.5 w-3.5" /> {t("portalDokumen.detailBtn")}
                       </Button>
