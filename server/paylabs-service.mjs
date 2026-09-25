@@ -155,7 +155,7 @@ async function activeMethods(client = query) {
       where is_active=true
       order by sort_order, code`,
   );
-  return result.rows.map((row) => ({
+  const methods = result.rows.map((row) => ({
     code: row.code,
     label: row.label,
     description: row.description ?? "",
@@ -163,6 +163,15 @@ async function activeMethods(client = query) {
     iconEnabled: Boolean(row.icon_enabled),
     sortOrder: Number(row.sort_order ?? 0),
   }));
+  if (methods.length > 0) return methods;
+  return [{
+    code: "PAYLABS_GATEWAY",
+    label: "Paylabs Payment Gateway",
+    description: "Paylabs hosted payment gateway",
+    iconUrl: "",
+    iconEnabled: false,
+    sortOrder: 1,
+  }];
 }
 
 function serializePayment(row) {
