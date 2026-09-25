@@ -86,9 +86,11 @@ jobs:
 
           url_count="$(grep -o '<url>' /tmp/sitemap.xml | wc -l | tr -d ' ')"
           echo "sitemap_url_count=$url_count"
-          test "$url_count" = "16"
+          test "$url_count" = "15"
+          ! grep -Fq '<loc>https://cstlogistic.co.id/services</loc>' /tmp/sitemap.xml
+          grep -Fq '<loc>https://cstlogistic.co.id/jasa</loc>' /tmp/sitemap.xml
 
-          echo "Public sitemap is live with 16 canonical URLs."
+          echo "Public sitemap is live with 15 canonical URLs and /jasa as the service hub."
 
       - name: Verify Paylabs routes are locally owned and fail closed
         shell: bash
