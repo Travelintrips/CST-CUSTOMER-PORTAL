@@ -84,6 +84,12 @@ describe("marketplace audit hardening contract", () => {
     expect(source).toContain("DP minimum sebelum handover");
   });
 
+  it("forwards the selected Paylabs method to the H5 payment request", () => {
+    const source = read("server/paylabs-service.mjs");
+    expect(source).toContain("paymentType: method.code");
+    expect(source).toContain("method.code === requestedMethod");
+  });
+
   it("rejects stale Paylabs callback timestamps before signature processing", () => {
     const source = read("server/paylabs-service.mjs");
     expect(source).toContain("isPaylabsTimestampFresh(timestamp)");
