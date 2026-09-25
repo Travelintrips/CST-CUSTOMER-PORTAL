@@ -127,8 +127,14 @@ export default function TruckingOrderPage() {
               <p className="text-xs text-slate-400 uppercase font-bold tracking-wider">Booking Trucking</p>
               <h1 className="text-2xl font-black text-slate-900 mt-1">{data.bookingNumber}</h1>
               <p className="text-sm text-slate-500 mt-1">{data.vehicleName} · {data.tripCount} trip</p>
+              {data.invoiceNumber && <p className="text-xs text-slate-400 mt-1">Invoice: {data.invoiceNumber}</p>}
+              {data.receiptNumber && <p className="text-xs text-emerald-600 mt-1">Kwitansi: {data.receiptNumber}</p>}
             </div>
-            <Badge className="text-xs">{STATUS_LABEL[data.status] ?? data.status}</Badge>
+            <div className="flex flex-wrap gap-2 items-center">
+              {data.invoiceNumber && <Button size="sm" variant="outline" onClick={() => window.print()}>Cetak Invoice</Button>}
+              {data.receiptNumber && <Button size="sm" variant="outline" onClick={() => window.print()}>Cetak Kwitansi</Button>}
+              <Badge className="text-xs">{STATUS_LABEL[data.status] ?? data.status}</Badge>
+            </div>
           </div>
         </div>
 
