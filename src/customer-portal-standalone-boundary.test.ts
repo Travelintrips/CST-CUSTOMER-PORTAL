@@ -1,3 +1,27 @@
+describe("logistic quotation approval lifecycle", () => {
+  it("requires admin quotation before customer approval and payment", () => {
+    const adminApi = readFileSync(join(process.cwd(), "server/admin-portal.mjs"), "utf8");
+    const server = readFileSync(join(process.cwd(), "server/index.mjs"), "utf8");
+    const adminUi = readFileSync(join(process.cwd(), "src/pages/admin/ServiceOperationsTab.tsx"), "utf8");
+    const customerUi = readFileSync(join(process.cwd(), "src/pages/logistic-order-success.tsx"), "utf8");
+
+    expect(adminApi).toContain('"send_quote"');
+    expect(adminApi).toContain("customer_quote_status='pending_customer_approval'");
+    expect(adminApi).toContain('.filter((action) => action !== "approve")');
+    expect(adminUi).toContain("Quotation Customer");
+    expect(adminUi).toContain("Kirim Quotation ke Customer");
+
+    expect(server).toContain("quote-response");
+    expect(server).toContain('customer_quote_status=$1');
+    expect(server).toContain('approved ? "approved" : "revision_requested"');
+
+    expect(customerUi).toContain("Setujui Quotation");
+    expect(customerUi).toContain("Minta Revisi");
+    expect(customerUi).toContain('order.customerQuoteStatus === "pending_customer_approval"');
+    expect(customerUi).toContain('quoteReadyForPayment');
+  });
+});
+
 describe("persistent customs and PPJK success flow", () => {
   it("keeps the canonical order number in the success URL and reloads from the API", () => {
     const customs = readFileSync(join(process.cwd(), "src/pages/custom-clearance.tsx"), "utf8");
