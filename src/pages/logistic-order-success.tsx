@@ -136,6 +136,7 @@ function PaylabsPaymentSection({ order }: { order: LogisticOrderDetail }) {
       const r = await fetch(`/api/logistic/orders/${order.orderNumber}/create-paylabs-link`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
+        credentials: "include",
       });
       const data = await r.json() as PaylabsLinkResult & { message?: string };
       if (!r.ok) throw new Error(data.message ?? t("logisticOrderSuccess.payment.createLinkError", "Gagal membuat link pembayaran"));
@@ -375,9 +376,15 @@ export default function OrderSuccessPage() {
     );
   }
 
-  const isGateway =
-    order.paymentMethod === "payment_gateway" ||
-    (order.paymentType ?? "").startsWith("payment_gateway");
+  const quoteReadyForPayment =
+    order.paymentStatus !== "paid"
+    && (!order.quotationSentAt || order.customerQuoteStatus === "approved");
+  const requestedGateway =
+    order.paymentMethod === "payment_gateway"
+    || (order.paymentType ?? "").startsWith("payment_gateway");
+  const paylabsConfigured = Boolean(order.paylabs?.configured);
+  const isGateway = quoteReadyForPayment && requestedGateway && paylabsConfigured;
+  const manualTransferAvailable = quoteReadyForPayment && Boolean(order.manualPaymentAccount);
 
   const eta = getEta(order.shipmentType, t);
 
@@ -489,6 +496,14 @@ export default function OrderSuccessPage() {
         </div>
 
         {/* ── Payment Gateway ── */}
+        {quoteReadyForPayment && requestedGateway && !paylabsConfigured && (
+          <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3">
+            <p className="text-sm font-semibold text-amber-900">Paylabs belum tersedia untuk transaksi ini</p>
+            <p className="text-xs text-amber-700 mt-1">
+              Anda tetap dapat membayar melalui transfer bank CST di bawah. Opsi Paylabs akan muncul otomatis setelah konfigurasi production aktif.
+            </p>
+          </div>
+        )}
         {isGateway && <PaylabsPaymentSection order={order} />}
 
         {/* ── Route summary ── */}
@@ -658,14 +673,31 @@ export default function OrderSuccessPage() {
           )}
         </div>
 
+        {quoteReadyForPayment && !paylabsConfigured && !order.manualPaymentAccount && (
+          <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3">
+            <p className="text-sm font-semibold text-rose-900">Metode pembayaran belum tersedia</p>
+            <p className="text-xs text-rose-700 mt-1">
+              Quotation Anda sudah disetujui, tetapi rekening transfer dan Paylabs belum tersedia. Hubungi CST agar pembayaran dapat diproses.
+            </p>
+          </div>
+        )}
+
         {/* ── Upload Bukti Transfer ── */}
-        {quoteReadyForPayment && (order.paymentMethod === "transfer" || (order.paymentType ?? "").startsWith("transfer")) && (
+        {manualTransferAvailable && (
           <div className="bg-card border border-border rounded-2xl overflow-hidden">
             <div className="px-5 py-3 bg-blue-50 border-b border-blue-200 flex items-center gap-2">
               <Upload className="w-4 h-4 text-blue-600 shrink-0" />
               <p className="text-sm font-semibold text-blue-900">{t("logisticOrderSuccess.uploadProof.title", "Upload Bukti Transfer")}</p>
             </div>
             <div className="p-5 space-y-3">
+              {order.manualPaymentAccount && (
+                <div className="rounded-xl border border-blue-100 bg-blue-50/60 p-4">
+                  <p className="text-[11px] uppercase tracking-wide text-slate-500">Rekening tujuan</p>
+                  <p className="mt-1 text-sm font-bold text-slate-900">{order.manualPaymentAccount.bankName}</p>
+                  <p className="text-xl font-black tracking-wide text-blue-700">{order.manualPaymentAccount.accountNumber}</p>
+                  <p className="text-xs text-slate-600">a.n. {order.manualPaymentAccount.accountHolder}</p>
+                </div>
+              )}
               {proofUploaded ? (
                 <div className="flex items-center gap-3 rounded-xl border border-emerald-300 bg-emerald-50 px-4 py-3">
                   <FileCheck className="w-5 h-5 text-emerald-600 shrink-0" />
