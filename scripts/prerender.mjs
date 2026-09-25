@@ -56,8 +56,8 @@ const SUPABASE_ORIGIN = String(
 const OG_IMAGE    = SUPABASE_ORIGIN
   ? `${SUPABASE_ORIGIN}/storage/v1/object/public/public-assets/portal-assets/static/customer-portal/images/og-cover.webp`
   : '';
-const OG_IMG_ALT  = 'B2B Marketplace and Logistic — Layanan ekspor impor, freight forwarding, dan logistik terpadu Indonesia';
-const SITE_NAME   = 'B2B Marketplace and Logistic';
+const OG_IMG_ALT  = 'CST Logistic — PT Cahaya Sejati Teknologi, layanan logistik dan transportasi Indonesia';
+const SITE_NAME   = 'CST Logistic';
 
 const routes = {
   '/': {
