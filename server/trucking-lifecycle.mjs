@@ -545,6 +545,9 @@ export async function adminReviewTrucking({ bookingNumber, admin, body }) {
     const booking = await bookingByNumber(bookingNumber, { forUpdate: true, client });
     if (!booking) fail(404, "Booking trucking tidak ditemukan.");
     if (BOOKING_TERMINAL.has(booking.status)) fail(409, "Booking sudah terminal.");
+    if (!["pending_review", "waiting_customer_approval"].includes(booking.status)) {
+      fail(409, "Harga final tidak dapat diubah setelah customer masuk tahap pembayaran atau operasional.");
+    }
 
     const finalPrice = money(body?.finalPrice);
     if (!(finalPrice > 0)) fail(400, "Harga final wajib lebih dari 0.");
@@ -608,7 +611,10 @@ async function refreshPaymentState(client, booking, actor) {
       set paid_amount=$2,remaining_amount=$3,payment_status=$4,status=$5,
           confirmed_at=case when $5='confirmed' then coalesce(confirmed_at,now()) else confirmed_at end,
           completed_at=case when $5='completed' then coalesce(completed_at,now()) else completed_at end,
-          receipt_number=case when $4='paid' then coalesce(receipt_number,'RCT-' || booking_number) else receipt_number end,
+          receipt_number=case
+            when $4='paid' then coalesce(receipt_number,'RCT-' || booking_number)
+            else null
+          end,
           updated_at=now()
       where id=$1`,
     [booking.id, totals.receivedAmount, totals.remainingAmount, paymentStatus, nextStatus],
