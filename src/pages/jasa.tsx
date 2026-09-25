@@ -138,6 +138,8 @@ const MAIN_CATEGORIES: MainCategory[] = [
   },
 ]
 
+const VISIBLE_MAIN_CATEGORIES = MAIN_CATEGORIES.filter((category) => category.id !== "additional");
+
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 const stripJasa = (name: string) => name.replace(/^Jasa\s+/i, "");
@@ -311,7 +313,7 @@ export default function Jasa() {
     .filter((service): service is CanonicalPortalService => Boolean(service?.isActive));
   const canonicalByCode = new Map(canonicalServices.map((service) => [service.code, service]));
   const presentedServiceCodes = new Set(
-    MAIN_CATEGORIES.flatMap((category) => category.services.map((service) => service.serviceCode)),
+    VISIBLE_MAIN_CATEGORIES.flatMap((category) => category.services.map((service) => service.serviceCode)),
   );
 
   const dedupById = (items: ServiceHubItem[]) => {
@@ -383,7 +385,7 @@ export default function Jasa() {
 
   const totalVendorOffers = allItems.length;
   const totalVendorItems = allItems.filter(matchSearch).length;
-  const totalCanonicalItems = MAIN_CATEGORIES.reduce((sum, cat) => sum + serviceCardsForCategory(cat).length, 0);
+  const totalCanonicalItems = VISIBLE_MAIN_CATEGORIES.reduce((sum, cat) => sum + serviceCardsForCategory(cat).length, 0);
   const totalSearchResults = totalVendorItems + totalCanonicalItems;
 
   return (
@@ -470,7 +472,7 @@ export default function Jasa() {
               <div className="flex items-center gap-6 mb-9">
                 {[
                   { val: String(canonicalServices.length || "—"), label: "Layanan Aktif" },
-                  { val: String(MAIN_CATEGORIES.length), label: "Kategori Utama" },
+                  { val: String(VISIBLE_MAIN_CATEGORIES.length), label: "Kategori Utama" },
                   { val: String(totalVendorOffers || "—"), label: "Penawaran Vendor" },
                 ].map(({ val, label }, i) => (
                   <div key={i} className="flex items-center gap-4">
@@ -593,7 +595,7 @@ export default function Jasa() {
 
             {/* ── Category sections ─────────────────────────────────────────── */}
             <div className="space-y-14 mt-10">
-              {MAIN_CATEGORIES.map((cat) => {
+              {VISIBLE_MAIN_CATEGORIES.map((cat) => {
                 const isActive = activeCatId === cat.id;
                 const vendorMatches = getItemsForCategory(cat);
                 const serviceCards = serviceCardsForCategory(cat);
