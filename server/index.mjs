@@ -819,7 +819,7 @@ async function handlePortalOrderFeed(request, response) {
   if (!user) return;
   const companyIds = await getAccessibleCompanyIds(user);
   const params = [user.id, user.email, companyIds];
-  const [crmResult, logisticResult, productResult, rfqResult] = await Promise.all([
+  const [crmResult, logisticResult, productResult, rfqResult, truckingResult] = await Promise.all([
     query(
       `select o.id, coalesce(o.id::text, '') as doc_number, o.status,
               coalesce(o.grand_total, o.total_amount, o.total, 0) as grand_total,
@@ -861,6 +861,18 @@ async function handlePortalOrderFeed(request, response) {
         limit 100`,
       params,
     ),
+    query(
+      `select t.id,t.booking_number,t.status,t.created_at,t.vehicle_name,
+              t.alamat_pickup,t.alamat_delivery,
+              coalesce(t.final_price,t.estimasi_total,0) as grand_total
+         from public.trucking_booking_requests t
+        where t.portal_customer_id=$1
+           or t.customer_id=$1
+           or t.company_id=any($3::int[])
+        order by t.created_at desc
+        limit 100`,
+      params,
+    ),
   ]);
 
   sendJson(response, 200, {
@@ -895,6 +907,16 @@ async function handlePortalOrderFeed(request, response) {
       rfqStatus: row.rfq_status,
       approvalStatus: row.approval_status,
       createdAt: row.created_at,
+    })),
+    truckingOrders: truckingResult.rows.map((row) => ({
+      id: Number(row.id),
+      bookingNumber: row.booking_number,
+      status: row.status,
+      grandTotal: Number(row.grand_total ?? 0),
+      createdAt: row.created_at,
+      vehicleName: row.vehicle_name,
+      pickup: row.alamat_pickup,
+      delivery: row.alamat_delivery,
     })),
   });
 }
