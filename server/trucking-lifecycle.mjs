@@ -103,6 +103,32 @@ async function appendEvent(client, bookingId, status, actor, notes = null, metad
   );
 }
 
+async function notifyPortalCustomer(client, customerId, { eventKey, type, title, message, payload = {} }) {
+  if (!customerId) return;
+  const run = typeof client === "function" ? client : (sql, values) => client.query(sql, values);
+  await run(
+    `insert into public.portal_customer_notifications
+       (portal_customer_id,event_key,type,title,message,payload,is_read,created_at)
+     values ($1,$2,$3,$4,$5,$6::jsonb,false,now())
+     on conflict (portal_customer_id,event_key) do nothing`,
+    [Number(customerId), eventKey, type, title, message, JSON.stringify(payload ?? {})],
+  ).catch(() => {});
+}
+
+async function notifyPortalAdmins(client, { eventKey, type, title, message, payload = {} }) {
+  const run = typeof client === "function" ? client : (sql, values) => client.query(sql, values);
+  await run(
+    `insert into public.portal_customer_notifications
+       (portal_customer_id,event_key,type,title,message,payload,is_read,created_at)
+     select id,$1,$2,$3,$4,$5::jsonb,false,now()
+       from public.portal_customers
+      where role='admin'
+        and coalesce(account_status,'active') not in ('suspended','blocked','deleted')
+     on conflict (portal_customer_id,event_key) do nothing`,
+    [eventKey, type, title, message, JSON.stringify(payload ?? {})],
+  ).catch(() => {});
+}
+
 async function bookingByNumber(bookingNumber, { forUpdate = false, client = query } = {}) {
   const run = typeof client === "function" ? client : (sql, values) => client.query(sql, values);
   const result = await run(
@@ -296,7 +322,16 @@ export async function initializeTruckingLifecycle(client, booking, actor) {
     `select id from public.trucking_status_events where booking_id=$1 limit 1`,
     [booking.id],
   )).rows[0];
-  if (!exists) await appendEvent(client, booking.id, "pending_review", actor, "Booking dibuat dan menunggu review CST.");
+  if (!exists) {
+    await appendEvent(client, booking.id, "pending_review", actor, "Booking dibuat dan menunggu review CST.");
+    await notifyPortalAdmins(client, {
+      eventKey: `trucking:new:${booking.id}`,
+      type: "trucking_booking_new",
+      title: "Booking trucking baru",
+      message: `${booking.booking_number} menunggu review CST.`,
+      payload: { bookingNumber: booking.booking_number, bookingId: Number(booking.id) },
+    });
+  }
 }
 
 
@@ -345,6 +380,13 @@ export async function customerApproveTrucking({ bookingNumber, user, companyIds,
       );
       await appendEvent(client, booking.id, "customer_rejected_quote",
         { type: "customer", id: user.id, name: user.name }, text(body?.notes));
+      await notifyPortalAdmins(client, {
+        eventKey: `trucking:quote-rejected:${booking.id}:${booking.updated_at ?? ""}`,
+        type: "trucking_quote_rejected",
+        title: "Harga trucking ditolak customer",
+        message: `${booking.booking_number} meminta revisi harga.`,
+        payload: { bookingNumber: booking.booking_number },
+      });
       await client.query("commit");
       return { ok: true, status: "pending_review" };
     }
@@ -363,6 +405,13 @@ export async function customerApproveTrucking({ bookingNumber, user, companyIds,
     );
     await appendEvent(client, booking.id, "waiting_payment",
       { type: "customer", id: user.id, name: user.name }, "Customer menyetujui harga final.");
+    await notifyPortalAdmins(client, {
+      eventKey: `trucking:quote-approved:${booking.id}`,
+      type: "trucking_quote_approved",
+      title: "Harga trucking disetujui",
+      message: `${booking.booking_number} siap masuk tahap pembayaran.`,
+      payload: { bookingNumber: booking.booking_number },
+    });
     await client.query("commit");
     return { ok: true, status: "waiting_payment" };
   } catch (error) {
@@ -415,6 +464,13 @@ export async function customerManualTruckingPayment({ bookingNumber, user, compa
       set payment_status='proof_submitted',updated_at=now() where id=$1`,
     [booking.id],
   );
+  await notifyPortalAdmins(query, {
+    eventKey: `trucking:payment-submitted:${inserted.id}`,
+    type: "trucking_payment_submitted",
+    title: "Bukti pembayaran trucking",
+    message: `${booking.booking_number} mengirim bukti pembayaran Rp${amount.toLocaleString("id-ID")}.`,
+    payload: { bookingNumber: booking.booking_number, paymentId: Number(inserted.id) },
+  });
   return { ok: true, paymentId: Number(inserted.id), status: "proof_submitted" };
 }
 
@@ -509,6 +565,13 @@ export async function adminReviewTrucking({ bookingNumber, admin, body }) {
       { type: "admin", id: admin.id, name: admin.name },
       "Harga final ditetapkan dan menunggu persetujuan customer.",
       { finalPrice, paymentTerms: terms });
+    await notifyPortalCustomer(client, booking.portal_customer_id ?? booking.customer_id, {
+      eventKey: `trucking:quote:${booking.id}:${finalPrice}`,
+      type: "trucking_quote_ready",
+      title: "Harga trucking siap disetujui",
+      message: `${booking.booking_number} memiliki harga final Rp${finalPrice.toLocaleString("id-ID")}.`,
+      payload: { bookingNumber: booking.booking_number, finalPrice },
+    });
     await client.query("commit");
     return { ok: true, status: "waiting_customer_approval" };
   } catch (error) {
@@ -595,6 +658,15 @@ export async function adminReviewTruckingPayment({ bookingNumber, paymentId, adm
     await appendEvent(client, booking.id, approved ? "payment_approved" : "payment_rejected",
       { type: "admin", id: admin.id, name: admin.name },
       approved ? `Pembayaran Rp${money(payment.amount).toLocaleString("id-ID")} disetujui.` : text(body?.reason));
+    await notifyPortalCustomer(client, booking.portal_customer_id ?? booking.customer_id, {
+      eventKey: `trucking:payment-review:${payment.id}:${approved ? "approved" : "rejected"}`,
+      type: approved ? "trucking_payment_approved" : "trucking_payment_rejected",
+      title: approved ? "Pembayaran trucking disetujui" : "Pembayaran trucking ditolak",
+      message: approved
+        ? `Pembayaran ${booking.booking_number} telah diverifikasi.`
+        : `Bukti pembayaran ${booking.booking_number} perlu diperbaiki.`,
+      payload: { bookingNumber: booking.booking_number, paymentId: Number(payment.id) },
+    });
     const refreshed = await refreshPaymentState(client, booking, { type: "system", name: "Payment Engine" });
     await client.query("commit");
     return { ok: true, ...refreshed };
@@ -630,6 +702,13 @@ export async function adminAssignTrucking({ bookingNumber, admin, body }) {
     await appendEvent(client, booking.id, "vehicle_assigned",
       { type: "admin", id: admin.id, name: admin.name },
       `Armada ${vehiclePlate} ditugaskan kepada ${driverName}.`);
+    await notifyPortalCustomer(client, booking.portal_customer_id ?? booking.customer_id, {
+      eventKey: `trucking:assigned:${booking.id}`,
+      type: "trucking_vehicle_assigned",
+      title: "Armada trucking ditugaskan",
+      message: `${booking.booking_number}: armada ${vehiclePlate} siap menjalankan order.`,
+      payload: { bookingNumber: booking.booking_number, vehiclePlate },
+    });
     await client.query("commit");
     return { ok: true, status: "vehicle_assigned", driverToken: token };
   } catch (error) {
