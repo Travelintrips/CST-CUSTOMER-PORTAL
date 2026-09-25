@@ -2146,6 +2146,12 @@ async function handleTruckingBooking(request, response, user, body) {
     return;
   }
   const tripCount = Math.max(1, Math.min(100, Math.trunc(Number(body.jumlahTrip) || 1)));
+  const rawIdempotencyKey = String(body.idempotencyKey ?? "").trim();
+  if (!rawIdempotencyKey || rawIdempotencyKey.length > 128) {
+    sendError(response, 400, "Idempotency key booking tidak valid.");
+    return;
+  }
+  const idempotencyKey = `trucking:${user.id}:${rawIdempotencyKey}`;
   const deliveryStops = normalizeTruckingDeliveryStops(body.deliveryStops);
   const isPassengerVehicle = PASSENGER_TRUCKING_VEHICLE_IDS.has(String(body.vehicleType));
   const addons = body.addons && typeof body.addons === "object" ? body.addons : {};
@@ -2191,11 +2197,14 @@ async function handleTruckingBooking(request, response, user, body) {
        pic_penerima, hp_penerima, jadwal_type, tanggal_pickup, jam_pickup, jenis_barang,
        berat_kg, jumlah_koli, volume_m3, catatan, jumlah_trip, addons, estimasi_total,
        estimated_distance_km, estimated_price, pricing_breakdown, candidate_vendor_ids,
-       selected_vendor_id, source, status
+       selected_vendor_id, source, status, idempotency_key
      ) values (
        $1,$2,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,
-       $22,$23::jsonb,$24,$25,$26,$27::jsonb,$28::jsonb,$29,'customer_portal','pending_review'
-     ) returning booking_number, status`,
+       $22,$23::jsonb,$24,$25,$26,$27::jsonb,$28::jsonb,$29,'customer_portal','pending_review',$30
+     )
+     on conflict (idempotency_key) where idempotency_key is not null
+     do update set updated_at=now()
+     returning booking_number, status`,
     [
       bookingNumber, user.id, companyIds[0] ?? null, String(body.vehicleType), String(body.vehicleName),
       String(body.areaPickup), String(body.alamatPickup), String(body.picPickup), String(body.hpPickup),
