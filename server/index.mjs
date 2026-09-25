@@ -819,7 +819,7 @@ async function handlePortalOrderFeed(request, response) {
   if (!user) return;
   const companyIds = await getAccessibleCompanyIds(user);
   const params = [user.id, user.email, companyIds];
-  const [crmResult, logisticResult, productResult, rfqResult, truckingResult] = await Promise.all([
+  const [crmResult, logisticResult, productResult, rfqResult, truckingResult, airFreightResult, oceanFreightResult] = await Promise.all([
     query(
       `select o.id, coalesce(o.id::text, '') as doc_number, o.status,
               coalesce(o.grand_total, o.total_amount, o.total, 0) as grand_total,
@@ -873,6 +873,32 @@ async function handlePortalOrderFeed(request, response) {
         limit 100`,
       params,
     ),
+    query(
+      `select a.id,a.order_number,a.status,a.tracking_status,a.created_at,
+              a.origin_airport,a.destination_airport,
+              coalesce(a.grand_total,a.final_price_idr,a.estimated_price_idr,0) as grand_total
+         from public.air_freight_orders a
+        where a.portal_customer_id=$1
+           or a.customer_id=$1
+           or lower(coalesce(a.customer_email,''))=lower($2)
+           or a.company_id=any($3::int[])
+        order by a.created_at desc
+        limit 100`,
+      params,
+    ),
+    query(
+      `select o.id,o.order_number,o.status,o.tracking_status,o.created_at,
+              o.origin_port,o.destination_port,
+              coalesce(o.grand_total,o.final_price_idr,o.estimated_price_idr,0) as grand_total
+         from public.ocean_freight_orders o
+        where o.portal_customer_id=$1
+           or o.customer_id=$1
+           or lower(coalesce(o.customer_email,''))=lower($2)
+           or o.company_id=any($3::int[])
+        order by o.created_at desc
+        limit 100`,
+      params,
+    ),
   ]);
 
   sendJson(response, 200, {
@@ -917,6 +943,26 @@ async function handlePortalOrderFeed(request, response) {
       vehicleName: row.vehicle_name,
       pickup: row.alamat_pickup,
       delivery: row.alamat_delivery,
+    })),
+    airFreightOrders: airFreightResult.rows.map((row) => ({
+      id: Number(row.id),
+      orderNumber: row.order_number,
+      status: row.status,
+      trackingStatus: row.tracking_status,
+      grandTotal: Number(row.grand_total ?? 0),
+      createdAt: row.created_at,
+      origin: row.origin_airport,
+      destination: row.destination_airport,
+    })),
+    oceanFreightOrders: oceanFreightResult.rows.map((row) => ({
+      id: Number(row.id),
+      orderNumber: row.order_number,
+      status: row.status,
+      trackingStatus: row.tracking_status,
+      grandTotal: Number(row.grand_total ?? 0),
+      createdAt: row.created_at,
+      origin: row.origin_port,
+      destination: row.destination_port,
     })),
   });
 }
