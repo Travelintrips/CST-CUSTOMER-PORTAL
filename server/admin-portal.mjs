@@ -1341,7 +1341,7 @@ async function handleServiceOperations(ctx) {
                     coalesce((select sum(pp.ocr_amount) from public.mkt_po_payment_proofs pp
                               where pp.po_id=po.id and pp.review_status='approved'),0)
                     +
-                    coalesce((select sum(p.amount) from public.payments p
+                    coalesce((select sum(p.amount) from public.mkt_gateway_payments p
                               where p.ref_kind='purchase'::payment_ref_kind
                                 and p.ref_id=po.id
                                 and p.provider='paylabs'::payment_provider
