@@ -243,6 +243,9 @@ function PaylabsPaymentSection({ order }: { order: LogisticOrderDetail }) {
 export default function OrderSuccessPage() {
   const { t } = useLanguage();
   const [order, setOrder] = useState<LogisticOrderDetail | null>(null);
+  const [quoteBusy, setQuoteBusy] = useState(false);
+  const [quoteError, setQuoteError] = useState("");
+  const [revisionNote, setRevisionNote] = useState("");
   const [, setLocation] = useLocation();
   const search = useSearch();
   const requestedOrderNumber = new URLSearchParams(search).get("order");
@@ -307,6 +310,33 @@ export default function OrderSuccessPage() {
       setProofError(String(err));
     } finally {
       setProofUploading(false);
+    }
+  }
+
+  async function respondToQuote(approved: boolean) {
+    if (!order || quoteBusy) return;
+    if (!approved && !revisionNote.trim()) {
+      setQuoteError("Tuliskan alasan atau bagian quotation yang perlu direvisi.");
+      return;
+    }
+    setQuoteBusy(true);
+    setQuoteError("");
+    try {
+      const response = await fetch(`/api/logistic/orders/${encodeURIComponent(order.orderNumber)}/quote-response`, {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ approved, note: approved ? null : revisionNote.trim() }),
+      });
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.message ?? payload.error ?? "Gagal memproses quotation.");
+      setOrder(payload);
+      localStorage.setItem("last_order", JSON.stringify(payload));
+      if (!approved) setRevisionNote("");
+    } catch (cause) {
+      setQuoteError(cause instanceof Error ? cause.message : "Gagal memproses quotation.");
+    } finally {
+      setQuoteBusy(false);
     }
   }
 
@@ -482,6 +512,62 @@ export default function OrderSuccessPage() {
           </div>
         )}
 
+        {order.customerQuoteStatus === "pending_customer_approval" && (order.finalSellingPrice ?? order.grandTotal) > 0 && (
+          <div className="rounded-2xl border border-blue-200 bg-blue-50 p-5 space-y-4">
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-wide text-blue-600">Quotation CST</p>
+              <h3 className="mt-1 text-lg font-bold text-blue-950">
+                {formatCurrency(Number(order.finalSellingPrice ?? order.grandTotal))}
+              </h3>
+              <p className="mt-1 text-sm text-blue-800">
+                Periksa harga dan ketentuan berikut. Pembayaran dilakukan setelah quotation Anda setujui.
+              </p>
+            </div>
+            {order.termsConditions && (
+              <div className="rounded-lg bg-white/80 p-3 text-sm text-slate-700">
+                <span className="font-semibold">Syarat & ketentuan:</span> {order.termsConditions}
+              </div>
+            )}
+            {order.quoteNotes && (
+              <div className="rounded-lg bg-white/80 p-3 text-sm text-slate-700">
+                <span className="font-semibold">Catatan CST:</span> {order.quoteNotes}
+              </div>
+            )}
+            <textarea
+              value={revisionNote}
+              onChange={(event) => setRevisionNote(event.target.value)}
+              rows={3}
+              className="w-full rounded-lg border border-blue-200 bg-white px-3 py-2 text-sm"
+              placeholder="Jika perlu revisi, tuliskan bagian yang ingin diubah"
+            />
+            {quoteError && <p className="text-sm text-rose-600">{quoteError}</p>}
+            <div className="flex flex-wrap gap-2">
+              <Button disabled={quoteBusy} onClick={() => void respondToQuote(true)}>
+                Setujui Quotation
+              </Button>
+              <Button disabled={quoteBusy} variant="outline" onClick={() => void respondToQuote(false)}>
+                Minta Revisi
+              </Button>
+            </div>
+          </div>
+        )}
+
+        {order.customerQuoteStatus === "approved" && (
+          <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3">
+            <p className="text-sm font-semibold text-emerald-900">Quotation sudah Anda setujui</p>
+            <p className="text-xs text-emerald-700 mt-1">
+              Harga final {formatCurrency(Number(order.finalSellingPrice ?? order.grandTotal))}. Anda dapat melanjutkan pembayaran sesuai metode yang dipilih.
+            </p>
+          </div>
+        )}
+
+        {order.customerQuoteStatus === "revision_requested" && (
+          <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3">
+            <p className="text-sm font-semibold text-amber-900">Revisi quotation diminta</p>
+            <p className="text-xs text-amber-700 mt-1">Tim CST akan meninjau permintaan revisi Anda dan mengirim quotation baru.</p>
+          </div>
+        )}
+
         {/* ── Order progress timeline ── */}
         <OrderTimeline />
 
@@ -547,7 +633,7 @@ export default function OrderSuccessPage() {
         </div>
 
         {/* ── Upload Bukti Transfer ── */}
-        {(order.paymentMethod === "transfer" || (order.paymentType ?? "").startsWith("transfer")) && (
+        {quoteReadyForPayment && (order.paymentMethod === "transfer" || (order.paymentType ?? "").startsWith("transfer")) && (
           <div className="bg-card border border-border rounded-2xl overflow-hidden">
             <div className="px-5 py-3 bg-blue-50 border-b border-blue-200 flex items-center gap-2">
               <Upload className="w-4 h-4 text-blue-600 shrink-0" />

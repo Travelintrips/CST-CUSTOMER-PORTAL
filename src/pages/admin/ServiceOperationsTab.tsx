@@ -324,6 +324,9 @@ export function ServiceOperationsTab() {
   const [showNotifications, setShowNotifications] = useState(false);
   const [actionBusy, setActionBusy] = useState(false);
   const [actionError, setActionError] = useState("");
+  const [quotePrice, setQuotePrice] = useState("");
+  const [quoteTerms, setQuoteTerms] = useState("");
+  const [quoteNotes, setQuoteNotes] = useState("");
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -388,7 +391,14 @@ export function ServiceOperationsTab() {
         { headers: getAuthHeaders(), credentials: "include", cache: "no-store" },
       );
       const payload = await response.json();
-      if (response.ok) setSelected(payload);
+      if (response.ok) {
+        setSelected(payload);
+        if (payload.service === "logistic-order") {
+          setQuotePrice(String(payload.record?.final_selling_price ?? payload.record?.grand_total ?? ""));
+          setQuoteTerms(String(payload.record?.terms_conditions ?? ""));
+          setQuoteNotes(String(payload.record?.quote_notes ?? ""));
+        }
+      }
     } finally {
       setDetailLoading(false);
     }
@@ -412,6 +422,41 @@ export function ServiceOperationsTab() {
     });
     setNotifications((items) => items.map((item) => item.id === id ? { ...item, read_at: new Date().toISOString() } : item));
     setUnread((count) => Math.max(0, count - 1));
+  }
+
+  async function sendLogisticQuote() {
+    if (!selected || selected.service !== "logistic-order" || actionBusy) return;
+    const finalPrice = Number(quotePrice);
+    if (!Number.isFinite(finalPrice) || finalPrice <= 0) {
+      setActionError("Harga final wajib lebih dari 0.");
+      return;
+    }
+    setActionBusy(true);
+    setActionError("");
+    try {
+      const response = await fetch(`/api/portal/admin/service-operations/${selected.service}/${selected.id}/actions`, {
+        method: "POST",
+        headers: { ...getAuthHeaders(), "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({
+          action: "send_quote",
+          finalPrice,
+          termsConditions: quoteTerms,
+          quoteNotes,
+        }),
+      });
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.message ?? payload.error ?? "Gagal mengirim quotation");
+      await Promise.all([load(), loadNotifications()]);
+      await openDetail(rows.find((row) => row.service_key === selected.service && row.id === selected.id) ?? {
+        service_key: selected.service,
+        id: selected.id,
+      } as ServiceRow);
+    } catch (cause) {
+      setActionError(cause instanceof Error ? cause.message : "Gagal mengirim quotation");
+    } finally {
+      setActionBusy(false);
+    }
   }
 
   async function runAction(action: "approve" | "request_revision" | "reject" | "contact") {
@@ -796,6 +841,63 @@ export function ServiceOperationsTab() {
                     <MarketplaceVendorAssignment rfqId={selected.id} />
                     <MarketplaceDealPriceEditor rfqId={selected.id} rfqStatus={String(selected.record["status"] ?? "")} />
                   </>
+                )}
+                {selected.service === "logistic-order" && (
+                  <div className="w-full rounded-xl border border-blue-200 bg-blue-50/60 p-4 space-y-3">
+                    <div>
+                      <p className="text-sm font-semibold text-blue-950">Quotation Customer</p>
+                      <p className="text-xs text-blue-700 mt-0.5">
+                        Tetapkan harga final CST. Customer akan menerima quotation dan harus menyetujui sebelum pembayaran diproses.
+                      </p>
+                    </div>
+                    <div className="grid gap-3 md:grid-cols-2">
+                      <label className="text-xs font-medium text-slate-700">
+                        Harga Final (IDR)
+                        <input
+                          type="number"
+                          min="1"
+                          value={quotePrice}
+                          onChange={(event) => setQuotePrice(event.target.value)}
+                          className="mt-1 h-10 w-full rounded-lg border border-slate-300 bg-white px-3 text-sm"
+                          placeholder="Contoh: 2500000"
+                        />
+                      </label>
+                      <label className="text-xs font-medium text-slate-700">
+                        Syarat & Ketentuan
+                        <input
+                          value={quoteTerms}
+                          onChange={(event) => setQuoteTerms(event.target.value)}
+                          className="mt-1 h-10 w-full rounded-lg border border-slate-300 bg-white px-3 text-sm"
+                          placeholder="Contoh: Berlaku 7 hari"
+                        />
+                      </label>
+                    </div>
+                    <label className="block text-xs font-medium text-slate-700">
+                      Catatan Quotation
+                      <textarea
+                        value={quoteNotes}
+                        onChange={(event) => setQuoteNotes(event.target.value)}
+                        rows={3}
+                        className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm"
+                        placeholder="Rincian harga atau catatan untuk customer"
+                      />
+                    </label>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <button
+                        type="button"
+                        disabled={actionBusy}
+                        onClick={() => void sendLogisticQuote()}
+                        className="inline-flex items-center gap-1.5 rounded-lg bg-blue-600 px-3 py-2 text-xs font-semibold text-white hover:bg-blue-700 disabled:opacity-50"
+                      >
+                        Kirim Quotation ke Customer
+                      </button>
+                      {selected.record["customer_quote_status"] && (
+                        <span className="text-xs text-slate-600">
+                          Status customer: {statusLabel(String(selected.record["customer_quote_status"]))}
+                        </span>
+                      )}
+                    </div>
+                  </div>
                 )}
                 {selected.service === "product-order" && (
                   <ProductOrderDealPriceEditor

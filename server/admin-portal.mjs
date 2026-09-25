@@ -1125,7 +1125,9 @@ async function loadServiceRows() {
     query(
       `select id, order_number, status, operational_status, admin_approval_status,
               customer_name, email, phone, company_name, company_id, portal_customer_id,
-              origin, destination, created_at, updated_at, notes
+              origin, destination, created_at, updated_at, notes,
+              final_selling_price, quotation_sent_at, customer_quote_status,
+              terms_conditions, quote_notes, payment_status, grand_total
          from public.logistic_orders order by created_at desc limit 500`,
     ),
     query(
@@ -1148,7 +1150,32 @@ async function loadServiceRows() {
   ]);
   const mapped = [
     ...rfqs.rows.map((row) => ({ service_key: "marketplace", service_label: SERVICE_LABELS.marketplace, id: Number(row.id), reference: row.rfq_number ?? `RFQ-${row.id}`, status: row.status ?? row.approval_status ?? "submitted", status_known: Boolean(row.status ?? row.approval_status), company_id: row.company_id, portal_customer_id: row.portal_customer_id, created_at: row.created_at, updated_at: row.updated_at ?? row.created_at, summary: row.delivery_address ?? row.notes ?? "", management_path: `/admin?tab=service-operations`, available_actions: actionList(row), record: row, ...customerFields(row) })),
-    ...logistic.rows.map((row) => ({ service_key: "logistic-order", service_label: SERVICE_LABELS["logistic-order"], id: Number(row.id), reference: row.order_number ?? `ORDER-${row.id}`, status: row.operational_status ?? row.admin_approval_status ?? row.status ?? "submitted", status_known: true, company_id: row.company_id, portal_customer_id: row.portal_customer_id, created_at: row.created_at, updated_at: row.updated_at ?? row.created_at, summary: `${row.origin ?? ""} → ${row.destination ?? ""}`.trim(), management_path: `/admin?tab=service-operations`, available_actions: actionList({ ...row, status: row.operational_status ?? row.admin_approval_status ?? row.status }), record: row, ...customerFields(row) })),
+    ...logistic.rows.map((row) => {
+      const baseActions = actionList({ ...row, status: row.operational_status ?? row.admin_approval_status ?? row.status })
+        .filter((action) => action !== "approve");
+      const quoteActions = !["approved","rejected","cancelled","completed"].includes(String(row.customer_quote_status ?? "").toLowerCase())
+        ? ["send_quote"]
+        : [];
+      return {
+        service_key: "logistic-order",
+        service_label: SERVICE_LABELS["logistic-order"],
+        id: Number(row.id),
+        reference: row.order_number ?? `ORDER-${row.id}`,
+        status: row.customer_quote_status === "pending_customer_approval"
+          ? "quoted"
+          : row.operational_status ?? row.admin_approval_status ?? row.status ?? "submitted",
+        status_known: true,
+        company_id: row.company_id,
+        portal_customer_id: row.portal_customer_id,
+        created_at: row.created_at,
+        updated_at: row.updated_at ?? row.created_at,
+        summary: `${row.origin ?? ""} → ${row.destination ?? ""}`.trim(),
+        management_path: `/admin?tab=service-operations`,
+        available_actions: [...new Set([...baseActions, ...quoteActions])],
+        record: row,
+        ...customerFields(row),
+      };
+    }),
     ...products.rows.map((row) => ({ service_key: "product-order", service_label: SERVICE_LABELS["product-order"], id: Number(row.id), reference: row.order_number ?? `PRODUCT-${row.id}`, status: row.status ?? "submitted", status_known: true, company_id: row.company_id, portal_customer_id: row.portal_customer_id, created_at: row.created_at, updated_at: row.updated_at ?? row.created_at, summary: row.shipping_address ?? "", management_path: `/admin?tab=service-operations`, available_actions: actionList(row), record: row, ...customerFields(row) })),
     ...serviceRequests.rows.map((row) => ({ service_key: "service-request", service_label: SERVICE_LABELS["service-request"], id: Number(row.id), reference: row.request_number ?? `CSR-${row.id}`, status: row.status ?? "submitted", status_known: true, company_id: row.company_id, portal_customer_id: row.portal_customer_id, created_at: row.created_at, updated_at: row.updated_at ?? row.created_at, summary: row.notes ?? row.request_type ?? "", management_path: `/admin?tab=service-operations`, available_actions: actionList(row), record: row, ...customerFields(row) })),
     ...quickQuotes.rows.map((row) => ({ service_key: "quote-request", service_label: SERVICE_LABELS["quote-request"], id: Number(row.id), reference: row.quote_number ?? `QUOTE-${row.id}`, status: row.status ?? "submitted", status_known: true, company_id: null, portal_customer_id: null, created_at: row.created_at, updated_at: row.updated_at ?? row.created_at, summary: `${row.service_category ?? ""} ${row.origin ?? ""} → ${row.destination ?? ""}`.trim(), management_path: `/admin?tab=service-operations`, available_actions: actionList(row), record: row, ...customerFields(row) })),
@@ -1509,7 +1536,7 @@ async function handleServiceOperations(ctx) {
     if (!row) return adminError(ctx, 404, "Transaksi canonical tidak ditemukan.");
     const action = text((ctx.body ?? {}).action);
     const reason = text((ctx.body ?? {}).reason) || null;
-    if (!["approve", "request_revision", "reject", "contact"].includes(action)) return adminError(ctx, 400, "Action tidak valid.");
+    if (!["approve", "request_revision", "reject", "contact", "send_quote"].includes(action)) return adminError(ctx, 400, "Action tidak valid.");
     if (action === "contact") {
       const rawPhone = String(row.phone ?? row.customer_phone ?? row.buyer_phone ?? "").trim();
       let phone = rawPhone.replace(/\D/g, "");
@@ -1517,6 +1544,43 @@ async function handleServiceOperations(ctx) {
       else if (phone.startsWith("8")) phone = `62${phone}`;
       if (!phone) return adminError(ctx, 400, "Nomor customer tidak tersedia.");
       ctx.sendJson(response, 200, { contactUrl: `https://wa.me/${phone}` });
+      return;
+    }
+    if (action === "send_quote") {
+      if (row.service_key !== "logistic-order") return adminError(ctx, 400, "Quotation hanya didukung untuk order logistik.");
+      const finalPrice = Number((ctx.body ?? {}).finalPrice);
+      const termsConditions = text((ctx.body ?? {}).termsConditions) || null;
+      const quoteNotes = text((ctx.body ?? {}).quoteNotes) || null;
+      if (!Number.isFinite(finalPrice) || finalPrice <= 0) return adminError(ctx, 400, "Harga final wajib lebih dari 0.");
+      await query(
+        `update public.logistic_orders
+            set final_selling_price=$1,
+                final_price=$1,
+                grand_total=$1,
+                customer_quote_status='pending_customer_approval',
+                quotation_sent_at=now(),
+                terms_conditions=$2,
+                quote_notes=$3,
+                admin_approval_status='quoted',
+                updated_at=now()
+          where id=$4 and status not in ('cancelled','rejected')`,
+        [finalPrice, termsConditions, quoteNotes, row.id],
+      );
+      if (row.portal_customer_id) {
+        await query(
+          `insert into public.portal_customer_notifications
+             (portal_customer_id,event_key,type,title,message,payload,is_read,created_at)
+           values ($1,$2,'logistic_quote_ready','Quotation CST siap disetujui',$3,$4::jsonb,false,now())
+           on conflict (portal_customer_id,event_key) do nothing`,
+          [
+            Number(row.portal_customer_id),
+            `logistic:quote:${row.id}:${finalPrice}`,
+            `${row.reference} memiliki quotation Rp${finalPrice.toLocaleString("id-ID")}.`,
+            JSON.stringify({ orderNumber: row.reference, finalPrice }),
+          ],
+        ).catch(() => {});
+      }
+      ctx.sendJson(response, 200, { ok: true, action, status: "quoted", service: row.service_key, id: row.id, finalPrice });
       return;
     }
     if (!row.available_actions.includes(action)) return adminError(ctx, 409, "Action tidak tersedia untuk status canonical saat ini.");
