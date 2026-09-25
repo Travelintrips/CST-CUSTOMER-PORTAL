@@ -3,6 +3,7 @@ import { pool, query } from "./db.mjs";
 import {
   buildPaylabsSignaturePayload,
   formatPaylabsTimestamp,
+  isPaylabsTimestampFresh,
   isTrustedPaylabsPaymentUrl,
   normalizePaylabsPem,
   resolvePaylabsWebhookStatus,
@@ -723,6 +724,10 @@ export async function handlePaylabsWebhook({ request, response, body, rawBodyTex
   const partnerId = text(request.headers["x-partner-id"], "");
   if (!signature || !timestamp) {
     sendJson(response, 401, { errCode: "401", errMsg: "Invalid signature" });
+    return true;
+  }
+  if (!isPaylabsTimestampFresh(timestamp)) {
+    sendJson(response, 401, { errCode: "401", errMsg: "Stale signature timestamp" });
     return true;
   }
 
