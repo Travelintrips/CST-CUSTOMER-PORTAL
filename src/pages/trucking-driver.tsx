@@ -53,7 +53,15 @@ export default function TruckingDriverPage() {
     {data.allowedActions.includes("in_transit") && <Button className="w-full" disabled={busy} onClick={() => action("in_transit")}>Mulai Perjalanan</Button>}
     <div className="space-y-3">{data.stops.map((s: any) => {
       const allowed = data.allowedActions.includes(`deliver_stop:${s.id}`);
-      return <div key={s.id} className="bg-white rounded-2xl border p-4"><p className="font-bold">{s.sequenceNo}. {s.address}</p><p className="text-xs text-slate-400 mt-1">{s.status}</p>{s.podUrl && <img src={s.podUrl} className="mt-3 rounded-xl max-h-40 w-full object-cover" />}{allowed && <div className="mt-3 space-y-2"><Input type="file" accept="image/*" capture="environment" onChange={(e) => setFiles((x) => ({ ...x, [s.id]: e.target.files?.[0] ?? null }))} /><Button variant="outline" className="w-full" disabled={busy || !files[s.id]} onClick={() => uploadPod(s.id)}>Upload POD</Button><Button className="w-full" disabled={busy || !s.podUrl} onClick={() => action("deliver_stop", s.id)}>Tandai Tujuan Selesai</Button></div>}</div>;
+      return <div key={s.id} className="bg-white rounded-2xl border p-4"><p className="font-bold">{s.sequenceNo}. {s.address}</p><p className="text-xs text-slate-400 mt-1">{s.status}</p>{s.podUrl && <img src={s.podUrl} className="mt-3 rounded-xl max-h-40 w-full object-cover" />}{allowed && <div className="mt-3 space-y-2">
+        {data.serviceMode !== "passenger" && <>
+          <Input type="file" accept="image/*" capture="environment" onChange={(e) => setFiles((x) => ({ ...x, [s.id]: e.target.files?.[0] ?? null }))} />
+          <Button variant="outline" className="w-full" disabled={busy || !files[s.id]} onClick={() => uploadPod(s.id)}>Upload POD</Button>
+        </>}
+        <Button className="w-full" disabled={busy || (data.serviceMode !== "passenger" && !s.podUrl)} onClick={() => action("deliver_stop", s.id)}>
+          {data.serviceMode === "passenger" ? "Konfirmasi Drop-off Selesai" : "Tandai Tujuan Selesai"}
+        </Button>
+      </div>}</div>;
     })}</div>
   </div></div>;
 }
