@@ -85,3 +85,18 @@ jobs:
           fi
 
           echo "Paylabs webhook and admin routes are live and fail closed."
+
+
+      - name: Verify Marketplace admin diagnostics fail closed
+        shell: bash
+        run: |
+          set -euo pipefail
+          status="$(curl --silent --show-error --output /tmp/mkt-queue-stats.json --write-out '%{http_code}' \
+            --max-time 20 \
+            https://cstlogistic.co.id/api/mkt/admin/notification-queue/stats)"
+          if [ "$status" != "401" ]; then
+            echo "Expected unauthenticated Marketplace queue diagnostics to return 401, got $status"
+            cat /tmp/mkt-queue-stats.json || true
+            exit 1
+          fi
+          echo "Marketplace queue diagnostics are admin-protected."
