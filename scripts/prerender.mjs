@@ -137,6 +137,20 @@ const routes = {
     ogTitle:       'Kalkulator Biaya Pengiriman Freight',
     ogDescription: 'Estimasi biaya freight forwarding udara & laut secara instan. Masukkan detail kargo dan dapatkan penawaran langsung.',
   },
+  '/kalkulator-impor': {
+    title:         `Kalkulator Tarif Impor, Bea Masuk, PPN & PPh 22 — ${SITE_NAME}`,
+    description:   'Hitung estimasi Bea Masuk, PPN Impor, PPh Pasal 22, dan total landed cost berdasarkan HS Code BTKI, kurs, Incoterm, serta skema tarif preferensial.',
+    canonical:     `${BASE_URL}/kalkulator-impor`,
+    ogTitle:       'Kalkulator Tarif Impor & Bea Masuk Indonesia',
+    ogDescription: 'Hitung Bea Masuk, PPN Impor, PPh 22, dan landed cost berdasarkan HS Code BTKI, kurs, Incoterm, dan tarif preferensial.',
+  },
+  '/translation-hub': {
+    title:         `Translation Hub AI untuk Logistik & Bisnis — ${SITE_NAME}`,
+    description:   'Terjemahkan teks bisnis dan logistik secara real-time dalam berbagai bahasa untuk komunikasi pelanggan, vendor, dokumen, dan operasional internasional.',
+    canonical:     `${BASE_URL}/translation-hub`,
+    ogTitle:       'Translation Hub AI untuk Logistik & Bisnis',
+    ogDescription: 'Terjemahan AI multi-bahasa untuk komunikasi pelanggan, vendor, dokumen, dan operasional logistik internasional.',
+  },
   '/track': {
     title:         `Lacak Pengiriman — ${SITE_NAME}`,
     description:   'Pantau status pengiriman Anda secara real-time. Masukkan nomor order atau resi untuk melihat posisi dan status terkini kargo Anda.',
