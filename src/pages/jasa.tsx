@@ -645,7 +645,7 @@ export default function Jasa() {
                     <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5 mb-5">
                       {serviceCards.map((svc) => {
                         const SvcIcon = svc.icon;
-                        const photo = SERVICE_PHOTOS[svc.title];
+                        const photo = SERVICE_PHOTOS[svc.serviceCode] ?? SERVICE_PHOTOS[svc.title];
 
                         return (
                           <Link key={svc.master?.code ?? svc.serviceCode} href={svc.href}>
