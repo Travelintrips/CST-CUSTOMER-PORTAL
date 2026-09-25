@@ -1220,6 +1220,10 @@ export async function handlePaylabsWebhook({ request, response, body, rawBodyTex
                 when $5='balance_due' then null
                 else completed_at
               end,
+              receipt_number=case
+                when $4='paid' then coalesce(receipt_number,'RCT-' || booking_number)
+                else receipt_number
+              end,
               updated_at=now()
           where id=$1`,
         [booking.id, totals.receivedAmount, totals.remainingAmount, paymentStatus, nextStatus],
