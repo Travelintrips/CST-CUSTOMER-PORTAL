@@ -132,4 +132,17 @@ describe("production runtime availability lifecycle", () => {
     expect(migration).toContain("onboarding_approvals_one_pending_per_customer_idx");
   });
 
+
+  it("submits onboarding as one serialized transaction", () => {
+    const adminPortal = readFileSync(join(process.cwd(), "server/admin-portal.mjs"), "utf8");
+
+    expect(adminPortal).toContain("const dbQuery = client.query.bind(client)");
+    expect(adminPortal).toContain('select pg_advisory_xact_lock($1)');
+    expect(adminPortal).toContain("for update");
+    expect(adminPortal).toContain("applyOrganizationSelection(");
+    expect(adminPortal).toContain("dbQuery,");
+    expect(adminPortal).toContain('await client.query("commit")');
+    expect(adminPortal).toContain('await client.query("rollback").catch(() => {})');
+  });
+
 });
