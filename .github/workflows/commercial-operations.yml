@@ -1,0 +1,45 @@
+name: Commercial Operations Monitor
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "17 * * * *"
+
+permissions:
+  contents: read
+
+jobs:
+  public-production-check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - name: Verify public production surfaces
+        shell: bash
+        run: |
+          set -euo pipefail
+          base="https://cstlogistic.co.id"
+
+          health_code="$(curl --silent --show-error --output /tmp/health.json --write-out '%{http_code}' --max-time 15 "$base/api/healthz")"
+          ready_code="$(curl --silent --show-error --output /tmp/ready.json --write-out '%{http_code}' --max-time 15 "$base/api/readyz")"
+          caps_code="$(curl --silent --show-error --output /tmp/caps.json --write-out '%{http_code}' --max-time 15 "$base/api/portal/auth/capabilities")"
+          home_code="$(curl --silent --show-error --output /tmp/home.html --write-out '%{http_code}' --max-time 15 "$base/")"
+
+          test "$health_code" = "200"
+          test "$ready_code" = "200"
+          test "$caps_code" = "200"
+          test "$home_code" = "200"
+
+          node - <<'NODE'
+          const fs = require("fs");
+          const health = JSON.parse(fs.readFileSync("/tmp/health.json", "utf8"));
+          const ready = JSON.parse(fs.readFileSync("/tmp/ready.json", "utf8"));
+          const caps = JSON.parse(fs.readFileSync("/tmp/caps.json", "utf8"));
+          if (health.status !== "ok") throw new Error("healthz not ok");
+          if (ready.status !== "ready" || ready.database !== "connected") throw new Error("readyz not ready");
+          if (caps.google !== true) throw new Error("Google auth unavailable");
+          if (caps.emailOtp !== true) throw new Error("Email OTP unavailable");
+          if (caps.password !== true) throw new Error("Password auth unavailable");
+          NODE
+
+          grep -Fqi '<!doctype html>' /tmp/home.html
+          echo "Commercial production monitor PASS"
