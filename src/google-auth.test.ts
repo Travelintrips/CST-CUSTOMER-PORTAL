@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from "vitest";
-import { authCapabilities, googleRedirectUri, resolveGoogleLogin, resolveGoogleOAuthConfig } from "../server/auth-providers.mjs";
+import { authCapabilities, googleRedirectUri, resolveGoogleLogin, resolveGoogleOAuthConfig, resolveSmtpConfig } from "../server/auth-providers.mjs";
 import { sessionCookies, verifySession } from "../server/session.mjs";
 
 type User = {
@@ -229,6 +229,38 @@ describe("canonical Google identity linking", () => {
       oauthCode: "google_profile_invalid",
     });
     expect(state.identities).toHaveLength(0);
+  });
+});
+
+describe("Email OTP production capability", () => {
+  beforeEach(() => {
+    process.env.APP_ENV = "production";
+    process.env.NODE_ENV = "production";
+    delete process.env.SMTP_PASS;
+    delete process.env.SMTP_PASSWORD;
+    delete process.env.SMTP_FROM;
+    delete process.env.SMTP_USER;
+    delete process.env.SMTP_HOST;
+    delete process.env["SMTP-HOST"];
+    delete process.env.SMTP_PORT;
+  });
+
+  it("restores SMTP credentials from app_config when runtime env is missing", async () => {
+    const config = await resolveSmtpConfig(async () => ({
+      rows: [
+        { key: "SMTP_FROM", value: " info@cstlogistic.co.id " },
+        { key: "SMTP_PASS", value: "db-mail-secret" },
+      ],
+    }) as any);
+
+    expect(config).toMatchObject({
+      from: "info@cstlogistic.co.id",
+      user: "info@cstlogistic.co.id",
+      pass: "db-mail-secret",
+      host: "smtp.hostinger.com",
+      port: 465,
+      secure: true,
+    });
   });
 });
 
