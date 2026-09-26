@@ -174,4 +174,17 @@ describe("production runtime availability lifecycle", () => {
     expect(migration).toContain("profile_status = 'active'");
   });
 
+
+  it("aligns suppliers already linked to verified vendors", () => {
+    const migration = readFileSync(
+      join(process.cwd(), "supabase/migrations/20260926202500_align_verified_vendor_suppliers.sql"),
+      "utf8",
+    );
+
+    expect(migration).toContain("registration_status = 'approved'");
+    expect(migration).toContain("is_verified = true");
+    expect(migration).toContain("onboarding_completed_at = coalesce");
+    expect(migration).toContain("vp.supplier_id = s.id");
+  });
+
 });
