@@ -351,13 +351,96 @@ export async function handleSignup(request, response) {
   json(response, 201, result, { "Set-Cookie": sessionCookies(result.token) });
 }
 
-function smtpConfig() {
+function smtpEnvConfig() {
   const pass = (process.env.SMTP_PASS ?? process.env.SMTP_PASSWORD ?? "").trim();
   const from = (process.env.SMTP_FROM ?? "").trim();
   const user = (process.env.SMTP_USER ?? from).trim();
   const host = (process.env.SMTP_HOST ?? process.env["SMTP-HOST"] ?? "smtp.hostinger.com").trim();
   const port = Number(process.env.SMTP_PORT ?? 465);
   return { pass, from, user, host, port, secure: port === 465 };
+}
+
+function smtpConfigIsUsable(config) {
+  return Boolean(
+    config?.pass
+      && config?.from
+      && config?.user
+      && config?.host
+      && Number.isFinite(config?.port)
+      && config.port > 0,
+  );
+}
+
+let smtpDbConfigCache = null;
+const SMTP_DB_CONFIG_CACHE_MS = 60_000;
+
+export async function resolveSmtpConfig(dbQuery = query) {
+  const envConfig = smtpEnvConfig();
+  if (smtpConfigIsUsable(envConfig)) return envConfig;
+
+  const useCache = dbQuery === query;
+  if (
+    useCache
+      && smtpDbConfigCache
+      && smtpDbConfigCache.expiresAt > Date.now()
+  ) {
+    return smtpDbConfigCache.config;
+  }
+
+  let databaseConfig = {};
+  try {
+    const result = await dbQuery(
+      `select key, value
+         from public.app_config
+        where upper(key) in (
+          'SMTP_PASS',
+          'SMTP_PASSWORD',
+          'SMTP_FROM',
+          'SMTP_USER',
+          'SMTP_HOST',
+          'SMTP-HOST',
+          'SMTP_PORT'
+        )`,
+    );
+    databaseConfig = Object.fromEntries(
+      result.rows
+        .filter((row) => typeof row?.key === "string" && typeof row?.value === "string")
+        .map((row) => [row.key.trim().toUpperCase(), row.value.trim()]),
+    );
+  } catch {
+    databaseConfig = {};
+  }
+
+  const from = envConfig.from || databaseConfig.SMTP_FROM || "";
+  const port = Number(
+    Number.isFinite(envConfig.port) && process.env.SMTP_PORT
+      ? envConfig.port
+      : databaseConfig.SMTP_PORT || envConfig.port || 465,
+  );
+  const config = {
+    pass:
+      envConfig.pass
+      || databaseConfig.SMTP_PASS
+      || databaseConfig.SMTP_PASSWORD
+      || "",
+    from,
+    user: envConfig.user || databaseConfig.SMTP_USER || from,
+    host:
+      envConfig.host
+      || databaseConfig.SMTP_HOST
+      || databaseConfig["SMTP-HOST"]
+      || "smtp.hostinger.com",
+    port,
+    secure: port === 465,
+  };
+
+  if (useCache) {
+    smtpDbConfigCache = {
+      config,
+      expiresAt: Date.now() + SMTP_DB_CONFIG_CACHE_MS,
+    };
+  }
+  return config;
 }
 
 const GOOGLE_CALLBACK_PATH = "/api/callback/google";
@@ -402,9 +485,8 @@ function googleRedirectBaseConfigured() {
   }
 }
 
-function emailConfigured() {
-  const config = smtpConfig();
-  return Boolean(config.pass && config.from && config.user);
+async function emailConfigured() {
+  return smtpConfigIsUsable(await resolveSmtpConfig());
 }
 
 function googleEnvConfig() {
@@ -502,19 +584,20 @@ async function fonnteStatus() {
 }
 
 export async function authCapabilities() {
-  const [whatsappStatus, googleConfig] = await Promise.all([
+  const [whatsappStatus, googleConfig, emailReady] = await Promise.all([
     fonnteStatus(),
     resolveGoogleOAuthConfig(),
+    emailConfigured(),
   ]);
   const googleReady = googleConfigIsUsable(googleConfig);
   return {
     google: googleReady,
-    emailOtp: SAFE_DEV_AUTH || emailConfigured(),
+    emailOtp: SAFE_DEV_AUTH || emailReady,
     whatsapp: SAFE_DEV_AUTH || whatsappStatus.status === "pass",
     password: true,
     providerStatus: {
       google: googleReady ? "configured" : "unconfigured",
-      email: SAFE_DEV_AUTH ? "test" : emailConfigured() ? "configured" : "unconfigured",
+      email: SAFE_DEV_AUTH ? "test" : emailReady ? "configured" : "unconfigured",
       whatsapp: whatsappStatus.status,
     },
     devLogin: !IS_PRODUCTION,
@@ -523,7 +606,10 @@ export async function authCapabilities() {
 
 async function sendEmailOtp(email, code) {
   if (SAFE_DEV_AUTH) return;
-  const config = smtpConfig();
+  const config = await resolveSmtpConfig();
+  if (!smtpConfigIsUsable(config)) {
+    throw errorWithStatus(503, "Layanan email belum dikonfigurasi. Hubungi admin.");
+  }
   const transporter = nodemailer.createTransport({
     host: config.host,
     port: config.port,
@@ -593,7 +679,7 @@ export async function handleEmailOtpRequest(request, response) {
   );
   const challengeId = inserted.rows[0]?.id;
 
-  if (!SAFE_DEV_AUTH && !emailConfigured()) {
+  if (!SAFE_DEV_AUTH && !(await emailConfigured())) {
     await query("delete from public.portal_email_otp_codes where id = $1", [challengeId]);
     throw errorWithStatus(503, "Layanan email belum dikonfigurasi. Hubungi admin.");
   }
