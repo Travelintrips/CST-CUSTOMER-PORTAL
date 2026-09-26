@@ -129,6 +129,7 @@ export default function OnboardingPage() {
   const [statusLoading, setStatusLoading] = useState(true);
   const [step, setStep]             = useState<Step>("basic");
   const [accountType, setAccountType] = useState<AccountType>("customer");
+  const [registeredRole, setRegisteredRole] = useState<AccountType | null>(null);
   const [customerType, setCustomerType] = useState<CustomerType | null>(null);
   const [companySearch, setCompanySearch] = useState("");
   const [companyOptions, setCompanyOptions] = useState<Array<{ id: number; name: string; code: string | null }>>([]);
@@ -193,6 +194,7 @@ export default function OnboardingPage() {
         );
       } else if (["customer", "vendor", "driver", "employee"].includes(role)) {
         setAccountType(role as AccountType);
+        setRegisteredRole(role as AccountType);
         if (role === "customer") setCustomerType(resolvedCustomerType);
       }
 
@@ -603,17 +605,28 @@ export default function OnboardingPage() {
           {/* ── STEP 2: Account Type ── */}
           {step === "account-type" && (
             <div className="space-y-5">
-              <h2 className="text-lg font-semibold mb-4">{t("onboarding.accountType.title", "Pilih Tipe Akun")}</h2>
+              <h2 className="text-lg font-semibold mb-2">{t("onboarding.accountType.title", "Tipe Akun")}</h2>
+              {registeredRole && (
+                <p className="text-sm text-muted-foreground mb-4">
+                  Tipe akun mengikuti pilihan saat pendaftaran dan tidak dapat diubah melalui onboarding.
+                </p>
+              )}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 {ACCOUNT_TYPES.map(({ value, label, desc, icon: Icon }) => (
                   <button
                     key={value}
                     type="button"
-                    onClick={() => setAccountType(value)}
+                    disabled={registeredRole !== null && value !== registeredRole}
+                    onClick={() => {
+                      if (registeredRole !== null && value !== registeredRole) return;
+                      setAccountType(value);
+                    }}
                     className={`flex items-start gap-3 rounded-xl border-2 p-4 text-left transition-all ${
-                      accountType === value
-                        ? "border-primary bg-primary/5 shadow-sm"
-                        : "border-gray-100 hover:border-gray-200 hover:bg-gray-50"
+                      registeredRole !== null && value !== registeredRole
+                        ? "border-gray-100 bg-gray-50 opacity-45 cursor-not-allowed"
+                        : accountType === value
+                          ? "border-primary bg-primary/5 shadow-sm"
+                          : "border-gray-100 hover:border-gray-200 hover:bg-gray-50"
                     }`}
                   >
                     <div className={`mt-0.5 p-2 rounded-lg ${accountType === value ? "bg-primary text-white" : "bg-gray-100 text-gray-500"}`}>
