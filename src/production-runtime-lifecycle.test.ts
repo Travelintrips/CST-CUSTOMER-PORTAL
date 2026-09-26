@@ -58,4 +58,16 @@ describe("production runtime availability lifecycle", () => {
     expect(storage).toContain('? "private-uploads"');
   });
 
+
+  it("production verification probes authentication surfaces after deploy", () => {
+    const workflow = readFileSync(join(process.cwd(), ".github/workflows/production-verify.yml"), "utf8");
+
+    expect(workflow).toContain("Verify authentication surface is live");
+    expect(workflow).toContain("/api/portal/auth/capabilities");
+    expect(workflow).toContain("/api/login/google?returnTo=%2Fdashboard");
+    expect(workflow).toContain("Google login is not configured/live.");
+    expect(workflow).toContain("Email OTP is not configured/live.");
+    expect(workflow).toContain("Expected Google login start to redirect with 302");
+  });
+
 });
