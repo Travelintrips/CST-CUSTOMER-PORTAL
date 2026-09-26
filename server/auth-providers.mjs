@@ -407,19 +407,75 @@ function emailConfigured() {
   return Boolean(config.pass && config.from && config.user);
 }
 
-function googleConfigured() {
-  const hasCredentials = Boolean(
-    process.env.GOOGLE_CLIENT_ID?.trim()
-      && process.env.GOOGLE_CLIENT_SECRET?.trim(),
-  );
-  if (!hasCredentials) return false;
+function googleEnvConfig() {
+  return {
+    clientId: process.env.GOOGLE_CLIENT_ID?.trim() || "",
+    clientSecret: process.env.GOOGLE_CLIENT_SECRET?.trim() || "",
+    redirectBaseUrl: process.env.GOOGLE_REDIRECT_BASE_URL?.trim() || "",
+  };
+}
 
-  // GOOGLE_REDIRECT_BASE_URL is an optional production override. When it is
-  // omitted, googleRedirectUri() derives the canonical callback from the
-  // forwarded request origin. Requiring the override here incorrectly
-  // disabled Google login even when valid OAuth credentials were installed.
-  const configuredRedirect = process.env.GOOGLE_REDIRECT_BASE_URL?.trim();
-  return !configuredRedirect || googleRedirectBaseConfigured();
+function googleConfigIsUsable(config) {
+  if (!config?.clientId || !config?.clientSecret) return false;
+  if (!config.redirectBaseUrl) return true;
+  try {
+    normalizeGoogleRedirectBase(config.redirectBaseUrl);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+let googleDbConfigCache = null;
+const GOOGLE_DB_CONFIG_CACHE_MS = 60_000;
+
+export async function resolveGoogleOAuthConfig(dbQuery = query) {
+  const envConfig = googleEnvConfig();
+  if (googleConfigIsUsable(envConfig)) return envConfig;
+
+  const useCache = dbQuery === query;
+  if (
+    useCache
+      && googleDbConfigCache
+      && googleDbConfigCache.expiresAt > Date.now()
+  ) {
+    return googleDbConfigCache.config;
+  }
+
+  let databaseConfig = {};
+  try {
+    const result = await dbQuery(
+      `select key, value
+         from public.app_config
+        where upper(key) in (
+          'GOOGLE_CLIENT_ID',
+          'GOOGLE_CLIENT_SECRET',
+          'GOOGLE_REDIRECT_BASE_URL'
+        )`,
+    );
+    databaseConfig = Object.fromEntries(
+      result.rows
+        .filter((row) => typeof row?.key === "string" && typeof row?.value === "string")
+        .map((row) => [row.key.trim().toUpperCase(), row.value.trim()]),
+    );
+  } catch {
+    databaseConfig = {};
+  }
+
+  const config = {
+    clientId: envConfig.clientId || databaseConfig.GOOGLE_CLIENT_ID || "",
+    clientSecret: envConfig.clientSecret || databaseConfig.GOOGLE_CLIENT_SECRET || "",
+    redirectBaseUrl:
+      envConfig.redirectBaseUrl || databaseConfig.GOOGLE_REDIRECT_BASE_URL || "",
+  };
+
+  if (useCache) {
+    googleDbConfigCache = {
+      config,
+      expiresAt: Date.now() + GOOGLE_DB_CONFIG_CACHE_MS,
+    };
+  }
+  return config;
 }
 
 function fonnteConfigured() {
@@ -446,14 +502,18 @@ async function fonnteStatus() {
 }
 
 export async function authCapabilities() {
-  const whatsappStatus = await fonnteStatus();
+  const [whatsappStatus, googleConfig] = await Promise.all([
+    fonnteStatus(),
+    resolveGoogleOAuthConfig(),
+  ]);
+  const googleReady = googleConfigIsUsable(googleConfig);
   return {
-    google: googleConfigured(),
+    google: googleReady,
     emailOtp: SAFE_DEV_AUTH || emailConfigured(),
     whatsapp: SAFE_DEV_AUTH || whatsappStatus.status === "pass",
     password: true,
     providerStatus: {
-      google: googleConfigured() ? "configured" : "unconfigured",
+      google: googleReady ? "configured" : "unconfigured",
       email: SAFE_DEV_AUTH ? "test" : emailConfigured() ? "configured" : "unconfigured",
       whatsapp: whatsappStatus.status,
     },
@@ -864,8 +924,8 @@ function requestOrigin(request) {
   return `${String(protocol).split(",")[0].trim()}://${String(host).split(",")[0].trim()}`;
 }
 
-export function googleRedirectUri(request) {
-  const base = process.env.GOOGLE_REDIRECT_BASE_URL?.trim() || requestOrigin(request);
+export function googleRedirectUri(request, config = googleEnvConfig()) {
+  const base = config.redirectBaseUrl || requestOrigin(request);
   return normalizeGoogleRedirectBase(base);
 }
 
@@ -908,8 +968,9 @@ function googleFailureTargetWithCode(returnTo = "/login", code = "google_callbac
   return `${target}${target.includes("?") ? "&" : "?"}${params.toString()}`;
 }
 
-export function handleGoogleStart(request, response, url) {
-  if (!googleConfigured()) {
+export async function handleGoogleStart(request, response, url) {
+  const googleConfig = await resolveGoogleOAuthConfig();
+  if (!googleConfigIsUsable(googleConfig)) {
     json(response, 503, { message: "Login Google belum dikonfigurasi." });
     return;
   }
@@ -917,8 +978,8 @@ export function handleGoogleStart(request, response, url) {
   const state = crypto.randomBytes(32).toString("hex");
   const issuedAt = Date.now();
   const params = new URLSearchParams({
-    client_id: process.env.GOOGLE_CLIENT_ID.trim(),
-    redirect_uri: googleRedirectUri(request),
+    client_id: googleConfig.clientId,
+    redirect_uri: googleRedirectUri(request, googleConfig),
     response_type: "code",
     scope: "openid email profile",
     access_type: "online",
@@ -933,14 +994,18 @@ export function handleGoogleStart(request, response, url) {
 }
 
 async function googleUser(request, code) {
-  const redirectUri = googleRedirectUri(request);
+  const googleConfig = await resolveGoogleOAuthConfig();
+  if (!googleConfigIsUsable(googleConfig)) {
+    throw oauthError(503, "Login Google belum dikonfigurasi.", "google_provider_unconfigured");
+  }
+  const redirectUri = googleRedirectUri(request, googleConfig);
   const tokenResponse = await fetch("https://oauth2.googleapis.com/token", {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body: new URLSearchParams({
       code,
-      client_id: process.env.GOOGLE_CLIENT_ID.trim(),
-      client_secret: process.env.GOOGLE_CLIENT_SECRET.trim(),
+      client_id: googleConfig.clientId,
+      client_secret: googleConfig.clientSecret,
       redirect_uri: redirectUri,
       grant_type: "authorization_code",
     }).toString(),
@@ -987,7 +1052,7 @@ async function googleUser(request, code) {
   const tokenEmailVerified = tokenInfo.email_verified === true || tokenInfo.email_verified === "true";
   if (
     !tokenInfoResponse.ok
-      || tokenAudience !== process.env.GOOGLE_CLIENT_ID.trim()
+      || tokenAudience !== googleConfig.clientId
       || !tokenInfo.sub
       || !tokenInfo.email
       || !tokenEmailVerified
