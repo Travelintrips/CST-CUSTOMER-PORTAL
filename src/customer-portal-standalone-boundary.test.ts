@@ -928,4 +928,15 @@ describe("standalone Customer Portal API boundary", () => {
     expect(server).toContain("requirePublishedStatus: false, type: null");
   });
 
+
+  it("routes admin trucking detail through a query parameter so slash-containing booking numbers remain addressable", () => {
+    const app = readFileSync(join(process.cwd(), "src/App.tsx"), "utf8");
+    const page = readFileSync(join(process.cwd(), "src/pages/admin-trucking.tsx"), "utf8");
+
+    expect(app).toContain('<Route path="/admin/trucking">');
+    expect(app).not.toContain('<Route path="/admin/trucking/:bookingNumber">');
+    expect(page).toContain('new URLSearchParams(window.location.search).get("booking")');
+    expect(page).toContain('/admin/trucking?booking=\${encodeURIComponent(row.bookingNumber)}');
+  });
+
 });

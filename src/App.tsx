@@ -461,7 +461,7 @@ function AppShell() {
         <Route path="/trucking/orders/:bookingNumber">{() => <ProtectedRoute component={TruckingOrderPage} />}</Route>
         <Route path="/trucking/driver/:token" component={TruckingDriverPage} />
         <Route path="/admin/trucking">{() => <ProtectedRoute component={AdminTruckingPage} adminOnly />}</Route>
-        <Route path="/admin/trucking/:bookingNumber">{() => <ProtectedRoute component={AdminTruckingPage} adminOnly />}</Route>
+        <Route path="/admin/trucking">{() => <ProtectedRoute component={AdminTruckingPage} adminOnly />}</Route>
         <Route path="/portal-dokumen">{() => <ProtectedRoute component={PortalDokumenPage} />}</Route>
         <Route path="/portal-invoice">{() => <ProtectedRoute component={PortalInvoicePage} />}</Route>
         <Route path="/company-profile">{() => <ProtectedRoute component={CompanyProfilePage} />}</Route>
