@@ -32,16 +32,16 @@ if (!connectionString) {
 
 const requestedPoolSize = Math.max(
   1,
-  Number(process.env.CUSTOMER_PORTAL_DB_POOL_SIZE ?? (isProduction ? 2 : 4)) || 1,
+  Number(process.env.CUSTOMER_PORTAL_DB_POOL_SIZE ?? (isProduction ? 1 : 4)) || 1,
 );
 const effectivePoolSize = isProduction
-  ? Math.min(2, requestedPoolSize)
+  ? 1
   : Math.min(8, requestedPoolSize);
 
 export const pool = new Pool({
   connectionString,
   max: effectivePoolSize,
-  idleTimeoutMillis: isProduction ? 10_000 : 30_000,
+  idleTimeoutMillis: isProduction ? 5_000 : 30_000,
   connectionTimeoutMillis: 10_000,
   ssl: { rejectUnauthorized: false },
 });
