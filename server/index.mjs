@@ -103,8 +103,8 @@ const MUTATION_METHODS = new Set(["POST", "PUT", "PATCH", "DELETE"]);
 const DEFAULT_PUBLIC_ASSET_ORIGIN = "https://xssrfshdrtdfupgqwfdw.supabase.co";
 const PUBLIC_ASSET_URL_PREFIX = "/storage/v1/object/public/public-assets/";
 const LEGACY_PORTAL_BUCKET_URL_PREFIX = "/storage/v1/object/public/portal-assets/";
-const STARTUP_MAX_ATTEMPTS = Math.max(1, Number(process.env.PORTAL_STARTUP_MAX_ATTEMPTS ?? 12));
-const STARTUP_RETRY_MS = Math.max(250, Number(process.env.PORTAL_STARTUP_RETRY_MS ?? 2500));
+const STARTUP_MAX_ATTEMPTS = Math.max(1, Number(process.env.PORTAL_STARTUP_MAX_ATTEMPTS ?? 8));
+const STARTUP_RETRY_MS = Math.max(250, Number(process.env.PORTAL_STARTUP_RETRY_MS ?? 1500));
 const DRAIN_DELAY_MS = Math.max(0, Number(process.env.PORTAL_DRAIN_DELAY_MS ?? 5000));
 const SHUTDOWN_TIMEOUT_MS = Math.max(1000, Number(process.env.PORTAL_SHUTDOWN_TIMEOUT_MS ?? 25000));
 
@@ -4726,8 +4726,9 @@ async function shutdown(signal) {
 process.on("SIGTERM", () => void shutdown("SIGTERM"));
 process.on("SIGINT", () => void shutdown("SIGINT"));
 
-startServer().catch((error) => {
+startServer().catch(async (error) => {
   runtimeState = "failed";
   console.error("[customer-portal-api] startup failed after preflight retries", error?.stack ?? error);
-  process.exitCode = 1;
+  try { await closeDatabase(); } catch {}
+  process.exit(1);
 });
