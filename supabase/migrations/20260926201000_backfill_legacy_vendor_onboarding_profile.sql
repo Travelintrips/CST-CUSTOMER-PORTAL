@@ -20,3 +20,16 @@ where c.role = 'vendor'
   )
 on conflict (customer_id) where customer_id is not null
 do nothing;
+
+-- Preserve already-verified legacy vendors as completed.
+update public.portal_customer_profiles p
+set profile_status = 'active',
+    is_verified = true,
+    verification_status = 'VERIFIED',
+    verified_at = coalesce(p.verified_at, vp.approved_at, vp.approval_date, now()),
+    updated_at = now()
+from public.portal_customers c
+join public.vendor_profiles vp on vp.customer_id = c.id
+where p.customer_id = c.id
+  and c.role = 'vendor'
+  and lower(coalesce(vp.verification_status, '')) in ('verified', 'approved');
