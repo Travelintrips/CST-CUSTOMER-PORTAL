@@ -145,4 +145,19 @@ describe("production runtime availability lifecycle", () => {
     expect(adminPortal).toContain('await client.query("rollback").catch(() => {})');
   });
 
+
+  it("keeps company onboarding requests and memberships idempotent", () => {
+    const adminPortal = readFileSync(join(process.cwd(), "server/admin-portal.mjs"), "utf8");
+    const migration = readFileSync(
+      join(process.cwd(), "supabase/migrations/20260926195500_harden_company_onboarding_request_uniqueness.sql"),
+      "utf8",
+    );
+
+    expect(adminPortal).toContain("on conflict (portal_customer_id, company_id)");
+    expect(adminPortal).toContain("on conflict (portal_customer_id)");
+    expect(adminPortal).toContain("where status in ('pending', 'submitted', 'in_review')");
+    expect(adminPortal).toContain("on conflict (customer_id) where customer_id is not null");
+    expect(migration).toContain("portal_company_requests_one_active_per_customer_idx");
+  });
+
 });

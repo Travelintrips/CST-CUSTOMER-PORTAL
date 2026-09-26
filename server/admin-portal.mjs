@@ -1024,27 +1024,17 @@ async function applyOrganizationSelection(user, body, dbQuery = query) {
   );
 
   if (companyId != null) {
-    const membership = await dbQuery(
-      `select id from public.portal_company_members
-        where portal_customer_id = $1 and company_id = $2
-        limit 1`,
+    await dbQuery(
+      `insert into public.portal_company_members
+        (portal_customer_id, company_id, buyer_role, is_active, invited_by, invited_at, joined_at, created_at, updated_at)
+       values ($1, $2, 'requester', true, $1, now(), now(), now(), now())
+       on conflict (portal_customer_id, company_id)
+       do update set
+         is_active = true,
+         joined_at = coalesce(portal_company_members.joined_at, now()),
+         updated_at = now()`,
       [user.id, companyId],
     );
-    if (membership.rows[0]) {
-      await dbQuery(
-        `update public.portal_company_members
-            set is_active = true, joined_at = coalesce(joined_at, now()), updated_at = now()
-          where id = $1`,
-        [membership.rows[0].id],
-      );
-    } else {
-      await dbQuery(
-        `insert into public.portal_company_members
-          (portal_customer_id, company_id, buyer_role, is_active, invited_by, invited_at, joined_at, created_at, updated_at)
-         values ($1, $2, 'requester', true, $1, now(), now(), now(), now())`,
-        [user.id, companyId],
-      );
-    }
   } else {
     await dbQuery(
       `update public.portal_company_members
@@ -1055,50 +1045,34 @@ async function applyOrganizationSelection(user, body, dbQuery = query) {
   }
 
   if (requestedCompanyName) {
-    const pending = await dbQuery(
-      `select id from public.portal_company_requests
-        where portal_customer_id = $1 and status in ('pending', 'submitted', 'in_review')
-        order by created_at desc limit 1`,
-      [user.id],
+    await dbQuery(
+      `insert into public.portal_company_requests
+        (portal_customer_id, requested_company_name, requested_registration_number, status, created_at, updated_at)
+       values ($1, $2, $3, 'pending', now(), now())
+       on conflict (portal_customer_id)
+         where status in ('pending', 'submitted', 'in_review')
+       do update set
+         requested_company_name = excluded.requested_company_name,
+         requested_registration_number = excluded.requested_registration_number,
+         status = 'pending',
+         reviewed_by = null,
+         reviewed_at = null,
+         updated_at = now()`,
+      [user.id, requestedCompanyName, requestedRegistrationNumber],
     );
-    if (pending.rows[0]) {
-      await dbQuery(
-        `update public.portal_company_requests
-            set requested_company_name = $1, requested_registration_number = $2,
-                status = 'pending', reviewed_by = null, reviewed_at = null, updated_at = now()
-          where id = $3`,
-        [requestedCompanyName, requestedRegistrationNumber, pending.rows[0].id],
-      );
-    } else {
-      await dbQuery(
-        `insert into public.portal_company_requests
-          (portal_customer_id, requested_company_name, requested_registration_number, status, created_at, updated_at)
-         values ($1, $2, $3, 'pending', now(), now())`,
-        [user.id, requestedCompanyName, requestedRegistrationNumber],
-      );
-    }
   }
 
-  const existingProfile = await dbQuery(
-    `select id from public.portal_customer_profiles
-      where customer_id = $1 order by updated_at desc nulls last, id desc limit 1`,
-    [user.id],
+  await dbQuery(
+    `insert into public.portal_customer_profiles
+      (customer_id, company_name, profile_status, updated_at)
+     values ($1, $2, $3, now())
+     on conflict (customer_id) where customer_id is not null
+     do update set
+       company_name = excluded.company_name,
+       profile_status = excluded.profile_status,
+       updated_at = now()`,
+    [user.id, company?.name ?? (requestedCompanyName || null), profileStatus],
   );
-  if (existingProfile.rows[0]) {
-    await dbQuery(
-      `update public.portal_customer_profiles
-          set company_name = $1, profile_status = $2, updated_at = now()
-        where id = $3`,
-      [company?.name ?? (requestedCompanyName || null), profileStatus, existingProfile.rows[0].id],
-    );
-  } else {
-    await dbQuery(
-      `insert into public.portal_customer_profiles
-        (customer_id, company_name, profile_status, updated_at)
-       values ($1, $2, $3, now())`,
-      [user.id, company?.name ?? (requestedCompanyName || null), profileStatus],
-    );
-  }
   return getOrganizationContext({ ...user, customer_type: customerType, company: company?.name ?? requestedCompanyName ?? null }, dbQuery);
 }
 
