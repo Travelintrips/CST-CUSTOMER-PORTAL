@@ -578,13 +578,21 @@ async function handleReadiness(response) {
       storageBucket: storage.bucket,
     });
   } catch (error) {
-    sendJson(response, 503, {
-      status: "not_ready",
+    // Authentication, marketplace browsing, and other database-backed APIs do
+    // not depend on document storage. Keep the core portal ready and surface
+    // storage degradation separately so one optional dependency cannot take
+    // every login method offline.
+    sendJson(response, 200, {
+      status: "ready",
       service: "customer-portal",
       appEnv: APP_ENV,
+      runtimeState,
+      readyAt: runtimeReadyAt,
+      releaseId: process.env.PORTAL_RELEASE_ID ?? "local-development",
       database: "connected",
       databaseEnvironment,
       storage: "unavailable",
+      storageDegraded: true,
       storageReason: error?.code ?? "storage_unavailable",
     });
   }
@@ -4642,7 +4650,14 @@ async function startupPreflight() {
   for (let attempt = 1; attempt <= STARTUP_MAX_ATTEMPTS; attempt += 1) {
     try {
       await checkDatabase();
-      await checkStorageReadiness();
+      try {
+        await checkStorageReadiness();
+      } catch (storageError) {
+        console.warn(
+          "[customer-portal-api] document storage degraded; core APIs remain available",
+          storageError?.code ?? storageError?.message ?? storageError,
+        );
+      }
       console.log(`[customer-portal-api] startup preflight passed on attempt ${attempt}/${STARTUP_MAX_ATTEMPTS}`);
       return;
     } catch (error) {
