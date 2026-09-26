@@ -214,4 +214,14 @@ describe("production runtime availability lifecycle", () => {
     expect(migration).toContain("'customer','vendor','driver','employee','admin'");
   });
 
+
+  it("bounds in-memory authentication rate limiter state", () => {
+    const auth = readFileSync(join(process.cwd(), "server/auth-providers.mjs"), "utf8");
+
+    expect(auth).toContain("function pruneExpiredRateBuckets");
+    expect(auth).toContain("rateBuckets.size > 10000");
+    expect(auth).toContain("rateLimitOperations % 250 === 0");
+    expect(auth).toContain("rateBuckets.delete(oldestKey)");
+  });
+
 });
