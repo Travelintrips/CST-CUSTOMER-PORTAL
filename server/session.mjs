@@ -72,6 +72,7 @@ function createPortalJwt(user) {
     email: user.email,
     customerId: Number(user.id),
     role: user.role,
+    av: Number(user.auth_version ?? 0),
     iss: "cst-portal",
     iat: Math.floor(Date.now() / 1000),
     exp: Math.floor(Date.now() / 1000) + SESSION_TTL_SECONDS,
@@ -112,6 +113,7 @@ export function verifySession(token) {
       id: Number(data.customerId),
       email: data.email,
       role: data.role,
+      authVersion: Number(data.av ?? 0),
       tokenFamily: "portal-jwt",
     };
   } catch {
