@@ -1154,44 +1154,26 @@ async function handleOnboardingComplete(ctx) {
     JSON.stringify({ accountType, driver, employee, ocrData: body.ocrData ?? null }),
     profileStatus,
   ];
-  const existingProfile = await query(
-    `select id from public.portal_customer_profiles
-      where customer_id = $1 order by updated_at desc nulls last, id desc limit 1`,
-    [ctx.user.id],
+  await query(
+    `insert into public.portal_customer_profiles
+      (customer_id, company_name, company_address, pic_name, pic_whatsapp,
+       legal_doc_url, ktp_pic_url, additional_notes, profile_status, updated_at)
+     values ($1, $2, $3, $4, $5, $6, $7, $8, $9, now())
+     on conflict (customer_id) where customer_id is not null
+     do update set
+       company_name = coalesce(excluded.company_name, portal_customer_profiles.company_name),
+       company_address = coalesce(excluded.company_address, portal_customer_profiles.company_address),
+       pic_name = coalesce(excluded.pic_name, portal_customer_profiles.pic_name),
+       pic_whatsapp = coalesce(excluded.pic_whatsapp, portal_customer_profiles.pic_whatsapp),
+       legal_doc_url = coalesce(excluded.legal_doc_url, portal_customer_profiles.legal_doc_url),
+       ktp_pic_url = coalesce(excluded.ktp_pic_url, portal_customer_profiles.ktp_pic_url),
+       additional_notes = coalesce(excluded.additional_notes, portal_customer_profiles.additional_notes),
+       profile_status = excluded.profile_status,
+       updated_at = now()`,
+    [ctx.user.id, ...profileValues],
   );
-  if (existingProfile.rows[0]) {
-    await query(
-      `update public.portal_customer_profiles
-          set company_name = coalesce($1, company_name),
-              company_address = coalesce($2, company_address),
-              pic_name = coalesce($3, pic_name),
-              pic_whatsapp = coalesce($4, pic_whatsapp),
-              legal_doc_url = coalesce($5, legal_doc_url),
-              ktp_pic_url = coalesce($6, ktp_pic_url),
-              additional_notes = coalesce($7, additional_notes),
-              profile_status = $8, updated_at = now()
-        where id = $9`,
-      [...profileValues, existingProfile.rows[0].id],
-    );
-  } else {
-    await query(
-      `insert into public.portal_customer_profiles
-        (customer_id, company_name, company_address, pic_name, pic_whatsapp,
-         legal_doc_url, ktp_pic_url, additional_notes, profile_status, updated_at)
-       values ($1, $2, $3, $4, $5, $6, $7, $8, $9, now())`,
-      [ctx.user.id, ...profileValues],
-    );
-  }
 
   if (accountType === "vendor") {
-    const existingVendorProfile = await query(
-      `select id
-         from public.vendor_profiles
-        where customer_id = $1
-        order by updated_at desc, id desc
-        limit 1`,
-      [ctx.user.id],
-    );
     const vendorValues = [
       text(vendor.companyName) || profileCompanyName,
       text(vendor.nib) || null,
@@ -1203,36 +1185,30 @@ async function handleOnboardingComplete(ctx) {
       ctx.user.email ?? null,
       address,
     ];
-    if (existingVendorProfile.rows[0]) {
-      await query(
-        `update public.vendor_profiles
-            set company_name = coalesce($1, company_name),
-                nib = coalesce($2, nib),
-                npwp = coalesce($3, npwp),
-                service_type = coalesce($4, service_type),
-                legality_doc_url = coalesce($5, legality_doc_url),
-                pic_name = coalesce($6, pic_name),
-                phone = coalesce($7, phone),
-                whatsapp = coalesce($7, whatsapp),
-                email = coalesce($8, email),
-                full_address = coalesce($9, full_address),
-                verification_status = 'pending',
-                approved_at = null,
-                approval_date = null,
-                updated_at = now()
-          where id = $10`,
-        [...vendorValues, existingVendorProfile.rows[0].id],
-      );
-    } else {
-      await query(
-        `insert into public.vendor_profiles
-          (customer_id, company_name, nib, npwp, service_type, legality_doc_url,
-           pic_name, phone, whatsapp, email, full_address, verification_status,
-           created_at, updated_at)
-         values ($1,$2,$3,$4,$5,$6,$7,$8,$8,$9,$10,'pending',now(),now())`,
-        [ctx.user.id, ...vendorValues],
-      );
-    }
+    await query(
+      `insert into public.vendor_profiles
+        (customer_id, company_name, nib, npwp, service_type, legality_doc_url,
+         pic_name, phone, whatsapp, email, full_address, verification_status,
+         created_at, updated_at)
+       values ($1,$2,$3,$4,$5,$6,$7,$8,$8,$9,$10,'pending',now(),now())
+       on conflict (customer_id)
+       do update set
+         company_name = coalesce(excluded.company_name, vendor_profiles.company_name),
+         nib = coalesce(excluded.nib, vendor_profiles.nib),
+         npwp = coalesce(excluded.npwp, vendor_profiles.npwp),
+         service_type = coalesce(excluded.service_type, vendor_profiles.service_type),
+         legality_doc_url = coalesce(excluded.legality_doc_url, vendor_profiles.legality_doc_url),
+         pic_name = coalesce(excluded.pic_name, vendor_profiles.pic_name),
+         phone = coalesce(excluded.phone, vendor_profiles.phone),
+         whatsapp = coalesce(excluded.whatsapp, vendor_profiles.whatsapp),
+         email = coalesce(excluded.email, vendor_profiles.email),
+         full_address = coalesce(excluded.full_address, vendor_profiles.full_address),
+         verification_status = 'pending',
+         approved_at = null,
+         approval_date = null,
+         updated_at = now()`,
+      [ctx.user.id, ...vendorValues],
+    );
   }
 
   let organization = null;
@@ -1244,27 +1220,16 @@ async function handleOnboardingComplete(ctx) {
       requestedRegistrationNumber: body.requestedRegistrationNumber,
     });
   } else {
-    const current = await query(
-      `select id from public.onboarding_approvals
-        where customer_id = $1 and status = 'pending'
-        order by created_at desc limit 1`,
-      [ctx.user.id],
+    await query(
+      `insert into public.onboarding_approvals
+        (customer_id, account_type, status, created_at, updated_at)
+       values ($1, $2, 'pending', now(), now())
+       on conflict (customer_id) where status = 'pending'
+       do update set
+         account_type = excluded.account_type,
+         updated_at = now()`,
+      [ctx.user.id, accountType],
     );
-    if (current.rows[0]) {
-      await query(
-        `update public.onboarding_approvals
-            set account_type = $1, updated_at = now()
-          where id = $2`,
-        [accountType, current.rows[0].id],
-      );
-    } else {
-      await query(
-        `insert into public.onboarding_approvals
-          (customer_id, account_type, status, created_at, updated_at)
-         values ($1, $2, 'pending', now(), now())`,
-        [ctx.user.id, accountType],
-      );
-    }
   }
   const status = accountType === "customer" && organization?.status === "company_pending"
     ? "company_pending"
