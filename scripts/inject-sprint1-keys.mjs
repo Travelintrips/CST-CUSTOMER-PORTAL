@@ -435,7 +435,7 @@ const translations = {
       pendingTitle: "此服务已选为运输方式",
       pendingOrderLabel: "订单:",
       pendingAddedMsg: "服务已添加。点击确认继续。",
-      pendingNotAddedMsg: "请先点击"添加到订单"。",
+      pendingNotAddedMsg: "请先点击\"添加到订单\"。",
       cancelBtn: "取消",
       confirmOrderBtn: "确认 & 继续订单",
       prevBtn: "返回",
