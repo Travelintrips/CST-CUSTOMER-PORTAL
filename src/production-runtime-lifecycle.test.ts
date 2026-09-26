@@ -187,4 +187,16 @@ describe("production runtime availability lifecycle", () => {
     expect(migration).toContain("vp.supplier_id = s.id");
   });
 
+
+  it("prevents onboarding from changing the registered account role", () => {
+    const adminPortal = readFileSync(join(process.cwd(), "server/admin-portal.mjs"), "utf8");
+    const onboarding = readFileSync(join(process.cwd(), "src/pages/onboarding.tsx"), "utf8");
+
+    expect(adminPortal).toContain("Tipe akun tidak dapat diubah melalui onboarding");
+    expect(adminPortal).toContain("accountType !== ctx.user.role");
+    expect(onboarding).toContain("registeredRole");
+    expect(onboarding).toContain("disabled={registeredRole !== null && value !== registeredRole}");
+    expect(onboarding).toContain("Tipe akun mengikuti pilihan saat pendaftaran");
+  });
+
 });
