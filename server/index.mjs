@@ -4749,9 +4749,10 @@ async function startupPreflight() {
 
 function startWorkers() {
   if (!IS_PRODUCTION || process.env.CUSTOMER_PORTAL_WA_WORKER_ENABLED === "false") return;
+  const workerStartedAt = new Date().toISOString();
   const run = async () => {
     try {
-      const result = await processMarketplaceWhatsAppQueue();
+      const result = await processMarketplaceWhatsAppQueue({ createdAfter: workerStartedAt });
       if (result?.skipped) {
         console.warn("[customer-portal-api] WhatsApp worker skipped", { reason: result.skipped });
       } else if (Number(result?.processed ?? 0) > 0 || Number(result?.failed ?? 0) > 0) {
