@@ -1,4 +1,5 @@
 import { pool, query } from "./db.mjs";
+import { resolveCustomerPortalFonnteToken } from "./fonnte-config.mjs";
 
 const clean = (v) => typeof v === "string" ? v.trim() : "";
 export function normalizeWhatsAppPhone(value) {
@@ -11,9 +12,10 @@ export function normalizeWhatsAppPhone(value) {
 }
 
 export async function sendFonnteMessage({ phone, message }) {
-  const target = normalizeWhatsAppPhone(phone), body = clean(message), token = clean(process.env.FONNTE_TOKEN);
+  const target = normalizeWhatsAppPhone(phone), body = clean(message);
+  const token = await resolveCustomerPortalFonnteToken();
   if (!target || !body) throw new Error("Nomor WhatsApp dan pesan wajib tersedia.");
-  if (!token) throw new Error("FONNTE_TOKEN belum dikonfigurasi.");
+  if (!token) throw new Error("CUSTOMER_PORTAL_FONNTE_TOKEN belum dikonfigurasi.");
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 10000);
   try {
@@ -80,7 +82,7 @@ export async function getMarketplaceWhatsAppQueueStats() {
      from public.mkt_notification_queue`,
   );
   const row = result.rows[0] ?? {};
-  const configured = Boolean(clean(process.env.FONNTE_TOKEN));
+  const configured = Boolean(await resolveCustomerPortalFonnteToken());
   const workerEnabled = process.env.CUSTOMER_PORTAL_WA_WORKER_ENABLED !== "false";
   return {
     configured,
@@ -98,7 +100,7 @@ export async function getMarketplaceWhatsAppQueueStats() {
 }
 
 export async function processMarketplaceWhatsAppQueue({ limit = 20 } = {}) {
-  if (!clean(process.env.FONNTE_TOKEN)) {
+  if (!(await resolveCustomerPortalFonnteToken())) {
     return { processed: 0, sent: 0, failed: 0, skipped: "not_configured" };
   }
 
