@@ -422,7 +422,13 @@ describe("Google OAuth production capability", () => {
     process.env.GOOGLE_CLIENT_ID = "test-client.apps.googleusercontent.com";
     process.env.GOOGLE_CLIENT_SECRET = "test-secret";
     delete process.env.GOOGLE_REDIRECT_BASE_URL;
-    delete process.env.FONNTE_TOKEN;
+
+    // Keep authCapabilities fully isolated from a real database/network during unit tests.
+    // Google capability assertions are not tests of SMTP or Fonnte connectivity.
+    process.env.SMTP_FROM = "test@example.com";
+    process.env.SMTP_USER = "test@example.com";
+    process.env.SMTP_PASS = "test-smtp-secret";
+    process.env.CUSTOMER_PORTAL_FONNTE_TOKEN = "test-fonnte-token";
   });
 
   it("restores Google OAuth credentials from app_config when runtime env is missing", async () => {
