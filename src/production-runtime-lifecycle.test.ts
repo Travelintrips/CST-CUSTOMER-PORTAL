@@ -199,4 +199,19 @@ describe("production runtime availability lifecycle", () => {
     expect(onboarding).toContain("Tipe akun mengikuti pilihan saat pendaftaran");
   });
 
+
+  it("rate-limits direct signup and constrains supported account roles", () => {
+    const auth = readFileSync(join(process.cwd(), "server/auth-providers.mjs"), "utf8");
+    const migration = readFileSync(
+      join(process.cwd(), "supabase/migrations/20260926204000_harden_portal_customer_roles.sql"),
+      "utf8",
+    );
+
+    expect(auth).toContain("signup:ip:");
+    expect(auth).toContain("signup:email:");
+    expect(auth).toContain("signup:phone:");
+    expect(migration).toContain("portal_customers_role_check");
+    expect(migration).toContain("'customer','vendor','driver','employee','admin'");
+  });
+
 });
