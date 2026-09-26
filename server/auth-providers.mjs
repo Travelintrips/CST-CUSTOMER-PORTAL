@@ -377,6 +377,10 @@ export async function handleSignup(request, response) {
   const name = typeof body.name === "string" ? body.name.trim() : "";
   const email = normalizedEmail(body.email);
   const phone = normalizePhone(body.phone);
+  const ip = requestIp(request);
+  enforceRateLimit(`signup:ip:${ip}`, 10, 60 * 60 * 1000);
+  if (email) enforceRateLimit(`signup:email:${email}`, 3, 60 * 60 * 1000);
+  if (phone) enforceRateLimit(`signup:phone:${phone}`, 3, 60 * 60 * 1000);
   const password = typeof body.password === "string" ? body.password : "";
   const role = body.role === "vendor" ? "vendor" : "customer";
   const customerType = role === "customer" && ["individual", "company"].includes(body.customerType)
