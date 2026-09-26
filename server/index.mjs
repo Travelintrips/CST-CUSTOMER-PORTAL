@@ -4817,7 +4817,7 @@ async function establishRuntimeReadiness() {
       runtimeReadyAt = new Date().toISOString();
       console.log(`[customer-portal-api] runtime ready release=${process.env.PORTAL_RELEASE_ID ?? "local-development"}`);
       startWorkers();
-      startOperationalMonitoring();
+      if (IS_PRODUCTION) startOperationalMonitoring();
       return;
     } catch (error) {
       runtimeState = "degraded";
