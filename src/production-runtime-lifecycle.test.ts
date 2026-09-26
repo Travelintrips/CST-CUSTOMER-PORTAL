@@ -294,4 +294,39 @@ describe("production runtime availability lifecycle", () => {
     expect(migration).toContain("auth_version integer not null default 0");
   });
 
+
+  it("isolates Customer Portal Fonnte credential ownership", () => {
+    const auth = readFileSync(join(process.cwd(), "server/auth-providers.mjs"), "utf8");
+    const whatsapp = readFileSync(join(process.cwd(), "server/whatsapp-service.mjs"), "utf8");
+    const server = readFileSync(join(process.cwd(), "server/index.mjs"), "utf8");
+    const fonnteConfig = readFileSync(join(process.cwd(), "server/fonnte-config.mjs"), "utf8");
+    const migration = readFileSync(
+      join(process.cwd(), "supabase/migrations/20260926223000_isolate_customer_portal_fonnte_token.sql"),
+      "utf8",
+    );
+
+    for (const source of [auth, whatsapp, server, fonnteConfig]) {
+      expect(source).not.toContain("process.env.FONNTE_TOKEN");
+    }
+    expect(fonnteConfig).toContain("CUSTOMER_PORTAL_FONNTE_TOKEN");
+    expect(migration).toContain("'CUSTOMER_PORTAL_FONNTE_TOKEN'");
+  });
+
+  it("gates Hostinger builds with release contracts and exposes commercial certification", () => {
+    const pkg = JSON.parse(readFileSync(join(process.cwd(), "package.json"), "utf8"));
+    const certification = readFileSync(
+      join(process.cwd(), "scripts/portal-commercial-certification.mjs"),
+      "utf8",
+    );
+
+    expect(pkg.scripts["build:portal"]).toContain("verify:release-contracts");
+    expect(pkg.scripts["verify:release-contracts"]).toContain("production-runtime-lifecycle.test.ts");
+    expect(pkg.scripts["verify:release-contracts"]).toContain("google-auth.test.ts");
+    expect(pkg.scripts["verify:release-contracts"]).toContain("customer-portal-standalone-boundary.test.ts");
+    expect(pkg.scripts["test:portal:commercial-certification"]).toContain("portal-commercial-certification.mjs");
+    expect(certification).toContain('status: "PASS"');
+    expect(certification).toContain("/api/portal/auth/forgot-password");
+    expect(certification).toContain("/api/portal/auth/reset-password-with-token");
+  });
+
 });

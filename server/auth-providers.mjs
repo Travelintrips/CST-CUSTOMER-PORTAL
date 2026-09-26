@@ -3,6 +3,7 @@ import bcrypt from "bcryptjs";
 import nodemailer from "nodemailer";
 import { pool, query } from "./db.mjs";
 import { createSession, sessionCookies } from "./session.mjs";
+import { resolveCustomerPortalFonnteToken } from "./fonnte-config.mjs";
 
 const APP_ENV = process.env.APP_ENV ?? process.env.NODE_ENV ?? "development";
 const IS_PRODUCTION =
@@ -676,17 +677,14 @@ export async function resolveGoogleOAuthConfig(dbQuery = query) {
   return config;
 }
 
-function fonnteConfigured() {
-  return Boolean(process.env.FONNTE_TOKEN?.trim());
-}
-
 async function fonnteStatus() {
-  if (!fonnteConfigured()) return { status: "unconfigured" };
+  const token = await resolveCustomerPortalFonnteToken();
+  if (!token) return { status: "unconfigured" };
   if (SAFE_DEV_AUTH) return { status: "test" };
   try {
     const response = await fetch("https://api.fonnte.com/device", {
       method: "POST",
-      headers: { Authorization: process.env.FONNTE_TOKEN.trim() },
+      headers: { Authorization: token },
       signal: AbortSignal.timeout(8_000),
     });
     const body = await response.json().catch(() => ({}));
@@ -779,10 +777,12 @@ function passwordResetOrigin(request) {
 
 async function sendWhatsAppOtp(phone, code) {
   if (SAFE_DEV_AUTH) return;
+  const token = await resolveCustomerPortalFonnteToken();
+  if (!token) throw errorWithStatus(503, "WhatsApp Customer Portal belum dikonfigurasi.");
   const response = await fetch("https://api.fonnte.com/send", {
     method: "POST",
     headers: {
-      Authorization: process.env.FONNTE_TOKEN.trim(),
+      Authorization: token,
       "Content-Type": "application/x-www-form-urlencoded",
     },
     body: new URLSearchParams({
