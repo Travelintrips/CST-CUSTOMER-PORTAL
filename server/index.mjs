@@ -3663,7 +3663,7 @@ async function route(request, response) {
     return;
   }
   if (request.method === "GET" && pathname === "/api/login/google") {
-    handleGoogleStart(request, response, url);
+    await handleGoogleStart(request, response, url);
     return;
   }
   if (request.method === "GET" && pathname === "/api/callback/google") {
