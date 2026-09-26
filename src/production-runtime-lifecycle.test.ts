@@ -160,4 +160,18 @@ describe("production runtime availability lifecycle", () => {
     expect(migration).toContain("portal_company_requests_one_active_per_customer_idx");
   });
 
+
+  it("backfills legacy vendors without forcing verified vendors through onboarding again", () => {
+    const migration = readFileSync(
+      join(process.cwd(), "supabase/migrations/20260926201000_backfill_legacy_vendor_onboarding_profile.sql"),
+      "utf8",
+    );
+
+    expect(migration).toContain("'incomplete'");
+    expect(migration).toContain("not exists");
+    expect(migration).toContain("verification_status = 'VERIFIED'");
+    expect(migration).toContain("in ('verified', 'approved')");
+    expect(migration).toContain("profile_status = 'active'");
+  });
+
 });
