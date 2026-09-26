@@ -104,4 +104,16 @@ describe("production runtime availability lifecycle", () => {
     expect(adminPortal).not.toContain("or lower(name) = lower($2)");
   });
 
+
+  it("makes onboarding approval atomic and locks the approval row", () => {
+    const adminPortal = readFileSync(join(process.cwd(), "server/admin-portal.mjs"), "utf8");
+
+    expect(adminPortal).toContain('import { pool, query } from "./db.mjs"');
+    expect(adminPortal).toContain('await client.query("begin")');
+    expect(adminPortal).toContain("for update");
+    expect(adminPortal).toContain('await client.query("commit")');
+    expect(adminPortal).toContain('await client.query("rollback").catch(() => {})');
+    expect(adminPortal).toContain("Profil vendor belum tersedia. Selesaikan onboarding vendor sebelum approval.");
+  });
+
 });
