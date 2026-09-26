@@ -231,7 +231,8 @@ describe("standalone Customer Portal API boundary", () => {
     const page = readFileSync(join(process.cwd(), "src/pages/trucking.tsx"), "utf8");
     expect(page).toContain("Tol & parkir sesuai biaya aktual");
     expect(page).toContain("Cek Tarif Perjalanan");
-    expect(page).toContain("Pesan Mobil");
+    expect(page).toContain("submitBooking");
+    expect(page).toContain("isPassengerVehicle");
     expect(page).toContain('isPassengerVehicle ? (["dasar"] as const)');
   });
 
@@ -282,7 +283,8 @@ describe("standalone Customer Portal API boundary", () => {
     const admin = readFileSync(join(process.cwd(), "src/pages/admin-trucking.tsx"), "utf8");
     const driver = readFileSync(join(process.cwd(), "src/pages/trucking-driver.tsx"), "utf8");
 
-    expect(server).toContain("/api/portal/trucking/orders/");
+    expect(server).toContain("customerTruckingOrderMatch");
+    expect(server).toContain("^\\/api\\/portal\\/trucking\\/orders\\/");
     expect(server).toContain("/api/portal/admin/trucking");
     expect(server).toContain("/api/trucking/driver/");
     expect(lifecycle).toContain("waiting_customer_approval");
@@ -613,7 +615,8 @@ describe("standalone Customer Portal API boundary", () => {
 
   it("uses canonical vendor verification status during bootstrap", () => {
     const server = readFileSync(join(process.cwd(), "server/index.mjs"), "utf8");
-    expect(server).toContain("select verification_status from public.vendor_profiles");
+    expect(server).toContain("from public.vendor_profiles");
+    expect(server).toContain("verification_status");
     expect(server).toContain("vendorApprovalStatus,");
     expect(server).not.toContain('vendorApprovalStatus: user.role === "vendor" ? "pending" : null');
   });
@@ -642,8 +645,10 @@ describe("standalone Customer Portal API boundary", () => {
 
   it("queues marketplace notifications for internal UI and WhatsApp with channel-scoped deduplication", () => {
     const marketplace = readFileSync(join(process.cwd(), "server/marketplace-service.mjs"), "utf8");
-    expect(marketplace).toContain('for (const channel of ["internal", "whatsapp"])');
-    expect(marketplace).toContain('${key}:${channel}');
+    expect(marketplace).toContain("mkt_notification_queue is the durable WhatsApp delivery queue");
+    expect(marketplace).toContain("values ($1,'whatsapp'");
+    expect(marketplace).toContain('${key}:whatsapp');
+    expect(marketplace).toContain("notifyRfqCustomer");
   });
 
   it("only processes fresh opt-in WhatsApp queue rows and never drains historical internal notifications", () => {
