@@ -46,4 +46,16 @@ describe("production runtime availability lifecycle", () => {
     expect(workflow).toContain('if [ "$consecutive" -ge 3 ]');
     expect(workflow).toContain("Release readiness and front door are stable across three consecutive probes.");
   });
+
+  it("keeps core auth APIs available when document storage is degraded", () => {
+    const server = readFileSync(join(process.cwd(), "server/index.mjs"), "utf8");
+    const storage = readFileSync(join(process.cwd(), "server/storage.mjs"), "utf8");
+
+    expect(server).toContain("document storage degraded; core APIs remain available");
+    expect(server).toContain("storageDegraded: true");
+    expect(server).toContain('status: "ready"');
+    expect(storage).toContain('process.env.SUPABASE_STORAGE_BUCKET || "private-uploads"');
+    expect(storage).toContain('? "private-uploads"');
+  });
+
 });
