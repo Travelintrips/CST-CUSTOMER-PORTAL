@@ -280,7 +280,7 @@ async function runRecoveryDrillIfDue() {
 }
 
 export function startOperationalMonitoring() {
-  if (process.env.CUSTOMER_PORTAL_OPERATIONS_MONITOR_ENABLED === "false") return;
+  if (process.env.CUSTOMER_PORTAL_OPERATIONS_MONITOR_ENABLED !== "true") return;
   if (healthTimer || publicProbeTimer || recoveryTimer || cleanupTimer) return;
 
   healthTimer = setInterval(() => void runOperationalHealthCheck(), 5 * 60_000);

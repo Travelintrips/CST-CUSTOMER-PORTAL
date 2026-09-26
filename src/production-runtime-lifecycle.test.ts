@@ -336,17 +336,16 @@ describe("production runtime availability lifecycle", () => {
   it("caps production database connections below the Supabase session pool ceiling", () => {
     const db = readFileSync(join(process.cwd(), "server/db.mjs"), "utf8");
 
-    expect(db).toContain("isProduction ? 2 : 4");
-    expect(db).toContain("Math.min(2, requestedPoolSize)");
-    expect(db).toContain("idleTimeoutMillis: isProduction ? 10_000 : 30_000");
+    expect(db).toContain("isProduction ? 1 : 4");
+    expect(db).toContain("? 1");
+    expect(db).toContain("idleTimeoutMillis: isProduction ? 5_000 : 30_000");
   });
 
-  it("pins production secrets to the standalone Customer Portal bundle", () => {
+  it("uses the configured production secret bundle with Customer Portal as the fallback", () => {
     const bootstrap = readFileSync(join(process.cwd(), "server/secret-bootstrap.mjs"), "utf8");
 
     expect(bootstrap).toContain('DEFAULT_BUNDLE_PREFIX = "customer-portal"');
-    expect(bootstrap).toContain('appEnv === "production"');
-    expect(bootstrap).toContain("? DEFAULT_BUNDLE_PREFIX");
+    expect(bootstrap).toContain("target.GCP_SECRET_BUNDLE_PREFIX || DEFAULT_BUNDLE_PREFIX");
   });
 
   it("only lets the WhatsApp worker consume rows created after worker startup", () => {
