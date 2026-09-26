@@ -741,6 +741,42 @@ async function sendEmailOtp(email, code) {
   });
 }
 
+
+async function sendPasswordResetEmail(email, resetUrl) {
+  if (SAFE_DEV_AUTH) return;
+  const config = await resolveSmtpConfig();
+  if (!smtpConfigIsUsable(config)) {
+    throw errorWithStatus(503, "Layanan email belum dikonfigurasi. Hubungi admin.");
+  }
+  const transporter = nodemailer.createTransport({
+    host: config.host,
+    port: config.port,
+    secure: config.secure,
+    auth: { user: config.user, pass: config.pass },
+  });
+  await transporter.sendMail({
+    from: config.from,
+    to: email,
+    subject: "Reset Password — CST Portal",
+    text: `Gunakan link berikut untuk membuat password baru:\n\n${resetUrl}\n\nLink berlaku selama 30 menit. Jika Anda tidak meminta reset password, abaikan email ini.`,
+  });
+}
+
+function passwordResetOrigin(request) {
+  const configured = String(process.env.PORTAL_PUBLIC_ORIGIN ?? "").trim();
+  if (configured) {
+    try {
+      const parsed = new URL(configured);
+      if (parsed.protocol === "https:" || (!IS_PRODUCTION && parsed.protocol === "http:")) {
+        return parsed.origin;
+      }
+    } catch {
+      // Fall through to canonical/default origin.
+    }
+  }
+  return IS_PRODUCTION ? "https://cstlogistic.co.id" : requestOrigin(request);
+}
+
 async function sendWhatsAppOtp(phone, code) {
   if (SAFE_DEV_AUTH) return;
   const response = await fetch("https://api.fonnte.com/send", {
@@ -763,6 +799,163 @@ async function sendWhatsAppOtp(phone, code) {
 
 export async function handleCapabilities(response) {
   json(response, 200, await authCapabilities());
+}
+
+
+export async function handlePasswordLogin(request, response) {
+  const body = await readJson(request);
+  const email = normalizedEmail(body.email);
+  const password = typeof body.password === "string" ? body.password : "";
+  if (!email || !password) throw errorWithStatus(400, "Email dan password wajib diisi.");
+
+  const ip = requestIp(request);
+  enforceRateLimit(`password-login:ip:${ip}`, 10, 15 * 60 * 1000);
+  enforceRateLimit(`password-login:email:${email}`, 10, 15 * 60 * 1000);
+
+  const result = await query(
+    `select id, name, email, phone, company, role, customer_type, account_status, password_hash
+       from public.portal_customers
+      where lower(trim(email)) = $1
+      limit 1`,
+    [email],
+  );
+  const user = result.rows[0];
+  if (
+    !user
+    || !accountIsUsable(user)
+    || !user.password_hash
+    || !(await bcrypt.compare(password, user.password_hash))
+  ) {
+    throw errorWithStatus(401, "Email atau password salah.");
+  }
+
+  const login = await loginUser(user);
+  json(response, 200, login, { "Set-Cookie": sessionCookies(login.token) });
+}
+
+export async function handleForgotPassword(request, response) {
+  const body = await readJson(request);
+  const email = normalizedEmail(body.email);
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    throw errorWithStatus(400, "Format email tidak valid.");
+  }
+
+  const ip = requestIp(request);
+  enforceRateLimit(`forgot-password:ip:${ip}`, 5, 15 * 60 * 1000);
+  enforceRateLimit(`forgot-password:email:${email}`, 3, 60 * 60 * 1000);
+
+  if (!SAFE_DEV_AUTH && !(await emailConfigured())) {
+    throw errorWithStatus(503, "Layanan email belum dikonfigurasi. Hubungi admin.");
+  }
+
+  const genericMessage = "Jika email terdaftar, link reset password akan dikirim.";
+  const userResult = await query(
+    `select id, email, account_status
+       from public.portal_customers
+      where lower(trim(email)) = $1
+      limit 1`,
+    [email],
+  );
+  const user = userResult.rows[0] ?? null;
+  if (!user || !accountIsUsable(user)) {
+    json(response, 200, { message: genericMessage });
+    return;
+  }
+
+  const rawToken = crypto.randomBytes(32).toString("base64url");
+  const tokenHash = hashToken(rawToken);
+  const created = await withTransaction(async (dbQuery) => {
+    await dbQuery(
+      `update public.portal_password_reset_tokens
+          set used_at = coalesce(used_at, now())
+        where customer_id = $1 and used_at is null`,
+      [user.id],
+    );
+    return dbQuery(
+      `insert into public.portal_password_reset_tokens
+        (customer_id, email, token_hash, request_ip, expires_at)
+       values ($1, $2, $3, $4, now() + interval '30 minutes')
+       returning id`,
+      [user.id, email, tokenHash, ip],
+    );
+  });
+  const tokenId = created.rows[0]?.id;
+  if (!tokenId) throw errorWithStatus(500, "Gagal menyiapkan reset password.");
+
+  const resetUrl = new URL("/reset-password", passwordResetOrigin(request));
+  resetUrl.searchParams.set("token", rawToken);
+  resetUrl.searchParams.set("email", email);
+
+  try {
+    await sendPasswordResetEmail(email, resetUrl.toString());
+  } catch (error) {
+    await query(
+      "delete from public.portal_password_reset_tokens where id = $1 and used_at is null",
+      [tokenId],
+    );
+    throw errorWithStatus(503, "Gagal mengirim email reset password. Coba lagi.");
+  }
+
+  json(response, 200, {
+    message: genericMessage,
+    ...(SAFE_DEV_AUTH ? { _dev_reset_url: resetUrl.toString() } : {}),
+  });
+}
+
+export async function handleResetPasswordWithToken(request, response) {
+  const body = await readJson(request);
+  const email = normalizedEmail(body.email);
+  const rawToken = typeof body.token === "string" ? body.token.trim() : "";
+  const password = typeof body.password === "string" ? body.password : "";
+
+  if (!email || rawToken.length < 32) {
+    throw errorWithStatus(400, "Link reset password tidak valid.");
+  }
+  if (password.length < 8 || password.length > 128) {
+    throw errorWithStatus(400, "Password harus 8–128 karakter.");
+  }
+
+  const ip = requestIp(request);
+  enforceRateLimit(`reset-password:ip:${ip}`, 10, 15 * 60 * 1000);
+  enforceRateLimit(`reset-password:email:${email}`, 10, 15 * 60 * 1000);
+
+  const tokenHash = hashToken(rawToken);
+  const passwordHash = await bcrypt.hash(password, 12);
+
+  await withTransaction(async (dbQuery) => {
+    const reset = await dbQuery(
+      `select r.id, r.customer_id
+         from public.portal_password_reset_tokens r
+         join public.portal_customers c on c.id = r.customer_id
+        where r.token_hash = $1
+          and lower(trim(r.email)) = $2
+          and lower(trim(c.email)) = $2
+          and r.used_at is null
+          and r.expires_at > now()
+        limit 1
+        for update`,
+      [tokenHash, email],
+    );
+    const row = reset.rows[0];
+    if (!row) throw errorWithStatus(400, "Link reset password tidak valid atau sudah kadaluarsa.");
+
+    await dbQuery(
+      "update public.portal_customers set password_hash = $1 where id = $2",
+      [passwordHash, row.customer_id],
+    );
+    await dbQuery(
+      "update public.portal_password_reset_tokens set used_at = now() where id = $1",
+      [row.id],
+    );
+    await dbQuery(
+      `update public.portal_password_reset_tokens
+          set used_at = coalesce(used_at, now())
+        where customer_id = $1 and id <> $2 and used_at is null`,
+      [row.customer_id, row.id],
+    );
+  });
+
+  json(response, 200, { ok: true, message: "Password berhasil diubah. Silakan login kembali." });
 }
 
 export async function handleEmailOtpRequest(request, response) {

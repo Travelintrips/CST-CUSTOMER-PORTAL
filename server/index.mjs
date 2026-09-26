@@ -1,6 +1,5 @@
 import http from "node:http";
 import { timingSafeEqual } from "node:crypto";
-import bcrypt from "bcryptjs";
 import { serveStatic } from "./static-server.mjs";
 import {
   checkDatabase,
@@ -63,6 +62,9 @@ import {
   handleCapabilities,
   handleEmailOtpRequest,
   handleEmailOtpVerify,
+  handleForgotPassword,
+  handlePasswordLogin,
+  handleResetPasswordWithToken,
   handleSignup,
   handleGoogleCallback,
   handleGoogleStart,
@@ -743,39 +745,6 @@ async function handleDevLogin(request, response) {
       role: user.role,
     },
   }, { "Set-Cookie": sessionCookies(token) });
-}
-
-async function handleLogin(request, response) {
-  const body = await readJson(request);
-  const email = typeof body.email === "string" ? body.email.trim().toLowerCase() : "";
-  const password = typeof body.password === "string" ? body.password : "";
-  if (!email || !password) {
-    sendError(response, 400, "Email and password are required.");
-    return;
-  }
-
-  const result = await query(
-    `select id, name, email, phone, company, role, customer_type, account_status, password_hash
-       from public.portal_customers
-      where lower(email) = $1
-      limit 1`,
-    [email],
-  );
-  const user = result.rows[0];
-  if (
-    !user ||
-     !["active", null, undefined].includes(user.account_status) ||
-    !user.password_hash ||
-    !(await bcrypt.compare(password, user.password_hash))
-  ) {
-    sendError(response, 401, "Email or password is incorrect.");
-    return;
-  }
-
-  const token = createSession(user);
-  sendJson(response, 200, authResponse(user, token), {
-    "Set-Cookie": sessionCookies(token),
-  });
 }
 
 async function handleSetCookie(request, response) {
@@ -3780,7 +3749,15 @@ async function route(request, response) {
     return;
   }
   if (request.method === "POST" && pathname === "/api/portal/auth/login") {
-    await handleLogin(request, response);
+    await handlePasswordLogin(request, response);
+    return;
+  }
+  if (request.method === "POST" && pathname === "/api/portal/auth/forgot-password") {
+    await handleForgotPassword(request, response);
+    return;
+  }
+  if (request.method === "POST" && pathname === "/api/portal/auth/reset-password-with-token") {
+    await handleResetPasswordWithToken(request, response);
     return;
   }
   if (request.method === "POST" && pathname === "/api/portal/auth/signup") {
