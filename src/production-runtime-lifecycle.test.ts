@@ -224,4 +224,17 @@ describe("production runtime availability lifecycle", () => {
     expect(auth).toContain("rateBuckets.delete(oldestKey)");
   });
 
+
+  it("enforces normalized email and phone uniqueness at the database boundary", () => {
+    const migration = readFileSync(
+      join(process.cwd(), "supabase/migrations/20260926211500_harden_portal_account_identity_uniqueness.sql"),
+      "utf8",
+    );
+
+    expect(migration).toContain("portal_customers_email_normalized_unique_idx");
+    expect(migration).toContain("portal_customers_phone_normalized_unique_idx");
+    expect(migration).toContain("lower(trim(email))");
+    expect(migration).toContain("regexp_replace(coalesce(phone, ''), '[^0-9]', '', 'g')");
+  });
+
 });
