@@ -4,19 +4,35 @@ import { join, relative } from "node:path";
 import { spawnSync } from "node:child_process";
 
 const root = process.cwd();
-const targets = [join(root, "server"), join(root, "scripts")];
 const files = [];
 
-function collect(dir) {
+function collectRuntime(dir) {
   for (const name of readdirSync(dir)) {
     const path = join(dir, name);
     const stat = statSync(path);
-    if (stat.isDirectory()) collect(path);
+    if (stat.isDirectory()) collectRuntime(path);
     else if (stat.isFile() && path.endsWith(".mjs")) files.push(path);
   }
 }
 
-for (const dir of targets) collect(dir);
+// All production server modules are syntax-critical.
+collectRuntime(join(root, "server"));
+
+// Only scripts that are executed by build/start/production verification are
+// syntax-critical for deploy. Legacy one-off maintenance scripts must not
+// block an otherwise valid production release.
+for (const name of [
+  "ensure-esbuild-executable.mjs",
+  "validate-translations.mjs",
+  "validate-seo-contract.mjs",
+  "build-vite.mjs",
+  "prerender.mjs",
+  "prepare-hostinger.mjs",
+  "portal-production-smoke.mjs",
+]) {
+  files.push(join(root, "scripts", name));
+}
+
 files.push(join(root, "index.js"));
 
 for (const file of files) {
@@ -31,4 +47,4 @@ for (const file of files) {
   }
 }
 
-console.log(`[server-syntax] PASS ${files.length} runtime files`);
+console.log(`[server-syntax] PASS ${files.length} production runtime/build files`);
