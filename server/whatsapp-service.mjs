@@ -99,12 +99,21 @@ export async function getMarketplaceWhatsAppQueueStats() {
   };
 }
 
-export async function processMarketplaceWhatsAppQueue({ limit = 20 } = {}) {
+export async function processMarketplaceWhatsAppQueue({
+  limit = 20,
+  createdAfter = new Date(Date.now() - 5 * 60_000).toISOString(),
+} = {}) {
   if (!(await resolveCustomerPortalFonnteToken())) {
     return { processed: 0, sent: 0, failed: 0, skipped: "not_configured" };
   }
 
+  const cutoff = new Date(createdAfter);
+  if (Number.isNaN(cutoff.getTime())) {
+    throw new Error("WhatsApp queue cutoff tidak valid.");
+  }
+  const cutoffIso = cutoff.toISOString();
   const batch = Math.min(50, Math.max(1, Number(limit) || 20));
+
   await query(
     `update public.mkt_notification_queue
         set status='pending',
@@ -112,8 +121,10 @@ export async function processMarketplaceWhatsAppQueue({ limit = 20 } = {}) {
             last_error=coalesce(last_error,'Recovered after interrupted WhatsApp delivery.'),
             updated_at=now()
       where channel='whatsapp'
+        and created_at >= $1
         and status='sending'
         and updated_at < now() - interval '10 minutes'`,
+    [cutoffIso],
   );
 
   const claimed = await query(
@@ -121,10 +132,11 @@ export async function processMarketplaceWhatsAppQueue({ limit = 20 } = {}) {
        select id
          from public.mkt_notification_queue
         where channel='whatsapp'
+          and created_at >= $1
           and status in ('pending','failed','retrying')
           and (next_retry_at is null or next_retry_at <= now())
         order by created_at,id
-        limit $1
+        limit $2
         for update skip locked
      )
      update public.mkt_notification_queue q
@@ -135,7 +147,7 @@ export async function processMarketplaceWhatsAppQueue({ limit = 20 } = {}) {
                 q.rfq_id,q.vendor_quote_id,q.purchase_order_id,q.payload_json,
                 q.deduplication_key,q.status,q.attempt_count,q.max_attempts,
                 q.next_retry_at,q.created_at`,
-    [batch],
+    [cutoffIso, batch],
   );
 
   const rows = claimed.rows ?? [];
@@ -209,7 +221,7 @@ export async function processMarketplaceWhatsAppQueue({ limit = 20 } = {}) {
     }
   }
 
-  return { processed: rows.length, sent, failed };
+  return { processed: rows.length, sent, failed, createdAfter: cutoffIso };
 }
 
 export async function retryWhatsAppLog(id) {

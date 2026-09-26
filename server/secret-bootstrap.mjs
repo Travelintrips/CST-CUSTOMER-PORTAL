@@ -117,7 +117,9 @@ function validateLoadedEnvironment(env, appEnv, loadedKeys) {
 export async function loadSecrets(target = process.env) {
   const appEnv = resolveEnvironment(target);
   const credentials = validateBootstrapJson(target.GCP_SECRET_MANAGER_BOOTSTRAP_JSON);
-  const bundlePrefix = target.GCP_SECRET_BUNDLE_PREFIX || DEFAULT_BUNDLE_PREFIX;
+  const bundlePrefix = appEnv === "production"
+    ? DEFAULT_BUNDLE_PREFIX
+    : target.GCP_SECRET_BUNDLE_PREFIX || DEFAULT_BUNDLE_PREFIX;
   const bundleName = `${bundlePrefix}-${appEnv}`;
   const secretName =
     `projects/${credentials.project_id}/secrets/${bundleName}/versions/latest`;

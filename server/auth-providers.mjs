@@ -580,7 +580,11 @@ function normalizeGoogleRedirectBase(value) {
   ) {
     throw errorWithStatus(503, "Konfigurasi callback Google tidak valid.");
   }
-  if (IS_PRODUCTION && parsed.protocol !== "https:") {
+  const productionMode =
+    process.env.APP_ENV === "production"
+    || process.env.NODE_ENV === "production"
+    || process.env.REPLIT_DEPLOYMENT === "1";
+  if (productionMode && parsed.protocol !== "https:") {
     throw errorWithStatus(503, "Konfigurasi callback Google production harus menggunakan HTTPS.");
   }
 

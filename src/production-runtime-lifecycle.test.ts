@@ -329,4 +329,31 @@ describe("production runtime availability lifecycle", () => {
     expect(certification).toContain("/api/portal/auth/reset-password-with-token");
   });
 
+
+  it("caps production database connections below the Supabase session pool ceiling", () => {
+    const db = readFileSync(join(process.cwd(), "server/db.mjs"), "utf8");
+
+    expect(db).toContain("isProduction ? 2 : 4");
+    expect(db).toContain("Math.min(2, requestedPoolSize)");
+    expect(db).toContain("idleTimeoutMillis: isProduction ? 10_000 : 30_000");
+  });
+
+  it("pins production secrets to the standalone Customer Portal bundle", () => {
+    const bootstrap = readFileSync(join(process.cwd(), "server/secret-bootstrap.mjs"), "utf8");
+
+    expect(bootstrap).toContain('DEFAULT_BUNDLE_PREFIX = "customer-portal"');
+    expect(bootstrap).toContain('appEnv === "production"');
+    expect(bootstrap).toContain("? DEFAULT_BUNDLE_PREFIX");
+  });
+
+  it("only lets the WhatsApp worker consume rows created after worker startup", () => {
+    const server = readFileSync(join(process.cwd(), "server/index.mjs"), "utf8");
+    const whatsapp = readFileSync(join(process.cwd(), "server/whatsapp-service.mjs"), "utf8");
+
+    expect(server).toContain("const workerStartedAt = new Date().toISOString()");
+    expect(server).toContain("createdAfter: workerStartedAt");
+    expect(whatsapp).toContain("created_at >= $1");
+    expect(whatsapp).toContain("createdAfter: cutoffIso");
+  });
+
 });

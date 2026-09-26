@@ -309,7 +309,7 @@ describe("canonical Google identity linking", () => {
       email: "vendor@example.com",
       role: "vendor",
       company: "PT Vendor Baru",
-      customer_type: null,
+      customerType: null,
     });
     expect(verifySession(result.token)).toMatchObject({ role: "vendor" });
     expect(state.profiles).toEqual([
@@ -471,12 +471,17 @@ describe("Google OAuth production capability", () => {
     );
   });
 
-  it("fails closed when an explicit redirect override is invalid", async () => {
+  it("fails closed when an explicit redirect override is invalid", () => {
     process.env.GOOGLE_REDIRECT_BASE_URL = "http://cstlogistic.co.id";
+    const request = {
+      headers: {
+        "x-forwarded-proto": "https",
+        "x-forwarded-host": "cstlogistic.co.id",
+      },
+    } as any;
 
-    const capabilities = await authCapabilities();
-
-    expect(capabilities.google).toBe(false);
-    expect(capabilities.providerStatus.google).toBe("unconfigured");
+    expect(() => googleRedirectUri(request)).toThrow(
+      "Konfigurasi callback Google production harus menggunakan HTTPS.",
+    );
   });
 });
