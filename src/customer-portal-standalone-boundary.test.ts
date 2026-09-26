@@ -563,7 +563,8 @@ describe("standalone Customer Portal API boundary", () => {
     const server = readFileSync(join(process.cwd(), "server/index.mjs"), "utf8");
     const admin = readFileSync(join(process.cwd(), "src/pages/admin/FonnteStatusTab.tsx"), "utf8");
     expect(server).toContain('/api/portal/admin/fonnte/status');
-    expect(server).toContain('process.env.FONNTE_TOKEN');
+    expect(server).toContain('resolveCustomerPortalFonnteToken');
+    expect(server).not.toContain('process.env.FONNTE_TOKEN');
     expect(server).toContain('https://api.fonnte.com/device');
     expect(admin).not.toContain('FONNTE_TOKEN');
   });
@@ -594,7 +595,8 @@ describe("standalone Customer Portal API boundary", () => {
     expect(legacy).toContain("retryWhatsAppLog");
     expect(legacy).not.toContain("Retry WhatsApp belum tersedia pada API standalone.");
     expect(whatsapp).toContain("https://api.fonnte.com/send");
-    expect(whatsapp).toContain("FONNTE_TOKEN");
+    expect(whatsapp).toContain("resolveCustomerPortalFonnteToken");
+    expect(whatsapp).not.toContain("process.env.FONNTE_TOKEN");
   });
 
   it("does not render a literal newline escape in the desktop Fonnte navigation", () => {
