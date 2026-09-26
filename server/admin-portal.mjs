@@ -913,9 +913,9 @@ async function handleKtpOcr(ctx) {
   ctx.sendJson(ctx.response, 200, { ok: true, data });
 }
 
-async function getOrganizationContext(user) {
+async function getOrganizationContext(user, dbQuery = query) {
   const [memberships, requests] = await Promise.all([
-    query(
+    dbQuery(
       `select m.company_id, m.buyer_role, m.department, m.cost_center,
               m.approval_level, m.spending_limit,
               coalesce(c.company_name, c.legal_name, c.name) as company_name,
@@ -926,7 +926,7 @@ async function getOrganizationContext(user) {
         order by m.created_at desc`,
       [user.id],
     ),
-    query(
+    dbQuery(
       `select requested_company_name, requested_registration_number, status,
               matched_company_id, created_at
          from public.portal_company_requests
@@ -960,7 +960,7 @@ async function getOrganizationContext(user) {
   };
 }
 
-async function applyOrganizationSelection(user, body) {
+async function applyOrganizationSelection(user, body, dbQuery = query) {
   const customerType = text(body.customerType);
   const companyId = body.companyId == null ? null : numberOrNull(body.companyId);
   const requestedCompanyName = text(body.requestedCompanyName);
@@ -994,7 +994,7 @@ async function applyOrganizationSelection(user, body) {
 
   let company = null;
   if (companyId != null) {
-    const result = await query(
+    const result = await dbQuery(
       `select id, coalesce(company_name, legal_name, name) as name,
               coalesce(company_code, code) as code
          from public.companies
@@ -1011,7 +1011,7 @@ async function applyOrganizationSelection(user, body) {
   }
 
   const profileStatus = customerType === "company" && requestedCompanyName ? "pending" : "active";
-  await query(
+  await dbQuery(
     `update public.portal_customers
         set customer_type = $1,
             company = $2
@@ -1024,21 +1024,21 @@ async function applyOrganizationSelection(user, body) {
   );
 
   if (companyId != null) {
-    const membership = await query(
+    const membership = await dbQuery(
       `select id from public.portal_company_members
         where portal_customer_id = $1 and company_id = $2
         limit 1`,
       [user.id, companyId],
     );
     if (membership.rows[0]) {
-      await query(
+      await dbQuery(
         `update public.portal_company_members
             set is_active = true, joined_at = coalesce(joined_at, now()), updated_at = now()
           where id = $1`,
         [membership.rows[0].id],
       );
     } else {
-      await query(
+      await dbQuery(
         `insert into public.portal_company_members
           (portal_customer_id, company_id, buyer_role, is_active, invited_by, invited_at, joined_at, created_at, updated_at)
          values ($1, $2, 'requester', true, $1, now(), now(), now(), now())`,
@@ -1046,7 +1046,7 @@ async function applyOrganizationSelection(user, body) {
       );
     }
   } else {
-    await query(
+    await dbQuery(
       `update public.portal_company_members
           set is_active = false, updated_at = now()
         where portal_customer_id = $1 and is_active = true`,
@@ -1055,14 +1055,14 @@ async function applyOrganizationSelection(user, body) {
   }
 
   if (requestedCompanyName) {
-    const pending = await query(
+    const pending = await dbQuery(
       `select id from public.portal_company_requests
         where portal_customer_id = $1 and status in ('pending', 'submitted', 'in_review')
         order by created_at desc limit 1`,
       [user.id],
     );
     if (pending.rows[0]) {
-      await query(
+      await dbQuery(
         `update public.portal_company_requests
             set requested_company_name = $1, requested_registration_number = $2,
                 status = 'pending', reviewed_by = null, reviewed_at = null, updated_at = now()
@@ -1070,7 +1070,7 @@ async function applyOrganizationSelection(user, body) {
         [requestedCompanyName, requestedRegistrationNumber, pending.rows[0].id],
       );
     } else {
-      await query(
+      await dbQuery(
         `insert into public.portal_company_requests
           (portal_customer_id, requested_company_name, requested_registration_number, status, created_at, updated_at)
          values ($1, $2, $3, 'pending', now(), now())`,
@@ -1079,27 +1079,27 @@ async function applyOrganizationSelection(user, body) {
     }
   }
 
-  const existingProfile = await query(
+  const existingProfile = await dbQuery(
     `select id from public.portal_customer_profiles
       where customer_id = $1 order by updated_at desc nulls last, id desc limit 1`,
     [user.id],
   );
   if (existingProfile.rows[0]) {
-    await query(
+    await dbQuery(
       `update public.portal_customer_profiles
           set company_name = $1, profile_status = $2, updated_at = now()
         where id = $3`,
       [company?.name ?? (requestedCompanyName || null), profileStatus, existingProfile.rows[0].id],
     );
   } else {
-    await query(
+    await dbQuery(
       `insert into public.portal_customer_profiles
         (customer_id, company_name, profile_status, updated_at)
        values ($1, $2, $3, now())`,
       [user.id, company?.name ?? (requestedCompanyName || null), profileStatus],
     );
   }
-  return getOrganizationContext({ ...user, customer_type: customerType, company: company?.name ?? requestedCompanyName ?? null });
+  return getOrganizationContext({ ...user, customer_type: customerType, company: company?.name ?? requestedCompanyName ?? null }, dbQuery);
 }
 
 async function handleOrganizationMutation(ctx) {
@@ -1128,113 +1128,156 @@ async function handleOnboardingComplete(ctx) {
   if (accountType === "customer" && !["individual", "company"].includes(customerType)) {
     return adminError(ctx, 400, "Tipe customer wajib dipilih.");
   }
+
   const vendor = body.vendor && typeof body.vendor === "object" ? body.vendor : {};
   const employee = body.employee && typeof body.employee === "object" ? body.employee : {};
   const driver = body.driver && typeof body.driver === "object" ? body.driver : {};
   const profileCompanyName = accountType === "customer"
     ? text(body.requestedCompanyName) || null
     : text(vendor.companyName || employee.companyName) || null;
-  const profileStatus = accountType === "customer" && body.requestedCompanyName ? "pending" : accountType === "customer" ? "active" : "pending";
+  const profileStatus = accountType === "customer" && body.requestedCompanyName
+    ? "pending"
+    : accountType === "customer"
+      ? "active"
+      : "pending";
 
-  await query(
-    `update public.portal_customers
-        set name = $1, phone = $2, role = $3,
-            customer_type = case when $3 = 'customer' then $4 else null end,
-            company = case when $3 = 'customer' then coalesce($5, company) else $5 end
-      where id = $6`,
-    [fullName, phone, accountType, customerType, profileCompanyName, ctx.user.id],
-  );
-  const profileValues = [
-    profileCompanyName,
-    address,
-    fullName,
-    phone,
-    text(vendor.legalityDocUrl) || null,
-    text(body.ktpUrl) || null,
-    JSON.stringify({ accountType, driver, employee, ocrData: body.ocrData ?? null }),
-    profileStatus,
-  ];
-  await query(
-    `insert into public.portal_customer_profiles
-      (customer_id, company_name, company_address, pic_name, pic_whatsapp,
-       legal_doc_url, ktp_pic_url, additional_notes, profile_status, updated_at)
-     values ($1, $2, $3, $4, $5, $6, $7, $8, $9, now())
-     on conflict (customer_id) where customer_id is not null
-     do update set
-       company_name = coalesce(excluded.company_name, portal_customer_profiles.company_name),
-       company_address = coalesce(excluded.company_address, portal_customer_profiles.company_address),
-       pic_name = coalesce(excluded.pic_name, portal_customer_profiles.pic_name),
-       pic_whatsapp = coalesce(excluded.pic_whatsapp, portal_customer_profiles.pic_whatsapp),
-       legal_doc_url = coalesce(excluded.legal_doc_url, portal_customer_profiles.legal_doc_url),
-       ktp_pic_url = coalesce(excluded.ktp_pic_url, portal_customer_profiles.ktp_pic_url),
-       additional_notes = coalesce(excluded.additional_notes, portal_customer_profiles.additional_notes),
-       profile_status = excluded.profile_status,
-       updated_at = now()`,
-    [ctx.user.id, ...profileValues],
-  );
+  const client = await pool.connect();
+  const dbQuery = client.query.bind(client);
+  try {
+    await client.query("begin");
+    await client.query("select pg_advisory_xact_lock($1)", [Number(ctx.user.id)]);
 
-  if (accountType === "vendor") {
-    const vendorValues = [
-      text(vendor.companyName) || profileCompanyName,
-      text(vendor.nib) || null,
-      text(vendor.npwp) || null,
-      text(vendor.serviceType) || null,
-      text(vendor.legalityDocUrl) || null,
+    const lockedUser = await dbQuery(
+      `select id, email, role, account_status
+         from public.portal_customers
+        where id = $1
+        for update`,
+      [ctx.user.id],
+    );
+    if (!lockedUser.rows[0]) {
+      const error = new Error("Akun portal tidak ditemukan.");
+      error.statusCode = 404;
+      throw error;
+    }
+
+    await dbQuery(
+      `update public.portal_customers
+          set name = $1, phone = $2, role = $3,
+              customer_type = case when $3 = 'customer' then $4 else null end,
+              company = case when $3 = 'customer' then coalesce($5, company) else $5 end
+        where id = $6`,
+      [fullName, phone, accountType, customerType, profileCompanyName, ctx.user.id],
+    );
+
+    const profileValues = [
+      profileCompanyName,
+      address,
       fullName,
       phone,
-      ctx.user.email ?? null,
-      address,
+      text(vendor.legalityDocUrl) || null,
+      text(body.ktpUrl) || null,
+      JSON.stringify({ accountType, driver, employee, ocrData: body.ocrData ?? null }),
+      profileStatus,
     ];
-    await query(
-      `insert into public.vendor_profiles
-        (customer_id, company_name, nib, npwp, service_type, legality_doc_url,
-         pic_name, phone, whatsapp, email, full_address, verification_status,
-         created_at, updated_at)
-       values ($1,$2,$3,$4,$5,$6,$7,$8,$8,$9,$10,'pending',now(),now())
-       on conflict (customer_id)
+    await dbQuery(
+      `insert into public.portal_customer_profiles
+        (customer_id, company_name, company_address, pic_name, pic_whatsapp,
+         legal_doc_url, ktp_pic_url, additional_notes, profile_status, updated_at)
+       values ($1, $2, $3, $4, $5, $6, $7, $8, $9, now())
+       on conflict (customer_id) where customer_id is not null
        do update set
-         company_name = coalesce(excluded.company_name, vendor_profiles.company_name),
-         nib = coalesce(excluded.nib, vendor_profiles.nib),
-         npwp = coalesce(excluded.npwp, vendor_profiles.npwp),
-         service_type = coalesce(excluded.service_type, vendor_profiles.service_type),
-         legality_doc_url = coalesce(excluded.legality_doc_url, vendor_profiles.legality_doc_url),
-         pic_name = coalesce(excluded.pic_name, vendor_profiles.pic_name),
-         phone = coalesce(excluded.phone, vendor_profiles.phone),
-         whatsapp = coalesce(excluded.whatsapp, vendor_profiles.whatsapp),
-         email = coalesce(excluded.email, vendor_profiles.email),
-         full_address = coalesce(excluded.full_address, vendor_profiles.full_address),
-         verification_status = 'pending',
-         approved_at = null,
-         approval_date = null,
+         company_name = coalesce(excluded.company_name, portal_customer_profiles.company_name),
+         company_address = coalesce(excluded.company_address, portal_customer_profiles.company_address),
+         pic_name = coalesce(excluded.pic_name, portal_customer_profiles.pic_name),
+         pic_whatsapp = coalesce(excluded.pic_whatsapp, portal_customer_profiles.pic_whatsapp),
+         legal_doc_url = coalesce(excluded.legal_doc_url, portal_customer_profiles.legal_doc_url),
+         ktp_pic_url = coalesce(excluded.ktp_pic_url, portal_customer_profiles.ktp_pic_url),
+         additional_notes = coalesce(excluded.additional_notes, portal_customer_profiles.additional_notes),
+         profile_status = excluded.profile_status,
          updated_at = now()`,
-      [ctx.user.id, ...vendorValues],
+      [ctx.user.id, ...profileValues],
     );
-  }
 
-  let organization = null;
-  if (accountType === "customer") {
-    organization = await applyOrganizationSelection(ctx.user, {
-      customerType,
-      companyId: body.companyId,
-      requestedCompanyName: body.requestedCompanyName,
-      requestedRegistrationNumber: body.requestedRegistrationNumber,
-    });
-  } else {
-    await query(
-      `insert into public.onboarding_approvals
-        (customer_id, account_type, status, created_at, updated_at)
-       values ($1, $2, 'pending', now(), now())
-       on conflict (customer_id) where status = 'pending'
-       do update set
-         account_type = excluded.account_type,
-         updated_at = now()`,
-      [ctx.user.id, accountType],
-    );
+    if (accountType === "vendor") {
+      const vendorValues = [
+        text(vendor.companyName) || profileCompanyName,
+        text(vendor.nib) || null,
+        text(vendor.npwp) || null,
+        text(vendor.serviceType) || null,
+        text(vendor.legalityDocUrl) || null,
+        fullName,
+        phone,
+        lockedUser.rows[0].email ?? ctx.user.email ?? null,
+        address,
+      ];
+      await dbQuery(
+        `insert into public.vendor_profiles
+          (customer_id, company_name, nib, npwp, service_type, legality_doc_url,
+           pic_name, phone, whatsapp, email, full_address, verification_status,
+           created_at, updated_at)
+         values ($1,$2,$3,$4,$5,$6,$7,$8,$8,$9,$10,'pending',now(),now())
+         on conflict (customer_id)
+         do update set
+           company_name = coalesce(excluded.company_name, vendor_profiles.company_name),
+           nib = coalesce(excluded.nib, vendor_profiles.nib),
+           npwp = coalesce(excluded.npwp, vendor_profiles.npwp),
+           service_type = coalesce(excluded.service_type, vendor_profiles.service_type),
+           legality_doc_url = coalesce(excluded.legality_doc_url, vendor_profiles.legality_doc_url),
+           pic_name = coalesce(excluded.pic_name, vendor_profiles.pic_name),
+           phone = coalesce(excluded.phone, vendor_profiles.phone),
+           whatsapp = coalesce(excluded.whatsapp, vendor_profiles.whatsapp),
+           email = coalesce(excluded.email, vendor_profiles.email),
+           full_address = coalesce(excluded.full_address, vendor_profiles.full_address),
+           verification_status = 'pending',
+           approved_at = null,
+           approval_date = null,
+           updated_at = now()`,
+        [ctx.user.id, ...vendorValues],
+      );
+    }
+
+    let organization = null;
+    if (accountType === "customer") {
+      organization = await applyOrganizationSelection(
+        ctx.user,
+        {
+          customerType,
+          companyId: body.companyId,
+          requestedCompanyName: body.requestedCompanyName,
+          requestedRegistrationNumber: body.requestedRegistrationNumber,
+        },
+        dbQuery,
+      );
+    } else {
+      await dbQuery(
+        `insert into public.onboarding_approvals
+          (customer_id, account_type, status, created_at, updated_at)
+         values ($1, $2, 'pending', now(), now())
+         on conflict (customer_id) where status = 'pending'
+         do update set
+           account_type = excluded.account_type,
+           updated_at = now()`,
+        [ctx.user.id, accountType],
+      );
+    }
+
+    const status = accountType === "customer" && organization?.status === "company_pending"
+      ? "company_pending"
+      : accountType === "customer"
+        ? "active"
+        : "pending";
+
+    await client.query("commit");
+    ctx.sendJson(ctx.response, 200, { ok: true, status, context: organization });
+  } catch (error) {
+    await client.query("rollback").catch(() => {});
+    if (Number.isInteger(error?.statusCode)) {
+      return adminError(ctx, error.statusCode, error.message);
+    }
+    throw error;
+  } finally {
+    client.release();
   }
-  const status = accountType === "customer" && organization?.status === "company_pending"
-    ? "company_pending"
-    : accountType === "customer" ? "active" : "pending";
-  ctx.sendJson(ctx.response, 200, { ok: true, status, context: organization });
 }
 
 async function handleOnboardingStatus(ctx) {
