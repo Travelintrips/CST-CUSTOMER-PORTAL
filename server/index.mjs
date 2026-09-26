@@ -984,18 +984,6 @@ async function handlePortalOrderFeed(request, response) {
 }
 
 function mapPortalOrder(row) {
-  const [paylabs, manualPaymentAccount] = await Promise.all([
-    getLogisticPaylabsState(row).catch(() => ({
-      configured: false,
-      sandboxMode: false,
-      activeMethods: [],
-      latestPayment: null,
-      hasPendingPayment: false,
-      canCreate: false,
-    })),
-    logisticManualPaymentAccount(),
-  ]);
-
   return {
     id: Number(row.id),
     docNumber: row.doc_number ?? String(row.id),
@@ -2093,6 +2081,19 @@ async function logisticOrderResponse(row, items = []) {
       paymentProofUrl = await signedDocumentUrl(row.payment_proof_url);
     }
   }
+
+  const [paylabs, manualPaymentAccount] = await Promise.all([
+    getLogisticPaylabsState(row).catch(() => ({
+      configured: false,
+      sandboxMode: false,
+      activeMethods: [],
+      latestPayment: null,
+      hasPendingPayment: false,
+      canCreate: false,
+    })),
+    logisticManualPaymentAccount(),
+  ]);
+
   return {
     id: Number(row.id),
     orderNumber: row.order_number,
