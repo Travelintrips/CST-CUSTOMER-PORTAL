@@ -913,9 +913,9 @@ async function handleKtpOcr(ctx) {
   ctx.sendJson(ctx.response, 200, { ok: true, data });
 }
 
-async function getOrganizationContext(user) {
+async function getOrganizationContext(user, dbQuery = query) {
   const [memberships, requests] = await Promise.all([
-    query(
+    dbQuery(
       `select m.company_id, m.buyer_role, m.department, m.cost_center,
               m.approval_level, m.spending_limit,
               coalesce(c.company_name, c.legal_name, c.name) as company_name,
@@ -926,7 +926,7 @@ async function getOrganizationContext(user) {
         order by m.created_at desc`,
       [user.id],
     ),
-    query(
+    dbQuery(
       `select requested_company_name, requested_registration_number, status,
               matched_company_id, created_at
          from public.portal_company_requests
@@ -960,7 +960,7 @@ async function getOrganizationContext(user) {
   };
 }
 
-async function applyOrganizationSelection(user, body) {
+async function applyOrganizationSelection(user, body, dbQuery = query) {
   const customerType = text(body.customerType);
   const companyId = body.companyId == null ? null : numberOrNull(body.companyId);
   const requestedCompanyName = text(body.requestedCompanyName);
@@ -994,7 +994,7 @@ async function applyOrganizationSelection(user, body) {
 
   let company = null;
   if (companyId != null) {
-    const result = await query(
+    const result = await dbQuery(
       `select id, coalesce(company_name, legal_name, name) as name,
               coalesce(company_code, code) as code
          from public.companies
@@ -1011,7 +1011,7 @@ async function applyOrganizationSelection(user, body) {
   }
 
   const profileStatus = customerType === "company" && requestedCompanyName ? "pending" : "active";
-  await query(
+  await dbQuery(
     `update public.portal_customers
         set customer_type = $1,
             company = $2
@@ -1024,21 +1024,21 @@ async function applyOrganizationSelection(user, body) {
   );
 
   if (companyId != null) {
-    const membership = await query(
+    const membership = await dbQuery(
       `select id from public.portal_company_members
         where portal_customer_id = $1 and company_id = $2
         limit 1`,
       [user.id, companyId],
     );
     if (membership.rows[0]) {
-      await query(
+      await dbQuery(
         `update public.portal_company_members
             set is_active = true, joined_at = coalesce(joined_at, now()), updated_at = now()
           where id = $1`,
         [membership.rows[0].id],
       );
     } else {
-      await query(
+      await dbQuery(
         `insert into public.portal_company_members
           (portal_customer_id, company_id, buyer_role, is_active, invited_by, invited_at, joined_at, created_at, updated_at)
          values ($1, $2, 'requester', true, $1, now(), now(), now(), now())`,
@@ -1046,7 +1046,7 @@ async function applyOrganizationSelection(user, body) {
       );
     }
   } else {
-    await query(
+    await dbQuery(
       `update public.portal_company_members
           set is_active = false, updated_at = now()
         where portal_customer_id = $1 and is_active = true`,
@@ -1055,14 +1055,14 @@ async function applyOrganizationSelection(user, body) {
   }
 
   if (requestedCompanyName) {
-    const pending = await query(
+    const pending = await dbQuery(
       `select id from public.portal_company_requests
         where portal_customer_id = $1 and status in ('pending', 'submitted', 'in_review')
         order by created_at desc limit 1`,
       [user.id],
     );
     if (pending.rows[0]) {
-      await query(
+      await dbQuery(
         `update public.portal_company_requests
             set requested_company_name = $1, requested_registration_number = $2,
                 status = 'pending', reviewed_by = null, reviewed_at = null, updated_at = now()
@@ -1070,7 +1070,7 @@ async function applyOrganizationSelection(user, body) {
         [requestedCompanyName, requestedRegistrationNumber, pending.rows[0].id],
       );
     } else {
-      await query(
+      await dbQuery(
         `insert into public.portal_company_requests
           (portal_customer_id, requested_company_name, requested_registration_number, status, created_at, updated_at)
          values ($1, $2, $3, 'pending', now(), now())`,
@@ -1079,27 +1079,27 @@ async function applyOrganizationSelection(user, body) {
     }
   }
 
-  const existingProfile = await query(
+  const existingProfile = await dbQuery(
     `select id from public.portal_customer_profiles
       where customer_id = $1 order by updated_at desc nulls last, id desc limit 1`,
     [user.id],
   );
   if (existingProfile.rows[0]) {
-    await query(
+    await dbQuery(
       `update public.portal_customer_profiles
           set company_name = $1, profile_status = $2, updated_at = now()
         where id = $3`,
       [company?.name ?? (requestedCompanyName || null), profileStatus, existingProfile.rows[0].id],
     );
   } else {
-    await query(
+    await dbQuery(
       `insert into public.portal_customer_profiles
         (customer_id, company_name, profile_status, updated_at)
        values ($1, $2, $3, now())`,
       [user.id, company?.name ?? (requestedCompanyName || null), profileStatus],
     );
   }
-  return getOrganizationContext({ ...user, customer_type: customerType, company: company?.name ?? requestedCompanyName ?? null });
+  return getOrganizationContext({ ...user, customer_type: customerType, company: company?.name ?? requestedCompanyName ?? null }, dbQuery);
 }
 
 async function handleOrganizationMutation(ctx) {
