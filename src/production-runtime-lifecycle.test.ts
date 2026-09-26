@@ -70,4 +70,29 @@ describe("production runtime availability lifecycle", () => {
     expect(workflow).toContain("Expected Google login start to redirect with 302");
   });
 
+
+  it("keeps newly registered accounts in onboarding until completion", () => {
+    const server = readFileSync(join(process.cwd(), "server/index.mjs"), "utf8");
+    const auth = readFileSync(join(process.cwd(), "server/auth-providers.mjs"), "utf8");
+
+    expect(auth).toContain("ensureInitialOnboardingProfile");
+    expect(auth).toContain("profile_status, updated_at");
+    expect(auth).toContain("'incomplete', now()");
+    expect(server).toContain('profileStatus === "incomplete"');
+    expect(server).toContain('allowedDestination = "/pending-approval"');
+    expect(server).toContain('allowedDestination = "/onboarding"');
+  });
+
+  it("requires vendor approval before operational vendor APIs", () => {
+    const vendorPortal = readFileSync(join(process.cwd(), "server/vendor-portal.mjs"), "utf8");
+    const adminPortal = readFileSync(join(process.cwd(), "server/admin-portal.mjs"), "utf8");
+
+    expect(vendorPortal).toContain("const vendorVerified");
+    expect(vendorPortal).toContain("Akun vendor masih menunggu persetujuan admin.");
+    expect(adminPortal).toContain("verification_status = 'pending'");
+    expect(adminPortal).toContain('status === "approved" ? "verified" : "rejected"');
+    expect(adminPortal).toContain("registration_status = 'approved'");
+    expect(adminPortal).toContain("supplier_id = $1");
+  });
+
 });
