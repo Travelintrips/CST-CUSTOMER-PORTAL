@@ -538,6 +538,36 @@ async function handleAdminCompanyRequests(ctx) {
         [current.portal_customer_id, matchedCompanyId, text(body.buyerRole, "member"), ctx.user.id],
       );
     }
+    const canonicalCompany = await query(
+      `select coalesce(company_name, legal_name, name) as name
+         from public.companies
+        where id = $1`,
+      [matchedCompanyId],
+    );
+    await query(
+      `update public.portal_customers
+          set customer_type = 'company',
+              company = coalesce($1, company)
+        where id = $2`,
+      [canonicalCompany.rows[0]?.name ?? null, current.portal_customer_id],
+    );
+    await query(
+      `update public.portal_customer_profiles
+          set profile_status = 'active',
+              company_name = coalesce($1, company_name),
+              updated_at = now()
+        where customer_id = $2`,
+      [canonicalCompany.rows[0]?.name ?? null, current.portal_customer_id],
+    );
+  } else if (status === "rejected") {
+    await query(
+      `update public.portal_customer_profiles
+          set profile_status = 'rejected',
+              verification_notes = coalesce($1, verification_notes),
+              updated_at = now()
+        where customer_id = $2`,
+      [text(body.reviewNote) || "Permintaan perusahaan ditolak.", current.portal_customer_id],
+    );
   }
   ctx.sendJson(response, 200, { id, status, matchedCompanyId });
 }
