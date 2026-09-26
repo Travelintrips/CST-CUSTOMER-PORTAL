@@ -1096,6 +1096,16 @@ async function handleOnboardingComplete(ctx) {
   if (!["customer", "vendor", "driver", "employee"].includes(accountType)) {
     return adminError(ctx, 400, "Tipe akun tidak valid.");
   }
+  if (
+    ["customer", "vendor", "driver", "employee"].includes(ctx.user.role)
+    && accountType !== ctx.user.role
+  ) {
+    return adminError(
+      ctx,
+      403,
+      "Tipe akun tidak dapat diubah melalui onboarding. Hubungi admin untuk perubahan role.",
+    );
+  }
   if (!fullName || !phone) return adminError(ctx, 400, "Nama dan nomor telepon wajib diisi.");
 
   const customerType = accountType === "customer" ? text(body.customerType) : null;
