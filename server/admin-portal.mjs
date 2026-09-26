@@ -333,17 +333,18 @@ async function handleAdminApprovals(ctx) {
 
         if (status === "approved") {
           let supplierId = vendorRow.supplier_id == null ? null : Number(vendorRow.supplier_id);
-          if (!supplierId) {
+          if (!supplierId && vendorRow.email) {
             const supplier = await query(
               `select id
                  from public.suppliers
-                where lower(coalesce(contact_email, '')) = lower($1)
-                   or lower(name) = lower($2)
-                order by case when lower(coalesce(contact_email, '')) = lower($1) then 0 else 1 end,
-                         id
-                limit 1`,
-              [vendorRow.email ?? "", vendorRow.company_name ?? vendorRow.name],
+                where lower(trim(coalesce(contact_email, ''))) = lower(trim($1))
+                order by id
+                limit 2`,
+              [vendorRow.email],
             );
+            if (supplier.rows.length > 1) {
+              throw new Error("Email vendor terhubung ke lebih dari satu supplier. Perlu audit sebelum approval.");
+            }
             supplierId = supplier.rows[0]?.id == null ? null : Number(supplier.rows[0].id);
           }
 
