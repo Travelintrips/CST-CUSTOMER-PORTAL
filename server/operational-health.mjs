@@ -266,13 +266,26 @@ async function cleanupOperationalHistory() {
   await query("delete from public.portal_recovery_drill_runs where created_at < now() - interval '180 days'");
 }
 
+async function runRecoveryDrillIfDue() {
+  try {
+    const latest = await query(
+      "select created_at from public.portal_recovery_drill_runs order by created_at desc limit 1",
+    );
+    const lastRunAt = latest.rows[0]?.created_at ? new Date(latest.rows[0].created_at).getTime() : 0;
+    const due = !lastRunAt || Date.now() - lastRunAt >= 7 * 24 * 60 * 60_000;
+    if (due) await runRecoveryDrill();
+  } catch (error) {
+    console.error("[customer-portal-api] recovery drill scheduler failed", error?.message ?? error);
+  }
+}
+
 export function startOperationalMonitoring() {
   if (process.env.CUSTOMER_PORTAL_OPERATIONS_MONITOR_ENABLED === "false") return;
   if (healthTimer || publicProbeTimer || recoveryTimer || cleanupTimer) return;
 
   healthTimer = setInterval(() => void runOperationalHealthCheck(), 5 * 60_000);
   publicProbeTimer = setInterval(() => void runPublicProductionProbe(), 15 * 60_000);
-  recoveryTimer = setInterval(() => void runRecoveryDrill(), 7 * 24 * 60 * 60_000);
+  recoveryTimer = setInterval(() => void runRecoveryDrillIfDue(), 6 * 60 * 60_000);
   cleanupTimer = setInterval(() => void cleanupOperationalHistory(), 24 * 60 * 60_000);
 
   healthTimer.unref?.();
@@ -282,6 +295,7 @@ export function startOperationalMonitoring() {
 
   setTimeout(() => void runOperationalHealthCheck(), 20_000).unref?.();
   setTimeout(() => void runPublicProductionProbe(), 45_000).unref?.();
+  setTimeout(() => void runRecoveryDrillIfDue(), 120_000).unref?.();
 }
 
 export function stopOperationalMonitoring() {
