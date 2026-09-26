@@ -1,7 +1,7 @@
 import crypto from "node:crypto";
 import bcrypt from "bcryptjs";
 import nodemailer from "nodemailer";
-import { query } from "./db.mjs";
+import { pool, query } from "./db.mjs";
 import { createSession, sessionCookies } from "./session.mjs";
 
 const APP_ENV = process.env.APP_ENV ?? process.env.NODE_ENV ?? "development";
@@ -29,6 +29,22 @@ function errorWithStatus(statusCode, message) {
   const error = new Error(message);
   error.statusCode = statusCode;
   return error;
+}
+
+async function withTransaction(work) {
+  const client = await pool.connect();
+  const dbQuery = client.query.bind(client);
+  try {
+    await client.query("begin");
+    const result = await work(dbQuery);
+    await client.query("commit");
+    return result;
+  } catch (error) {
+    await client.query("rollback").catch(() => {});
+    throw error;
+  } finally {
+    client.release();
+  }
 }
 
 function oauthError(statusCode, message, code, details = {}) {
@@ -179,8 +195,8 @@ async function findUserByEmail(email, dbQuery = query) {
   return result.rows[0] ?? null;
 }
 
-async function findUserByPhone(phone) {
-  const result = await query(
+async function findUserByPhone(phone, dbQuery = query) {
+  const result = await dbQuery(
     `select id, name, email, phone, company, role, customer_type, account_status
        from public.portal_customers
       where (
@@ -261,33 +277,30 @@ export async function createOrFindEmailUser(email, registrationIntent = null, db
   const intent = normalizeRegistrationIntent(registrationIntent ?? {});
   if (registrationIntent) validateRegistrationIntent(intent);
 
-  try {
-    const created = await dbQuery(
-      `insert into public.portal_customers
-        (name, email, password_hash, role, customer_type, company, account_status)
-       values ($1, $2, '', $3, $4, $5, 'active')
-       returning id, name, email, phone, company, role, customer_type, account_status`,
-      [
-        email.split("@")[0],
-        email,
-        intent.role,
-        intent.customerType,
-        intent.company || null,
-      ],
+  const created = await dbQuery(
+    `insert into public.portal_customers
+      (name, email, password_hash, role, customer_type, company, account_status)
+     values ($1, $2, '', $3, $4, $5, 'active')
+     on conflict do nothing
+     returning id, name, email, phone, company, role, customer_type, account_status`,
+    [
+      email.split("@")[0],
+      email,
+      intent.role,
+      intent.customerType,
+      intent.company || null,
+    ],
+  );
+  const user = created.rows[0] ?? await findUserByEmail(email, dbQuery);
+  const isNew = Boolean(created.rows[0]);
+  if (user && isNew) {
+    await ensureInitialOnboardingProfile(
+      user.id,
+      { companyName: intent.company || null, fullName: user.name ?? null, phone: user.phone ?? null },
+      dbQuery,
     );
-    const user = created.rows[0] ?? null;
-    if (user) {
-      await ensureInitialOnboardingProfile(
-        user.id,
-        { companyName: intent.company || null, fullName: user.name ?? null, phone: user.phone ?? null },
-        dbQuery,
-      );
-    }
-    return { user, isNew: true };
-  } catch (error) {
-    if (error?.code !== "23505") throw error;
-    return { user: await findUserByEmail(email, dbQuery), isNew: false };
   }
+  return { user, isNew };
 }
 
 export async function linkIdentity(customerId, provider, subject, dbQuery = query) {
@@ -1366,39 +1379,35 @@ export async function googleResolveUser(profile, dbQuery = query, registrationIn
   if (!user) {
     const intent = normalizeRegistrationIntent(registrationIntent ?? {});
     if (registrationIntent) validateRegistrationIntent(intent);
-    try {
-      const inserted = await dbQuery(
-        `insert into public.portal_customers
-          (name, email, password_hash, role, customer_type, company,
-           oauth_provider, oauth_id, avatar_url, account_status)
-         values ($1, $2, '', $3, $4, $5, 'google', $6, $7, 'active')
-         returning id, name, email, phone, company, role, customer_type, account_status,
-                   oauth_provider, oauth_id`,
-        [
-          profile.name,
-          profile.email,
-          intent.role,
-          intent.customerType,
-          intent.company || null,
-          profile.subject,
-          profile.avatarUrl,
-        ],
+    const inserted = await dbQuery(
+      `insert into public.portal_customers
+        (name, email, password_hash, role, customer_type, company,
+         oauth_provider, oauth_id, avatar_url, account_status)
+       values ($1, $2, '', $3, $4, $5, 'google', $6, $7, 'active')
+       on conflict do nothing
+       returning id, name, email, phone, company, role, customer_type, account_status,
+                 oauth_provider, oauth_id`,
+      [
+        profile.name,
+        profile.email,
+        intent.role,
+        intent.customerType,
+        intent.company || null,
+        profile.subject,
+        profile.avatarUrl,
+      ],
+    );
+    user = inserted.rows[0] ?? await findUserByEmail(profile.email, dbQuery);
+    if (inserted.rows[0]) {
+      await ensureInitialOnboardingProfile(
+        user.id,
+        {
+          companyName: intent.company || null,
+          fullName: profile.name,
+          phone: null,
+        },
+        dbQuery,
       );
-      user = inserted.rows[0];
-      if (user) {
-        await ensureInitialOnboardingProfile(
-          user.id,
-          {
-            companyName: intent.company || null,
-            fullName: profile.name,
-            phone: null,
-          },
-          dbQuery,
-        );
-      }
-    } catch (error) {
-      if (error?.code !== "23505") throw error;
-      user = await findUserByEmail(profile.email, dbQuery);
     }
   } else {
     if (!identity.rows[0]) {
