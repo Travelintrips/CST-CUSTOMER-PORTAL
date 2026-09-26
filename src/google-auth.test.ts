@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from "vitest";
-import { authCapabilities, googleRedirectUri, resolveGoogleLogin, resolveGoogleOAuthConfig, resolveSmtpConfig } from "../server/auth-providers.mjs";
+import { authCapabilities, createOrFindEmailUser, googleRedirectUri, resolveGoogleLogin, resolveGoogleOAuthConfig, resolveSmtpConfig } from "../server/auth-providers.mjs";
 import { sessionCookies, verifySession } from "../server/session.mjs";
 
 type User = {
@@ -53,6 +53,7 @@ function fakeDb(initialUsers: User[] = [user()], initialIdentities: Identity[] =
   const users = initialUsers.map((record) => ({ ...record }));
   const identities = initialIdentities.map((record) => ({ ...record }));
   let nextIdentityId = Math.max(0, ...identities.map((record) => record.id)) + 1;
+  let nextUserId = Math.max(0, ...users.map((record) => record.id)) + 1;
 
   const db = async (sql: string, values: unknown[] = []) => {
     const normalizedSql = sql.replace(/\s+/g, " ").trim().toLowerCase();
@@ -110,6 +111,42 @@ function fakeDb(initialUsers: User[] = [user()], initialIdentities: Identity[] =
           rows: users.filter((record) => record.email.toLowerCase() === String(values[0])).slice(0, 1),
         };
       }
+    }
+
+    if (normalizedSql.startsWith("insert into public.portal_customers")) {
+      const isGoogleInsert = normalizedSql.includes("oauth_provider");
+      const record: User = isGoogleInsert
+        ? {
+            id: nextUserId++,
+            name: String(values[0]),
+            email: String(values[1]),
+            phone: null,
+            company: values[4] == null ? null : String(values[4]),
+            role: String(values[2]),
+            customer_type: values[3] == null ? null : String(values[3]),
+            account_status: "active",
+            oauth_provider: "google",
+            oauth_id: String(values[5]),
+          }
+        : {
+            id: nextUserId++,
+            name: String(values[0]),
+            email: String(values[1]),
+            phone: null,
+            company: values[4] == null ? null : String(values[4]),
+            role: String(values[2]),
+            customer_type: values[3] == null ? null : String(values[3]),
+            account_status: "active",
+            oauth_provider: "email",
+            oauth_id: null,
+          };
+      if (users.some((item) => item.email.toLowerCase() === record.email.toLowerCase())) {
+        const error = new Error("duplicate user") as Error & { code?: string };
+        error.code = "23505";
+        throw error;
+      }
+      users.push(record);
+      return { rows: [{ ...record }], rowCount: 1 };
     }
 
     if (normalizedSql.startsWith("update public.portal_customers")) {
@@ -229,6 +266,70 @@ describe("canonical Google identity linking", () => {
       oauthCode: "google_profile_invalid",
     });
     expect(state.identities).toHaveLength(0);
+  });
+
+  it("creates a new Google vendor with the selected registration role", async () => {
+    const state = fakeDb([]);
+    const result = await resolveGoogleLogin(
+      googleProfile({ email: "vendor@example.com", name: "Vendor Baru" }),
+      state.db,
+      { role: "vendor", company: "PT Vendor Baru" },
+    );
+
+    expect(result.user).toMatchObject({
+      email: "vendor@example.com",
+      role: "vendor",
+      company: "PT Vendor Baru",
+      customer_type: null,
+    });
+    expect(verifySession(result.token)).toMatchObject({ role: "vendor" });
+  });
+
+  it("does not change the role of an existing account from registration intent", async () => {
+    const state = fakeDb([user({ role: "customer", company: null })]);
+
+    const result = await resolveGoogleLogin(
+      googleProfile(),
+      state.db,
+      { role: "vendor", company: "PT Should Not Replace" },
+    );
+
+    expect(result.user.role).toBe("customer");
+    expect(result.user.company).toBeNull();
+  });
+});
+
+describe("registration role creation", () => {
+  it("creates a new Email OTP vendor with company context", async () => {
+    const state = fakeDb([]);
+    const created = await createOrFindEmailUser(
+      "email-vendor@example.com",
+      { role: "vendor", company: "PT Email Vendor" },
+      state.db,
+    );
+
+    expect(created.isNew).toBe(true);
+    expect(created.user).toMatchObject({
+      email: "email-vendor@example.com",
+      role: "vendor",
+      company: "PT Email Vendor",
+      customer_type: null,
+    });
+  });
+
+  it("creates a company customer with customer_type company", async () => {
+    const state = fakeDb([]);
+    const created = await createOrFindEmailUser(
+      "company@example.com",
+      { role: "customer", customerType: "company", company: "PT Customer Company" },
+      state.db,
+    );
+
+    expect(created.user).toMatchObject({
+      role: "customer",
+      customer_type: "company",
+      company: "PT Customer Company",
+    });
   });
 });
 
