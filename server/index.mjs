@@ -103,7 +103,16 @@ const MUTATION_METHODS = new Set(["POST", "PUT", "PATCH", "DELETE"]);
 const DEFAULT_PUBLIC_ASSET_ORIGIN = "https://xssrfshdrtdfupgqwfdw.supabase.co";
 const PUBLIC_ASSET_URL_PREFIX = "/storage/v1/object/public/public-assets/";
 const LEGACY_PORTAL_BUCKET_URL_PREFIX = "/storage/v1/object/public/portal-assets/";
+const STARTUP_MAX_ATTEMPTS = Math.max(1, Number(process.env.PORTAL_STARTUP_MAX_ATTEMPTS ?? 8));
+const STARTUP_RETRY_MS = Math.max(250, Number(process.env.PORTAL_STARTUP_RETRY_MS ?? 1500));
+const DRAIN_DELAY_MS = Math.max(0, Number(process.env.PORTAL_DRAIN_DELAY_MS ?? 5000));
+const SHUTDOWN_TIMEOUT_MS = Math.max(1000, Number(process.env.PORTAL_SHUTDOWN_TIMEOUT_MS ?? 25000));
 
+let runtimeState = "starting";
+let runtimeReadyAt = null;
+let shutdownPromise = null;
+
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 function sendJson(response, status, value, headers = {}) {
   const body = JSON.stringify(value);
@@ -512,29 +521,33 @@ async function handleAdminFonnteStatus(response) {
 }
 
 async function handleHealth(response) {
-  try {
-    await checkDatabase();
-    sendJson(response, 200, {
-      status: "ok",
-      service: "customer-portal-api",
-      appEnv: APP_ENV,
-      database: "connected",
-      databaseEnvironment,
-      databaseConnectionSource,
-    });
-  } catch {
-    sendJson(response, 503, {
-      status: "degraded",
-      service: "customer-portal-api",
-      appEnv: APP_ENV,
-      database: "unavailable",
-      databaseEnvironment,
-      databaseConnectionSource,
-    });
-  }
+  sendJson(response, 200, {
+    status: runtimeState === "draining" ? "draining" : "ok",
+    service: "customer-portal-api",
+    appEnv: APP_ENV,
+    runtimeState,
+    readyAt: runtimeReadyAt,
+    databaseEnvironment,
+    databaseConnectionSource,
+    releaseId: process.env.PORTAL_RELEASE_ID ?? "local-development",
+  });
 }
 
 async function handleReadiness(response) {
+  if (runtimeState !== "ready") {
+    sendJson(response, 503, {
+      status: "not_ready",
+      service: "customer-portal",
+      appEnv: APP_ENV,
+      runtimeState,
+      databaseEnvironment,
+      storage: "unknown",
+      storageReason: runtimeState === "draining" ? "runtime_draining" : "runtime_starting",
+      releaseId: process.env.PORTAL_RELEASE_ID ?? "local-development",
+    });
+    return;
+  }
+
   try {
     await checkDatabase();
   } catch {
@@ -556,6 +569,9 @@ async function handleReadiness(response) {
       status: "ready",
       service: "customer-portal",
       appEnv: APP_ENV,
+      runtimeState,
+      readyAt: runtimeReadyAt,
+      releaseId: process.env.PORTAL_RELEASE_ID ?? "local-development",
       database: "connected",
       databaseEnvironment,
       storage: storage.private ? "private" : "unavailable",
@@ -3421,6 +3437,27 @@ async function route(request, response) {
     response.setHeader(name, value);
   }
 
+  const runtimeExemptApi = new Set([
+    "/api/healthz",
+    "/api/readyz",
+    "/api/portal/release-info",
+  ]);
+  if (
+    pathname.startsWith("/api/")
+    && request.method !== "OPTIONS"
+    && !runtimeExemptApi.has(pathname)
+    && runtimeState !== "ready"
+  ) {
+    sendJson(response, 503, {
+      message: "Customer Portal sedang menyiapkan layanan. Silakan coba lagi sebentar.",
+      service: "customer-portal-api",
+      runtimeState,
+      retryAfterSeconds: 3,
+      releaseId: process.env.PORTAL_RELEASE_ID ?? "local-development",
+    }, { "Retry-After": "3" });
+    return;
+  }
+
   if (pathname.startsWith("/api/places/")) {
     const body = pathname === "/api/places/optimize-route" && request.method === "POST"
       ? await readJson(request)
@@ -4599,38 +4636,137 @@ const server = http.createServer(async (request, response) => {
 });
 
 let whatsappTimer = null;
-server.listen(PORT, "0.0.0.0", () => {
-  console.log(`[customer-portal-api] listening on :${PORT} (${APP_ENV})`);
-  if (IS_PRODUCTION && process.env.CUSTOMER_PORTAL_WA_WORKER_ENABLED !== "false") {
-    const run = async () => {
-      try {
-        const result = await processMarketplaceWhatsAppQueue();
-        if (result?.skipped) {
-          console.warn("[customer-portal-api] WhatsApp worker skipped", { reason: result.skipped });
-        } else if (Number(result?.processed ?? 0) > 0 || Number(result?.failed ?? 0) > 0) {
-          console.info("[customer-portal-api] WhatsApp worker cycle", {
-            processed: Number(result?.processed ?? 0),
-            sent: Number(result?.sent ?? 0),
-            failed: Number(result?.failed ?? 0),
-          });
-        }
-      } catch (error) {
-        console.error("[customer-portal-api] WhatsApp worker failed", error?.message ?? error);
-      }
-    };
-    whatsappTimer = setInterval(() => void run(), 60_000);
-    whatsappTimer.unref?.();
-    setTimeout(() => void run(), 5_000).unref?.();
+
+async function startupPreflight() {
+  for (let attempt = 1; attempt <= STARTUP_MAX_ATTEMPTS; attempt += 1) {
+    try {
+      await checkDatabase();
+      await checkStorageReadiness();
+      console.log(`[customer-portal-api] startup preflight passed on attempt ${attempt}/${STARTUP_MAX_ATTEMPTS}`);
+      return;
+    } catch (error) {
+      console.error(
+        `[customer-portal-api] startup preflight failed attempt ${attempt}/${STARTUP_MAX_ATTEMPTS}`,
+        error?.code ?? error?.message ?? error,
+      );
+      if (attempt >= STARTUP_MAX_ATTEMPTS) throw error;
+      await sleep(STARTUP_RETRY_MS);
+    }
   }
-});
+}
+
+function startWorkers() {
+  if (!IS_PRODUCTION || process.env.CUSTOMER_PORTAL_WA_WORKER_ENABLED === "false") return;
+  const run = async () => {
+    try {
+      const result = await processMarketplaceWhatsAppQueue();
+      if (result?.skipped) {
+        console.warn("[customer-portal-api] WhatsApp worker skipped", { reason: result.skipped });
+      } else if (Number(result?.processed ?? 0) > 0 || Number(result?.failed ?? 0) > 0) {
+        console.info("[customer-portal-api] WhatsApp worker cycle", {
+          processed: Number(result?.processed ?? 0),
+          sent: Number(result?.sent ?? 0),
+          failed: Number(result?.failed ?? 0),
+        });
+      }
+    } catch (error) {
+      console.error("[customer-portal-api] WhatsApp worker failed", error?.message ?? error);
+    }
+  };
+  whatsappTimer = setInterval(() => void run(), 60_000);
+  whatsappTimer.unref?.();
+  setTimeout(() => void run(), 5_000).unref?.();
+}
+
+async function establishRuntimeReadiness() {
+  while (runtimeState !== "draining") {
+    try {
+      runtimeState = "starting";
+      await startupPreflight();
+      if (runtimeState === "draining") return;
+      runtimeState = "ready";
+      runtimeReadyAt = new Date().toISOString();
+      console.log(`[customer-portal-api] runtime ready release=${process.env.PORTAL_RELEASE_ID ?? "local-development"}`);
+      startWorkers();
+      return;
+    } catch (error) {
+      runtimeState = "degraded";
+      console.error("[customer-portal-api] dependencies not ready; frontend remains available and API stays gated", error?.stack ?? error);
+      await sleep(10_000);
+    }
+  }
+}
+
+async function startServer() {
+  await new Promise((resolve, reject) => {
+    const onError = (error) => {
+      server.off("listening", onListening);
+      reject(error);
+    };
+    const onListening = () => {
+      server.off("error", onError);
+      resolve();
+    };
+    server.once("error", onError);
+    server.once("listening", onListening);
+    server.listen(PORT, "0.0.0.0");
+  });
+
+  server.keepAliveTimeout = Math.max(5_000, Number(process.env.PORTAL_KEEPALIVE_TIMEOUT_MS ?? 65_000));
+  server.headersTimeout = Math.max(server.keepAliveTimeout + 1_000, Number(process.env.PORTAL_HEADERS_TIMEOUT_MS ?? 66_000));
+  console.log(`[customer-portal-api] listening on :${PORT} (${APP_ENV}) while dependencies warm up; release=${process.env.PORTAL_RELEASE_ID ?? "local-development"}`);
+  void establishRuntimeReadiness();
+}
 
 async function shutdown(signal) {
-  console.log(`[customer-portal-api] ${signal}, shutting down`);
-  if (whatsappTimer) clearInterval(whatsappTimer);
-  server.close();
-  await closeDatabase();
-  process.exit(0);
+  if (shutdownPromise) return shutdownPromise;
+  shutdownPromise = (async () => {
+    runtimeState = "draining";
+    console.log(`[customer-portal-api] ${signal}, draining for ${DRAIN_DELAY_MS}ms before shutdown`);
+    if (whatsappTimer) {
+      clearInterval(whatsappTimer);
+      whatsappTimer = null;
+    }
+
+    // Give the upstream proxy time to observe /api/readyz=503 and stop routing
+    // new requests to this instance before we stop accepting connections.
+    if (DRAIN_DELAY_MS > 0) await sleep(DRAIN_DELAY_MS);
+
+    const closeServer = new Promise((resolve) => {
+      server.close(() => resolve("closed"));
+      server.closeIdleConnections?.();
+    });
+    const forced = sleep(SHUTDOWN_TIMEOUT_MS).then(() => "timeout");
+    const result = await Promise.race([closeServer, forced]);
+    if (result === "timeout") {
+      console.error(`[customer-portal-api] graceful shutdown exceeded ${SHUTDOWN_TIMEOUT_MS}ms; forcing remaining connections closed`);
+      server.closeAllConnections?.();
+    }
+
+    try {
+      await closeDatabase();
+    } catch (error) {
+      console.error("[customer-portal-api] database close failed", error?.message ?? error);
+    }
+    console.log("[customer-portal-api] shutdown complete");
+  })();
+
+  try {
+    await shutdownPromise;
+    process.exitCode = 0;
+  } catch (error) {
+    console.error("[customer-portal-api] shutdown failed", error?.stack ?? error);
+    process.exitCode = 1;
+  }
+  return shutdownPromise;
 }
 
 process.on("SIGTERM", () => void shutdown("SIGTERM"));
 process.on("SIGINT", () => void shutdown("SIGINT"));
+
+startServer().catch(async (error) => {
+  runtimeState = "failed";
+  console.error("[customer-portal-api] failed to open HTTP listener", error?.stack ?? error);
+  try { await closeDatabase(); } catch {}
+  process.exit(1);
+});

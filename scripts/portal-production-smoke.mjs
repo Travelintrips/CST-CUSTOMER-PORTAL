@@ -57,11 +57,14 @@ async function main() {
   const health = await request("/api/healthz");
   assertStatus(health, 200, "health");
   assert.equal(health.body?.appEnv, "production");
-  assert.equal(health.body?.database, "connected");
+  assert.equal(health.body?.status, "ok");
+  assert.equal(health.body?.runtimeState, "ready");
 
   const readiness = await request("/api/readyz");
   assertStatus(readiness, 200, "readiness");
   assert.equal(readiness.body?.status, "ready");
+  assert.equal(readiness.body?.runtimeState, "ready");
+  assert.equal(readiness.body?.database, "connected");
   assert.equal(readiness.body?.storage, "private");
 
   const home = await request("/");

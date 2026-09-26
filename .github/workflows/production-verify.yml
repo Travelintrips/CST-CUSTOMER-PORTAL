@@ -43,6 +43,37 @@ jobs:
           curl -i --max-time 20 "$url" || true
           exit 1
 
+      - name: Verify new release is ready and front door is stable
+        shell: bash
+        run: |
+          set -euo pipefail
+          ready_url="https://cstlogistic.co.id/api/readyz"
+          home_url="https://cstlogistic.co.id/"
+
+          consecutive=0
+          for attempt in $(seq 1 12); do
+            ready_code="$(curl --silent --show-error --output /tmp/ready.json --write-out '%{http_code}' --max-time 15 "$ready_url" || true)"
+            home_code="$(curl --silent --show-error --output /tmp/home.html --write-out '%{http_code}' --max-time 15 "$home_url" || true)"
+            echo "stability attempt=$attempt ready=$ready_code home=$home_code consecutive=$consecutive"
+
+            if [ "$ready_code" = "200" ] && [ "$home_code" = "200" ]               && grep -Fq '"status":"ready"' /tmp/ready.json               && grep -Fq '<!doctype html>' /tmp/home.html; then
+              consecutive=$((consecutive + 1))
+            else
+              consecutive=0
+              echo "Release is not stable yet."
+              cat /tmp/ready.json 2>/dev/null || true
+            fi
+
+            if [ "$consecutive" -ge 3 ]; then
+              echo "Release readiness and front door are stable across three consecutive probes."
+              exit 0
+            fi
+            sleep 5
+          done
+
+          echo "Release failed readiness/front-door stability verification."
+          exit 1
+
       - name: Verify canonical services are exposed
         shell: bash
         run: |
