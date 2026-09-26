@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from "vitest";
-import { authCapabilities, googleRedirectUri, resolveGoogleLogin } from "../server/auth-providers.mjs";
+import { authCapabilities, googleRedirectUri, resolveGoogleLogin, resolveGoogleOAuthConfig } from "../server/auth-providers.mjs";
 import { sessionCookies, verifySession } from "../server/session.mjs";
 
 type User = {
@@ -240,6 +240,26 @@ describe("Google OAuth production capability", () => {
     process.env.GOOGLE_CLIENT_SECRET = "test-secret";
     delete process.env.GOOGLE_REDIRECT_BASE_URL;
     delete process.env.FONNTE_TOKEN;
+  });
+
+  it("restores Google OAuth credentials from app_config when runtime env is missing", async () => {
+    delete process.env.GOOGLE_CLIENT_ID;
+    delete process.env.GOOGLE_CLIENT_SECRET;
+    delete process.env.GOOGLE_REDIRECT_BASE_URL;
+
+    const config = await resolveGoogleOAuthConfig(async () => ({
+      rows: [
+        { key: "GOOGLE_CLIENT_ID", value: "db-client.apps.googleusercontent.com" },
+        { key: "GOOGLE_CLIENT_SECRET", value: "db-secret" },
+        { key: "GOOGLE_REDIRECT_BASE_URL", value: "https://cstlogistic.co.id/api/callback/google" },
+      ],
+    }) as any);
+
+    expect(config).toEqual({
+      clientId: "db-client.apps.googleusercontent.com",
+      clientSecret: "db-secret",
+      redirectBaseUrl: "https://cstlogistic.co.id/api/callback/google",
+    });
   });
 
   it("keeps Google login enabled when credentials exist and redirect override is omitted", async () => {
