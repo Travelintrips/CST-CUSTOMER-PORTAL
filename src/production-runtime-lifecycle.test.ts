@@ -275,4 +275,23 @@ describe("production runtime availability lifecycle", () => {
     expect(migration).toContain("revoke all on table public.portal_password_reset_tokens from anon, authenticated");
   });
 
+
+  it("revokes previously issued portal sessions after password reset", () => {
+    const session = readFileSync(join(process.cwd(), "server/session.mjs"), "utf8");
+    const server = readFileSync(join(process.cwd(), "server/index.mjs"), "utf8");
+    const auth = readFileSync(join(process.cwd(), "server/auth-providers.mjs"), "utf8");
+    const migration = readFileSync(
+      join(process.cwd(), "supabase/migrations/20260926214500_portal_auth_version.sql"),
+      "utf8",
+    );
+
+    expect(session).toContain("av: Number(user.auth_version ?? 0)");
+    expect(session).toContain("authVersion: Number(data.av ?? 0)");
+    expect(server).toContain("auth_version");
+    expect(server).toContain("session.authVersion");
+    expect(auth).toContain("auth_version = auth_version + 1");
+    expect(auth).toContain("delete from public.trusted_devices");
+    expect(migration).toContain("auth_version integer not null default 0");
+  });
+
 });

@@ -173,7 +173,7 @@ function loginResponse(row, token) {
 
 async function findUserById(id, dbQuery = query) {
   const result = await dbQuery(
-    `select id, name, email, phone, company, role, customer_type, account_status,
+    `select id, name, email, phone, company, role, customer_type, account_status, auth_version,
             oauth_provider, oauth_id
        from public.portal_customers
       where id = $1
@@ -185,7 +185,7 @@ async function findUserById(id, dbQuery = query) {
 
 async function findUserByEmail(email, dbQuery = query) {
   const result = await dbQuery(
-    `select id, name, email, phone, company, role, customer_type, account_status,
+    `select id, name, email, phone, company, role, customer_type, account_status, auth_version,
             oauth_provider, oauth_id
        from public.portal_customers
       where lower(email) = $1
@@ -197,7 +197,7 @@ async function findUserByEmail(email, dbQuery = query) {
 
 async function findUserByPhone(phone, dbQuery = query) {
   const result = await dbQuery(
-    `select id, name, email, phone, company, role, customer_type, account_status
+    `select id, name, email, phone, company, role, customer_type, account_status, auth_version
        from public.portal_customers
       where (
         case
@@ -282,7 +282,7 @@ export async function createOrFindEmailUser(email, registrationIntent = null, db
       (name, email, password_hash, role, customer_type, company, account_status)
      values ($1, $2, '', $3, $4, $5, 'active')
      on conflict do nothing
-     returning id, name, email, phone, company, role, customer_type, account_status`,
+     returning id, name, email, phone, company, role, customer_type, account_status, auth_version`,
     [
       email.split("@")[0],
       email,
@@ -447,7 +447,7 @@ export async function handleSignup(request, response) {
         (name, email, password_hash, phone, company, role, customer_type, account_status)
        values ($1, $2, $3, $4, $5, $6, $7, 'active')
        on conflict do nothing
-       returning id, name, email, phone, company, role, customer_type, account_status`,
+       returning id, name, email, phone, company, role, customer_type, account_status, auth_version`,
       [name, email, passwordHash, phone, company || null, role, customerType],
     );
     const createdUser = created.rows[0] ?? null;
@@ -813,7 +813,7 @@ export async function handlePasswordLogin(request, response) {
   enforceRateLimit(`password-login:email:${email}`, 10, 15 * 60 * 1000);
 
   const result = await query(
-    `select id, name, email, phone, company, role, customer_type, account_status, password_hash
+    `select id, name, email, phone, company, role, customer_type, account_status, auth_version, password_hash
        from public.portal_customers
       where lower(trim(email)) = $1
       limit 1`,
@@ -940,7 +940,7 @@ export async function handleResetPasswordWithToken(request, response) {
     if (!row) throw errorWithStatus(400, "Link reset password tidak valid atau sudah kadaluarsa.");
 
     await dbQuery(
-      "update public.portal_customers set password_hash = $1 where id = $2",
+      "update public.portal_customers set password_hash = $1, auth_version = auth_version + 1 where id = $2",
       [passwordHash, row.customer_id],
     );
     await dbQuery(
@@ -952,6 +952,10 @@ export async function handleResetPasswordWithToken(request, response) {
           set used_at = coalesce(used_at, now())
         where customer_id = $1 and id <> $2 and used_at is null`,
       [row.customer_id, row.id],
+    );
+    await dbQuery(
+      "delete from public.trusted_devices where phone in (select phone from public.portal_customers where id = $1)",
+      [row.customer_id],
     );
   });
 
@@ -1266,7 +1270,7 @@ export async function handleWaRegister(request, response) {
         (name, email, password_hash, phone, company, role, customer_type, account_status)
        values ($1, $2, '', $3, $4, $5, $6, 'active')
        on conflict do nothing
-       returning id, name, email, phone, company, role, customer_type, account_status`,
+       returning id, name, email, phone, company, role, customer_type, account_status, auth_version`,
       [name, accountEmail, phone, company || null, role, customerType],
     );
     const createdUser = created.rows[0] ?? null;
@@ -1585,7 +1589,7 @@ export async function googleResolveUser(profile, dbQuery = query, registrationIn
          oauth_provider, oauth_id, avatar_url, account_status)
        values ($1, $2, '', $3, $4, $5, 'google', $6, $7, 'active')
        on conflict do nothing
-       returning id, name, email, phone, company, role, customer_type, account_status,
+       returning id, name, email, phone, company, role, customer_type, account_status, auth_version,
                  oauth_provider, oauth_id`,
       [
         profile.name,
