@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Link, useParams } from "wouter";
+import { Link } from "wouter";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
@@ -9,7 +9,9 @@ function rupiah(v: number | null | undefined) {
 }
 
 export default function AdminTruckingPage() {
-  const { bookingNumber } = useParams<{ bookingNumber?: string }>();
+  const bookingNumber = typeof window !== "undefined"
+    ? new URLSearchParams(window.location.search).get("booking") ?? undefined
+    : undefined;
   const [list, setList] = useState<any[]>([]);
   const [data, setData] = useState<any | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -86,7 +88,7 @@ export default function AdminTruckingPage() {
           <div className="mt-5 rounded-2xl bg-white border border-slate-200 overflow-x-auto">
             <table className="w-full text-sm">
               <thead><tr className="bg-slate-50 text-left text-xs text-slate-500"><th className="p-3">Booking</th><th className="p-3">Customer</th><th className="p-3">Armada</th><th className="p-3">Status</th><th className="p-3">Pembayaran</th><th className="p-3">Harga</th><th className="p-3"></th></tr></thead>
-              <tbody>{list.map((row) => <tr key={row.id} className="border-t border-slate-100"><td className="p-3 font-semibold">{row.bookingNumber}</td><td className="p-3">{row.customerName ?? row.customerEmail}</td><td className="p-3">{row.vehicleName}</td><td className="p-3"><Badge>{row.status}</Badge></td><td className="p-3">{row.paymentStatus}</td><td className="p-3">{rupiah(row.finalPrice ?? row.estimate)}</td><td className="p-3"><Link href={`/admin/trucking/${row.bookingNumber}`} className="text-blue-600 font-semibold">Buka</Link></td></tr>)}</tbody>
+              <tbody>{list.map((row) => <tr key={row.id} className="border-t border-slate-100"><td className="p-3 font-semibold">{row.bookingNumber}</td><td className="p-3">{row.customerName ?? row.customerEmail}</td><td className="p-3">{row.vehicleName}</td><td className="p-3"><Badge>{row.status}</Badge></td><td className="p-3">{row.paymentStatus}</td><td className="p-3">{rupiah(row.finalPrice ?? row.estimate)}</td><td className="p-3"><Link href={`/admin/trucking?booking=${encodeURIComponent(row.bookingNumber)}`} className="text-blue-600 font-semibold">Buka</Link></td></tr>)}</tbody>
             </table>
           </div>
         </div>
