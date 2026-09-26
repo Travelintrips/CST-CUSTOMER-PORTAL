@@ -3437,6 +3437,27 @@ async function route(request, response) {
     response.setHeader(name, value);
   }
 
+  const runtimeExemptApi = new Set([
+    "/api/healthz",
+    "/api/readyz",
+    "/api/portal/release-info",
+  ]);
+  if (
+    pathname.startsWith("/api/")
+    && request.method !== "OPTIONS"
+    && !runtimeExemptApi.has(pathname)
+    && runtimeState !== "ready"
+  ) {
+    sendJson(response, 503, {
+      message: "Customer Portal sedang menyiapkan layanan. Silakan coba lagi sebentar.",
+      service: "customer-portal-api",
+      runtimeState,
+      retryAfterSeconds: 3,
+      releaseId: process.env.PORTAL_RELEASE_ID ?? "local-development",
+    }, { "Retry-After": "3" });
+    return;
+  }
+
   if (pathname.startsWith("/api/places/")) {
     const body = pathname === "/api/places/optimize-route" && request.method === "POST"
       ? await readJson(request)
@@ -4657,8 +4678,26 @@ function startWorkers() {
   setTimeout(() => void run(), 5_000).unref?.();
 }
 
+async function establishRuntimeReadiness() {
+  while (runtimeState !== "draining") {
+    try {
+      runtimeState = "starting";
+      await startupPreflight();
+      if (runtimeState === "draining") return;
+      runtimeState = "ready";
+      runtimeReadyAt = new Date().toISOString();
+      console.log(`[customer-portal-api] runtime ready release=${process.env.PORTAL_RELEASE_ID ?? "local-development"}`);
+      startWorkers();
+      return;
+    } catch (error) {
+      runtimeState = "degraded";
+      console.error("[customer-portal-api] dependencies not ready; frontend remains available and API stays gated", error?.stack ?? error);
+      await sleep(10_000);
+    }
+  }
+}
+
 async function startServer() {
-  await startupPreflight();
   await new Promise((resolve, reject) => {
     const onError = (error) => {
       server.off("listening", onListening);
@@ -4672,12 +4711,11 @@ async function startServer() {
     server.once("listening", onListening);
     server.listen(PORT, "0.0.0.0");
   });
-  runtimeState = "ready";
-  runtimeReadyAt = new Date().toISOString();
+
   server.keepAliveTimeout = Math.max(5_000, Number(process.env.PORTAL_KEEPALIVE_TIMEOUT_MS ?? 65_000));
   server.headersTimeout = Math.max(server.keepAliveTimeout + 1_000, Number(process.env.PORTAL_HEADERS_TIMEOUT_MS ?? 66_000));
-  console.log(`[customer-portal-api] ready on :${PORT} (${APP_ENV}) release=${process.env.PORTAL_RELEASE_ID ?? "local-development"}`);
-  startWorkers();
+  console.log(`[customer-portal-api] listening on :${PORT} (${APP_ENV}) while dependencies warm up; release=${process.env.PORTAL_RELEASE_ID ?? "local-development"}`);
+  void establishRuntimeReadiness();
 }
 
 async function shutdown(signal) {
@@ -4728,7 +4766,7 @@ process.on("SIGINT", () => void shutdown("SIGINT"));
 
 startServer().catch(async (error) => {
   runtimeState = "failed";
-  console.error("[customer-portal-api] startup failed after preflight retries", error?.stack ?? error);
+  console.error("[customer-portal-api] failed to open HTTP listener", error?.stack ?? error);
   try { await closeDatabase(); } catch {}
   process.exit(1);
 });
