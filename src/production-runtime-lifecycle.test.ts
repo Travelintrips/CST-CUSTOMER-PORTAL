@@ -254,4 +254,25 @@ describe("production runtime availability lifecycle", () => {
     expect(auth).toContain('linkIdentity(createdUser.id, "whatsapp", phone, dbQuery)');
   });
 
+
+  it("provides rate-limited password login and token-based password recovery", () => {
+    const auth = readFileSync(join(process.cwd(), "server/auth-providers.mjs"), "utf8");
+    const server = readFileSync(join(process.cwd(), "server/index.mjs"), "utf8");
+    const migration = readFileSync(
+      join(process.cwd(), "supabase/migrations/20260926213000_portal_password_reset_tokens.sql"),
+      "utf8",
+    );
+
+    expect(auth).toContain("handlePasswordLogin");
+    expect(auth).toContain("password-login:ip:");
+    expect(auth).toContain("handleForgotPassword");
+    expect(auth).toContain("handleResetPasswordWithToken");
+    expect(auth).toContain("portal_password_reset_tokens");
+    expect(auth).toContain("randomBytes(32)");
+    expect(auth).toContain("Link berlaku selama 30 menit");
+    expect(server).toContain("/api/portal/auth/forgot-password");
+    expect(server).toContain("/api/portal/auth/reset-password-with-token");
+    expect(migration).toContain("revoke all on table public.portal_password_reset_tokens from anon, authenticated");
+  });
+
 });
