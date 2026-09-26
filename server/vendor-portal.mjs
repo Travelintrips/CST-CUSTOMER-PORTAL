@@ -716,6 +716,23 @@ export async function handleVendorPortalRoutes({ request, response, url, user, b
     [user.id],
   );
   const vendor = profile.rows[0] ?? null;
+  const vendorVerified = ["verified", "approved"].includes(
+    String(vendor?.verification_status ?? "").toLowerCase(),
+  );
+  const pendingSafeRoute =
+    (url.pathname === "/api/portal/vendor/vendor-profile" && request.method === "GET")
+    || (url.pathname === "/api/portal/vendor/profile" && request.method === "PATCH");
+  if (!vendorVerified && !pendingSafeRoute) {
+    sendError(
+      response,
+      403,
+      vendor
+        ? "Akun vendor masih menunggu persetujuan admin."
+        : "Profil vendor belum lengkap. Selesaikan onboarding terlebih dahulu.",
+    );
+    return true;
+  }
+
   if (url.pathname === "/api/portal/vendor/vendor-profile" && request.method === "GET") {
     sendJson(response, 200, {
       vendorProfile: vendor ? {

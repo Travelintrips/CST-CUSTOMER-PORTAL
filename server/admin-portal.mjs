@@ -280,7 +280,10 @@ async function handleAdminApprovals(ctx) {
     const note = text(body.adminNote) || null;
     if (!["approved", "rejected"].includes(status)) return adminError(ctx, 400, "Status approval tidak valid.");
     if (status === "rejected" && !note) return adminError(ctx, 400, "Alasan penolakan wajib diisi.");
-    const approval = await query("select id, customer_id from public.onboarding_approvals where id = $1", [id]);
+    const approval = await query(
+      "select id, customer_id, account_type from public.onboarding_approvals where id = $1",
+      [id],
+    );
     if (!approval.rows[0]) return adminError(ctx, 404, "Approval tidak ditemukan.");
     await query(
       `update public.onboarding_approvals
@@ -305,6 +308,100 @@ async function handleAdminApprovals(ctx) {
         approval.rows[0].customer_id,
       ],
     );
+    if (approval.rows[0].account_type === "vendor") {
+      const vendorProfile = await query(
+        `select vp.id, vp.company_name, vp.service_type, vp.supplier_id,
+                c.email, c.phone, c.name
+           from public.vendor_profiles vp
+           join public.portal_customers c on c.id = vp.customer_id
+          where vp.customer_id = $1
+          order by vp.updated_at desc, vp.id desc
+          limit 1`,
+        [approval.rows[0].customer_id],
+      );
+      const vendorRow = vendorProfile.rows[0] ?? null;
+      if (vendorRow) {
+        await query(
+          `update public.vendor_profiles
+              set verification_status = $1,
+                  approved_at = case when $1 = 'verified' then now() else null end,
+                  approval_date = case when $1 = 'verified' then now() else null end,
+                  updated_at = now()
+            where id = $2`,
+          [status === "approved" ? "verified" : "rejected", vendorRow.id],
+        );
+
+        if (status === "approved") {
+          let supplierId = vendorRow.supplier_id == null ? null : Number(vendorRow.supplier_id);
+          if (!supplierId) {
+            const supplier = await query(
+              `select id
+                 from public.suppliers
+                where lower(coalesce(contact_email, '')) = lower($1)
+                   or lower(name) = lower($2)
+                order by case when lower(coalesce(contact_email, '')) = lower($1) then 0 else 1 end,
+                         id
+                limit 1`,
+              [vendorRow.email ?? "", vendorRow.company_name ?? vendorRow.name],
+            );
+            supplierId = supplier.rows[0]?.id == null ? null : Number(supplier.rows[0].id);
+          }
+
+          if (!supplierId) {
+            const createdSupplier = await query(
+              `insert into public.suppliers
+                (name, contact_email, phone, service_type, is_active, status,
+                 registration_status, is_verified, verified_at, verified_by,
+                 reviewed_by, reviewed_at, onboarding_completed_at, self_submitted,
+                 created_at, updated_at)
+               values ($1,$2,$3,$4,true,'active','approved',true,now(),$5,$5,now(),now(),true,now(),now())
+               returning id`,
+              [
+                vendorRow.company_name ?? vendorRow.name,
+                vendorRow.email ?? null,
+                vendorRow.phone ?? null,
+                vendorRow.service_type ?? null,
+                ctx.user.email,
+              ],
+            );
+            supplierId = Number(createdSupplier.rows[0].id);
+          } else {
+            await query(
+              `update public.suppliers
+                  set contact_email = coalesce(nullif($1, ''), contact_email),
+                      phone = coalesce(nullif($2, ''), phone),
+                      service_type = coalesce(nullif($3, ''), service_type),
+                      registration_status = 'approved',
+                      is_active = true,
+                      status = 'active',
+                      is_verified = true,
+                      verified_at = coalesce(verified_at, now()),
+                      verified_by = coalesce(verified_by, $4),
+                      reviewed_by = $4,
+                      reviewed_at = now(),
+                      onboarding_completed_at = coalesce(onboarding_completed_at, now()),
+                      self_submitted = true,
+                      updated_at = now()
+                where id = $5`,
+              [
+                vendorRow.email ?? "",
+                vendorRow.phone ?? "",
+                vendorRow.service_type ?? "",
+                ctx.user.email,
+                supplierId,
+              ],
+            );
+          }
+
+          await query(
+            `update public.vendor_profiles
+                set supplier_id = $1, updated_at = now()
+              where id = $2`,
+            [supplierId, vendorRow.id],
+          );
+        }
+      }
+    }
     ctx.sendJson(response, 200, { id, status, adminNote: note });
     return;
   }
@@ -441,6 +538,36 @@ async function handleAdminCompanyRequests(ctx) {
         [current.portal_customer_id, matchedCompanyId, text(body.buyerRole, "member"), ctx.user.id],
       );
     }
+    const canonicalCompany = await query(
+      `select coalesce(company_name, legal_name, name) as name
+         from public.companies
+        where id = $1`,
+      [matchedCompanyId],
+    );
+    await query(
+      `update public.portal_customers
+          set customer_type = 'company',
+              company = coalesce($1, company)
+        where id = $2`,
+      [canonicalCompany.rows[0]?.name ?? null, current.portal_customer_id],
+    );
+    await query(
+      `update public.portal_customer_profiles
+          set profile_status = 'active',
+              company_name = coalesce($1, company_name),
+              updated_at = now()
+        where customer_id = $2`,
+      [canonicalCompany.rows[0]?.name ?? null, current.portal_customer_id],
+    );
+  } else if (status === "rejected") {
+    await query(
+      `update public.portal_customer_profiles
+          set profile_status = 'rejected',
+              verification_notes = coalesce($1, verification_notes),
+              updated_at = now()
+        where customer_id = $2`,
+      [text(body.reviewNote) || "Permintaan perusahaan ditolak.", current.portal_customer_id],
+    );
   }
   ctx.sendJson(response, 200, { id, status, matchedCompanyId });
 }
@@ -1012,6 +1139,58 @@ async function handleOnboardingComplete(ctx) {
     );
   }
 
+  if (accountType === "vendor") {
+    const existingVendorProfile = await query(
+      `select id
+         from public.vendor_profiles
+        where customer_id = $1
+        order by updated_at desc, id desc
+        limit 1`,
+      [ctx.user.id],
+    );
+    const vendorValues = [
+      text(vendor.companyName) || profileCompanyName,
+      text(vendor.nib) || null,
+      text(vendor.npwp) || null,
+      text(vendor.serviceType) || null,
+      text(vendor.legalityDocUrl) || null,
+      fullName,
+      phone,
+      ctx.user.email ?? null,
+      address,
+    ];
+    if (existingVendorProfile.rows[0]) {
+      await query(
+        `update public.vendor_profiles
+            set company_name = coalesce($1, company_name),
+                nib = coalesce($2, nib),
+                npwp = coalesce($3, npwp),
+                service_type = coalesce($4, service_type),
+                legality_doc_url = coalesce($5, legality_doc_url),
+                pic_name = coalesce($6, pic_name),
+                phone = coalesce($7, phone),
+                whatsapp = coalesce($7, whatsapp),
+                email = coalesce($8, email),
+                full_address = coalesce($9, full_address),
+                verification_status = 'pending',
+                approved_at = null,
+                approval_date = null,
+                updated_at = now()
+          where id = $10`,
+        [...vendorValues, existingVendorProfile.rows[0].id],
+      );
+    } else {
+      await query(
+        `insert into public.vendor_profiles
+          (customer_id, company_name, nib, npwp, service_type, legality_doc_url,
+           pic_name, phone, whatsapp, email, full_address, verification_status,
+           created_at, updated_at)
+         values ($1,$2,$3,$4,$5,$6,$7,$8,$8,$9,$10,'pending',now(),now())`,
+        [ctx.user.id, ...vendorValues],
+      );
+    }
+  }
+
   let organization = null;
   if (accountType === "customer") {
     organization = await applyOrganizationSelection(ctx.user, {
@@ -1062,9 +1241,15 @@ async function handleOnboardingStatus(ctx) {
   const organization = await getOrganizationContext(ctx.user);
   const approvalRow = approval.rows[0];
   const profileRow = profile.rows[0];
-  let status = ctx.user.account_status === "inactive" ? "incomplete" : "active";
+  let status =
+    profileRow?.profile_status === "incomplete" || ctx.user.account_status === "inactive"
+      ? "incomplete"
+      : profileRow?.profile_status === "pending"
+        ? "pending"
+        : "active";
   if (approvalRow?.status === "pending") status = "pending";
   if (approvalRow?.status === "rejected" || profileRow?.profile_status === "rejected") status = "rejected";
+  if (approvalRow?.status === "approved" && profileRow?.profile_status === "active") status = "active";
   if (organization.status === "company_pending") status = "company_pending";
   ctx.sendJson(ctx.response, 200, {
     status, accountType: ctx.user.role, customerType: ctx.user.customer_type ?? null,

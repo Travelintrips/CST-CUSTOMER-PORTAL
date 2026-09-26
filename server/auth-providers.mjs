@@ -203,6 +203,39 @@ function validateRegistrationIntent(intent) {
   }
 }
 
+export async function ensureInitialOnboardingProfile(
+  customerId,
+  { companyName = null, fullName = null, phone = null } = {},
+  dbQuery = query,
+) {
+  if (!Number.isFinite(Number(customerId))) {
+    throw errorWithStatus(500, "Customer ID onboarding tidak valid.");
+  }
+  const existing = await dbQuery(
+    `select id, profile_status
+       from public.portal_customer_profiles
+      where customer_id = $1
+      order by updated_at desc nulls last, id desc
+      limit 1`,
+    [Number(customerId)],
+  );
+  if (existing.rows[0]) return existing.rows[0];
+
+  const inserted = await dbQuery(
+    `insert into public.portal_customer_profiles
+      (customer_id, company_name, pic_name, pic_whatsapp, profile_status, updated_at)
+     values ($1, $2, $3, $4, 'incomplete', now())
+     returning id, profile_status`,
+    [
+      Number(customerId),
+      companyName || null,
+      fullName || null,
+      phone || null,
+    ],
+  );
+  return inserted.rows[0] ?? null;
+}
+
 export async function createOrFindEmailUser(email, registrationIntent = null, dbQuery = query) {
   const existing = await findUserByEmail(email, dbQuery);
   if (existing) return { user: existing, isNew: false };
@@ -224,7 +257,15 @@ export async function createOrFindEmailUser(email, registrationIntent = null, db
         intent.company || null,
       ],
     );
-    return { user: created.rows[0] ?? null, isNew: true };
+    const user = created.rows[0] ?? null;
+    if (user) {
+      await ensureInitialOnboardingProfile(
+        user.id,
+        { companyName: intent.company || null, fullName: user.name ?? null, phone: user.phone ?? null },
+        dbQuery,
+      );
+    }
+    return { user, isNew: true };
   } catch (error) {
     if (error?.code !== "23505") throw error;
     return { user: await findUserByEmail(email, dbQuery), isNew: false };
@@ -382,6 +423,11 @@ export async function handleSignup(request, response) {
   }
   const user = created.rows[0];
   if (!user) throw errorWithStatus(500, "Akun portal gagal disiapkan.");
+  await ensureInitialOnboardingProfile(user.id, {
+    companyName: company || null,
+    fullName: name,
+    phone,
+  });
   await linkIdentity(user.id, "email", email);
   const result = await loginUser(user);
   json(response, 201, result, { "Set-Cookie": sessionCookies(result.token) });
@@ -994,6 +1040,12 @@ export async function handleWaRegister(request, response) {
     throw error;
   }
   const user = created.rows[0];
+  if (!user) throw errorWithStatus(500, "Akun portal gagal disiapkan.");
+  await ensureInitialOnboardingProfile(user.id, {
+    companyName: company || null,
+    fullName: name,
+    phone,
+  });
   await linkIdentity(user.id, "whatsapp", phone);
   if (email) await linkIdentity(user.id, "email", email);
   const result = await loginUser(user);
@@ -1311,6 +1363,17 @@ export async function googleResolveUser(profile, dbQuery = query, registrationIn
         ],
       );
       user = inserted.rows[0];
+      if (user) {
+        await ensureInitialOnboardingProfile(
+          user.id,
+          {
+            companyName: intent.company || null,
+            fullName: profile.name,
+            phone: null,
+          },
+          dbQuery,
+        );
+      }
     } catch (error) {
       if (error?.code !== "23505") throw error;
       user = await findUserByEmail(profile.email, dbQuery);

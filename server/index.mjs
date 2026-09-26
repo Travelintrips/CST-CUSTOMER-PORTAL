@@ -396,23 +396,120 @@ function authResponse(user, token) {
 }
 
 async function bootstrapResponse(user, requestedReturnTo, customerContext) {
-  let vendorApprovalStatus = null;
-  if (user.role === "vendor") {
-    const vendorStatus = await query(`select verification_status from public.vendor_profiles where customer_id = $1 order by updated_at desc nulls last, id desc limit 1`, [user.id]);
-    vendorApprovalStatus = vendorStatus.rows[0]?.verification_status ?? "pending";
-  }
-  const onboardingStatus = user.account_status ?? "active";
-  const onboardingComplete = onboardingStatus === "active";
+  const [profileResult, approvalResult, vendorResult] = await Promise.all([
+    query(
+      `select profile_status, verification_status
+         from public.portal_customer_profiles
+        where customer_id = $1
+        order by updated_at desc nulls last, id desc
+        limit 1`,
+      [user.id],
+    ),
+    query(
+      `select status, account_type
+         from public.onboarding_approvals
+        where customer_id = $1
+        order by created_at desc, id desc
+        limit 1`,
+      [user.id],
+    ),
+    user.role === "vendor"
+      ? query(
+          `select verification_status
+             from public.vendor_profiles
+            where customer_id = $1
+            order by updated_at desc nulls last, id desc
+            limit 1`,
+          [user.id],
+        )
+      : Promise.resolve({ rows: [] }),
+  ]);
+
+  const profile = profileResult.rows[0] ?? null;
+  const approval = approvalResult.rows[0] ?? null;
+  const vendorApprovalStatus = user.role === "vendor"
+    ? vendorResult.rows[0]?.verification_status
+      ?? (approval?.status === "approved" ? "verified" : approval?.status ?? "pending")
+    : null;
+
+  const profileStatus = profile?.profile_status ?? null;
+  const approvalStatus = approval?.status ?? null;
   const organizationBlocked = ["company_pending", "company_unresolved", "legacy_unresolved"]
     .includes(customerContext?.status);
-  const defaultDestination = user.role === "admin"
+
+  const isAdmin = user.role === "admin";
+  const legacyCustomerWithoutProfile =
+    user.role === "customer"
+    && !profile
+    && user.customer_type == null;
+  const needsInitialOnboarding =
+    profileStatus === "incomplete"
+    || (
+      user.role === "customer"
+      && !profile
+      && user.customer_type != null
+    )
+    || (
+      ["vendor", "driver", "employee"].includes(user.role)
+      && !profile
+      && approvalStatus == null
+      && vendorApprovalStatus !== "verified"
+    );
+
+  const rejected =
+    profileStatus === "rejected"
+    || approvalStatus === "rejected"
+    || vendorApprovalStatus === "rejected";
+  const pending =
+    profileStatus === "pending"
+    || approvalStatus === "pending"
+    || customerContext?.status === "company_pending"
+    || (
+      user.role === "vendor"
+      && profile
+      && vendorApprovalStatus
+      && !["verified", "approved"].includes(String(vendorApprovalStatus).toLowerCase())
+      && !needsInitialOnboarding
+    );
+
+  const onboardingComplete = isAdmin
+    || legacyCustomerWithoutProfile
+    || (
+      !needsInitialOnboarding
+      && !pending
+      && !rejected
+      && !organizationBlocked
+      && (
+        profileStatus === "active"
+        || approvalStatus === "approved"
+        || vendorApprovalStatus === "verified"
+      )
+    );
+
+  const onboardingStatus = isAdmin
+    ? "active"
+    : needsInitialOnboarding
+      ? "incomplete"
+      : rejected
+        ? "rejected"
+        : pending
+          ? "pending"
+          : onboardingComplete
+            ? "active"
+            : user.account_status ?? "incomplete";
+
+  const defaultDestination = isAdmin
     ? "/admin"
     : user.role === "vendor"
       ? "/vendor-dashboard"
       : "/dashboard";
-  const allowedDestination = onboardingComplete && !organizationBlocked
-    ? safeReturnTo(requestedReturnTo) ?? defaultDestination
-    : "/onboarding";
+
+  let allowedDestination = "/onboarding";
+  if (rejected || pending) {
+    allowedDestination = "/pending-approval";
+  } else if (onboardingComplete) {
+    allowedDestination = safeReturnTo(requestedReturnTo) ?? defaultDestination;
+  }
 
   return {
     authenticated: true,
