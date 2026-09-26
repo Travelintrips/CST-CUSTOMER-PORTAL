@@ -408,12 +408,18 @@ function emailConfigured() {
 }
 
 function googleConfigured() {
-  return Boolean(
+  const hasCredentials = Boolean(
     process.env.GOOGLE_CLIENT_ID?.trim()
-      && process.env.GOOGLE_CLIENT_SECRET?.trim()
-      && process.env.GOOGLE_REDIRECT_BASE_URL?.trim()
-      && googleRedirectBaseConfigured(),
+      && process.env.GOOGLE_CLIENT_SECRET?.trim(),
   );
+  if (!hasCredentials) return false;
+
+  // GOOGLE_REDIRECT_BASE_URL is an optional production override. When it is
+  // omitted, googleRedirectUri() derives the canonical callback from the
+  // forwarded request origin. Requiring the override here incorrectly
+  // disabled Google login even when valid OAuth credentials were installed.
+  const configuredRedirect = process.env.GOOGLE_REDIRECT_BASE_URL?.trim();
+  return !configuredRedirect || googleRedirectBaseConfigured();
 }
 
 function fonnteConfigured() {
