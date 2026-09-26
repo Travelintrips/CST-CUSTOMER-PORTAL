@@ -52,8 +52,17 @@ function googleProfile(overrides: Record<string, unknown> = {}) {
 function fakeDb(initialUsers: User[] = [user()], initialIdentities: Identity[] = []) {
   const users = initialUsers.map((record) => ({ ...record }));
   const identities = initialIdentities.map((record) => ({ ...record }));
+  const profiles: Array<{
+    id: number;
+    customer_id: number;
+    company_name: string | null;
+    pic_name: string | null;
+    pic_whatsapp: string | null;
+    profile_status: string;
+  }> = [];
   let nextIdentityId = Math.max(0, ...identities.map((record) => record.id)) + 1;
   let nextUserId = Math.max(0, ...users.map((record) => record.id)) + 1;
+  let nextProfileId = 1;
 
   const db = async (sql: string, values: unknown[] = []) => {
     const normalizedSql = sql.replace(/\s+/g, " ").trim().toLowerCase();
@@ -111,6 +120,26 @@ function fakeDb(initialUsers: User[] = [user()], initialIdentities: Identity[] =
           rows: users.filter((record) => record.email.toLowerCase() === String(values[0])).slice(0, 1),
         };
       }
+    }
+
+    if (normalizedSql.includes("from public.portal_customer_profiles")) {
+      const rows = profiles
+        .filter((record) => record.customer_id === Number(values[0]))
+        .sort((a, b) => b.id - a.id);
+      return { rows: rows.slice(0, 1) };
+    }
+
+    if (normalizedSql.startsWith("insert into public.portal_customer_profiles")) {
+      const record = {
+        id: nextProfileId++,
+        customer_id: Number(values[0]),
+        company_name: values[1] == null ? null : String(values[1]),
+        pic_name: values[2] == null ? null : String(values[2]),
+        pic_whatsapp: values[3] == null ? null : String(values[3]),
+        profile_status: "incomplete",
+      };
+      profiles.push(record);
+      return { rows: [{ id: record.id, profile_status: record.profile_status }], rowCount: 1 };
     }
 
     if (normalizedSql.startsWith("insert into public.portal_customers")) {
@@ -181,7 +210,7 @@ function fakeDb(initialUsers: User[] = [user()], initialIdentities: Identity[] =
     throw new Error(`Unhandled fake query: ${sql}`);
   };
 
-  return { db, users, identities };
+  return { db, users, identities, profiles };
 }
 
 describe("canonical Google identity linking", () => {
@@ -283,6 +312,13 @@ describe("canonical Google identity linking", () => {
       customer_type: null,
     });
     expect(verifySession(result.token)).toMatchObject({ role: "vendor" });
+    expect(state.profiles).toEqual([
+      expect.objectContaining({
+        customer_id: result.user.id,
+        company_name: "PT Vendor Baru",
+        profile_status: "incomplete",
+      }),
+    ]);
   });
 
   it("does not change the role of an existing account from registration intent", async () => {
@@ -315,6 +351,13 @@ describe("registration role creation", () => {
       company: "PT Email Vendor",
       customer_type: null,
     });
+    expect(state.profiles).toEqual([
+      expect.objectContaining({
+        customer_id: created.user?.id,
+        company_name: "PT Email Vendor",
+        profile_status: "incomplete",
+      }),
+    ]);
   });
 
   it("creates a company customer with customer_type company", async () => {
@@ -330,6 +373,13 @@ describe("registration role creation", () => {
       customer_type: "company",
       company: "PT Customer Company",
     });
+    expect(state.profiles).toEqual([
+      expect.objectContaining({
+        customer_id: created.user?.id,
+        company_name: "PT Customer Company",
+        profile_status: "incomplete",
+      }),
+    ]);
   });
 });
 
