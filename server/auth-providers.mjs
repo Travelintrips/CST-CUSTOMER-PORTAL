@@ -72,10 +72,28 @@ function requestIp(request) {
     .slice(0, 128);
 }
 
+let rateLimitOperations = 0;
+
+function pruneExpiredRateBuckets(now) {
+  for (const [bucketKey, bucket] of rateBuckets) {
+    if (bucket.resetAt <= now) rateBuckets.delete(bucketKey);
+  }
+  while (rateBuckets.size > 10000) {
+    const oldestKey = rateBuckets.keys().next().value;
+    if (oldestKey == null) break;
+    rateBuckets.delete(oldestKey);
+  }
+}
+
 function enforceRateLimit(key, max, windowMs) {
   const now = Date.now();
+  rateLimitOperations += 1;
+  if (rateBuckets.size > 10000 || rateLimitOperations % 250 === 0) {
+    pruneExpiredRateBuckets(now);
+  }
   const current = rateBuckets.get(key);
   if (!current || current.resetAt <= now) {
+    rateBuckets.delete(key);
     rateBuckets.set(key, { count: 1, resetAt: now + windowMs });
     return;
   }
