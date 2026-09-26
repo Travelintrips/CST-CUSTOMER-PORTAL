@@ -1,7 +1,7 @@
 import crypto from "node:crypto";
 import bcrypt from "bcryptjs";
 import nodemailer from "nodemailer";
-import { query } from "./db.mjs";
+import { pool, query } from "./db.mjs";
 import { createSession, sessionCookies } from "./session.mjs";
 
 const APP_ENV = process.env.APP_ENV ?? process.env.NODE_ENV ?? "development";
@@ -29,6 +29,22 @@ function errorWithStatus(statusCode, message) {
   const error = new Error(message);
   error.statusCode = statusCode;
   return error;
+}
+
+async function withTransaction(work) {
+  const client = await pool.connect();
+  const dbQuery = client.query.bind(client);
+  try {
+    await client.query("begin");
+    const result = await work(dbQuery);
+    await client.query("commit");
+    return result;
+  } catch (error) {
+    await client.query("rollback").catch(() => {});
+    throw error;
+  } finally {
+    client.release();
+  }
 }
 
 function oauthError(statusCode, message, code, details = {}) {
@@ -179,8 +195,8 @@ async function findUserByEmail(email, dbQuery = query) {
   return result.rows[0] ?? null;
 }
 
-async function findUserByPhone(phone) {
-  const result = await query(
+async function findUserByPhone(phone, dbQuery = query) {
+  const result = await dbQuery(
     `select id, name, email, phone, company, role, customer_type, account_status
        from public.portal_customers
       where (
@@ -261,33 +277,30 @@ export async function createOrFindEmailUser(email, registrationIntent = null, db
   const intent = normalizeRegistrationIntent(registrationIntent ?? {});
   if (registrationIntent) validateRegistrationIntent(intent);
 
-  try {
-    const created = await dbQuery(
-      `insert into public.portal_customers
-        (name, email, password_hash, role, customer_type, company, account_status)
-       values ($1, $2, '', $3, $4, $5, 'active')
-       returning id, name, email, phone, company, role, customer_type, account_status`,
-      [
-        email.split("@")[0],
-        email,
-        intent.role,
-        intent.customerType,
-        intent.company || null,
-      ],
+  const created = await dbQuery(
+    `insert into public.portal_customers
+      (name, email, password_hash, role, customer_type, company, account_status)
+     values ($1, $2, '', $3, $4, $5, 'active')
+     on conflict do nothing
+     returning id, name, email, phone, company, role, customer_type, account_status`,
+    [
+      email.split("@")[0],
+      email,
+      intent.role,
+      intent.customerType,
+      intent.company || null,
+    ],
+  );
+  const user = created.rows[0] ?? await findUserByEmail(email, dbQuery);
+  const isNew = Boolean(created.rows[0]);
+  if (user && isNew) {
+    await ensureInitialOnboardingProfile(
+      user.id,
+      { companyName: intent.company || null, fullName: user.name ?? null, phone: user.phone ?? null },
+      dbQuery,
     );
-    const user = created.rows[0] ?? null;
-    if (user) {
-      await ensureInitialOnboardingProfile(
-        user.id,
-        { companyName: intent.company || null, fullName: user.name ?? null, phone: user.phone ?? null },
-        dbQuery,
-      );
-    }
-    return { user, isNew: true };
-  } catch (error) {
-    if (error?.code !== "23505") throw error;
-    return { user: await findUserByEmail(email, dbQuery), isNew: false };
   }
+  return { user, isNew };
 }
 
 export async function linkIdentity(customerId, provider, subject, dbQuery = query) {
@@ -428,29 +441,28 @@ export async function handleSignup(request, response) {
   }
 
   const passwordHash = await bcrypt.hash(password, 12);
-  let created;
-  try {
-    created = await query(
+  const user = await withTransaction(async (dbQuery) => {
+    const created = await dbQuery(
       `insert into public.portal_customers
         (name, email, password_hash, phone, company, role, customer_type, account_status)
        values ($1, $2, $3, $4, $5, $6, $7, 'active')
+       on conflict do nothing
        returning id, name, email, phone, company, role, customer_type, account_status`,
       [name, email, passwordHash, phone, company || null, role, customerType],
     );
-  } catch (error) {
-    if (error?.code === "23505") {
+    const createdUser = created.rows[0] ?? null;
+    if (!createdUser) {
       throw errorWithStatus(409, "Email atau nomor HP sudah terdaftar. Gunakan login untuk melanjutkan.");
     }
-    throw error;
-  }
-  const user = created.rows[0];
-  if (!user) throw errorWithStatus(500, "Akun portal gagal disiapkan.");
-  await ensureInitialOnboardingProfile(user.id, {
-    companyName: company || null,
-    fullName: name,
-    phone,
+    await ensureInitialOnboardingProfile(createdUser.id, {
+      companyName: company || null,
+      fullName: name,
+      phone,
+    }, dbQuery);
+    await linkIdentity(createdUser.id, "email", email, dbQuery);
+    return createdUser;
   });
-  await linkIdentity(user.id, "email", email);
+
   const result = await loginUser(user);
   json(response, 201, result, { "Set-Cookie": sessionCookies(result.token) });
 }
@@ -831,14 +843,6 @@ export async function handleEmailOtpVerify(request, response) {
     );
     throw errorWithStatus(401, "Kode OTP salah.");
   }
-  const consumed = await query(
-    `update public.portal_email_otp_codes
-        set verified = true, expires_at = now()
-      where id = $1 and verified = false and expires_at > now() and attempts < 5
-      returning id`,
-    [challenge.id],
-  );
-  if (!consumed.rows[0]) throw errorWithStatus(401, "OTP sudah digunakan. Minta kode baru.");
 
   const registrationIntent = normalizeRegistrationIntent({
     role: body.role,
@@ -852,14 +856,27 @@ export async function handleEmailOtpVerify(request, response) {
     || body.company != null;
   if (hasRegistrationIntent) validateRegistrationIntent(registrationIntent);
 
-  const created = await createOrFindEmailUser(
-    email,
-    hasRegistrationIntent ? registrationIntent : null,
-  );
-  const user = created.user;
-  if (!user) throw errorWithStatus(500, "Akun portal gagal disiapkan.");
-  await linkIdentity(user.id, "email", email);
-  const result = await loginUser(user);
+  const created = await withTransaction(async (dbQuery) => {
+    const consumed = await dbQuery(
+      `update public.portal_email_otp_codes
+          set verified = true, expires_at = now()
+        where id = $1 and verified = false and expires_at > now() and attempts < 5
+        returning id`,
+      [challenge.id],
+    );
+    if (!consumed.rows[0]) throw errorWithStatus(401, "OTP sudah digunakan. Minta kode baru.");
+
+    const account = await createOrFindEmailUser(
+      email,
+      hasRegistrationIntent ? registrationIntent : null,
+      dbQuery,
+    );
+    if (!account.user) throw errorWithStatus(500, "Akun portal gagal disiapkan.");
+    await linkIdentity(account.user.id, "email", email, dbQuery);
+    return account;
+  });
+
+  const result = await loginUser(created.user);
   json(response, 200, { ...result, isNew: created.isNew }, { "Set-Cookie": sessionCookies(result.token) });
 }
 
@@ -1023,65 +1040,68 @@ export async function handleWaRegister(request, response) {
   }
 
   const tokenHash = hashToken(verifyToken);
-  const claimed = await query(
-    `update public.wa_otp_codes
-        set verify_token = null, verify_token_hash = null, expires_at = now()
-      where verify_token_hash = $1
-        and verified = true
-        and purpose = 'login'
-        and expires_at > now()
-      returning phone`,
-    [tokenHash],
-  );
-  const challenge = claimed.rows[0];
-  if (!challenge) throw errorWithStatus(400, "Token verifikasi tidak valid, kadaluarsa, atau sudah digunakan.");
+  const rememberDays = Number(body.rememberDays);
+  const shouldRemember = Number.isFinite(rememberDays) && rememberDays > 0 && rememberDays <= 90;
+  const deviceToken = shouldRemember ? crypto.randomBytes(32).toString("hex") : undefined;
 
-  const phone = normalizePhone(challenge.phone);
-  const [phoneUsers, emailUser] = await Promise.all([
-    findUserByPhone(phone),
-    email ? findUserByEmail(email) : Promise.resolve(null),
-  ]);
-  if (phoneUsers.length || emailUser) {
-    throw errorWithStatus(409, "Nomor HP atau email sudah terdaftar. Gunakan login untuk melanjutkan.");
-  }
+  const user = await withTransaction(async (dbQuery) => {
+    const claimed = await dbQuery(
+      `update public.wa_otp_codes
+          set verify_token = null, verify_token_hash = null, expires_at = now()
+        where verify_token_hash = $1
+          and verified = true
+          and purpose = 'login'
+          and expires_at > now()
+        returning phone`,
+      [tokenHash],
+    );
+    const challenge = claimed.rows[0];
+    if (!challenge) throw errorWithStatus(400, "Token verifikasi tidak valid, kadaluarsa, atau sudah digunakan.");
 
-  const accountEmail = email || `${phone}@wa.local`;
-  let created;
-  try {
-    created = await query(
+    const phone = normalizePhone(challenge.phone);
+    const [phoneUsers, emailUser] = await Promise.all([
+      findUserByPhone(phone, dbQuery),
+      email ? findUserByEmail(email, dbQuery) : Promise.resolve(null),
+    ]);
+    if (phoneUsers.length || emailUser) {
+      throw errorWithStatus(409, "Nomor HP atau email sudah terdaftar. Gunakan login untuk melanjutkan.");
+    }
+
+    const accountEmail = email || `${phone}@wa.local`;
+    const created = await dbQuery(
       `insert into public.portal_customers
         (name, email, password_hash, phone, company, role, customer_type, account_status)
        values ($1, $2, '', $3, $4, $5, $6, 'active')
+       on conflict do nothing
        returning id, name, email, phone, company, role, customer_type, account_status`,
       [name, accountEmail, phone, company || null, role, customerType],
     );
-  } catch (error) {
-    if (error?.code === "23505") {
+    const createdUser = created.rows[0] ?? null;
+    if (!createdUser) {
       throw errorWithStatus(409, "Akun dengan email atau nomor HP tersebut sudah terdaftar.");
     }
-    throw error;
-  }
-  const user = created.rows[0];
-  if (!user) throw errorWithStatus(500, "Akun portal gagal disiapkan.");
-  await ensureInitialOnboardingProfile(user.id, {
-    companyName: company || null,
-    fullName: name,
-    phone,
+
+    await ensureInitialOnboardingProfile(createdUser.id, {
+      companyName: company || null,
+      fullName: name,
+      phone,
+    }, dbQuery);
+    await linkIdentity(createdUser.id, "whatsapp", phone, dbQuery);
+    if (email) await linkIdentity(createdUser.id, "email", email, dbQuery);
+
+    if (deviceToken) {
+      const deviceHash = hashToken(deviceToken);
+      await dbQuery(
+        `insert into public.trusted_devices (phone, device_token, device_token_hash, expires_at)
+         values ($1, $2, $2, now() + ($3 * interval '1 day'))`,
+        [phone, deviceHash, rememberDays],
+      );
+    }
+
+    return createdUser;
   });
-  await linkIdentity(user.id, "whatsapp", phone);
-  if (email) await linkIdentity(user.id, "email", email);
+
   const result = await loginUser(user);
-  let deviceToken;
-  const rememberDays = Number(body.rememberDays);
-  if (Number.isFinite(rememberDays) && rememberDays > 0 && rememberDays <= 90) {
-    deviceToken = crypto.randomBytes(32).toString("hex");
-    const deviceHash = hashToken(deviceToken);
-    await query(
-      `insert into public.trusted_devices (phone, device_token, device_token_hash, expires_at)
-       values ($1, $2, $2, now() + ($3 * interval '1 day'))`,
-      [phone, deviceHash, rememberDays],
-    );
-  }
   json(response, 201, { ...result, deviceToken }, { "Set-Cookie": sessionCookies(result.token) });
 }
 
@@ -1366,39 +1386,35 @@ export async function googleResolveUser(profile, dbQuery = query, registrationIn
   if (!user) {
     const intent = normalizeRegistrationIntent(registrationIntent ?? {});
     if (registrationIntent) validateRegistrationIntent(intent);
-    try {
-      const inserted = await dbQuery(
-        `insert into public.portal_customers
-          (name, email, password_hash, role, customer_type, company,
-           oauth_provider, oauth_id, avatar_url, account_status)
-         values ($1, $2, '', $3, $4, $5, 'google', $6, $7, 'active')
-         returning id, name, email, phone, company, role, customer_type, account_status,
-                   oauth_provider, oauth_id`,
-        [
-          profile.name,
-          profile.email,
-          intent.role,
-          intent.customerType,
-          intent.company || null,
-          profile.subject,
-          profile.avatarUrl,
-        ],
+    const inserted = await dbQuery(
+      `insert into public.portal_customers
+        (name, email, password_hash, role, customer_type, company,
+         oauth_provider, oauth_id, avatar_url, account_status)
+       values ($1, $2, '', $3, $4, $5, 'google', $6, $7, 'active')
+       on conflict do nothing
+       returning id, name, email, phone, company, role, customer_type, account_status,
+                 oauth_provider, oauth_id`,
+      [
+        profile.name,
+        profile.email,
+        intent.role,
+        intent.customerType,
+        intent.company || null,
+        profile.subject,
+        profile.avatarUrl,
+      ],
+    );
+    user = inserted.rows[0] ?? await findUserByEmail(profile.email, dbQuery);
+    if (inserted.rows[0]) {
+      await ensureInitialOnboardingProfile(
+        user.id,
+        {
+          companyName: intent.company || null,
+          fullName: profile.name,
+          phone: null,
+        },
+        dbQuery,
       );
-      user = inserted.rows[0];
-      if (user) {
-        await ensureInitialOnboardingProfile(
-          user.id,
-          {
-            companyName: intent.company || null,
-            fullName: profile.name,
-            phone: null,
-          },
-          dbQuery,
-        );
-      }
-    } catch (error) {
-      if (error?.code !== "23505") throw error;
-      user = await findUserByEmail(profile.email, dbQuery);
     }
   } else {
     if (!identity.rows[0]) {
@@ -1470,7 +1486,9 @@ export async function handleGoogleCallback(request, response, url) {
   }
   try {
     const profile = await googleUser(request, url.searchParams.get("code"));
-    const user = await googleResolveUser(profile, query, context.registration);
+    const user = await withTransaction(
+      (dbQuery) => googleResolveUser(profile, dbQuery, context.registration),
+    );
     const result = await loginUser(user);
     redirect(response, context.returnTo, [
       ...sessionCookies(result.token),
