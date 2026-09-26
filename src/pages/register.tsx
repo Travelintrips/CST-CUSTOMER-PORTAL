@@ -136,14 +136,41 @@ export default function Register() {
     }
   };
 
+  const registrationContextError = () => {
+    if (role === "vendor" && !company.trim()) {
+      return "Nama perusahaan atau armada wajib diisi untuk vendor.";
+    }
+    if (role === "customer" && customerType === "company" && !company.trim()) {
+      return "Nama perusahaan wajib diisi untuk customer perusahaan.";
+    }
+    return "";
+  };
+
   const startGoogleRegistration = () => {
     if (!capabilities.google) return;
-    const query = new URLSearchParams({ returnTo: "/onboarding", portal: "1" });
+    const contextError = registrationContextError();
+    if (contextError) {
+      setErrorMsg(contextError);
+      return;
+    }
+    setErrorMsg("");
+    const query = new URLSearchParams({
+      returnTo: "/onboarding",
+      portal: "1",
+      role,
+    });
+    if (role === "customer") query.set("customerType", customerType);
+    if (company.trim()) query.set("company", company.trim());
     window.location.assign(`${BASE}/api/login/google?${query.toString()}`);
   };
 
   const sendEmailOtp = async () => {
     setEmailMsg("");
+    const contextError = registrationContextError();
+    if (contextError) {
+      setEmailMsg(contextError);
+      return;
+    }
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())) {
       setEmailMsg("Masukkan alamat email yang valid.");
       return;
@@ -183,7 +210,13 @@ export default function Register() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         credentials: "include",
-        body: JSON.stringify({ email: email.trim(), code: emailCode.trim() }),
+        body: JSON.stringify({
+          email: email.trim(),
+          code: emailCode.trim(),
+          role,
+          customerType: role === "customer" ? customerType : undefined,
+          company: company.trim() || undefined,
+        }),
       });
       const json = await res.json() as {
         token?: string;
@@ -406,6 +439,67 @@ export default function Register() {
     { id: "password", label: "Password", available: capabilities.password },
   ];
 
+  const registrationRoleFields = (
+    <div className="space-y-3">
+      <div className="space-y-2">
+        <Label>Daftar sebagai</Label>
+        <div className="grid grid-cols-2 gap-2">
+          <button
+            type="button"
+            onClick={() => { setRole("customer"); setErrorMsg(""); setEmailMsg(""); }}
+            className={`rounded-lg border-2 p-3 text-left transition ${role === "customer" ? "border-emerald-500 bg-emerald-50" : "border-border hover:border-emerald-300"}`}
+          >
+            <User className={`h-4 w-4 mb-1 ${role === "customer" ? "text-emerald-600" : "text-muted-foreground"}`} />
+            <p className="font-semibold text-sm">Customer</p>
+            <p className="text-xs text-muted-foreground">Membeli atau meminta layanan</p>
+          </button>
+          <button
+            type="button"
+            onClick={() => { setRole("vendor"); setErrorMsg(""); setEmailMsg(""); }}
+            className={`rounded-lg border-2 p-3 text-left transition ${role === "vendor" ? "border-emerald-500 bg-emerald-50" : "border-border hover:border-emerald-300"}`}
+          >
+            <Truck className={`h-4 w-4 mb-1 ${role === "vendor" ? "text-emerald-600" : "text-muted-foreground"}`} />
+            <p className="font-semibold text-sm">Vendor</p>
+            <p className="text-xs text-muted-foreground">Menawarkan jasa atau produk</p>
+          </button>
+        </div>
+      </div>
+
+      {role === "customer" && (
+        <div className="space-y-2">
+          <Label>Tipe customer</Label>
+          <div className="grid grid-cols-2 gap-2">
+            <button
+              type="button"
+              onClick={() => setCustomerType("individual")}
+              className={`rounded-lg border p-2.5 text-sm ${customerType === "individual" ? "border-emerald-500 bg-emerald-50 font-medium" : "border-border"}`}
+            >
+              Personal
+            </button>
+            <button
+              type="button"
+              onClick={() => setCustomerType("company")}
+              className={`rounded-lg border p-2.5 text-sm ${customerType === "company" ? "border-emerald-500 bg-emerald-50 font-medium" : "border-border"}`}
+            >
+              Perusahaan
+            </button>
+          </div>
+        </div>
+      )}
+
+      {(role === "vendor" || customerType === "company") && (
+        <div className="space-y-2">
+          <Label>{role === "vendor" ? "Nama perusahaan / armada" : "Nama perusahaan"}</Label>
+          <Input
+            value={company}
+            onChange={(e) => setCompany(e.target.value)}
+            placeholder={role === "vendor" ? "PT Vendor Logistik" : "PT Nama Perusahaan"}
+          />
+        </div>
+      )}
+    </div>
+  );
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-emerald-50 via-white to-emerald-100 flex items-center justify-center p-4">
       <Card className="w-full max-w-md border-none shadow-2xl">
@@ -477,6 +571,7 @@ export default function Register() {
               {emailMsg && <Alert variant={emailMsg.includes("berhasil") || emailMsg.includes("dikirim") ? "default" : "destructive"}><AlertCircle className="h-4 w-4" /><AlertDescription>{emailMsg}</AlertDescription></Alert>}
               {emailStep === "email" ? (
                 <>
+                  {registrationRoleFields}
                   <div className="space-y-2">
                     <Label>Email</Label>
                     <div className="relative">
@@ -503,9 +598,12 @@ export default function Register() {
 
           {step === "phone" && method === "google" && (
             <div className="space-y-4">
-              <p className="text-sm text-muted-foreground">Gunakan akun Google terverifikasi. Profil baru akan dilanjutkan ke onboarding.</p>
+              {registrationRoleFields}
+              <p className="text-sm text-muted-foreground">
+                Gunakan akun Google terverifikasi. Akun baru akan dibuat sesuai tipe akun yang dipilih lalu dilanjutkan ke onboarding.
+              </p>
               <Button className="w-full h-12" variant="outline" onClick={startGoogleRegistration}>
-                Lanjutkan dengan Google
+                Lanjutkan dengan Google sebagai {role === "vendor" ? "Vendor" : "Customer"}
               </Button>
             </div>
           )}

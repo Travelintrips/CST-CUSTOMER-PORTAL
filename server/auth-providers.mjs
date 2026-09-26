@@ -181,20 +181,53 @@ async function findUserByPhone(phone) {
   return result.rows;
 }
 
-async function createOrFindEmailUser(email) {
-  const existing = await findUserByEmail(email);
-  if (existing) return existing;
+function normalizeRegistrationIntent(input = {}) {
+  const role = input?.role === "vendor" ? "vendor" : "customer";
+  const customerType = role === "customer" && input?.customerType === "company"
+    ? "company"
+    : role === "customer"
+      ? "individual"
+      : null;
+  const company = typeof input?.company === "string"
+    ? input.company.trim().slice(0, 200)
+    : "";
+  return { role, customerType, company };
+}
+
+function validateRegistrationIntent(intent) {
+  if (intent.role === "vendor" && !intent.company) {
+    throw errorWithStatus(400, "Nama perusahaan wajib diisi untuk vendor.");
+  }
+  if (intent.role === "customer" && intent.customerType === "company" && !intent.company) {
+    throw errorWithStatus(400, "Nama perusahaan wajib diisi untuk customer perusahaan.");
+  }
+}
+
+export async function createOrFindEmailUser(email, registrationIntent = null, dbQuery = query) {
+  const existing = await findUserByEmail(email, dbQuery);
+  if (existing) return { user: existing, isNew: false };
+
+  const intent = normalizeRegistrationIntent(registrationIntent ?? {});
+  if (registrationIntent) validateRegistrationIntent(intent);
+
   try {
-    const created = await query(
-      `insert into public.portal_customers (name, email, password_hash, role)
-       values ($1, $2, $3, 'customer')
+    const created = await dbQuery(
+      `insert into public.portal_customers
+        (name, email, password_hash, role, customer_type, company, account_status)
+       values ($1, $2, '', $3, $4, $5, 'active')
        returning id, name, email, phone, company, role, customer_type, account_status`,
-      [email.split("@")[0], email, ""],
+      [
+        email.split("@")[0],
+        email,
+        intent.role,
+        intent.customerType,
+        intent.company || null,
+      ],
     );
-    return created.rows[0] ?? null;
+    return { user: created.rows[0] ?? null, isNew: true };
   } catch (error) {
     if (error?.code !== "23505") throw error;
-    return findUserByEmail(email);
+    return { user: await findUserByEmail(email, dbQuery), isNew: false };
   }
 }
 
@@ -319,6 +352,9 @@ export async function handleSignup(request, response) {
   if (!validPhone(phone)) throw errorWithStatus(400, "Nomor HP tidak valid.");
   if (password.length < 8) throw errorWithStatus(400, "Password minimal 8 karakter.");
   if (role === "vendor" && !company) throw errorWithStatus(400, "Nama perusahaan wajib diisi untuk vendor.");
+  if (role === "customer" && customerType === "company" && !company) {
+    throw errorWithStatus(400, "Nama perusahaan wajib diisi untuk customer perusahaan.");
+  }
 
   const [emailUser, phoneUsers] = await Promise.all([
     findUserByEmail(email),
@@ -351,13 +387,96 @@ export async function handleSignup(request, response) {
   json(response, 201, result, { "Set-Cookie": sessionCookies(result.token) });
 }
 
-function smtpConfig() {
+function smtpEnvConfig() {
   const pass = (process.env.SMTP_PASS ?? process.env.SMTP_PASSWORD ?? "").trim();
   const from = (process.env.SMTP_FROM ?? "").trim();
   const user = (process.env.SMTP_USER ?? from).trim();
   const host = (process.env.SMTP_HOST ?? process.env["SMTP-HOST"] ?? "smtp.hostinger.com").trim();
   const port = Number(process.env.SMTP_PORT ?? 465);
   return { pass, from, user, host, port, secure: port === 465 };
+}
+
+function smtpConfigIsUsable(config) {
+  return Boolean(
+    config?.pass
+      && config?.from
+      && config?.user
+      && config?.host
+      && Number.isFinite(config?.port)
+      && config.port > 0,
+  );
+}
+
+let smtpDbConfigCache = null;
+const SMTP_DB_CONFIG_CACHE_MS = 60_000;
+
+export async function resolveSmtpConfig(dbQuery = query) {
+  const envConfig = smtpEnvConfig();
+  if (smtpConfigIsUsable(envConfig)) return envConfig;
+
+  const useCache = dbQuery === query;
+  if (
+    useCache
+      && smtpDbConfigCache
+      && smtpDbConfigCache.expiresAt > Date.now()
+  ) {
+    return smtpDbConfigCache.config;
+  }
+
+  let databaseConfig = {};
+  try {
+    const result = await dbQuery(
+      `select key, value
+         from public.app_config
+        where upper(key) in (
+          'SMTP_PASS',
+          'SMTP_PASSWORD',
+          'SMTP_FROM',
+          'SMTP_USER',
+          'SMTP_HOST',
+          'SMTP-HOST',
+          'SMTP_PORT'
+        )`,
+    );
+    databaseConfig = Object.fromEntries(
+      result.rows
+        .filter((row) => typeof row?.key === "string" && typeof row?.value === "string")
+        .map((row) => [row.key.trim().toUpperCase(), row.value.trim()]),
+    );
+  } catch {
+    databaseConfig = {};
+  }
+
+  const from = envConfig.from || databaseConfig.SMTP_FROM || "";
+  const port = Number(
+    Number.isFinite(envConfig.port) && process.env.SMTP_PORT
+      ? envConfig.port
+      : databaseConfig.SMTP_PORT || envConfig.port || 465,
+  );
+  const config = {
+    pass:
+      envConfig.pass
+      || databaseConfig.SMTP_PASS
+      || databaseConfig.SMTP_PASSWORD
+      || "",
+    from,
+    user: envConfig.user || databaseConfig.SMTP_USER || from,
+    host:
+      envConfig.host
+      || databaseConfig.SMTP_HOST
+      || databaseConfig["SMTP-HOST"]
+      || "smtp.hostinger.com",
+    port,
+    secure: port === 465,
+  };
+
+  if (useCache) {
+    smtpDbConfigCache = {
+      config,
+      expiresAt: Date.now() + SMTP_DB_CONFIG_CACHE_MS,
+    };
+  }
+  return config;
 }
 
 const GOOGLE_CALLBACK_PATH = "/api/callback/google";
@@ -402,9 +521,8 @@ function googleRedirectBaseConfigured() {
   }
 }
 
-function emailConfigured() {
-  const config = smtpConfig();
-  return Boolean(config.pass && config.from && config.user);
+async function emailConfigured() {
+  return smtpConfigIsUsable(await resolveSmtpConfig());
 }
 
 function googleEnvConfig() {
@@ -502,19 +620,20 @@ async function fonnteStatus() {
 }
 
 export async function authCapabilities() {
-  const [whatsappStatus, googleConfig] = await Promise.all([
+  const [whatsappStatus, googleConfig, emailReady] = await Promise.all([
     fonnteStatus(),
     resolveGoogleOAuthConfig(),
+    emailConfigured(),
   ]);
   const googleReady = googleConfigIsUsable(googleConfig);
   return {
     google: googleReady,
-    emailOtp: SAFE_DEV_AUTH || emailConfigured(),
+    emailOtp: SAFE_DEV_AUTH || emailReady,
     whatsapp: SAFE_DEV_AUTH || whatsappStatus.status === "pass",
     password: true,
     providerStatus: {
       google: googleReady ? "configured" : "unconfigured",
-      email: SAFE_DEV_AUTH ? "test" : emailConfigured() ? "configured" : "unconfigured",
+      email: SAFE_DEV_AUTH ? "test" : emailReady ? "configured" : "unconfigured",
       whatsapp: whatsappStatus.status,
     },
     devLogin: !IS_PRODUCTION,
@@ -523,7 +642,10 @@ export async function authCapabilities() {
 
 async function sendEmailOtp(email, code) {
   if (SAFE_DEV_AUTH) return;
-  const config = smtpConfig();
+  const config = await resolveSmtpConfig();
+  if (!smtpConfigIsUsable(config)) {
+    throw errorWithStatus(503, "Layanan email belum dikonfigurasi. Hubungi admin.");
+  }
   const transporter = nodemailer.createTransport({
     host: config.host,
     port: config.port,
@@ -593,7 +715,7 @@ export async function handleEmailOtpRequest(request, response) {
   );
   const challengeId = inserted.rows[0]?.id;
 
-  if (!SAFE_DEV_AUTH && !emailConfigured()) {
+  if (!SAFE_DEV_AUTH && !(await emailConfigured())) {
     await query("delete from public.portal_email_otp_codes where id = $1", [challengeId]);
     throw errorWithStatus(503, "Layanan email belum dikonfigurasi. Hubungi admin.");
   }
@@ -650,11 +772,27 @@ export async function handleEmailOtpVerify(request, response) {
   );
   if (!consumed.rows[0]) throw errorWithStatus(401, "OTP sudah digunakan. Minta kode baru.");
 
-  const user = await createOrFindEmailUser(email);
+  const registrationIntent = normalizeRegistrationIntent({
+    role: body.role,
+    customerType: body.customerType,
+    company: body.company,
+  });
+  const hasRegistrationIntent =
+    body.role === "vendor"
+    || body.role === "customer"
+    || body.customerType != null
+    || body.company != null;
+  if (hasRegistrationIntent) validateRegistrationIntent(registrationIntent);
+
+  const created = await createOrFindEmailUser(
+    email,
+    hasRegistrationIntent ? registrationIntent : null,
+  );
+  const user = created.user;
   if (!user) throw errorWithStatus(500, "Akun portal gagal disiapkan.");
   await linkIdentity(user.id, "email", email);
   const result = await loginUser(user);
-  json(response, 200, result, { "Set-Cookie": sessionCookies(result.token) });
+  json(response, 200, { ...result, isNew: created.isNew }, { "Set-Cookie": sessionCookies(result.token) });
 }
 
 export async function handleWaOtpRequest(request, response) {
@@ -812,6 +950,9 @@ export async function handleWaRegister(request, response) {
     throw errorWithStatus(400, "Format email tidak valid.");
   }
   if (role === "vendor" && !company) throw errorWithStatus(400, "Nama perusahaan wajib diisi untuk vendor.");
+  if (role === "customer" && customerType === "company" && !company) {
+    throw errorWithStatus(400, "Nama perusahaan wajib diisi untuk customer perusahaan.");
+  }
 
   const tokenHash = hashToken(verifyToken);
   const claimed = await query(
@@ -929,15 +1070,18 @@ export function googleRedirectUri(request, config = googleEnvConfig()) {
   return normalizeGoogleRedirectBase(base);
 }
 
-function signedOAuthState(state, returnTo, issuedAt) {
+function signedOAuthState(state, returnTo, issuedAt, registration = null) {
+  const registrationPayload = JSON.stringify(registration ?? null);
   return crypto.createHmac("sha256", process.env.SESSION_SECRET)
-    .update(`${state}|${returnTo}|${issuedAt}`)
+    .update(`${state}|${returnTo}|${issuedAt}|${registrationPayload}`)
     .digest("base64url");
 }
 
-function oauthStateCookie(state, returnTo, issuedAt) {
-  const payload = Buffer.from(JSON.stringify({ state, returnTo, issuedAt })).toString("base64url");
-  const signature = signedOAuthState(state, returnTo, issuedAt);
+function oauthStateCookie(state, returnTo, issuedAt, registration = null) {
+  const payload = Buffer.from(
+    JSON.stringify({ state, returnTo, issuedAt, registration }),
+  ).toString("base64url");
+  const signature = signedOAuthState(state, returnTo, issuedAt, registration);
   const secure = IS_PRODUCTION ? "; Secure" : "";
   return `portal_oauth_state=${payload}.${signature}; Path=/; HttpOnly; SameSite=Lax${secure}; Max-Age=600`;
 }
@@ -975,6 +1119,15 @@ export async function handleGoogleStart(request, response, url) {
     return;
   }
   const returnTo = safeReturnTo(url.searchParams.get("returnTo"));
+  const isRegistration = url.searchParams.get("portal") === "1";
+  const registration = isRegistration
+    ? normalizeRegistrationIntent({
+        role: url.searchParams.get("role"),
+        customerType: url.searchParams.get("customerType"),
+        company: url.searchParams.get("company"),
+      })
+    : null;
+  if (registration) validateRegistrationIntent(registration);
   const state = crypto.randomBytes(32).toString("hex");
   const issuedAt = Date.now();
   const params = new URLSearchParams({
@@ -989,7 +1142,7 @@ export async function handleGoogleStart(request, response, url) {
   redirect(
     response,
     `https://accounts.google.com/o/oauth2/v2/auth?${params.toString()}`,
-    [oauthStateCookie(state, returnTo, issuedAt)],
+    [oauthStateCookie(state, returnTo, issuedAt, registration)],
   );
 }
 
@@ -1118,7 +1271,7 @@ async function reconcileGoogleIdentityBinding(user, subject, dbQuery) {
   );
 }
 
-export async function googleResolveUser(profile, dbQuery = query) {
+export async function googleResolveUser(profile, dbQuery = query, registrationIntent = null) {
   if (profile?.emailVerified !== true) {
     throw oauthError(401, "Profil Google tidak tervalidasi.", "google_profile_invalid");
   }
@@ -1137,14 +1290,25 @@ export async function googleResolveUser(profile, dbQuery = query) {
     throw errorWithStatus(409, "Identitas Google terhubung ke akun yang tidak ditemukan.");
   }
   if (!user) {
+    const intent = normalizeRegistrationIntent(registrationIntent ?? {});
+    if (registrationIntent) validateRegistrationIntent(intent);
     try {
       const inserted = await dbQuery(
         `insert into public.portal_customers
-          (name, email, password_hash, role, oauth_provider, oauth_id, avatar_url)
-         values ($1, $2, '', 'customer', 'google', $3, $4)
+          (name, email, password_hash, role, customer_type, company,
+           oauth_provider, oauth_id, avatar_url, account_status)
+         values ($1, $2, '', $3, $4, $5, 'google', $6, $7, 'active')
          returning id, name, email, phone, company, role, customer_type, account_status,
                    oauth_provider, oauth_id`,
-        [profile.name, profile.email, profile.subject, profile.avatarUrl],
+        [
+          profile.name,
+          profile.email,
+          intent.role,
+          intent.customerType,
+          intent.company || null,
+          profile.subject,
+          profile.avatarUrl,
+        ],
       );
       user = inserted.rows[0];
     } catch (error) {
@@ -1173,8 +1337,8 @@ export async function googleResolveUser(profile, dbQuery = query) {
   return findUserById(user.id, dbQuery);
 }
 
-export async function resolveGoogleLogin(profile, dbQuery = query) {
-  const user = await googleResolveUser(profile, dbQuery);
+export async function resolveGoogleLogin(profile, dbQuery = query, registrationIntent = null) {
+  const user = await googleResolveUser(profile, dbQuery, registrationIntent);
   return loginUser(user);
 }
 
@@ -1184,7 +1348,12 @@ export async function handleGoogleCallback(request, response, url) {
   try {
     const [payload, signature] = cookie.split(".");
     const decoded = JSON.parse(Buffer.from(payload, "base64url").toString("utf8"));
-    const expected = signedOAuthState(decoded.state, decoded.returnTo, decoded.issuedAt);
+    const expected = signedOAuthState(
+      decoded.state,
+      decoded.returnTo,
+      decoded.issuedAt,
+      decoded.registration ?? null,
+    );
     if (
       !decoded.state || !decoded.returnTo ||
       !timingSafeEqualText(signature, expected) ||
@@ -1193,7 +1362,10 @@ export async function handleGoogleCallback(request, response, url) {
     ) {
       throw new Error("invalid oauth state");
     }
-    context = { returnTo: safeReturnTo(decoded.returnTo) };
+    context = {
+      returnTo: safeReturnTo(decoded.returnTo),
+      registration: decoded.registration ?? null,
+    };
   } catch {
     redirect(response, googleFailureTargetWithCode("/login", "google_state_invalid"), [clearOAuthStateCookie()]);
     return;
@@ -1213,7 +1385,7 @@ export async function handleGoogleCallback(request, response, url) {
   }
   try {
     const profile = await googleUser(request, url.searchParams.get("code"));
-    const user = await googleResolveUser(profile);
+    const user = await googleResolveUser(profile, query, context.registration);
     const result = await loginUser(user);
     redirect(response, context.returnTo, [
       ...sessionCookies(result.token),
