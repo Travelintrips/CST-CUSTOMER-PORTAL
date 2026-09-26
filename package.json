@@ -12,6 +12,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "validate:i18n": "node scripts/validate-translations.mjs",
     "verify:assets": "node scripts/verify-assets.mjs",
+    "verify:server-syntax": "node scripts/check-server-syntax.mjs",
     "test": "vitest run",
     "test:portal:e2e": "node scripts/portal-auth-e2e.mjs",
     "test:chatbot:e2e": "node scripts/chatbot-e2e.mjs",
@@ -19,7 +20,7 @@
     "test:portal:storage-e2e": "node scripts/portal-storage-e2e.mjs",
     "test:portal:admin-regression": "node server/load-secrets.mjs node scripts/portal-admin-regression-e2e.mjs",
     "test:portal:production-smoke": "node scripts/portal-production-smoke.mjs",
-    "build:portal": "node scripts/ensure-esbuild-executable.mjs && node scripts/validate-translations.mjs && node scripts/validate-seo-contract.mjs && node scripts/build-vite.mjs && node scripts/prerender.mjs && node scripts/prepare-hostinger.mjs",
+    "build:portal": "node scripts/ensure-esbuild-executable.mjs && node scripts/check-server-syntax.mjs && node scripts/validate-translations.mjs && node scripts/validate-seo-contract.mjs && node scripts/build-vite.mjs && node scripts/prerender.mjs && node scripts/prepare-hostinger.mjs",
     "start": "node ./index.js",
     "hostinger:build": "npm run build"
   },
