@@ -321,8 +321,10 @@ describe("production runtime availability lifecycle", () => {
 
     expect(pkg.scripts["build:portal"]).toContain("verify:release-contracts");
     expect(pkg.scripts["verify:release-contracts"]).toContain("production-runtime-lifecycle.test.ts");
-    expect(pkg.scripts["verify:release-contracts"]).toContain("google-auth.test.ts");
-    expect(pkg.scripts["verify:release-contracts"]).toContain("customer-portal-standalone-boundary.test.ts");
+    expect(pkg.scripts["verify:release-contracts"]).not.toContain("google-auth.test.ts");
+    expect(pkg.scripts["verify:release-contracts"]).not.toContain("customer-portal-standalone-boundary.test.ts");
+    expect(pkg.scripts["test:release-full"]).toContain("google-auth.test.ts");
+    expect(pkg.scripts["test:release-full"]).toContain("customer-portal-standalone-boundary.test.ts");
     expect(pkg.scripts["test:portal:commercial-certification"]).toContain("portal-commercial-certification.mjs");
     expect(certification).toContain('status: "PASS"');
     expect(certification).toContain("/api/portal/auth/forgot-password");
