@@ -35,6 +35,14 @@ import { handleMarketplaceRoute } from "./marketplace-service.mjs";
 import { createLogisticPaylabsLink, getLogisticPaylabsState, handlePaylabsAdminRoute, handlePaylabsWebhook } from "./paylabs-service.mjs";
 import { processMarketplaceWhatsAppQueue } from "./whatsapp-service.mjs";
 import {
+  getOperationalSummary,
+  runOperationalHealthCheck,
+  runPublicProductionProbe,
+  runRecoveryDrill,
+  startOperationalMonitoring,
+  stopOperationalMonitoring,
+} from "./operational-health.mjs";
+import {
   handleAdminInvoices,
   handleAdminPayments,
   handleCustomerInvoices,
@@ -3831,6 +3839,34 @@ async function route(request, response) {
     if (user) await handleAdminFonnteStatus(response);
     return;
   }
+  if (pathname === "/api/portal/admin/operations/health") {
+    const user = await requireAdmin(request, response);
+    if (!user) return;
+    if (request.method === "GET") {
+      sendJson(response, 200, await getOperationalSummary());
+      return;
+    }
+    if (request.method === "POST") {
+      const body = await readJson(request);
+      const action = String(body.action ?? "").trim();
+      if (action === "runtime-check") {
+        sendJson(response, 200, await runOperationalHealthCheck());
+        return;
+      }
+      if (action === "public-probe") {
+        sendJson(response, 200, await runPublicProductionProbe());
+        return;
+      }
+      if (action === "recovery-drill") {
+        sendJson(response, 200, await runRecoveryDrill());
+        return;
+      }
+      sendError(response, 400, "Aksi operasi tidak valid.");
+      return;
+    }
+    sendError(response, 405, "Method tidak didukung.");
+    return;
+  }
   if (pathname.startsWith("/api/portal/admin/vendor-invitations")
       || pathname === "/api/portal/admin/suppliers"
       || pathname.startsWith("/api/portal/admin/suppliers/")) {
@@ -4781,6 +4817,7 @@ async function establishRuntimeReadiness() {
       runtimeReadyAt = new Date().toISOString();
       console.log(`[customer-portal-api] runtime ready release=${process.env.PORTAL_RELEASE_ID ?? "local-development"}`);
       startWorkers();
+      startOperationalMonitoring();
       return;
     } catch (error) {
       runtimeState = "degraded";
@@ -4820,6 +4857,7 @@ async function shutdown(signal) {
       clearInterval(whatsappTimer);
       whatsappTimer = null;
     }
+    stopOperationalMonitoring();
 
     // Give the upstream proxy time to observe /api/readyz=503 and stop routing
     // new requests to this instance before we stop accepting connections.
