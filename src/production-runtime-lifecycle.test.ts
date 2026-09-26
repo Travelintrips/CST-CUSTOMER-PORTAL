@@ -312,14 +312,15 @@ describe("production runtime availability lifecycle", () => {
     expect(migration).toContain("'CUSTOMER_PORTAL_FONNTE_TOKEN'");
   });
 
-  it("gates Hostinger builds with release contracts and exposes commercial certification", () => {
+  it("keeps release verification separate from the Hostinger build and exposes commercial certification", () => {
     const pkg = JSON.parse(readFileSync(join(process.cwd(), "package.json"), "utf8"));
     const certification = readFileSync(
       join(process.cwd(), "scripts/portal-commercial-certification.mjs"),
       "utf8",
     );
 
-    expect(pkg.scripts["build:portal"]).toContain("verify:release-contracts");
+    expect(pkg.scripts["build:portal"]).not.toContain("verify:release-contracts");
+    expect(pkg.scripts["build:portal"]).toContain("check-server-syntax.mjs");
     expect(pkg.scripts["verify:release-contracts"]).toContain("production-runtime-lifecycle.test.ts");
     expect(pkg.scripts["verify:release-contracts"]).not.toContain("google-auth.test.ts");
     expect(pkg.scripts["verify:release-contracts"]).not.toContain("customer-portal-standalone-boundary.test.ts");
