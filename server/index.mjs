@@ -338,7 +338,7 @@ function normalizeUser(row) {
 
 async function findPortalUser(id) {
   const result = await query(
-    `select id, name, email, phone, company, role, customer_type, account_status, created_at
+    `select id, name, email, phone, company, role, customer_type, account_status, auth_version, created_at
        from public.portal_customers
       where id = $1
       limit 1`,
@@ -365,6 +365,7 @@ async function requireUser(request, response) {
   if (
     String(session.email ?? "").trim().toLowerCase() !== String(user.email ?? "").trim().toLowerCase()
     || String(session.role ?? "") !== String(user.role ?? "")
+    || Number(session.authVersion ?? 0) !== Number(user.auth_version ?? 0)
   ) {
     sendError(response, 401, "Session is no longer valid.");
     return null;
