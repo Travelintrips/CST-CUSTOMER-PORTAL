@@ -30,6 +30,7 @@ import {
   handleVerification,
 } from "./admin-portal.mjs";
 import { checkStorageReadiness, signedDocumentUrl, signedPaymentProofUrl, uploadPaymentProof } from "./storage.mjs";
+import { resolveCustomerPortalFonnteToken } from "./fonnte-config.mjs";
 import { handleMarketplaceRoute } from "./marketplace-service.mjs";
 import { createLogisticPaylabsLink, getLogisticPaylabsState, handlePaylabsAdminRoute, handlePaylabsWebhook } from "./paylabs-service.mjs";
 import { processMarketplaceWhatsAppQueue } from "./whatsapp-service.mjs";
@@ -574,11 +575,11 @@ async function handleAdminChatbot(request, response) {
 }
 
 async function handleAdminFonnteStatus(response) {
-  const token = String(process.env.FONNTE_TOKEN ?? "").trim();
+  const token = await resolveCustomerPortalFonnteToken();
   if (!token) {
     sendJson(response, 200, {
       configured: false, connected: false, device: null, name: null, package: null,
-      quota: null, messages: null, expired: null, reason: "FONNTE_TOKEN belum dikonfigurasi.",
+      quota: null, messages: null, expired: null, reason: "CUSTOMER_PORTAL_FONNTE_TOKEN belum dikonfigurasi.",
       checkedAt: new Date().toISOString(),
     });
     return;
