@@ -104,4 +104,32 @@ describe("production runtime availability lifecycle", () => {
     expect(adminPortal).not.toContain("or lower(name) = lower($2)");
   });
 
+
+  it("makes onboarding approval atomic and locks the approval row", () => {
+    const adminPortal = readFileSync(join(process.cwd(), "server/admin-portal.mjs"), "utf8");
+
+    expect(adminPortal).toContain('import { pool, query } from "./db.mjs"');
+    expect(adminPortal).toContain('await client.query("begin")');
+    expect(adminPortal).toContain("for update");
+    expect(adminPortal).toContain('await client.query("commit")');
+    expect(adminPortal).toContain('await client.query("rollback").catch(() => {})');
+    expect(adminPortal).toContain("Profil vendor belum tersedia. Selesaikan onboarding vendor sebelum approval.");
+  });
+
+
+  it("enforces one canonical onboarding record and idempotent upserts", () => {
+    const adminPortal = readFileSync(join(process.cwd(), "server/admin-portal.mjs"), "utf8");
+    const migration = readFileSync(
+      join(process.cwd(), "supabase/migrations/20260926193500_harden_portal_onboarding_uniqueness.sql"),
+      "utf8",
+    );
+
+    expect(adminPortal).toContain("on conflict (customer_id) where customer_id is not null");
+    expect(adminPortal).toContain("on conflict (customer_id)");
+    expect(adminPortal).toContain("on conflict (customer_id) where status = 'pending'");
+    expect(migration).toContain("portal_customer_profiles_customer_unique_idx");
+    expect(migration).toContain("vendor_profiles_customer_unique_idx");
+    expect(migration).toContain("onboarding_approvals_one_pending_per_customer_idx");
+  });
+
 });

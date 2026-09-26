@@ -1,4 +1,4 @@
-import { query } from "./db.mjs";
+import { pool, query } from "./db.mjs";
 import {
   deleteDocumentObject,
   documentType,
@@ -280,52 +280,74 @@ async function handleAdminApprovals(ctx) {
     const note = text(body.adminNote) || null;
     if (!["approved", "rejected"].includes(status)) return adminError(ctx, 400, "Status approval tidak valid.");
     if (status === "rejected" && !note) return adminError(ctx, 400, "Alasan penolakan wajib diisi.");
-    const approval = await query(
-      "select id, customer_id, account_type from public.onboarding_approvals where id = $1",
-      [id],
-    );
-    if (!approval.rows[0]) return adminError(ctx, 404, "Approval tidak ditemukan.");
-    await query(
-      `update public.onboarding_approvals
-          set status = $1, admin_note = $2, reviewed_by = $3, reviewed_at = now(), updated_at = now()
-        where id = $4`,
-      [status, note, ctx.user.email, id],
-    );
-    await query(
-      `update public.portal_customer_profiles
-          set profile_status = $1, is_verified = $2,
-              verification_status = $3, verification_notes = $4,
-              verified_by = case when $2 then $5 else verified_by end,
-              verified_at = case when $2 then now() else verified_at end,
-              updated_at = now()
-        where customer_id = $6`,
-      [
-        status === "approved" ? "active" : "rejected",
-        status === "approved",
-        status === "approved" ? "VERIFIED" : "REJECTED",
-        note,
-        ctx.user.email,
-        approval.rows[0].customer_id,
-      ],
-    );
-    if (approval.rows[0].account_type === "vendor") {
-      const vendorProfile = await query(
-        `select vp.id, vp.company_name, vp.service_type, vp.supplier_id,
-                c.email, c.phone, c.name
-           from public.vendor_profiles vp
-           join public.portal_customers c on c.id = vp.customer_id
-          where vp.customer_id = $1
-          order by vp.updated_at desc, vp.id desc
-          limit 1`,
-        [approval.rows[0].customer_id],
+
+    const client = await pool.connect();
+    try {
+      await client.query("begin");
+      const approval = await client.query(
+        `select id, customer_id, account_type, status
+           from public.onboarding_approvals
+          where id = $1
+          for update`,
+        [id],
       );
-      const vendorRow = vendorProfile.rows[0] ?? null;
-      if (vendorRow) {
-        await query(
+      if (!approval.rows[0]) {
+        await client.query("rollback");
+        return adminError(ctx, 404, "Approval tidak ditemukan.");
+      }
+
+      await client.query(
+        `update public.onboarding_approvals
+            set status = $1, admin_note = $2, reviewed_by = $3,
+                reviewed_at = now(), updated_at = now()
+          where id = $4`,
+        [status, note, ctx.user.email, id],
+      );
+
+      await client.query(
+        `update public.portal_customer_profiles
+            set profile_status = $1,
+                is_verified = $2,
+                verification_status = $3,
+                verification_notes = $4,
+                verified_by = case when $2 then $5 else verified_by end,
+                verified_at = case when $2 then coalesce(verified_at, now()) else verified_at end,
+                updated_at = now()
+          where customer_id = $6`,
+        [
+          status === "approved" ? "active" : "rejected",
+          status === "approved",
+          status === "approved" ? "VERIFIED" : "REJECTED",
+          note,
+          ctx.user.email,
+          approval.rows[0].customer_id,
+        ],
+      );
+
+      if (approval.rows[0].account_type === "vendor") {
+        const vendorProfile = await client.query(
+          `select vp.id, vp.company_name, vp.service_type, vp.supplier_id,
+                  c.email, c.phone, c.name
+             from public.vendor_profiles vp
+             join public.portal_customers c on c.id = vp.customer_id
+            where vp.customer_id = $1
+            order by vp.updated_at desc, vp.id desc
+            limit 1
+            for update of vp`,
+          [approval.rows[0].customer_id],
+        );
+        const vendorRow = vendorProfile.rows[0] ?? null;
+        if (!vendorRow) {
+          const error = new Error("Profil vendor belum tersedia. Selesaikan onboarding vendor sebelum approval.");
+          error.statusCode = 409;
+          throw error;
+        }
+
+        await client.query(
           `update public.vendor_profiles
               set verification_status = $1,
-                  approved_at = case when $1 = 'verified' then now() else null end,
-                  approval_date = case when $1 = 'verified' then now() else null end,
+                  approved_at = case when $1 = 'verified' then coalesce(approved_at, now()) else null end,
+                  approval_date = case when $1 = 'verified' then coalesce(approval_date, now()) else null end,
                   updated_at = now()
             where id = $2`,
           [status === "approved" ? "verified" : "rejected", vendorRow.id],
@@ -333,23 +355,34 @@ async function handleAdminApprovals(ctx) {
 
         if (status === "approved") {
           let supplierId = vendorRow.supplier_id == null ? null : Number(vendorRow.supplier_id);
+          if (supplierId) {
+            const existingSupplier = await client.query(
+              "select id from public.suppliers where id = $1 for update",
+              [supplierId],
+            );
+            if (!existingSupplier.rows[0]) supplierId = null;
+          }
+
           if (!supplierId && vendorRow.email) {
-            const supplier = await query(
+            const supplier = await client.query(
               `select id
                  from public.suppliers
                 where lower(trim(coalesce(contact_email, ''))) = lower(trim($1))
                 order by id
-                limit 2`,
+                limit 2
+                for update`,
               [vendorRow.email],
             );
             if (supplier.rows.length > 1) {
-              throw new Error("Email vendor terhubung ke lebih dari satu supplier. Perlu audit sebelum approval.");
+              const error = new Error("Email vendor terhubung ke lebih dari satu supplier. Perlu audit sebelum approval.");
+              error.statusCode = 409;
+              throw error;
             }
             supplierId = supplier.rows[0]?.id == null ? null : Number(supplier.rows[0].id);
           }
 
           if (!supplierId) {
-            const createdSupplier = await query(
+            const createdSupplier = await client.query(
               `insert into public.suppliers
                 (name, contact_email, phone, service_type, is_active, status,
                  registration_status, is_verified, verified_at, verified_by,
@@ -367,7 +400,7 @@ async function handleAdminApprovals(ctx) {
             );
             supplierId = Number(createdSupplier.rows[0].id);
           } else {
-            await query(
+            await client.query(
               `update public.suppliers
                   set contact_email = coalesce(nullif($1, ''), contact_email),
                       phone = coalesce(nullif($2, ''), phone),
@@ -394,7 +427,7 @@ async function handleAdminApprovals(ctx) {
             );
           }
 
-          await query(
+          await client.query(
             `update public.vendor_profiles
                 set supplier_id = $1, updated_at = now()
               where id = $2`,
@@ -402,9 +435,19 @@ async function handleAdminApprovals(ctx) {
           );
         }
       }
+
+      await client.query("commit");
+      ctx.sendJson(response, 200, { id, status, adminNote: note });
+      return;
+    } catch (error) {
+      await client.query("rollback").catch(() => {});
+      if (Number.isInteger(error?.statusCode)) {
+        return adminError(ctx, error.statusCode, error.message);
+      }
+      throw error;
+    } finally {
+      client.release();
     }
-    ctx.sendJson(response, 200, { id, status, adminNote: note });
-    return;
   }
   if (request.method === "GET" && url.pathname === "/api/portal/admin/approvals/stats") {
     const result = await query(
@@ -1111,44 +1154,26 @@ async function handleOnboardingComplete(ctx) {
     JSON.stringify({ accountType, driver, employee, ocrData: body.ocrData ?? null }),
     profileStatus,
   ];
-  const existingProfile = await query(
-    `select id from public.portal_customer_profiles
-      where customer_id = $1 order by updated_at desc nulls last, id desc limit 1`,
-    [ctx.user.id],
+  await query(
+    `insert into public.portal_customer_profiles
+      (customer_id, company_name, company_address, pic_name, pic_whatsapp,
+       legal_doc_url, ktp_pic_url, additional_notes, profile_status, updated_at)
+     values ($1, $2, $3, $4, $5, $6, $7, $8, $9, now())
+     on conflict (customer_id) where customer_id is not null
+     do update set
+       company_name = coalesce(excluded.company_name, portal_customer_profiles.company_name),
+       company_address = coalesce(excluded.company_address, portal_customer_profiles.company_address),
+       pic_name = coalesce(excluded.pic_name, portal_customer_profiles.pic_name),
+       pic_whatsapp = coalesce(excluded.pic_whatsapp, portal_customer_profiles.pic_whatsapp),
+       legal_doc_url = coalesce(excluded.legal_doc_url, portal_customer_profiles.legal_doc_url),
+       ktp_pic_url = coalesce(excluded.ktp_pic_url, portal_customer_profiles.ktp_pic_url),
+       additional_notes = coalesce(excluded.additional_notes, portal_customer_profiles.additional_notes),
+       profile_status = excluded.profile_status,
+       updated_at = now()`,
+    [ctx.user.id, ...profileValues],
   );
-  if (existingProfile.rows[0]) {
-    await query(
-      `update public.portal_customer_profiles
-          set company_name = coalesce($1, company_name),
-              company_address = coalesce($2, company_address),
-              pic_name = coalesce($3, pic_name),
-              pic_whatsapp = coalesce($4, pic_whatsapp),
-              legal_doc_url = coalesce($5, legal_doc_url),
-              ktp_pic_url = coalesce($6, ktp_pic_url),
-              additional_notes = coalesce($7, additional_notes),
-              profile_status = $8, updated_at = now()
-        where id = $9`,
-      [...profileValues, existingProfile.rows[0].id],
-    );
-  } else {
-    await query(
-      `insert into public.portal_customer_profiles
-        (customer_id, company_name, company_address, pic_name, pic_whatsapp,
-         legal_doc_url, ktp_pic_url, additional_notes, profile_status, updated_at)
-       values ($1, $2, $3, $4, $5, $6, $7, $8, $9, now())`,
-      [ctx.user.id, ...profileValues],
-    );
-  }
 
   if (accountType === "vendor") {
-    const existingVendorProfile = await query(
-      `select id
-         from public.vendor_profiles
-        where customer_id = $1
-        order by updated_at desc, id desc
-        limit 1`,
-      [ctx.user.id],
-    );
     const vendorValues = [
       text(vendor.companyName) || profileCompanyName,
       text(vendor.nib) || null,
@@ -1160,36 +1185,30 @@ async function handleOnboardingComplete(ctx) {
       ctx.user.email ?? null,
       address,
     ];
-    if (existingVendorProfile.rows[0]) {
-      await query(
-        `update public.vendor_profiles
-            set company_name = coalesce($1, company_name),
-                nib = coalesce($2, nib),
-                npwp = coalesce($3, npwp),
-                service_type = coalesce($4, service_type),
-                legality_doc_url = coalesce($5, legality_doc_url),
-                pic_name = coalesce($6, pic_name),
-                phone = coalesce($7, phone),
-                whatsapp = coalesce($7, whatsapp),
-                email = coalesce($8, email),
-                full_address = coalesce($9, full_address),
-                verification_status = 'pending',
-                approved_at = null,
-                approval_date = null,
-                updated_at = now()
-          where id = $10`,
-        [...vendorValues, existingVendorProfile.rows[0].id],
-      );
-    } else {
-      await query(
-        `insert into public.vendor_profiles
-          (customer_id, company_name, nib, npwp, service_type, legality_doc_url,
-           pic_name, phone, whatsapp, email, full_address, verification_status,
-           created_at, updated_at)
-         values ($1,$2,$3,$4,$5,$6,$7,$8,$8,$9,$10,'pending',now(),now())`,
-        [ctx.user.id, ...vendorValues],
-      );
-    }
+    await query(
+      `insert into public.vendor_profiles
+        (customer_id, company_name, nib, npwp, service_type, legality_doc_url,
+         pic_name, phone, whatsapp, email, full_address, verification_status,
+         created_at, updated_at)
+       values ($1,$2,$3,$4,$5,$6,$7,$8,$8,$9,$10,'pending',now(),now())
+       on conflict (customer_id)
+       do update set
+         company_name = coalesce(excluded.company_name, vendor_profiles.company_name),
+         nib = coalesce(excluded.nib, vendor_profiles.nib),
+         npwp = coalesce(excluded.npwp, vendor_profiles.npwp),
+         service_type = coalesce(excluded.service_type, vendor_profiles.service_type),
+         legality_doc_url = coalesce(excluded.legality_doc_url, vendor_profiles.legality_doc_url),
+         pic_name = coalesce(excluded.pic_name, vendor_profiles.pic_name),
+         phone = coalesce(excluded.phone, vendor_profiles.phone),
+         whatsapp = coalesce(excluded.whatsapp, vendor_profiles.whatsapp),
+         email = coalesce(excluded.email, vendor_profiles.email),
+         full_address = coalesce(excluded.full_address, vendor_profiles.full_address),
+         verification_status = 'pending',
+         approved_at = null,
+         approval_date = null,
+         updated_at = now()`,
+      [ctx.user.id, ...vendorValues],
+    );
   }
 
   let organization = null;
@@ -1201,27 +1220,16 @@ async function handleOnboardingComplete(ctx) {
       requestedRegistrationNumber: body.requestedRegistrationNumber,
     });
   } else {
-    const current = await query(
-      `select id from public.onboarding_approvals
-        where customer_id = $1 and status = 'pending'
-        order by created_at desc limit 1`,
-      [ctx.user.id],
+    await query(
+      `insert into public.onboarding_approvals
+        (customer_id, account_type, status, created_at, updated_at)
+       values ($1, $2, 'pending', now(), now())
+       on conflict (customer_id) where status = 'pending'
+       do update set
+         account_type = excluded.account_type,
+         updated_at = now()`,
+      [ctx.user.id, accountType],
     );
-    if (current.rows[0]) {
-      await query(
-        `update public.onboarding_approvals
-            set account_type = $1, updated_at = now()
-          where id = $2`,
-        [accountType, current.rows[0].id],
-      );
-    } else {
-      await query(
-        `insert into public.onboarding_approvals
-          (customer_id, account_type, status, created_at, updated_at)
-         values ($1, $2, 'pending', now(), now())`,
-        [ctx.user.id, accountType],
-      );
-    }
   }
   const status = accountType === "customer" && organization?.status === "company_pending"
     ? "company_pending"
