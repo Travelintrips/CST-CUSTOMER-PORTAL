@@ -95,4 +95,13 @@ describe("production runtime availability lifecycle", () => {
     expect(adminPortal).toContain("supplier_id = $1");
   });
 
+
+  it("links approved vendors to suppliers by unambiguous email only", () => {
+    const adminPortal = readFileSync(join(process.cwd(), "server/admin-portal.mjs"), "utf8");
+
+    expect(adminPortal).toContain("Email vendor terhubung ke lebih dari satu supplier");
+    expect(adminPortal).toContain("lower(trim(coalesce(contact_email, ''))) = lower(trim($1))");
+    expect(adminPortal).not.toContain("or lower(name) = lower($2)");
+  });
+
 });
