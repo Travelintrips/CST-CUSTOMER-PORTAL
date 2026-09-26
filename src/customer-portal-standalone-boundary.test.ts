@@ -286,7 +286,8 @@ describe("standalone Customer Portal API boundary", () => {
     expect(server).toContain("customerTruckingOrderMatch");
     expect(server).toContain("^\\/api\\/portal\\/trucking\\/orders\\/");
     expect(server).toContain("/api/portal/admin/trucking");
-    expect(server).toContain("/api/trucking/driver/");
+    expect(server).toContain("driverTruckingMatch");
+    expect(server).toContain("^\\/api\\/trucking\\/driver\\/");
     expect(lifecycle).toContain("waiting_customer_approval");
     expect(lifecycle).toContain("waiting_payment");
     expect(lifecycle).toContain("vehicle_assigned");
