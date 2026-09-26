@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from "vitest";
-import { resolveGoogleLogin } from "../server/auth-providers.mjs";
+import { authCapabilities, googleRedirectUri, resolveGoogleLogin } from "../server/auth-providers.mjs";
 import { sessionCookies, verifySession } from "../server/session.mjs";
 
 type User = {
@@ -229,5 +229,45 @@ describe("canonical Google identity linking", () => {
       oauthCode: "google_profile_invalid",
     });
     expect(state.identities).toHaveLength(0);
+  });
+});
+
+describe("Google OAuth production capability", () => {
+  beforeEach(() => {
+    process.env.APP_ENV = "production";
+    process.env.NODE_ENV = "production";
+    process.env.GOOGLE_CLIENT_ID = "test-client.apps.googleusercontent.com";
+    process.env.GOOGLE_CLIENT_SECRET = "test-secret";
+    delete process.env.GOOGLE_REDIRECT_BASE_URL;
+    delete process.env.FONNTE_TOKEN;
+  });
+
+  it("keeps Google login enabled when credentials exist and redirect override is omitted", async () => {
+    const capabilities = await authCapabilities();
+
+    expect(capabilities.google).toBe(true);
+    expect(capabilities.providerStatus.google).toBe("configured");
+  });
+
+  it("derives the HTTPS Google callback from forwarded production origin", () => {
+    const request = {
+      headers: {
+        "x-forwarded-proto": "https",
+        "x-forwarded-host": "cstlogistic.co.id",
+      },
+    } as any;
+
+    expect(googleRedirectUri(request)).toBe(
+      "https://cstlogistic.co.id/api/callback/google",
+    );
+  });
+
+  it("fails closed when an explicit redirect override is invalid", async () => {
+    process.env.GOOGLE_REDIRECT_BASE_URL = "http://cstlogistic.co.id";
+
+    const capabilities = await authCapabilities();
+
+    expect(capabilities.google).toBe(false);
+    expect(capabilities.providerStatus.google).toBe("unconfigured");
   });
 });
