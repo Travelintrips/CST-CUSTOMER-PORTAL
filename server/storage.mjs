@@ -39,11 +39,14 @@ function storageConfig() {
     : process.env.SUPABASE_SERVICE_ROLE_KEY_DEV;
   const rawBucket = (
     production
-      ? process.env.SUPABASE_STORAGE_BUCKET
+      ? process.env.SUPABASE_STORAGE_BUCKET || "private-uploads"
       : process.env.SUPABASE_STORAGE_BUCKET_DEV
     || ""
   ).trim();
-  const bucket = /^(['"]).*\1$/.test(rawBucket) ? rawBucket.slice(1, -1).trim() : rawBucket;
+  const unquotedBucket = /^(['"]).*\1$/.test(rawBucket) ? rawBucket.slice(1, -1).trim() : rawBucket;
+  const bucket = production && /^https?:\/\//i.test(unquotedBucket)
+    ? "private-uploads"
+    : unquotedBucket;
   if (!url || !serviceRoleKey || !bucket) {
     const error = new Error(
       production
