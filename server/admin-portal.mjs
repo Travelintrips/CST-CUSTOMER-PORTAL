@@ -1211,9 +1211,15 @@ async function handleOnboardingStatus(ctx) {
   const organization = await getOrganizationContext(ctx.user);
   const approvalRow = approval.rows[0];
   const profileRow = profile.rows[0];
-  let status = ctx.user.account_status === "inactive" ? "incomplete" : "active";
+  let status =
+    profileRow?.profile_status === "incomplete" || ctx.user.account_status === "inactive"
+      ? "incomplete"
+      : profileRow?.profile_status === "pending"
+        ? "pending"
+        : "active";
   if (approvalRow?.status === "pending") status = "pending";
   if (approvalRow?.status === "rejected" || profileRow?.profile_status === "rejected") status = "rejected";
+  if (approvalRow?.status === "approved" && profileRow?.profile_status === "active") status = "active";
   if (organization.status === "company_pending") status = "company_pending";
   ctx.sendJson(ctx.response, 200, {
     status, accountType: ctx.user.role, customerType: ctx.user.customer_type ?? null,
