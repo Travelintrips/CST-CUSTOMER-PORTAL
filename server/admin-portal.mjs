@@ -1312,7 +1312,7 @@ function actionList(row) {
   const status = String(row.status ?? "").toLowerCase();
   const actions = [];
   if (!TERMINAL_STATUSES.has(status)) {
-    if (["submitted", "pending", "pending_review", "in_review", "requested", "waiting_rate"].includes(status)) {
+    if (["new order", "new_order", "submitted", "pending", "pending_review", "in_review", "requested", "waiting_rate"].includes(status)) {
       actions.push("approve", "request_revision", "reject");
     }
   }
@@ -1881,7 +1881,11 @@ async function handleServiceOperations(ctx) {
         [targetStatus, row.id],
       );
     } else if (row.service_key === "product-order") {
-      await query("update public.portal_product_orders set status = $1, updated_at = now() where id = $2 and status not in ('completed', 'cancelled', 'rejected')", [targetStatus, row.id]);
+      const updated = await query(
+        "update public.portal_product_orders set status = $1, updated_at = now() where id = $2 and status not in ('completed', 'cancelled', 'rejected') returning id",
+        [targetStatus, row.id],
+      );
+      if (!updated.rows[0]) return adminError(ctx, 409, "Status product order sudah berubah. Muat ulang sebelum mencoba lagi.");
     } else if (row.service_key === "service-request") {
       await query("update public.customer_service_requests set status = $1, admin_notes = $2, handled_by = $3, updated_at = now() where id = $4 and status not in ('completed', 'cancelled', 'rejected')", [targetStatus, reason, ctx.user.email, row.id]);
     } else if (row.service_key === "quote-request") {

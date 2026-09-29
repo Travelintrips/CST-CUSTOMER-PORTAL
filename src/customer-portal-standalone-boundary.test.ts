@@ -186,6 +186,15 @@ describe("standalone Customer Portal API boundary", () => {
     expect(productOrderSource).not.toContain("/api/portal-product/templates");
   });
 
+  it("keeps new product orders actionable and guards concurrent admin transitions", () => {
+    const admin = readFileSync(join(process.cwd(), "server/admin-portal.mjs"), "utf8");
+
+    expect(admin).toContain('"new order", "new_order", "submitted"');
+    expect(admin).toContain("update public.portal_product_orders set status = $1");
+    expect(admin).toContain("returning id");
+    expect(admin).toContain("Status product order sudah berubah. Muat ulang sebelum mencoba lagi.");
+  });
+
   it("keeps product order writes local and idempotent", () => {
     const page = readFileSync(join(process.cwd(), "src/pages/product-order.tsx"), "utf8");
     const server = readFileSync(join(process.cwd(), "server/index.mjs"), "utf8");
