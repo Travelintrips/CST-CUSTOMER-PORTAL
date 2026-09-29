@@ -22,11 +22,12 @@
     "test:portal:production-smoke": "node scripts/portal-production-smoke.mjs",
     "test:portal:commercial-certification": "node scripts/portal-commercial-certification.mjs",
     "verify:release-contracts": "APP_ENV=development NODE_ENV=test SESSION_SECRET=customer-portal-release-contract-secret-32 SUPABASE_DATABASE_URL_DEV=postgresql://ci:ci@127.0.0.1:5432/ci SMTP_FROM=test@example.com SMTP_USER=test@example.com SMTP_PASS=test-smtp-secret CUSTOMER_PORTAL_FONNTE_TOKEN=test-fonnte-token vitest run src/production-runtime-lifecycle.test.ts && tsc -p tsconfig.json --noEmit && node scripts/check-server-syntax.mjs",
-    "build:portal": "node scripts/ensure-esbuild-executable.mjs && node scripts/check-server-syntax.mjs && node scripts/validate-translations.mjs && node scripts/validate-seo-contract.mjs && node scripts/build-vite.mjs && node scripts/prerender.mjs && node scripts/prepare-hostinger.mjs",
+    "build:portal": "node scripts/verify-critical-deploy-contracts.mjs && node scripts/ensure-esbuild-executable.mjs && node scripts/check-server-syntax.mjs && node scripts/validate-translations.mjs && node scripts/validate-seo-contract.mjs && node scripts/build-vite.mjs && node scripts/prerender.mjs && node scripts/prepare-hostinger.mjs",
     "start": "node ./index.js",
     "hostinger:build": "npm run build",
     "test:release-full": "APP_ENV=development NODE_ENV=test SESSION_SECRET=customer-portal-release-contract-secret-32 SUPABASE_DATABASE_URL_DEV=postgresql://ci:ci@127.0.0.1:5432/ci SMTP_FROM=test@example.com SMTP_USER=test@example.com SMTP_PASS=test-smtp-secret CUSTOMER_PORTAL_FONNTE_TOKEN=test-fonnte-token vitest run src/production-runtime-lifecycle.test.ts src/google-auth.test.ts src/customer-portal-standalone-boundary.test.ts src/operational-health.test.ts",
-    "test:ops:contracts": "vitest run src/operational-health.test.ts"
+    "test:ops:contracts": "vitest run src/operational-health.test.ts",
+    "verify:critical-deploy-contracts": "node scripts/verify-critical-deploy-contracts.mjs"
   },
   "devDependencies": {
     "@hookform/resolvers": "^5.2.2",
