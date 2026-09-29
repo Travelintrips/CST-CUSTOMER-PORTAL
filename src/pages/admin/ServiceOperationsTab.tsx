@@ -197,7 +197,7 @@ const statusClass = (value: string) => {
 
 function formatDate(value: string | null | undefined) {
   if (!value) return "—";
-  return new Intl.DateTimeFormat("id-ID", {
+  return new Intl.DateTimeFormat(document.documentElement.lang || "id-ID", {
     dateStyle: "medium",
     timeStyle: "short",
   }).format(new Date(value));
@@ -250,8 +250,8 @@ function marketplaceFlowGuide(detail: Detail): { owner: string; action: string; 
         ? "Verifikasi bukti pembayaran"
         : dp ? "Penuhi DP minimum" : "Lunasi sebelum serah/kirim",
       description: dp
-        ? `PO menggunakan DP ${payment.dpPercent ?? "—"}%. Masih kurang Rp ${new Intl.NumberFormat("id-ID").format(Number(payment.requiredBeforeHandoverRemaining ?? 0))} sebelum vendor boleh menyerahkan/mengirim barang.`
-        : `PO menggunakan prepayment. Masih kurang Rp ${new Intl.NumberFormat("id-ID").format(Number(payment.requiredBeforeHandoverRemaining ?? 0))} sebelum handover.`,
+        ? `PO menggunakan DP ${payment.dpPercent ?? "—"}%. Masih kurang Rp ${new Intl.NumberFormat(document.documentElement.lang || "id-ID").format(Number(payment.requiredBeforeHandoverRemaining ?? 0))} sebelum vendor boleh menyerahkan/mengirim barang.`
+        : `PO menggunakan prepayment. Masih kurang Rp ${new Intl.NumberFormat(document.documentElement.lang || "id-ID").format(Number(payment.requiredBeforeHandoverRemaining ?? 0))} sebelum handover.`,
     };
   }
   if (
@@ -263,7 +263,7 @@ function marketplaceFlowGuide(detail: Detail): { owner: string; action: string; 
     return {
       owner: "Vendor",
       action: "Lanjutkan handover / pengiriman",
-      description: `DP ${payment.dpPercent ?? "—"}% sudah terpenuhi. Vendor boleh melanjutkan fulfillment; sisa Rp ${new Intl.NumberFormat("id-ID").format(Number(payment.remainingAmount ?? 0))} dilunasi customer setelah barang diterima.`,
+      description: `DP ${payment.dpPercent ?? "—"}% sudah terpenuhi. Vendor boleh melanjutkan fulfillment; sisa Rp ${new Intl.NumberFormat(document.documentElement.lang || "id-ID").format(Number(payment.remainingAmount ?? 0))} dilunasi customer setelah barang diterima.`,
     };
   }
   if (podAvailable && receiptCount === 0) {
@@ -575,7 +575,7 @@ export function ServiceOperationsTab() {
       <div className="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-7 gap-3">
         <div className="rounded-xl border bg-white p-4">
           <p className="text-xs text-slate-500">Total antrean</p>
-          <p className="text-2xl font-bold text-slate-900 mt-1">{total.toLocaleString("id-ID")}</p>
+          <p className="text-2xl font-bold text-slate-900 mt-1">{total.toLocaleString(document.documentElement.lang || "id-ID")}</p>
         </div>
         {summary.map((item) => (
           <button
@@ -586,7 +586,7 @@ export function ServiceOperationsTab() {
           >
             <p className="text-xs text-slate-500 truncate">{item.service_label}</p>
             <div className="flex items-end justify-between gap-2 mt-1">
-              <p className="text-2xl font-bold text-slate-900">{Number(item.total).toLocaleString("id-ID")}</p>
+              <p className="text-2xl font-bold text-slate-900">{Number(item.total).toLocaleString(document.documentElement.lang || "id-ID")}</p>
               <span className="text-xs text-amber-700">{Number(item.pending)} pending{Number(item.ambiguous) > 0 ? ` · ${Number(item.ambiguous)} review` : ""}</span>
             </div>
           </button>
@@ -700,9 +700,9 @@ export function ServiceOperationsTab() {
                     <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
                       {[
                         ["Invoice", selected.projection.finance.invoice.number ?? "—"],
-                        ["Total", `Rp ${selected.projection.finance.invoice.total.toLocaleString("id-ID")}`],
-                        ["Dibayar", `Rp ${selected.projection.finance.invoice.amountPaid.toLocaleString("id-ID")}`],
-                        ["Outstanding", `Rp ${selected.projection.finance.invoice.outstanding.toLocaleString("id-ID")}`],
+                        ["Total", `Rp ${selected.projection.finance.invoice.total.toLocaleString(document.documentElement.lang || "id-ID")}`],
+                        ["Dibayar", `Rp ${selected.projection.finance.invoice.amountPaid.toLocaleString(document.documentElement.lang || "id-ID")}`],
+                        ["Outstanding", `Rp ${selected.projection.finance.invoice.outstanding.toLocaleString(document.documentElement.lang || "id-ID")}`],
                         ["Payment", statusLabel(selected.projection.finance.invoice.paymentStatus)],
                         ["Proof", statusLabel(selected.projection.finance.paymentProof?.status ?? "not_uploaded")],
                         ["Jatuh tempo", formatDate(selected.projection.finance.invoice.dueDate)],
@@ -806,7 +806,7 @@ export function ServiceOperationsTab() {
                         ? `${selected.projection.operations.receipts.count} receipt`
                         : "N/A"],
                       ["Payment", selected.projection.operations.payment?.status === "available"
-                        ? `${statusLabel(selected.projection.operations.payment.paymentStatus ?? "unpaid")} · dibayar Rp ${new Intl.NumberFormat("id-ID").format(Number(selected.projection.operations.payment.paidAmount ?? 0))} · sisa Rp ${new Intl.NumberFormat("id-ID").format(Number(selected.projection.operations.payment.remainingAmount ?? 0))}`
+                        ? `${statusLabel(selected.projection.operations.payment.paymentStatus ?? "unpaid")} · dibayar Rp ${new Intl.NumberFormat(document.documentElement.lang || "id-ID").format(Number(selected.projection.operations.payment.paidAmount ?? 0))} · sisa Rp ${new Intl.NumberFormat(document.documentElement.lang || "id-ID").format(Number(selected.projection.operations.payment.remainingAmount ?? 0))}`
                         : "N/A"],
                       ["Completion", statusLabel(selected.projection.operations.completion.status)],
                     ].map(([label, value]) => (
