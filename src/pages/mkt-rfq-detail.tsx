@@ -391,7 +391,7 @@ export default function MktRfqDetailPage() {
         {!isCancelled && (
           <Card>
             <CardHeader className="pb-2">
-              <CardTitle className="text-sm text-muted-foreground uppercase tracking-wider">{t("mktMyRfqs.pageDesc", "RFQ progress")}<CardTitle>
+              <CardTitle className="text-sm text-muted-foreground uppercase tracking-wider">{t("mktMyRfqs.pageDesc", "RFQ progress")}</CardTitle>
             </CardHeader>
             <CardContent>
               <div className="flex items-start">
@@ -530,7 +530,7 @@ export default function MktRfqDetailPage() {
         {/* RFQ Info */}
         <Card>
           <CardHeader className="pb-2">
-            <CardTitle className="text-sm text-muted-foreground uppercase tracking-wider">{t("mktMyRfqs.viewDetail", "RFQ information")}<CardTitle>
+            <CardTitle className="text-sm text-muted-foreground uppercase tracking-wider">{t("mktMyRfqs.viewDetail", "RFQ information")}</CardTitle>
           </CardHeader>
           <CardContent className="space-y-2.5 text-sm">
             {rfq.buyer_company && (
