@@ -16,6 +16,15 @@ describe("production runtime availability lifecycle", () => {
     expect(server).toContain("frontend remains available and API stays gated");
   });
 
+  it("requires browser provenance for cookie-authenticated production mutations", () => {
+    const server = readFileSync(join(process.cwd(), "server/index.mjs"), "utf8");
+
+    expect(server).toContain('part.trim().startsWith("portal_session=")');
+    expect(server).toContain("hasPortalSessionCookie && !origin && !fetchSite");
+    expect(server).toContain("Mutation request provenance is required.");
+    expect(server).toContain('["same-origin", "none"].includes(fetchSite)');
+  });
+
   it("uses liveness separately from dependency readiness", () => {
     const server = readFileSync(join(process.cwd(), "server/index.mjs"), "utf8");
     const smoke = readFileSync(join(process.cwd(), "scripts/portal-production-smoke.mjs"), "utf8");
