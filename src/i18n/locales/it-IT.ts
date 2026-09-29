@@ -789,7 +789,7 @@ const locale: DeepRecord = {
     closeFilter: 'Tutup filter',
     close: 'Tutup',
     priceChartItemCount: '{n} articoli con prezzo',
-    priceChartClickHint: 'Fai clic su una barra per vedere i dettagli dell'articolo',
+    priceChartClickHint: "Fai clic su una barra per vedere i dettagli dell'articolo",
     priceChartTitle: 'Confronto prezzi fornitori',
     priceHighest: 'Tertinggi',
     priceMid: 'Menengah',
