@@ -140,6 +140,66 @@ function flattenStrings(
 const legacyTextSource = new WeakMap<Text, string>();
 const legacyAttrSource = new WeakMap<Element, Map<string, string>>();
 
+const EN_LEGACY_LITERAL_OVERRIDES: Record<string, string> = {
+  "Semua Layanan": "All Services",
+  "Operasional Trucking": "Trucking Operations",
+  "Riwayat Pembayaran": "Payment History",
+  "Website & Konten": "Website & Content",
+  "Konten Website": "Website Content",
+  "Kelola Layanan": "Manage Services",
+  "Kelola Produk": "Manage Products",
+  "Kurir": "Couriers",
+  "Kelola Harga": "Manage Pricing",
+  "Armada Trucking": "Trucking Fleet",
+  "Katalog Vendor": "Vendor Catalogue",
+  "Produk Unggulan": "Featured Products",
+  "Vendor & Pengguna": "Vendors & Users",
+  "Undang Vendor": "Invite Vendor",
+  "Pelanggan": "Customers",
+  "Kelola Chatbot": "Manage Chatbot",
+  "Status Koneksi Fonnte": "Fonnte Connection Status",
+  "Sistem": "System",
+  "Utilitas": "Utilities",
+  "Aktivasi Admin": "Admin Activation",
+  "Semua layanan dalam satu antrean": "All services in one queue",
+  "Satu tampilan untuk transaksi canonical dari Marketplace, freight, trucking, kepabeanan, dan request layanan. Detail serta tindakan Marketplace dikelola langsung dari panel ini.": "A single view for canonical Marketplace, freight, trucking, customs, and service-request transactions. Marketplace details and actions are managed directly from this panel.",
+  "Total antrean": "Total queue",
+  "Semua layanan": "All services",
+  "Cari nomor, customer, perusahaan, rute...": "Search number, customer, company, route...",
+  "Semua status": "All statuses",
+  "Layanan": "Service",
+  "Referensi / Customer": "Reference / Customer",
+  "Dibuat": "Created",
+  "Memuat workload...": "Loading workload...",
+  "Tidak ada transaksi sesuai filter.": "No transactions match the current filters.",
+  "Mapping perlu review": "Mapping needs review",
+  "Detail transaksi layanan": "Service transaction details",
+  "Tutup detail": "Close details",
+  "Canonical record dan history dari sumber transaksi.": "Canonical record and history from the transaction source.",
+  "Perusahaan / Tipe": "Company / Type",
+  "Telepon": "Phone",
+  "Belum terhubung": "Not connected",
+  "Sumber": "Source",
+  "Dibayar": "Paid",
+  "Jatuh tempo": "Due date",
+  "Belum ada invoice canonical yang terhubung.": "No canonical invoice is connected yet.",
+  "Buka bukti pembayaran": "Open payment proof",
+  "Belum ada event timeline. Status saat ini:": "No timeline events yet. Current status:",
+  "Langkah berikutnya": "Next step",
+  "Atur Pembayaran PO": "Manage PO Payment",
+  "Data canonical": "Canonical data",
+  "Tersedia": "Available",
+  "Belum ada": "Not available yet",
+  "Belum ada history tambahan.": "No additional history yet.",
+  "Verifikasi Pembayaran Manual": "Manual Payment Verification",
+  "Customer sudah mengunggah bukti transfer. Verifikasi sebelum order masuk proses operasional.": "The customer has uploaded transfer proof. Verify it before the order enters operations.",
+  "Lihat Bukti Pembayaran": "View Payment Proof",
+  "Verifikasi Pembayaran": "Verify Payment",
+  "Tolak Bukti": "Reject Proof",
+  "Quotation Customer": "Customer Quotation",
+  "Harga Final (IDR)": "Final Price (IDR)",
+};
+
 const LEGACY_LITERAL_KEY_ALIASES: Record<string, string> = {
   "Daftar sebagai": "registerPage.roleLabel",
   "Membeli atau meminta layanan": "registerPage.roleCustomerDesc",
@@ -196,7 +256,7 @@ const LEGACY_LITERAL_KEY_ALIASES: Record<string, string> = {
   "Total Tagihan": "paymentProof.totalBill",
 };
 
-function buildLegacyLiteralMap(dict: Record<string, unknown>) {
+function buildLegacyLiteralMap(dict: Record<string, unknown>, locale: string) {
   const current = flattenStrings(dict);
   const sources = [
     getCachedLocale("id-ID") as Record<string, unknown> | undefined,
@@ -212,6 +272,12 @@ function buildLegacyLiteralMap(dict: Record<string, unknown>) {
       const normalized = sourceValue.trim();
       if (normalized.length < 2) continue;
       if (!map.has(normalized)) map.set(normalized, target);
+    }
+  }
+
+  if (locale.startsWith("en")) {
+    for (const [literal, translated] of Object.entries(EN_LEGACY_LITERAL_OVERRIDES)) {
+      map.set(literal, translated);
     }
   }
 
@@ -363,7 +429,7 @@ export function LanguageProvider({ children }: { children: ReactNode }) {
   // data (names, order numbers, addresses, amounts) is left untouched.
   useEffect(() => {
     if (typeof document === "undefined") return;
-    const literalMap = buildLegacyLiteralMap(dict);
+    const literalMap = buildLegacyLiteralMap(dict, locale);
     translateLegacyNode(document.body, literalMap);
 
     const observer = new MutationObserver((mutations) => {
