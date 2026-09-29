@@ -28,6 +28,16 @@ describe("customer company onboarding contract", () => {
     expect(onboarding).not.toContain("Driver dan Karyawan bukan pilihan registrasi Customer");
   });
 
+
+  it("localizes the registration and company onboarding flow through LanguageContext", () => {
+    expect(onboarding).toContain('t("onboarding.registration.companyDataTitle"');
+    expect(onboarding).toContain('t("onboarding.registration.newCompany"');
+    expect(onboarding).toContain('t("onboarding.registration.searchExisting"');
+    expect(onboarding).toContain('t("onboarding.registration.ktpUploadRequired"');
+    expect(onboarding).toContain('t("onboarding.registration.vendorLegality"');
+    expect(onboarding).toContain('t("onboarding.registration.reviewNewPending"');
+  });
+
   it("requires identity and legal documents at both UI and server boundaries", () => {
     expect(onboarding).toContain("KTP wajib diunggah untuk melanjutkan pendaftaran.");
     expect(onboarding).toContain("Dokumen legalitas vendor wajib diunggah.");
