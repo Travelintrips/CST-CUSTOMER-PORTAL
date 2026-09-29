@@ -1106,7 +1106,9 @@ async function handleOnboardingComplete(ctx) {
       "Tipe akun tidak dapat diubah melalui onboarding. Hubungi admin untuk perubahan role.",
     );
   }
-  if (!fullName || !phone) return adminError(ctx, 400, "Nama dan nomor telepon wajib diisi.");
+  if (!fullName || fullName.length < 3 || !phone || !address || address.length < 10) {
+    return adminError(ctx, 400, "Nama, nomor telepon, dan alamat lengkap wajib diisi.");
+  }
 
   const customerType = accountType === "customer" ? text(body.customerType) : null;
   if (accountType === "customer" && !["individual", "company"].includes(customerType)) {
@@ -1116,6 +1118,31 @@ async function handleOnboardingComplete(ctx) {
   const vendor = body.vendor && typeof body.vendor === "object" ? body.vendor : {};
   const employee = body.employee && typeof body.employee === "object" ? body.employee : {};
   const driver = body.driver && typeof body.driver === "object" ? body.driver : {};
+
+  if (["customer", "vendor"].includes(accountType) && !text(body.ktpUrl)) {
+    return adminError(ctx, 400, "KTP wajib diunggah untuk menyelesaikan pendaftaran.");
+  }
+
+  if (accountType === "customer" && customerType === "company") {
+    const companyId = Number(body.companyId);
+    const hasExistingCompany = Number.isInteger(companyId) && companyId > 0;
+    const requestedCompanyName = text(body.requestedCompanyName);
+    const requestedRegistrationNumber = text(body.requestedRegistrationNumber);
+    if (!hasExistingCompany && (!requestedCompanyName || !requestedRegistrationNumber)) {
+      return adminError(ctx, 400, "Nama perusahaan dan NIB / NPWP wajib diisi untuk perusahaan baru.");
+    }
+  }
+
+  if (accountType === "vendor") {
+    if (
+      !text(vendor.companyName)
+      || !text(vendor.nib)
+      || !text(vendor.serviceType)
+      || !text(vendor.legalityDocUrl)
+    ) {
+      return adminError(ctx, 400, "Nama perusahaan, NIB, jenis layanan, dan dokumen legalitas vendor wajib diisi.");
+    }
+  }
   const profileCompanyName = accountType === "customer"
     ? text(body.requestedCompanyName) || null
     : text(vendor.companyName || employee.companyName) || null;
