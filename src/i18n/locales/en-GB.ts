@@ -9315,4 +9315,146 @@ locale["vendorProductApproval"]["vendorPhonePlaceholder"] = "Contoh: 08123456789
 if (!locale["vendorProductApproval"] || typeof locale["vendorProductApproval"] !== 'object') locale["vendorProductApproval"] = {};
 locale["vendorProductApproval"]["vendorResponse"] = "Vendor Response";
 
+// Canonical English admin copy. Keep this final override after generated legacy assignments
+// so the English admin experience cannot fall back to Indonesian text.
+locale["adminPage"] = {
+  "erpEvent": {
+    "freightUpdated": "Freight statistics updated automatically.",
+    "latestLoaded": "Latest ERP data loaded.",
+    "newOrder": "New order received",
+    "quoteReceived": "Vendor quote received",
+    "rfqUpdated": "RFQ data updated automatically.",
+    "statsRefreshed": "Statistics refreshed",
+    "statsUpdated": "Portal statistics updated automatically.",
+    "statusChanged": "Order status changed"
+  },
+  "erp": {
+    "openBizPortal": "Open BizPortal",
+    "portalCustomers": "Portal Customers",
+    "purchaseReport": "Purchase Report",
+    "realtimeStats": "Real-time Statistics",
+    "refresh": "Refresh",
+    "salesReport": "Sales Report",
+    "section": {
+      "accounting": "Accounting",
+      "dashboard": "Dashboard & Main",
+      "expensesReports": "Expenses & Reports",
+      "logistics": "Logistics",
+      "others": "Others",
+      "purchase": "Purchase",
+      "sales": "Sales"
+    },
+    "stat": {
+      "activeFreight": "Active Freight",
+      "inTransit": "In Transit",
+      "monthlyRevenue": "Revenue This Month",
+      "pendingRfq": "Pending RFQs",
+      "portalCustomers": "Portal Customers",
+      "portalOrders": "Portal Orders (this month)"
+    },
+    "subtitle": "Quick access to all internal ERP modules. Click a module to open BizPortal.",
+    "title": "BizPortal ERP",
+    "unifiedCatalog": "Unified Catalogue",
+    "updatedAt": "Updated"
+  },
+  "header": {
+    "title": "Admin Panel"
+  },
+  "nav": {
+    "adminActivation": "Admin Activation",
+    "approvals": "Approvals",
+    "bizportalErp": "BizPortal ERP",
+    "commandCenter": "Command Center",
+    "couriers": "Couriers",
+    "customers": "Customers",
+    "featuredProducts": "Featured Products",
+    "inviteVendor": "Invite Vendor",
+    "managePricing": "Manage Pricing",
+    "manageProducts": "Manage Products",
+    "manageServices": "Manage Services",
+    "masterPrice": "Master Price",
+    "menuAriaLabel": "Admin navigation menu",
+    "miniForms": "Mini Form",
+    "openMenu": "Open navigation menu",
+    "paylabsSetting": "Paylabs Settings",
+    "productTemplates": "Product Templates",
+    "sectionMarketplace": "Marketplace",
+    "sectionSystem": "System",
+    "sectionVendorUsers": "Vendors & Users",
+    "sectionWebsite": "Website & Content",
+    "truckingFleet": "Trucking Fleet",
+    "utilities": "Utilities",
+    "vendorCatalog": "Vendor Catalogue",
+    "vendorMarketplace": "Vendor Marketplace",
+    "websiteContent": "Website Content",
+    "whatsapp": "WhatsApp"
+  },
+  "tab": {
+    "approvals": {
+      "desc": "Review and approve or reject account applications from vendors, drivers, and employees who register through the portal.",
+      "title": "Vendor & Customer Approvals"
+    },
+    "claim": {
+      "desc": "Activate admin access using the secret key.",
+      "title": "Admin Activation"
+    },
+    "couriers": {
+      "desc": "Manage the courier list shown to customers when selecting product delivery.",
+      "title": "Courier Vendors & Delivery"
+    },
+    "customers": {
+      "desc": "List all accounts registered in the portal — customers, vendors, drivers, and admins.",
+      "title": "Portal Customer Data"
+    },
+    "featuredProducts": {
+      "desc": "Manage applications, active products, promotion packages, history, and payment verification for featured vendor products in the marketplace.",
+      "title": "Featured Products"
+    },
+    "masterPrice": {
+      "desc": "Manage marketplace product pricing centrally — individual updates, bulk updates, Excel/CSV imports, change history, and price approvals.",
+      "title": "Master Price Management"
+    },
+    "miniForms": {
+      "customer": "Customer",
+      "desc": "Create and manage dynamic form links. Share them with recipients — they can open the link and complete the form without logging in.",
+      "internal": "Internal",
+      "title": "Mini Form",
+      "vendor": "Vendor"
+    },
+    "pricing": {
+      "desc": "Configure trucking rates and international freight rates.",
+      "title": "Manage Trucking & Freight Pricing"
+    },
+    "products": {
+      "desc": "Edit the name, description, price, and images for each product.",
+      "title": "Manage Products"
+    },
+    "productTemplates": {
+      "desc": "Reference templates for multiple commodity types — custom fields, required documents, operational checklists, and packing instructions by product category.",
+      "title": "Product Template Engine"
+    },
+    "services": {
+      "desc": "Edit the name, description, price, and images for each service.",
+      "title": "Manage Services"
+    },
+    "truckingFleet": {
+      "desc": "Upload images and configure vehicle display order on the Trucking page.",
+      "title": "Trucking Fleet Images & Order"
+    },
+    "utilities": {
+      "desc": "Data cleanup and repair tools — run only when needed.",
+      "fixJasaNames": "Fix Service Product Names",
+      "title": "Admin Utilities"
+    },
+    "waLogs": {
+      "desc": "Monitor WhatsApp notification delivery status — sent, failed, or deduplicated — and manually retry failed messages.",
+      "title": "WhatsApp Notification Log"
+    },
+    "websiteContent": {
+      "desc": "Edit text displayed across sections of the public website.",
+      "title": "Website Content"
+    }
+  }
+} as any;
+
 export default locale;
