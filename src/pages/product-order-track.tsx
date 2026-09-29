@@ -244,26 +244,26 @@ export default function ProductOrderTrackPage() {
         {/* Product-First Action Buttons */}
         {data.orderType === "product_first" && data.status === "Customer Product Approval" && data.productApproveUrl && (
           <div className="bg-amber-50 border border-amber-200 rounded-2xl p-5">
-            <p className="font-semibold text-sm text-amber-800 mb-1">✍️ {t("mktMyRfqs.actionRequired", "Product approval required")}<p>
+            <p className="font-semibold text-sm text-amber-800 mb-1">✍️ {t("mktMyRfqs.actionRequired", "Product approval required")}</p>
             <p className="text-xs text-amber-600 mb-3">{t("productOrder.success.step3", "A product vendor has been selected. Review and approve the offer.")}</p>
             <a
               href={data.productApproveUrl}
               className="block w-full py-3 bg-amber-600 hover:bg-amber-700 text-white font-semibold text-sm text-center rounded-xl transition-colors"
             >
-              Review &amp; Setujui Produk →
+              {t("mktMyRfqs.viewDetail", "Review & approve product")} →
             </a>
           </div>
         )}
 
         {data.orderType === "product_first" && data.status === "Shipment Selection Pending" && data.shipmentSelectionUrl && (
           <div className="bg-blue-50 border border-blue-200 rounded-2xl p-5">
-            <p className="font-semibold text-sm text-blue-800 mb-1">🚚 {t("productOrder.serviceCatalog.title", "Choose shipping method")}<p>
+            <p className="font-semibold text-sm text-blue-800 mb-1">🚚 {t("productOrder.serviceCatalog.title", "Choose shipping method")}</p>
             <p className="text-xs text-blue-600 mb-3">{t("productOrder.success.step4", "The product is confirmed. Choose your preferred shipping method.")}</p>
             <a
               href={data.shipmentSelectionUrl}
               className="block w-full py-3 bg-blue-600 hover:bg-blue-700 text-white font-semibold text-sm text-center rounded-xl transition-colors"
             >
-              Pilih Mode Pengiriman →
+              {t("productOrder.serviceCatalog.title", "Choose shipping method")} →
             </a>
           </div>
         )}
@@ -285,7 +285,7 @@ export default function ProductOrderTrackPage() {
                   rel="noopener noreferrer"
                   className="shrink-0 bg-blue-600 text-white text-xs font-semibold px-4 py-2 rounded-lg hover:bg-blue-700 transition-colors"
                 >
-                  Lihat Invoice
+                  {t("dashboard.viewInvoice", "View invoice")}
                 </a>
               )}
             </div>
