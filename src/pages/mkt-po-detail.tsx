@@ -350,7 +350,7 @@ function OverviewTab({ po }: { po: PoDetail }) {
       {/* Status */}
       <Card>
         <CardHeader className="pb-2">
-          <CardTitle className="text-base">{t("mktVendorPo.status", "PO status")}<CardTitle>
+          <CardTitle className="text-base">{t("mktVendorPo.status", "PO status")}</CardTitle>
         </CardHeader>
         <CardContent className="space-y-3">
           <div className="flex items-center gap-3">
@@ -410,7 +410,7 @@ function OverviewTab({ po }: { po: PoDetail }) {
       {/* PO Information */}
       <Card>
         <CardHeader className="pb-2">
-          <CardTitle className="text-base">{t("mktVendorPo.poInfoTitle", "PO information")}<CardTitle>
+          <CardTitle className="text-base">{t("mktVendorPo.poInfoTitle", "PO information")}</CardTitle>
         </CardHeader>
         <CardContent className="space-y-2">
           <InfoRow label={t("mktVendorPo.poNumber", "PO number")} value={<span className="font-mono">{po.poNumber}</span>} />
@@ -436,7 +436,7 @@ function OverviewTab({ po }: { po: PoDetail }) {
       {po.rfqNotes && (
         <Card>
           <CardHeader className="pb-2">
-            <CardTitle className="text-base">{t("mktVendorQuote.buyerNotes", "RFQ notes")}<CardTitle>
+            <CardTitle className="text-base">{t("mktVendorQuote.buyerNotes", "RFQ notes")}</CardTitle>
           </CardHeader>
           <CardContent>
             <p className="text-sm text-gray-700 whitespace-pre-wrap">{po.rfqNotes}</p>
@@ -566,6 +566,7 @@ function ShipmentTab({
   selectedId: number | null;
   onSelect: (id: number) => void;
 }) {
+  const { locale, t } = useLanguage();
   const queryClient = useQueryClient();
   const [selectedType, setSelectedType] = useState<string>("trucking");
   const [shipmentRequestKey] = useState(() => crypto.randomUUID());
@@ -1004,7 +1005,7 @@ function PaymentTab({ po }: { po: PoDetail }) {
     <div className="space-y-4">
       <Card>
         <CardHeader>
-          <CardTitle className="text-base">{t("portalInvoice.title", "Customer payment to CST")}<CardTitle>
+          <CardTitle className="text-base">{t("portalInvoice.title", "Customer payment to CST")}</CardTitle>
         </CardHeader>
         <CardContent className="space-y-4">
           {payment.termsMissing ? (
