@@ -529,7 +529,7 @@ function ItemsTab({ po }: { po: PoDetail }) {
                     <tr key={line.id} className="border-b last:border-b-0 hover:bg-gray-50/60 transition-colors">
                       <td className="px-4 py-3 text-center text-gray-400 font-mono text-xs">{line.lineNumber}</td>
                       <td className="px-4 py-3 font-medium text-gray-800">{line.itemName}</td>
-                      <td className="px-4 py-3 text-right tabular-nums">{parseFloat(line.qty).toLocaleString("id-ID")}</td>
+                      <td className="px-4 py-3 text-right tabular-nums">{parseFloat(line.qty).toLocaleString(locale)}</td>
                       <td className="px-4 py-3 text-gray-500">{line.unit ?? "—"}</td>
                       <td className="px-4 py-3 text-right tabular-nums">{fmtAmount(line.unitPrice, po.currencySnapshot, locale)}</td>
                       <td className="px-4 py-3 text-right tabular-nums font-semibold text-gray-800">{fmtAmount(line.subtotal, po.currencySnapshot, locale)}</td>
