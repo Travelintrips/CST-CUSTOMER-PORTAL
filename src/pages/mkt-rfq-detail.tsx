@@ -266,7 +266,7 @@ export default function MktRfqDetailPage() {
           <Link href="/marketplace/my-rfqs">
             <Button variant="outline">
               <ArrowLeft className="w-4 h-4 mr-2" />
-              Kembali ke Daftar RFQ
+              {t("mktPurchaseOrders.viewRfqs", "Back to RFQ list")}
             </Button>
           </Link>
         </div>
@@ -305,14 +305,14 @@ export default function MktRfqDetailPage() {
               <div className="flex items-center gap-3">
                 <CheckCircle2 className="w-6 h-6 text-green-600 shrink-0" />
                 <div>
-                  <p className="font-semibold text-green-800">{t("mktMyRfqs.poCreated", "Purchase Order created")}<p>
+                  <p className="font-semibold text-green-800">{t("mktMyRfqs.poCreated", "Purchase Order created")}</p>
                   <p className="text-sm text-green-700 font-mono">{po.poNumber}</p>
                 </div>
               </div>
               <Link href={`/marketplace/my-purchase-orders/${po.id}`}>
                 <Button size="sm" className="bg-green-600 hover:bg-green-700 shrink-0">
                   <ExternalLink className="w-4 h-4 mr-1" />
-                  Lihat PO
+                  {t("mktPurchaseOrders.pageTitle", "View PO")}
                 </Button>
               </Link>
             </CardContent>
@@ -326,9 +326,9 @@ export default function MktRfqDetailPage() {
               <div className="flex items-start gap-3">
                 <AlertCircle className="w-5 h-5 text-orange-600 shrink-0 mt-0.5" />
                 <div>
-                  <p className="font-semibold text-orange-800">{t("mktMyRfqs.rfqStatusCustomerReview", "Quote awaiting your approval")}<p>
+                  <p className="font-semibold text-orange-800">{t("mktMyRfqs.rfqStatusCustomerReview", "Quote awaiting your approval")}</p>
                   <p className="text-sm text-orange-700 mt-0.5">
-                    Admin telah memilih vendor terbaik. Tinjau detail penawaran di bawah lalu berikan keputusan Anda.
+                    {t("mktMyRfqs.actionRequired", "Review the selected vendor quote and provide your decision.")}
                   </p>
                 </div>
               </div>
@@ -443,7 +443,7 @@ export default function MktRfqDetailPage() {
             <CardHeader className="pb-2">
               <CardTitle className="text-sm flex items-center gap-2">
                 <Building2 className="w-4 h-4 text-blue-500" />
-                 Detail Harga Penawaran
+                {t("customerApproval.priceBreakdownTitle", "Quote price details")}
               </CardTitle>
             </CardHeader>
             <CardContent>
@@ -456,34 +456,34 @@ export default function MktRfqDetailPage() {
                       <p className="text-xs text-muted-foreground">{quotation.isInternalVendor ? "Vendor Internal" : "Penyedia"}</p>
                       <p className="font-semibold">{quotation.vendorName ?? "—"}</p>
                       {!quotation.isInternalVendor && (
-                        <p className="text-[11px] text-muted-foreground mt-0.5">Seluruh komunikasi dan transaksi dikelola melalui PT Cahaya Sejati Teknologi (CST).</p>
+                        <p className="text-[11px] text-muted-foreground mt-0.5">{t("tracking.contactUs", "All communication and transactions are managed through PT Cahaya Sejati Teknologi (CST).")}</p>
                       )}
                     </div>
                     <div>
-                      <p className="text-xs text-muted-foreground">Total Penawaran</p>
+                      <p className="text-xs text-muted-foreground">{t("vendorQuote.grandTotalLabel", "Quote total")}</p>
                       <p className="font-bold text-green-700 text-lg">{idr(quotation.grandTotal, locale)}</p>
                     </div>
                     {quotation.paymentTerms && (
                       <div>
-                        <p className="text-xs text-muted-foreground">Syarat Pembayaran</p>
+                        <p className="text-xs text-muted-foreground">{t("mktVendorQuote.paymentTerms", "Payment terms")}</p>
                         <p className="font-medium">{quotation.paymentTerms}</p>
                       </div>
                     )}
                     {quotation.incoterm && (
                       <div>
-                        <p className="text-xs text-muted-foreground">Incoterm</p>
+                        <p className="text-xs text-muted-foreground">{t("calculator.incoterms", "Incoterm")}</p>
                         <p className="font-medium">{quotation.incoterm}</p>
                       </div>
                     )}
                     {quotation.deliveryLocation && (
                       <div className="col-span-2">
-                        <p className="text-xs text-muted-foreground">Lokasi Pengiriman</p>
+                        <p className="text-xs text-muted-foreground">{t("productOrder.checkout.shippingAddress", "Delivery location")}</p>
                         <p className="font-medium">{quotation.deliveryLocation}</p>
                       </div>
                     )}
                     {quotation.quotationNumber && (
                       <div className="col-span-2">
-                        <p className="text-xs text-muted-foreground">No. Quotation</p>
+                        <p className="text-xs text-muted-foreground">{t("vendorQuote.rfqNoLabel", "Quotation no.")}</p>
                         <p className="font-mono text-xs">{quotation.quotationNumber}</p>
                       </div>
                     )}
@@ -491,7 +491,7 @@ export default function MktRfqDetailPage() {
 
                   {quotation.lines.length > 0 && (
                     <div className="border-t pt-3 space-y-2">
-                      <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">{t("customerApproval.priceBreakdownTitle", "Item details")}<p>
+                      <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">{t("customerApproval.priceBreakdownTitle", "Item details")}</p>
                       {quotation.lines.map((line, i) => (
                         <div key={i} className="flex items-start justify-between gap-2 py-1.5 border-b border-gray-50 last:border-0">
                           <div className="flex-1 min-w-0">
@@ -513,7 +513,7 @@ export default function MktRfqDetailPage() {
 
                   {quotation.notes && (
                     <div className="p-3 bg-blue-50 rounded-lg text-sm">
-                      <p className="text-xs font-semibold text-blue-600 mb-1">Catatan Penawaran:</p>
+                      <p className="text-xs font-semibold text-blue-600 mb-1">{t("vendorDashboard.notesOptional", "Quote notes")}:</p>
                       <p className="text-blue-800">{quotation.notes}</p>
                     </div>
                   )}
@@ -565,7 +565,7 @@ export default function MktRfqDetailPage() {
                       target="_blank"
                       rel="noreferrer"
                     >
-                      Buka di Google Maps
+                      {t("contactPage.locationViewMaps", "Open in Google Maps")}
                     </a>
                   )}
                 </span>
@@ -573,7 +573,7 @@ export default function MktRfqDetailPage() {
             )}
             {rfq.notes && (
               <div className="pt-2 border-t">
-                <p className="text-muted-foreground text-xs mb-1">Catatan:</p>
+                <p className="text-muted-foreground text-xs mb-1">{t("booking.notes", "Notes")}:</p>
                 <p className="text-gray-700">{rfq.notes}</p>
               </div>
             )}
