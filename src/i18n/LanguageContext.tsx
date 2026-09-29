@@ -156,7 +156,6 @@ const LEGACY_LITERAL_KEY_ALIASES: Record<string, string> = {
   "Pilih dari daftar": "common.confirm",
   "Nama perusahaan": "onboarding.vendor.companyName",
   "Cari perusahaan canonical": "navbar.searchPlaceholder",
-  "Perusahaan saya belum terdaftar": "dashboard.notProvided",
   "Simpan pilihan": "common.save",
   "Memuat konteks customer…": "common.loading",
   "Produk Terkait": "products.title",
