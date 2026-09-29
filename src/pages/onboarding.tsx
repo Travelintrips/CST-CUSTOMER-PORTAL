@@ -801,7 +801,7 @@ export default function OnboardingPage() {
                          />
                        </div>
                        <div className="space-y-2">
-                         <Label htmlFor="requested-company-registration">Nomor registrasi (opsional)</Label>
+                         <Label htmlFor="requested-company-registration">{t("onboarding.vendor.nib", "Registration number (optional)")}</Label>
                          <Input
                            id="requested-company-registration"
                            value={requestedRegistrationNumber}
@@ -1016,7 +1016,7 @@ export default function OnboardingPage() {
                  <Alert className="border-amber-200 bg-amber-50">
                    <Eye className="h-4 w-4 text-amber-500" />
                    <AlertDescription className="text-amber-800">
-                     Status setelah disimpan: <strong>Menunggu verifikasi perusahaan</strong>. Anda tidak dapat membuat RFQ perusahaan sampai admin memetakan perusahaan canonical.
+                     {t("mktVendorPo.status", "Status")}: <strong>{t("mktMyRfqs.approvalPending", "Pending approval")}</strong>. {t("onboarding.accountType.needsAdminApproval", "Company requests require admin verification before company RFQs are available.")}
                    </AlertDescription>
                  </Alert>
                )}
