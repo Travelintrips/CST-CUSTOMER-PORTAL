@@ -629,7 +629,7 @@ function ShipmentTab({
           <div>
             <p className="font-semibold text-amber-900">{t("mktPurchaseOrders.statusIssued", "Waiting for vendor to accept the Purchase Order")}</p>
             <p className="mt-1 text-sm text-amber-800">
-              Setelah vendor menekan Terima PO, pilihan metode pengiriman akan terbuka di sini.
+              {t("mktVendorPo.acceptedNotice", "Shipping options will become available after the vendor accepts the PO.")}
             </p>
           </div>
         </div>
@@ -642,10 +642,10 @@ function ShipmentTab({
       <CardHeader>
         <CardTitle className="text-base flex items-center gap-2">
           <Truck className="w-5 h-5 text-orange-500" />
-          Pilih mode pengiriman
+          {t("productOrder.serviceCatalog.title", "Choose shipping method")}
         </CardTitle>
         <p className="text-sm text-gray-500">
-          Vendor sudah menerima PO. Pilih satu metode pengiriman; pilihan ini membuat satu shipment canonical yang sama untuk customer, vendor, dan admin.
+          {t("mktVendorPo.shipmentInfoDesc", "The vendor accepted the PO. Choose one shipping method for this order.")}
         </p>
       </CardHeader>
       <CardContent className="space-y-3">
@@ -689,7 +689,7 @@ function ShipmentTab({
           <CardContent className="p-4 text-sm text-amber-800">
             <p className="font-semibold">{t("mktPurchaseOrders.statusIssued", "Waiting for vendor to accept the Purchase Order")}</p>
             <p className="mt-1 text-xs">
-              Pilihan pengiriman Anda sudah tercatat, tetapi vendor belum dapat memproses shipment sebelum menekan Terima PO.
+              {t("mktVendorPo.acceptedNotice", "Your shipping selection is saved. The vendor must accept the PO before processing the shipment.")}
             </p>
           </CardContent>
         </Card>
@@ -735,7 +735,7 @@ function ShipmentTab({
 
               {s.trackingNumber && !isPickup && (
                 <p className="text-xs text-gray-600">
-                  Tracking: <span className="font-mono">{s.trackingNumber}</span>
+                  {t("airFreightTrack.awbNumber", "Tracking")}: <span className="font-mono">{s.trackingNumber}</span>
                 </p>
               )}
 
@@ -744,10 +744,10 @@ function ShipmentTab({
                   {s.origin || (s.shipmentStatus !== "planned" ? s.destination : null) ? (
                     <span className="flex items-start gap-1">
                       <MapPin className="w-3 h-3 mt-0.5 shrink-0" />
-                      <span>Lokasi pengambilan: {s.origin || s.destination}</span>
+                      <span>{t("productOrder.trucking.pickupAddress", "Pickup location")}: {s.origin || s.destination}</span>
                     </span>
                   ) : (
-                    <span>Lokasi pengambilan akan tampil setelah vendor menyatakan barang siap diambil.</span>
+                    <span>{t("mktVendorPo.shipmentInfoDesc", "Pickup location will appear when the vendor marks the goods ready.")}</span>
                   )}
                 </div>
               ) : (
@@ -1010,13 +1010,13 @@ function PaymentTab({ po }: { po: PoDetail }) {
         <CardContent className="space-y-4">
           {payment.termsMissing ? (
             <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
-              Syarat pembayaran belum ditetapkan. Admin CST harus menetapkan syarat pembayaran sebelum barang dapat diserahkan/dikirim.
+              {t("mktVendorPo.paymentTerms", "Payment terms have not been set. CST admin must set them before handover or shipment.")}
             </div>
           ) : (
             <>
-              <InfoRow label="Syarat Pembayaran" value={payment.paymentTerms} />
+              <InfoRow label={t("mktVendorPo.paymentTerms", "Payment terms")} value={payment.paymentTerms} />
               <InfoRow
-                label="Status"
+                label={t("mktVendorPo.status", "Status")}
                 value={<Badge className={statusClass[payment.paymentStatus] ?? "bg-gray-100 text-gray-700"} variant="secondary">{statusLabel[payment.paymentStatus] ?? payment.paymentStatus}</Badge>}
               />
               {payment.paymentDueAt && <InfoRow label="Jatuh Tempo Pelunasan" value={fmtDateTime(payment.paymentDueAt, locale)} />}
@@ -1079,9 +1079,9 @@ function PaymentTab({ po }: { po: PoDetail }) {
               {payment.paymentStatus !== "paid" && payment.remainingAmount > 0 && !pendingPaylabs && !payment.proofLocked && (
                 <div className="space-y-3 rounded-xl border border-slate-200 bg-white p-4">
                   <div>
-                    <p className="text-sm font-semibold text-slate-900">Nominal pembayaran kali ini</p>
+<p className="text-sm font-semibold text-slate-900">{t("paymentProof.totalBill", "Payment amount")}</p>
                     <p className="mt-1 text-xs text-slate-500">
-                      Anda dapat membayar sebagian/DP. Sistem otomatis menghitung sisa tagihan setelah pembayaran disetujui.
+                      {t("productOrder.payment.transferTerms.termin.desc", "You can make a partial payment or deposit. The remaining balance is calculated automatically.")}
                     </p>
                   </div>
                   <div className="flex flex-col gap-2 sm:flex-row">
@@ -1100,16 +1100,16 @@ function PaymentTab({ po }: { po: PoDetail }) {
                       placeholder={t("paymentProof.totalBill", "Enter payment amount")}
                     />
                     <Button variant="outline" size="sm" className="h-10" onClick={() => selectAmount(payment.remainingAmount)}>
-                      Bayar Sisa Penuh
+                      {t("productOrder.payment.transferTerms.full.label", "Pay full remaining balance")}
                     </Button>
                     {payment.requiredBeforeHandoverRemaining > 0 && payment.requiredBeforeHandoverRemaining < payment.remainingAmount && (
                       <Button variant="outline" size="sm" className="h-10" onClick={() => selectAmount(payment.requiredBeforeHandoverRemaining)}>
-                        Bayar DP Minimum
+                        {t("productOrder.payment.transferTerms.dp.label", "Pay minimum deposit")}
                       </Button>
                     )}
                   </div>
                   {!validSelectedAmount && paymentAmountInput && (
-                    <p className="text-xs text-red-600">Nominal harus lebih dari Rp0 dan tidak boleh melebihi sisa tagihan.</p>
+                    <p className="text-xs text-red-600">{t("common.error", "Amount must be greater than zero and cannot exceed the outstanding balance.")}</p>
                   )}
                 </div>
               )}
@@ -1120,7 +1120,7 @@ function PaymentTab({ po }: { po: PoDetail }) {
                     <div>
                       <p className="text-sm font-semibold text-slate-900">{t("paymentProof.payViaGateway", "Pay via Paylabs")}</p>
                       <p className="mt-1 text-xs text-slate-600">
-                        Bisa untuk DP/cicilan maupun pelunasan. Pembayaran diverifikasi otomatis melalui callback Paylabs.
+                        {t("paymentProof.securedByPaylabs", "Supports deposits, installments, and full payment. Paylabs verifies payment automatically.")}
                       </p>
                     </div>
                     {payment.paylabs.sandboxMode && (
@@ -1131,22 +1131,22 @@ function PaymentTab({ po }: { po: PoDetail }) {
                   {pendingPaylabs?.paymentUrl ? (
                     <div className="space-y-2">
                       <div className="rounded-lg bg-white p-3 text-sm">
-                        <p className="font-medium">Pembayaran Paylabs sedang menunggu penyelesaian.</p>
+                        <p className="font-medium">{t("paymentProof.linkPending", "Paylabs payment is pending completion.")}</p>
                         <p className="mt-1 text-xs text-slate-500">
                           Nominal: {fmtAmount(pendingPaylabs.amount, payment.currency, locale)} · Metode: {pendingPaylabs.paymentMethod ?? "Paylabs"}.
                         </p>
                       </div>
                       <Button size="sm" onClick={() => window.location.assign(pendingPaylabs.paymentUrl!)}>
-                        Lanjutkan Pembayaran Paylabs
+                        {t("paymentProof.payNow", "Continue Paylabs payment")}
                       </Button>
                       <p className="text-xs text-amber-700">
-                        Transfer manual dinonaktifkan selama transaksi Paylabs ini masih aktif untuk mencegah pembayaran ganda.
+                        {t("paymentProof.linkPendingDesc", "Manual transfer is disabled while this Paylabs transaction is active to prevent duplicate payment.")}
                       </p>
                     </div>
                   ) : (
                     <div className="space-y-3">
                       <div>
-                        <label className="text-xs font-medium text-slate-600">Metode Paylabs</label>
+                        <label className="text-xs font-medium text-slate-600">{t("productOrder.payment.gateway.label", "Paylabs method")}</label>
                         <select
                           value={activePaylabsMethod}
                           onChange={(e) => setSelectedPaylabsMethod(e.target.value)}
@@ -1190,15 +1190,15 @@ function PaymentTab({ po }: { po: PoDetail }) {
                   )}
                   <div className="grid gap-2 rounded-lg bg-white p-3 text-sm sm:grid-cols-3">
                     <div>
-                      <p className="text-xs text-slate-500">Nominal diajukan</p>
+                      <p className="text-xs text-slate-500">{t("paymentProof.totalBill", "Submitted amount")}</p>
                       <p className="font-semibold">{payment.proofExpectedAmount == null ? "—" : fmtAmount(payment.proofExpectedAmount, payment.currency, locale)}</p>
                     </div>
                     <div>
-                      <p className="text-xs text-slate-500">Nominal hasil OCR</p>
+                      <p className="text-xs text-slate-500">{t("onboarding.ocr.success", "OCR amount")}</p>
                       <p className="font-semibold">{payment.ocrAmount == null ? "Tidak terbaca" : fmtAmount(payment.ocrAmount, payment.currency, locale)}</p>
                     </div>
                     <div>
-                      <p className="text-xs text-slate-500">Status bukti</p>
+                      <p className="text-xs text-slate-500">{t("productOrder.success.proofReceived", "Proof status")}</p>
                       <p className="font-semibold">{payment.proofReviewStatus === "submitted" ? "Menunggu Admin" : payment.proofReviewStatus === "approved" ? "Disetujui" : payment.proofReviewStatus === "rejected" ? "Ditolak" : "—"}</p>
                     </div>
                   </div>
@@ -1211,7 +1211,7 @@ function PaymentTab({ po }: { po: PoDetail }) {
                     <p className="text-sm font-semibold">{t("productOrder.success.uploadTransfer", "Manual bank transfer")}</p>
                     <p className="mt-1 text-xs font-medium text-slate-700">{t("productOrder.success.uploadTransfer", "Upload transfer proof to CST")}</p>
                     <p className="mt-1 text-xs text-slate-500">
-                      OCR akan mencocokkan nominal pada bukti dengan nominal pembayaran kali ini, bukan harus selalu sama dengan total PO.
+                      {t("productOrder.success.uploadInstruction", "OCR checks the proof against this payment amount, not necessarily the full PO total.")}
                     </p>
                   </div>
 
@@ -1274,14 +1274,14 @@ function PaymentTab({ po }: { po: PoDetail }) {
                       size="sm"
                       onClick={() => scanProof.mutate({ file: proofFile, amount: selectedAmount })}
                     >
-                      Baca Nominal Bukti
+                      {t("onboarding.ocr.reading", "Read proof amount")}
                     </Button>
                   )}
 
                   {scanProof.isPending && (
                     <div className="flex items-center gap-2 rounded-lg bg-blue-50 p-3 text-sm text-blue-700">
                       <RefreshCw className="h-4 w-4 animate-spin" />
-                      Membaca nominal dari bukti pembayaran…
+                      {t("common.loading", "Reading payment proof amount...")}
                     </div>
                   )}
 
@@ -1293,11 +1293,11 @@ function PaymentTab({ po }: { po: PoDetail }) {
                     }`}>
                       <div className="grid gap-2 sm:grid-cols-2">
                         <div>
-                          <p className="text-xs opacity-70">Nominal terbaca OCR</p>
+                          <p className="text-xs opacity-70">{t("onboarding.ocr.success", "OCR amount")}</p>
                           <p className="font-semibold">{scanResult.extractedAmount == null ? "Belum terbaca" : fmtAmount(scanResult.extractedAmount, payment.currency, locale)}</p>
                         </div>
                         <div>
-                          <p className="text-xs opacity-70">Nominal pembayaran kali ini</p>
+                          <p className="text-xs opacity-70">{t("paymentProof.totalBill", "Payment amount")}</p>
                           <p className="font-semibold">{fmtAmount(scanResult.expectedAmount, payment.currency, locale)}</p>
                         </div>
                       </div>
@@ -1504,7 +1504,7 @@ function GoodsReceiptTab({ shipmentId, poId }: { shipmentId: number | null; poId
   if (!shipmentId) return (
     <Card className="border-dashed">
       <CardContent className="p-10 text-center text-gray-500 text-sm">
-        Pilih shipment di tab Shipment terlebih dahulu.
+        {t("mktVendorPo.shipmentInfo", "Select a shipment in the Shipment tab first.")}
       </CardContent>
     </Card>
   );
@@ -1530,7 +1530,7 @@ function GoodsReceiptTab({ shipmentId, poId }: { shipmentId: number | null; poId
             <ClipboardCheck className={`w-4 h-4 shrink-0 mt-0.5 ${canConfirm ? "text-emerald-600" : "text-blue-500"}`} />
             <div>
               <p className={`text-sm font-semibold ${canConfirm ? "text-emerald-800" : "text-blue-800"}`}>
-                Konfirmasi penerimaan barang
+                {t("common.confirm", "Confirm goods receipt")}
               </p>
               <p className={`text-xs mt-1 ${canConfirm ? "text-emerald-700" : "text-blue-700"}`}>
                 {!shipment
@@ -1625,7 +1625,7 @@ function GoodsReceiptTab({ shipmentId, poId }: { shipmentId: number | null; poId
         <Card className="border-dashed">
           <CardContent className="p-10 text-center">
             <ClipboardCheck className="w-10 h-10 text-gray-300 mx-auto mb-3" />
-            <p className="text-gray-500 text-sm">Belum ada konfirmasi penerimaan untuk shipment ini.</p>
+            <p className="text-gray-500 text-sm">{t("common.loading", "No goods receipt confirmation for this shipment yet.")}</p>
           </CardContent>
         </Card>
       ) : (
@@ -1691,7 +1691,7 @@ function TimelineTab({ shipmentId }: { shipmentId: number | null }) {
   if (!shipmentId) return (
     <Card className="border-dashed">
       <CardContent className="p-10 text-center text-gray-500 text-sm">
-        Pilih shipment di tab Shipment terlebih dahulu.
+        {t("mktVendorPo.shipmentInfo", "Select a shipment in the Shipment tab first.")}
       </CardContent>
     </Card>
   );
@@ -1782,7 +1782,7 @@ function TimelineTab({ shipmentId }: { shipmentId: number | null }) {
               rel="noreferrer"
               className="inline-flex items-center rounded-md border border-emerald-300 bg-white px-3 py-1.5 text-xs font-medium text-emerald-700 hover:bg-emerald-100"
             >
-              Lihat POD
+              {t("tracking.clickToView", "View POD")}
             </a>
           </CardContent>
         </Card>
