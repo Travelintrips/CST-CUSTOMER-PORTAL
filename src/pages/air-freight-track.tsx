@@ -4,15 +4,16 @@ import { Plane, AlertCircle, CheckCircle2, Package, Clock, MapPin, Loader2 } fro
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { useLanguage } from "@/i18n/LanguageContext";
 
-const IDR = (n: number | string | null | undefined) => {
+const IDR = (n: number | string | null | undefined, locale: string) => {
   if (n == null) return "—";
-  return new Intl.NumberFormat("id-ID", { style: "currency", currency: "IDR", maximumFractionDigits: 0 }).format(Number(n));
+  return new Intl.NumberFormat(locale, { style: "currency", currency: "IDR", maximumFractionDigits: 0 }).format(Number(n));
 };
 
-const fmtDate = (d: string | null | undefined) => {
+const fmtDate = (d: string | null | undefined, locale: string) => {
   if (!d) return "—";
-  try { return new Intl.DateTimeFormat("id-ID", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" }).format(new Date(d)); }
+  try { return new Intl.DateTimeFormat(locale, { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" }).format(new Date(d)); }
   catch { return d; }
 };
 
@@ -35,6 +36,7 @@ const TRACKING_META: Record<string, { label: string; color: string }> = {
 };
 
 export default function AirFreightTrackPage() {
+  const { locale, t } = useLanguage();
   const { orderNumber } = useParams<{ orderNumber: string }>();
   const [, setLocation] = useLocation();
 
@@ -43,7 +45,7 @@ export default function AirFreightTrackPage() {
     queryFn: async () => {
       const r = await fetch(`/api/air-freight/public/track/${orderNumber}`);
       const body = await r.json();
-      if (!r.ok) throw new Error(body.error ?? "Gagal memuat tracking");
+      if (!r.ok) throw new Error(body.error ?? t("tracking.noTracking", "Failed to load tracking"));
       return body as { order: Record<string, any>; events: any[] };
     },
     enabled: !!orderNumber,
@@ -55,7 +57,7 @@ export default function AirFreightTrackPage() {
       <div className="min-h-screen bg-gradient-to-br from-slate-950 via-slate-900 to-sky-950 flex items-center justify-center">
         <div className="flex flex-col items-center gap-3 text-white/60">
           <Loader2 className="w-8 h-8 animate-spin" />
-          <p className="text-sm">Memuat tracking…</p>
+          <p className="text-sm">{t("tracking.loading", "Loading tracking...")}</p>
         </div>
       </div>
     );
@@ -66,10 +68,10 @@ export default function AirFreightTrackPage() {
       <div className="min-h-screen bg-gradient-to-br from-slate-950 via-slate-900 to-sky-950 flex items-center justify-center p-4">
         <div className="max-w-sm w-full bg-white/5 border border-red-500/30 rounded-2xl p-8 text-center space-y-3">
           <AlertCircle className="w-12 h-12 text-red-400 mx-auto" />
-          <h1 className="text-lg font-bold text-white">Order Tidak Ditemukan</h1>
-          <p className="text-sm text-white/60">{(error as Error)?.message ?? "Nomor order tidak valid"}</p>
+          <h1 className="text-lg font-bold text-white">{t("vendorResponse.notFound", "Order not found")}</h1>
+          <p className="text-sm text-white/60">{(error as Error)?.message ?? t("tracking.notFoundDesc", "Invalid order number")}</p>
           <Button variant="outline" className="border-white/20 text-white hover:bg-white/10"
-                  onClick={() => setLocation("/")}>Kembali</Button>
+                  onClick={() => setLocation("/")}>{t("common.back", "Back")}</Button>
         </div>
       </div>
     );
@@ -87,7 +89,7 @@ export default function AirFreightTrackPage() {
           <div className="w-12 h-12 mx-auto rounded-full bg-sky-900/60 border border-sky-700 flex items-center justify-center">
             <Plane className="w-6 h-6 text-sky-400" />
           </div>
-          <h1 className="text-xl font-bold text-white">Air Freight Tracking</h1>
+          <h1 className="text-xl font-bold text-white">{t("airFreightTrack.pageTitle", "Air Freight Tracking")}</h1>
           <p className="text-sm font-mono text-white/60">{order.order_number}</p>
           <Badge className={`text-xs border ${meta.color}`}>{meta.label}</Badge>
         </div>
@@ -95,22 +97,22 @@ export default function AirFreightTrackPage() {
         {/* Info */}
         <div className="bg-white/5 border border-white/10 rounded-2xl p-5 space-y-2.5 text-sm">
           <div className="flex justify-between">
-            <span className="text-white/50">Pelanggan</span>
+            <span className="text-white/50">{t("tracking.pic", "Customer")}</span>
             <span className="text-white font-medium">{order.customer_name}</span>
           </div>
           <div className="flex justify-between">
-            <span className="text-white/50">Rute</span>
+            <span className="text-white/50">{t("airFreight.summaryRoute", "Route")}</span>
             <span className="text-white font-medium">
               <MapPin className="w-3.5 h-3.5 inline mr-1 text-sky-400" />
               {order.origin_airport} → {order.destination_airport}
             </span>
           </div>
           <div className="flex justify-between">
-            <span className="text-white/50">Komoditi</span>
+            <span className="text-white/50">{t("airFreight.commodityLabel", "Commodity")}</span>
             <span className="text-white">{order.commodity ?? "—"}</span>
           </div>
           <div className="flex justify-between">
-            <span className="text-white/50">Chargeable</span>
+            <span className="text-white/50">{t("airFreight.summaryChargeable", "Chargeable weight")}</span>
             <span className="text-white font-medium">
               <Weight className="w-3.5 h-3.5 inline mr-1 text-sky-400" />
               {Number(order.chargeable_weight ?? 0).toLocaleString("id-ID")} kg
@@ -118,7 +120,7 @@ export default function AirFreightTrackPage() {
           </div>
           {order.airline && (
             <div className="flex justify-between">
-              <span className="text-white/50">Airline</span>
+              <span className="text-white/50">{t("airFreight.summaryRate", "Airline")}</span>
               <span className="text-white">{order.airline}</span>
             </div>
           )}
@@ -160,7 +162,7 @@ export default function AirFreightTrackPage() {
           )}
           {order.grand_total && (
             <div className="flex justify-between border-t border-white/10 pt-2.5 mt-1">
-              <span className="text-white/50">Total Biaya</span>
+              <span className="text-white/50">{t("calculator.total", "Total cost")}</span>
               <span className="text-emerald-400 font-bold">{IDR(order.grand_total)}</span>
             </div>
           )}
@@ -185,7 +187,7 @@ export default function AirFreightTrackPage() {
                         {(TRACKING_META[ev.event_type]?.label) ?? ev.event_type?.replace(/_/g, " ")}
                       </p>
                       {ev.note && <p className="text-xs text-white/50 mt-0.5">{ev.note}</p>}
-                      <p className="text-xs text-white/30">{fmtDate(ev.created_at)}</p>
+                      <p className="text-xs text-white/30">{fmtDate(ev.created_at, locale)}</p>
                     </div>
                   </div>
                 ))}
@@ -197,7 +199,7 @@ export default function AirFreightTrackPage() {
         {events && events.length === 0 && (
           <div className="bg-white/5 border border-white/10 rounded-2xl p-5 text-center">
             <Package className="w-8 h-8 text-white/20 mx-auto mb-2" />
-            <p className="text-sm text-white/40">Belum ada update tracking</p>
+            <p className="text-sm text-white/40">{t("logisticTrack.noTracking", "No tracking updates yet")}</p>
           </div>
         )}
 
