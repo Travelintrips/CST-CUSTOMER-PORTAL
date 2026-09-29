@@ -5,7 +5,7 @@
 // extra/duplicate keys, or empty values compared to the id-ID baseline.
 // Run via `pnpm run validate:i18n` or as part of `build`.
 
-import { transformSync } from "esbuild";
+import { transformSync, buildSync } from "esbuild";
 import { readFileSync, readdirSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
@@ -36,10 +36,18 @@ const mod = await import(dataUrl);
 const { TRANSLATIONS, SUPPORTED_LOCALES } = mod;
 /** Load a locale .ts file via esbuild → tmp CJS → require */
 function loadLocale(fname) {
-  const src = readFileSync(path.join(localesDir, fname), "utf8");
-  const { code } = transformSync(src, { loader: "ts", format: "cjs" });
+  const entry = path.join(localesDir, fname);
+  const result = buildSync({
+    entryPoints: [entry],
+    bundle: true,
+    platform: "node",
+    format: "cjs",
+    write: false,
+    logLevel: "silent",
+  });
+  const code = result.outputFiles[0]?.text;
+  if (!code) throw new Error(`Failed to compile locale ${fname}`);
   const tmpFile = `/tmp/vt_${fname.replace(".ts", ".cjs")}`;
-  readFileSync; // ensure node:fs is available
   require("fs").writeFileSync(tmpFile, code);
   delete require.cache[require.resolve(tmpFile)];
   const mod = require(tmpFile);
@@ -151,6 +159,60 @@ for (const locale of locales) {
   }
 
   report.push(`[${locale}] ${keys.length} keys OK`);
+}
+
+
+const repoRoot = path.join(__dirname, "..");
+const criticalPages = [
+  "src/pages/mkt-po-detail.tsx",
+  "src/pages/mkt-rfq-detail.tsx",
+  "src/pages/product-order-track.tsx",
+  "src/pages/shipment-timeline.tsx",
+  "src/pages/customer-invoice.tsx",
+  "src/pages/air-freight-track.tsx",
+];
+
+for (const rel of criticalPages) {
+  const page = readFileSync(path.join(repoRoot, rel), "utf8");
+  if (!page.includes("useLanguage")) {
+    errors.push(`[${rel}] critical customer page is not connected to LanguageContext`);
+    hasError = true;
+  }
+  const fixedLocale = /(?:toLocaleString|toLocaleDateString|Intl\.NumberFormat)\(\s*["']id-ID["']/;
+  if (fixedLocale.test(page)) {
+    errors.push(`[${rel}] still hardcodes id-ID formatting instead of the selected locale`);
+    hasError = true;
+  }
+  if (/\}\s*<(?:p|span|CardTitle|Button)>/.test(page)) {
+    errors.push(`[${rel}] contains suspicious localized JSX closing markup`);
+    hasError = true;
+  }
+}
+
+const languageContext = readFileSync(path.join(repoRoot, "src/i18n/LanguageContext.tsx"), "utf8");
+if (!languageContext.includes("SUPPORTED_LOCALES.includes(code as SupportedLocale)")) {
+  errors.push("[LanguageContext] setLanguage must reject unsupported locale codes");
+  hasError = true;
+}
+if (!languageContext.includes("translateLegacyNode")) {
+  errors.push("[LanguageContext] legacy exact-match translation bridge is missing");
+  hasError = true;
+}
+
+const indonesianLeakageMarkers = [
+  "{n} item dengan harga",
+  "klik bar untuk detail item",
+  "Perbandingan Harga Vendor",
+];
+for (const locale of locales) {
+  if (locale === "id-ID") continue;
+  const source = readFileSync(path.join(localesDir, `${locale}.ts`), "utf8");
+  for (const marker of indonesianLeakageMarkers) {
+    if (source.includes(marker)) {
+      errors.push(`[${locale}] Indonesian leakage remains: ${marker}`);
+      hasError = true;
+    }
+  }
 }
 
 console.log("=== i18n validation report ===");

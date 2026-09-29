@@ -7,6 +7,9 @@ const server = read("server/index.mjs");
 const admin = read("server/admin-portal.mjs");
 const app = read("src/App.tsx");
 const adminTrucking = read("src/pages/admin-trucking.tsx");
+const languageContext = read("src/i18n/LanguageContext.tsx");
+const translationValidator = read("scripts/validate-translations.mjs");
+const packageJson = JSON.parse(read("package.json"));
 
 // Security: cookie-authenticated production mutations require browser provenance.
 assert.match(server, /portal_session=/);
@@ -24,5 +27,14 @@ assert.match(app, /<Route path="\/admin\/trucking">/);
 assert.doesNotMatch(app, /<Route path="\/admin\/trucking\/:bookingNumber">/);
 assert.match(adminTrucking, /new URLSearchParams\(window\.location\.search\)\.get\("booking"\)/);
 assert.match(adminTrucking, /encodeURIComponent\(row\.bookingNumber\)/);
+
+// Localization: production build must enforce locale integrity and the runtime must
+// reject unsupported locale values while preserving RTL/document language behavior.
+assert.match(languageContext, /SUPPORTED_LOCALES\.includes\(code as SupportedLocale\)/);
+assert.match(languageContext, /applyDocumentLocale\(next\)/);
+assert.match(languageContext, /translateLegacyNode/);
+assert.match(translationValidator, /criticalPages/);
+assert.match(translationValidator, /Indonesian leakage remains/);
+assert.match(packageJson.scripts["build:portal"], /validate-translations\.mjs/);
 
 console.log("Critical Customer Portal deployment contracts passed.");

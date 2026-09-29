@@ -12,6 +12,7 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import PageSeo from "@/components/PageSeo";
+import { useLanguage } from "@/i18n/LanguageContext";
 
 const BASE = import.meta.env.BASE_URL?.replace(/\/$/, "") ?? "";
 
@@ -69,8 +70,8 @@ const STATUS_COLORS: Record<string, string> = {
   "Cancelled":   "bg-red-100 text-red-800 border-red-200",
 };
 
-function formatDateTime(iso: string) {
-  return new Date(iso).toLocaleString("id-ID", {
+function formatDateTime(iso: string, locale: string) {
+  return new Date(iso).toLocaleString(locale, {
     day: "2-digit", month: "short", year: "numeric",
     hour: "2-digit", minute: "2-digit",
   });
@@ -85,6 +86,7 @@ async function fetchTracking(orderNumber: string): Promise<TrackingData> {
 }
 
 function OrderStepper({ status }: { status: string }) {
+  const { t } = useLanguage();
   const current = ORDER_STATUS_RANK[status] ?? 0;
   return (
     <div className="flex items-start w-full gap-0">
@@ -112,7 +114,7 @@ function OrderStepper({ status }: { status: string }) {
                 done   ? "text-green-600" :
                           "text-muted-foreground"
               )}>
-                {step.label}
+                {t(`orderStatusLabels.${step.key}`, step.label)}
               </span>
             </div>
             {i < ORDER_STEPS.length - 1 && (
@@ -129,6 +131,7 @@ function OrderStepper({ status }: { status: string }) {
 }
 
 function DriverTimeline({ job }: { job: DriverJob }) {
+  const { locale, t } = useLanguage();
   const current = DRIVER_STATUS_RANK[job.status] ?? 0;
   const isCancelled = job.status === "CANCELLED";
   const visibleSteps = DRIVER_STEPS.filter(
@@ -175,17 +178,17 @@ function DriverTimeline({ job }: { job: DriverJob }) {
                 done   && !isCancelled  ? "text-foreground" :
                                           "text-muted-foreground"
               )}>
-                {step.label}
+                {t(`logisticTrack.${step.key.toLowerCase()}`, step.label)}
                 {active && !isCancelled && (
                   <span className="ml-1.5 inline-flex items-center gap-0.5 text-[10px] bg-primary/10 text-primary px-1.5 py-0.5 rounded-full">
                     <span className="w-1 h-1 rounded-full bg-primary animate-pulse" />
-                    Sekarang
+                    {t("logisticTrack.lastUpdate", "Now")}
                   </span>
                 )}
               </p>
               {log && (
                 <p className="text-[10px] text-muted-foreground mt-0.5">
-                  {formatDateTime(log.timestamp)}
+                  {formatDateTime(log.timestamp, locale)}
                 </p>
               )}
             </div>
@@ -204,6 +207,7 @@ function TrackingCard({ orderNumber, shipmentType, origin, destination, status, 
   status: string;
   createdAt: string;
 }) {
+  const { locale, t } = useLanguage();
   const [expanded, setExpanded] = useState(false);
 
   const { data: tracking, isLoading, isError, isFetching, refetch, dataUpdatedAt } = useQuery<TrackingData, Error>({
@@ -248,7 +252,7 @@ function TrackingCard({ orderNumber, shipmentType, origin, destination, status, 
               <span className="capitalize">{shipmentType}</span>
             </div>
             <p className="text-[10px] text-muted-foreground mt-1">
-              {new Date(createdAt).toLocaleDateString("id-ID", { day: "2-digit", month: "short", year: "numeric" })}
+              {new Date(createdAt).toLocaleDateString(locale, { day: "2-digit", month: "short", year: "numeric" })}
             </p>
           </div>
           <div className="flex items-center gap-2 flex-shrink-0">
@@ -279,20 +283,20 @@ function TrackingCard({ orderNumber, shipmentType, origin, destination, status, 
               disabled={isFetching}
               className="hover:text-foreground transition-colors disabled:opacity-50 flex items-center gap-1"
             >
-              <RefreshCw className="w-2.5 h-2.5" /> Perbarui
+              <RefreshCw className="w-2.5 h-2.5" /> {t("common.retry", "Refresh")}
             </button>
           </div>
 
           {isLoading && (
             <div className="flex items-center justify-center py-8 gap-2 text-muted-foreground text-sm">
-              <Loader2 className="w-4 h-4 animate-spin" /> Memuat timeline...
+              <Loader2 className="w-4 h-4 animate-spin" /> {t("common.loading", "Loading timeline...")}
             </div>
           )}
 
           {isError && (
             <div className="flex items-center gap-2 text-sm text-red-600 bg-red-50 rounded-lg px-3 py-2.5">
               <AlertCircle className="w-4 h-4 flex-shrink-0" />
-              Gagal memuat detail tracking. Coba perbarui.
+              {t("common.error", "Failed to load tracking details. Refresh and try again.")}
             </div>
           )}
 
@@ -301,7 +305,7 @@ function TrackingCard({ orderNumber, shipmentType, origin, destination, status, 
               {/* Order Status Stepper */}
               <div>
                 <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider mb-3">
-                  Status Order
+                  {t("productOrderTrack.status", "Order status")}
                 </p>
                 <OrderStepper status={tracking.status} />
               </div>
@@ -311,7 +315,7 @@ function TrackingCard({ orderNumber, shipmentType, origin, destination, status, 
                 <div>
                   <div className="flex items-center gap-2 mb-3">
                     <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">
-                      Tracking Driver
+                      {t("logisticTrack.pageTitle", "Driver tracking")}
                     </p>
                     <span className="text-[10px] text-muted-foreground font-mono bg-muted px-1.5 py-0.5 rounded">
                       {tracking.driverJob.jobNumber}
@@ -331,8 +335,8 @@ function TrackingCard({ orderNumber, shipmentType, origin, destination, status, 
                 <div className="bg-amber-50 border border-amber-200 rounded-xl px-4 py-3 flex items-center gap-3">
                   <div className="w-2 h-2 rounded-full bg-amber-500 animate-pulse flex-shrink-0" />
                   <div className="flex-1 min-w-0">
-                    <p className="text-xs font-semibold text-amber-800">Penawaran Harga Menunggu Respons</p>
-                    <p className="text-[10px] text-amber-600 mt-0.5">Buka detail untuk menyetujui atau menolak penawaran</p>
+                    <p className="text-xs font-semibold text-amber-800">{t("mktMyRfqs.actionRequired", "Quote awaiting your response")}</p>
+                    <p className="text-[10px] text-amber-600 mt-0.5">{t("mktMyRfqs.viewDetail", "Open details to approve or reject the quote")}</p>
                   </div>
                 </div>
               )}
@@ -340,7 +344,7 @@ function TrackingCard({ orderNumber, shipmentType, origin, destination, status, 
               {/* Services */}
               {tracking.items.length > 0 && (
                 <div className="bg-muted/40 rounded-xl px-4 py-3">
-                  <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider mb-2">Layanan</p>
+                  <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider mb-2">{t("tracking.service", "Service")}</p>
                   <div className="flex flex-wrap gap-1.5">
                     {tracking.items.map((item) => (
                       <span key={item.id} className="text-[10px] bg-white border border-border rounded-full px-2 py-0.5 text-foreground/70">
@@ -355,7 +359,7 @@ function TrackingCard({ orderNumber, shipmentType, origin, destination, status, 
               <Link href={`/track?order=${encodeURIComponent(orderNumber)}`}>
                 <Button variant="outline" size="sm" className="w-full gap-2 text-xs h-8">
                   <ExternalLink className="w-3.5 h-3.5" />
-                  Lihat Detail Lengkap & Penawaran
+                  {t("mktMyRfqs.viewDetail", "View full details & quote")}
                 </Button>
               </Link>
             </div>
@@ -367,6 +371,7 @@ function TrackingCard({ orderNumber, shipmentType, origin, destination, status, 
 }
 
 export default function ShipmentTimelinePage() {
+  const { locale, t } = useLanguage();
   const [, setLocation] = useLocation();
   const authed = isAuthenticated();
 
@@ -411,15 +416,15 @@ export default function ShipmentTimelinePage() {
           onClick={() => window.history.length > 1 ? window.history.back() : setLocation("/dashboard")}
           className="inline-flex items-center gap-1.5 mb-4 text-[12px] font-semibold px-3 py-1.5 rounded-lg text-slate-500 hover:text-slate-800 bg-white hover:bg-slate-50 border border-slate-200 transition-all shadow-sm"
         >
-          <ArrowLeft className="h-3.5 w-3.5" /> Kembali
+          <ArrowLeft className="h-3.5 w-3.5" /> {t("common.back", "Back")}
         </button>
 
         {/* Header */}
         <div className="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-4 mb-6">
           <div>
-            <h1 className="text-2xl font-display font-bold">Timeline Pengiriman</h1>
+            <h1 className="text-2xl font-display font-bold">{t("logisticOrder.deliveryTimeline", "Shipment timeline")}</h1>
             <p className="text-sm text-muted-foreground mt-1">
-              Status real-time semua pengiriman logistik Anda
+              {t("logisticTrack.pageTitle", "Real-time status for all logistics shipments")}
             </p>
           </div>
           <button
@@ -428,7 +433,7 @@ export default function ShipmentTimelinePage() {
             className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors disabled:opacity-50 self-start sm:self-auto"
           >
             <RefreshCw className={cn("w-3.5 h-3.5", isFetching && "animate-spin")} />
-            {isFetching ? "Memperbarui..." : "Perbarui semua"}
+            {isFetching ? t("common.loading", "Refreshing...") : t("common.retry", "Refresh all")}
           </button>
         </div>
 
@@ -453,10 +458,10 @@ export default function ShipmentTimelinePage() {
         {isError && (
           <div className="bg-white rounded-2xl border border-red-200 p-8 text-center">
             <AlertCircle className="w-10 h-10 text-red-400 mx-auto mb-3" />
-            <p className="font-medium text-foreground">Gagal memuat data pengiriman</p>
-            <p className="text-sm text-muted-foreground mt-1 mb-4">Periksa koneksi internet Anda</p>
+            <p className="font-medium text-foreground">{t("common.error", "Failed to load shipment data")}</p>
+            <p className="text-sm text-muted-foreground mt-1 mb-4">{t("vendorResponse.loadFailedDesc", "Check your internet connection")}</p>
             <Button variant="outline" size="sm" onClick={() => refetch()}>
-              <RefreshCw className="w-3.5 h-3.5 mr-2" /> Coba lagi
+              <RefreshCw className="w-3.5 h-3.5 mr-2" /> {t("common.retry", "Try again")}
             </Button>
           </div>
         )}
@@ -464,13 +469,13 @@ export default function ShipmentTimelinePage() {
         {!isLoading && !isError && orders.length === 0 && (
           <div className="bg-white rounded-2xl border border-border p-12 text-center">
             <Truck className="w-12 h-12 text-muted-foreground/30 mx-auto mb-4" />
-            <p className="font-semibold text-foreground text-lg">Belum ada pengiriman</p>
+            <p className="font-semibold text-foreground text-lg">{t("dashboard.noShipments", "No shipments yet")}</p>
             <p className="text-sm text-muted-foreground mt-1 mb-6">
-              Order logistik pertama Anda akan muncul di sini dengan tracking real-time
+              {t("dashboard.noShipmentsDesc", "Your first logistics order will appear here with real-time tracking")}
             </p>
             <Link href="/book">
               <Button size="sm" className="gap-2">
-                <Package className="w-4 h-4" /> Buat Order Baru
+                <Package className="w-4 h-4" /> {t("dashboard.newOrder", "Create new order")}
               </Button>
             </Link>
           </div>
@@ -482,7 +487,7 @@ export default function ShipmentTimelinePage() {
             <div className="flex items-center gap-2">
               <div className="w-2 h-2 rounded-full bg-green-500 animate-pulse" />
               <h2 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
-                Pengiriman Aktif ({activeOrders.length})
+                {t("dashboard.activeShipments", "Active shipments")} ({activeOrders.length})
               </h2>
             </div>
             {activeOrders.map((order) => (
@@ -503,7 +508,7 @@ export default function ShipmentTimelinePage() {
         {finishedOrders.length > 0 && (
           <div className="space-y-3">
             <h2 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
-              Riwayat ({finishedOrders.length})
+              {t("orders.title", "History")} ({finishedOrders.length})
             </h2>
             {finishedOrders.map((order) => (
               <TrackingCard

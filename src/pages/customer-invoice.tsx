@@ -2,6 +2,7 @@ import { useState, useEffect } from "react";
 import { useParams } from "wouter";
 import { ArrowLeft } from "lucide-react";
 import TokenErrorPage, { httpStatusToTokenErrorType, type TokenErrorType } from "@/components/TokenErrorPage";
+import { useLanguage } from "@/i18n/LanguageContext";
 
 type LineItem = {
   description: string;
@@ -82,6 +83,7 @@ function formatFieldValue(v: unknown, unit?: string): string | null {
 }
 
 function SnapSummary({ snap }: { snap: TemplateSnapshot }) {
+  const { t } = useLanguage();
   const isService = snap.templateKind === "service";
   const productFields: TemplateField[] = (!isService && snap.customFields) ? snap.customFields : [];
   const serviceFields: ServiceField[] = isService
@@ -107,7 +109,7 @@ function SnapSummary({ snap }: { snap: TemplateSnapshot }) {
             <p className="text-sm font-semibold text-indigo-800">{snap.name}</p>
           )}
           <p className="text-xs text-indigo-400 uppercase tracking-wide">
-            {isService ? "Layanan" : "Produk"}
+            {isService ? t("marketplaceDetail.typeServiceShort", "Service") : t("marketplaceDetail.typeProduct", "Product")}
           </p>
         </div>
       </div>
@@ -144,6 +146,7 @@ function Spinner() {
 }
 
 function ErrorState({ message }: { message: string }) {
+  const { t } = useLanguage();
   return (
     <div className="min-h-screen bg-slate-50 flex items-center justify-center p-4">
       <div className="bg-white rounded-2xl shadow-md p-8 max-w-md w-full text-center">
@@ -152,21 +155,21 @@ function ErrorState({ message }: { message: string }) {
             <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v4m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" />
           </svg>
         </div>
-        <h2 className="text-lg font-semibold text-slate-800 mb-2">Link Tidak Valid</h2>
+        <h2 className="text-lg font-semibold text-slate-800 mb-2">{t("customerApproval.linkInvalid", "Invalid link")}</h2>
         <p className="text-sm text-slate-500">{message}</p>
       </div>
     </div>
   );
 }
 
-const fmtNum = (n: number | null | undefined, cur: string | null) => {
+const fmtNum = (n: number | null | undefined, cur: string | null, locale: string) => {
   if (n == null) return "—";
-  return `${cur ?? "IDR"} ${Math.round(n).toLocaleString("id-ID")}`;
+  return `${cur ?? "IDR"} ${Math.round(n).toLocaleString(locale)}`;
 };
 
-const fmtDate = (d: string | null) => {
+const fmtDate = (d: string | null, locale: string) => {
   if (!d) return "—";
-  return new Date(d).toLocaleDateString("id-ID", { day: "numeric", month: "long", year: "numeric" });
+  return new Date(d).toLocaleDateString(locale, { day: "numeric", month: "long", year: "numeric" });
 };
 
 const PAYMENT_STATUS: Record<string, { text: string; color: string }> = {
@@ -186,22 +189,23 @@ function WaIcon() {
 
 function buildWaPaymentLink(data: InvoiceData): string {
   const inv = data.invoiceNumber ? `No. Invoice: *${data.invoiceNumber}*` : "";
-  const ord = data.orderNumber ? `No. Order: *${data.orderNumber}*` : "";
+  const ord = data.orderNumber ? `${t("customerApproval.orderLabel", "Order")}: *${data.orderNumber}*` : "";
   const total = data.grandTotal != null
-    ? `Total: *${data.currency ?? "IDR"} ${Math.round(data.grandTotal).toLocaleString("id-ID")}*`
+    ? `${t("tracking.total", "Total")}: *${data.currency ?? "IDR"} ${Math.round(data.grandTotal).toLocaleString(locale)}*`
     : "";
   const paid = data.amountPaid > 0
-    ? `Sudah Dibayar: *${data.currency ?? "IDR"} ${Math.round(data.amountPaid).toLocaleString("id-ID")}*`
+    ? `${t("tracking.paymentReceived", "Paid")}: *${data.currency ?? "IDR"} ${Math.round(data.amountPaid).toLocaleString(locale)}*`
     : "";
   const remaining = data.grandTotal != null && data.amountPaid > 0
-    ? `Sisa: *${data.currency ?? "IDR"} ${Math.round(Math.max(0, data.grandTotal - data.amountPaid)).toLocaleString("id-ID")}*`
+    ? `${t("portalInvoice.totalUnpaid", "Outstanding")}: *${data.currency ?? "IDR"} ${Math.round(Math.max(0, data.grandTotal - data.amountPaid)).toLocaleString(locale)}*`
     : "";
   const lines = [inv, ord, total, paid, remaining].filter(Boolean).join("\n");
-  const msg = `📄 *Konfirmasi Pembayaran Invoice*\n\n${lines}\n\nSaya telah melakukan pembayaran. Mohon dikonfirmasi. Terima kasih.`;
+  const msg = `📄 *${t("common.confirm", "Payment confirmation")}*\n\n${lines}\n\n${t("tracking.contactUs", "I have completed the payment. Please confirm it. Thank you.")}`;
   return `https://wa.me/?text=${encodeURIComponent(msg)}`;
 }
 
 export default function CustomerInvoicePage() {
+  const { locale, t } = useLanguage();
   const { token } = useParams<{ token: string }>();
   const [data, setData] = useState<InvoiceData | null>(null);
   const [loading, setLoading] = useState(true);
@@ -222,7 +226,7 @@ export default function CustomerInvoicePage() {
             setTokenErrorType(httpStatusToTokenErrorType(r.status));
             setError(d.error ?? null);
           } else {
-            setError(d.error ?? "Terjadi kesalahan");
+            setError(d.error ?? t("common.error", "An error occurred"));
           }
           return;
         }
@@ -243,7 +247,7 @@ export default function CustomerInvoicePage() {
         headers: { "Content-Type": "application/json" },
       });
       const d = await res.json() as { ok?: boolean; error?: string };
-      if (!res.ok) throw new Error(d.error ?? "Gagal konfirmasi");
+      if (!res.ok) throw new Error(d.error ?? t("common.error", "Confirmation failed"));
       setAckDone(true);
     } catch (e: unknown) {
       setAckError((e as Error).message);
@@ -255,9 +259,15 @@ export default function CustomerInvoicePage() {
   if (loading) return <Spinner />;
   if (tokenErrorType) return <TokenErrorPage type={tokenErrorType} message={error} />;
   if (error) return <ErrorState message={error} />;
-  if (!data) return <ErrorState message="Invoice tidak ditemukan" />;
+  if (!data) return <ErrorState message={t("portalInvoice.emptyTitle", "Invoice not found")} />;
 
-  const statusInfo = PAYMENT_STATUS[data.paymentStatus] ?? { text: data.paymentStatus, color: "bg-slate-50 border-slate-200 text-slate-700" };
+  const baseStatusInfo = PAYMENT_STATUS[data.paymentStatus] ?? { text: data.paymentStatus, color: "bg-slate-50 border-slate-200 text-slate-700" };
+  const statusText =
+    data.paymentStatus === "paid" ? t("tracking.paymentReceived", "Paid") :
+    data.paymentStatus === "partial" ? t("mktPurchaseOrders.statusPartiallyDelivered", "Partially paid") :
+    data.paymentStatus === "unpaid" ? t("portalInvoice.totalUnpaid", "Unpaid") :
+    baseStatusInfo.text;
+  const statusInfo = { ...baseStatusInfo, text: statusText };
   const remaining = (data.grandTotal ?? 0) - (data.amountPaid ?? 0);
   const isLate = data.dueDate && new Date(data.dueDate) < new Date() && data.paymentStatus !== "paid";
   const tSnap = data.templateSnapshot ?? null;
@@ -270,7 +280,7 @@ export default function CustomerInvoicePage() {
           onClick={() => window.history.back()}
           className="inline-flex items-center gap-1.5 text-[12px] font-semibold px-3 py-1.5 rounded-lg text-slate-500 hover:text-slate-800 bg-white hover:bg-slate-50 border border-slate-200 transition-all shadow-sm"
         >
-          <ArrowLeft className="h-3.5 w-3.5" /> Kembali
+          <ArrowLeft className="h-3.5 w-3.5" /> {t("common.back", "Back")}
         </button>
 
         {/* Header */}
@@ -282,17 +292,17 @@ export default function CustomerInvoicePage() {
               </svg>
             </div>
             <div>
-              <h1 className="text-xl font-bold text-slate-800">Invoice Pembayaran</h1>
+              <h1 className="text-xl font-bold text-slate-800">{t("portalInvoice.title", "Invoice & Payment")}</h1>
               {data.invoiceNumber && (
                 <p className="text-sm font-mono text-blue-600 font-semibold">{data.invoiceNumber}</p>
               )}
             </div>
           </div>
           {data.customerName && (
-            <p className="text-sm text-slate-600">Kepada: <span className="font-medium">{data.customerName}</span></p>
+            <p className="text-sm text-slate-600">{t("vendorForm.rfqRecipient", "To")}: <span className="font-medium">{data.customerName}</span></p>
           )}
           {data.orderNumber && (
-            <p className="text-xs text-slate-400 mt-0.5">No. Order: <span className="font-mono">{data.orderNumber}</span></p>
+            <p className="text-xs text-slate-400 mt-0.5">{t("customerApproval.orderLabel", "Order")}: <span className="font-mono">{data.orderNumber}</span></p>
           )}
         </div>
 
@@ -301,7 +311,7 @@ export default function CustomerInvoicePage() {
           <span className="font-semibold text-sm">{statusInfo.text}</span>
           {isLate && (
             <span className="text-xs font-medium bg-red-100 text-red-600 border border-red-200 px-2 py-0.5 rounded-full">
-              Melewati Jatuh Tempo
+              {t("mktMyRfqs.rfqStatusExpired", "Past due")}
             </span>
           )}
         </div>
@@ -312,15 +322,15 @@ export default function CustomerInvoicePage() {
         {/* Rincian item */}
         {data.lineItems && data.lineItems.length > 0 && (
           <div className="bg-white rounded-2xl shadow-sm border border-slate-100 p-6">
-            <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-4">Rincian Tagihan</p>
+            <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-4">{t("customerApproval.priceBreakdownTitle", "Billing details")}</p>
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
                 <thead>
                   <tr className="border-b border-slate-100">
-                    <th className="text-left py-2 pr-2 text-xs font-semibold text-slate-500">Deskripsi</th>
-                    <th className="text-center py-2 px-1 text-xs font-semibold text-slate-500">Qty</th>
-                    <th className="text-right py-2 px-2 text-xs font-semibold text-slate-500">Harga Satuan</th>
-                    <th className="text-right py-2 pl-2 text-xs font-semibold text-slate-500">Subtotal</th>
+                    <th className="text-left py-2 pr-2 text-xs font-semibold text-slate-500">{t("customerApproval.descCol", "Description")}</th>
+                    <th className="text-center py-2 px-1 text-xs font-semibold text-slate-500">{t("customerApproval.qtyCol", "Qty")}</th>
+                    <th className="text-right py-2 px-2 text-xs font-semibold text-slate-500">{t("customerApproval.unitPriceCol", "Unit price")}</th>
+                    <th className="text-right py-2 pl-2 text-xs font-semibold text-slate-500">{t("customerApproval.subtotalCol", "Subtotal")}</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -328,8 +338,8 @@ export default function CustomerInvoicePage() {
                     <tr key={i} className="border-b border-slate-50">
                       <td className="py-2.5 pr-2 text-slate-800 font-medium">{item.description}</td>
                       <td className="py-2.5 px-1 text-center text-slate-600">{item.qty} {item.unit || ""}</td>
-                      <td className="py-2.5 px-2 text-right text-slate-600">{fmtNum(item.unitPrice, data.currency)}</td>
-                      <td className="py-2.5 pl-2 text-right font-semibold text-slate-800">{fmtNum(item.subtotal, data.currency)}</td>
+                      <td className="py-2.5 px-2 text-right text-slate-600">{fmtNum(item.unitPrice, data.currency, locale)}</td>
+                      <td className="py-2.5 pl-2 text-right font-semibold text-slate-800">{fmtNum(item.subtotal, data.currency, locale)}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -340,29 +350,29 @@ export default function CustomerInvoicePage() {
             <div className="mt-4 pt-3 border-t border-slate-100 space-y-1.5">
               {data.subtotal != null && (
                 <div className="flex justify-between text-sm text-slate-600">
-                  <span>Subtotal (belum PPN)</span>
-                  <span>{fmtNum(data.subtotal, data.currency)}</span>
+                  <span>{t("customerApproval.subtotalLabel", "Subtotal before VAT")}</span>
+                  <span>{fmtNum(data.subtotal, data.currency, locale)}</span>
                 </div>
               )}
               {data.taxAmount != null && (
                 <div className="flex justify-between text-sm text-slate-600">
-                  <span>PPN {data.taxRate}% <span className="text-xs text-slate-400">(nominal)</span></span>
-                  <span>{fmtNum(data.taxAmount, data.currency)}</span>
+                  <span>PPN {data.taxRate}% <span className="text-xs text-slate-400">{t("vendorQuote.priceLabel", "amount")}</span></span>
+                  <span>{fmtNum(data.taxAmount, data.currency, locale)}</span>
                 </div>
               )}
               <div className="flex justify-between font-bold text-base text-blue-700 pt-1.5 border-t border-slate-200">
-                <span>Total (sudah termasuk PPN)</span>
-                <span>{fmtNum(data.grandTotal, data.currency)}</span>
+                <span>{t("customerApproval.totalLabel", "Total including VAT")}</span>
+                <span>{fmtNum(data.grandTotal, data.currency, locale)}</span>
               </div>
               {data.amountPaid > 0 && (
                 <>
                   <div className="flex justify-between text-sm text-green-600">
-                    <span>Sudah Dibayar</span>
-                    <span>— {fmtNum(data.amountPaid, data.currency)}</span>
+                    <span>{t("tracking.paymentReceived", "Paid")}</span>
+                    <span>— {fmtNum(data.amountPaid, data.currency, locale)}</span>
                   </div>
                   <div className="flex justify-between font-bold text-base text-red-600 pt-1 border-t border-slate-200">
-                    <span>Sisa Tagihan</span>
-                    <span>{fmtNum(remaining, data.currency)}</span>
+                    <span>{t("portalInvoice.totalUnpaid", "Outstanding")}</span>
+                    <span>{fmtNum(remaining, data.currency, locale)}</span>
                   </div>
                 </>
               )}
@@ -374,23 +384,23 @@ export default function CustomerInvoicePage() {
         {/* Jika tidak ada line items, tampilkan ringkasan saja */}
         {(!data.lineItems || data.lineItems.length === 0) && data.grandTotal != null && (
           <div className="bg-white rounded-2xl shadow-sm border border-slate-100 p-6">
-            <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-3">Total Tagihan</p>
+            <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-3">{t("paymentProof.totalBill", "Total bill")}</p>
             <div className="space-y-1.5">
               {data.subtotal != null && (
                 <div className="flex justify-between text-sm text-slate-600">
-                  <span>Subtotal (belum PPN)</span>
-                  <span>{fmtNum(data.subtotal, data.currency)}</span>
+                  <span>{t("customerApproval.subtotalLabel", "Subtotal before VAT")}</span>
+                  <span>{fmtNum(data.subtotal, data.currency, locale)}</span>
                 </div>
               )}
               {data.taxAmount != null && (
                 <div className="flex justify-between text-sm text-slate-600">
                   <span>PPN {data.taxRate}%</span>
-                  <span>{fmtNum(data.taxAmount, data.currency)}</span>
+                  <span>{fmtNum(data.taxAmount, data.currency, locale)}</span>
                 </div>
               )}
               <div className="flex justify-between font-bold text-xl text-blue-700 pt-2 border-t border-slate-200">
                 <span>Total</span>
-                <span>{fmtNum(data.grandTotal, data.currency)}</span>
+                <span>{fmtNum(data.grandTotal, data.currency, locale)}</span>
               </div>
             </div>
             <p className="mt-2 text-xs text-blue-500 font-medium">* Sudah termasuk PPN {data.taxRate}%</p>
@@ -399,21 +409,21 @@ export default function CustomerInvoicePage() {
 
         {/* Info pembayaran */}
         <div className="bg-white rounded-2xl shadow-sm border border-slate-100 p-6 space-y-2">
-          <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-3">Informasi Pembayaran</p>
+          <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-3">{t("portalInvoice.title", "Payment information")}</p>
           {data.dueDate && (
             <div className="flex justify-between text-sm">
-              <span className="text-slate-500">Jatuh Tempo</span>
-              <span className={`font-medium ${isLate ? "text-red-600" : "text-slate-800"}`}>{fmtDate(data.dueDate)}</span>
+              <span className="text-slate-500">{t("portalInvoice.dueDateLabel", "Due date")}</span>
+              <span className={`font-medium ${isLate ? "text-red-600" : "text-slate-800"}`}>{fmtDate(data.dueDate, locale)}</span>
             </div>
           )}
           {data.paymentMethod && (
             <div className="flex justify-between text-sm">
-              <span className="text-slate-500">Metode Pembayaran</span>
+              <span className="text-slate-500">{t("logisticBook.step4.title", "Payment method")}</span>
               <span className="font-medium text-slate-800">{data.paymentMethod}</span>
             </div>
           )}
           <div className="flex justify-between text-sm">
-            <span className="text-slate-500">Status</span>
+            <span className="text-slate-500">{t("productOrderTrack.status", "Status")}</span>
             <span className={`font-semibold ${data.paymentStatus === "paid" ? "text-green-600" : data.paymentStatus === "partial" ? "text-amber-600" : "text-red-600"}`}>
               {statusInfo.text}
             </span>
@@ -423,7 +433,7 @@ export default function CustomerInvoicePage() {
         {/* Catatan */}
         {data.notes && (
           <div className="bg-amber-50 border border-amber-200 rounded-2xl p-4">
-            <p className="text-xs font-semibold text-amber-700 uppercase tracking-wide mb-1">Catatan</p>
+            <p className="text-xs font-semibold text-amber-700 uppercase tracking-wide mb-1">{t("booking.notes", "Notes")}</p>
             <p className="text-sm text-amber-900 whitespace-pre-line">{data.notes}</p>
           </div>
         )}
@@ -431,18 +441,18 @@ export default function CustomerInvoicePage() {
         {/* Tombol konfirmasi pembayaran via WA — tampil jika belum lunas */}
         {data.paymentStatus !== "paid" && (
           <div className="bg-white rounded-2xl shadow-sm border border-slate-100 p-5">
-            <p className="text-sm font-semibold text-slate-700 mb-1">💳 Konfirmasi Pembayaran via WhatsApp</p>
+            <p className="text-sm font-semibold text-slate-700 mb-1">💳 {t("tracking.paymentReceived", "Payment confirmation")} · WhatsApp</p>
             <p className="text-xs text-slate-400 mb-4">
-              Setelah melakukan pembayaran, kirimkan konfirmasi ke tim kami via WhatsApp agar segera diproses.
+              {t("tracking.contactUs", "After payment, send confirmation to our team via WhatsApp.")}
             </p>
             <a
-              href={buildWaPaymentLink(data)}
+              href={buildWaPaymentLink(data, locale, t)}
               target="_blank"
               rel="noopener noreferrer"
               className="flex items-center justify-center gap-2 w-full rounded-xl bg-[#25D366] hover:bg-[#1ebe5a] text-white font-semibold py-3.5 text-sm transition-colors"
             >
               <WaIcon />
-              Kirim Konfirmasi Pembayaran via WhatsApp
+              {t("common.confirm", "Confirm payment")} · WhatsApp
             </a>
           </div>
         )}
@@ -450,10 +460,9 @@ export default function CustomerInvoicePage() {
         {/* Konfirmasi penerimaan invoice */}
         {!ackDone ? (
           <div className="bg-white rounded-2xl shadow-sm border border-slate-100 p-6">
-            <p className="text-sm font-medium text-slate-700 mb-1">✉️ Konfirmasi Penerimaan Invoice</p>
+            <p className="text-sm font-medium text-slate-700 mb-1">✉️ {t("common.confirm", "Confirm invoice receipt")}</p>
             <p className="text-xs text-slate-400 mb-4">
-              Klik tombol di bawah untuk mengkonfirmasi bahwa Anda telah menerima dan memeriksa invoice ini.
-              Admin akan mendapat notifikasi otomatis.
+              {t("customerApproval.agreementNote", "Confirm that you have received and reviewed this invoice.")}
             </p>
             {ackError && (
               <p className="text-sm text-red-600 bg-red-50 rounded-lg px-3 py-2 mb-3">{ackError}</p>
@@ -464,26 +473,26 @@ export default function CustomerInvoicePage() {
               className="w-full rounded-xl bg-blue-600 hover:bg-blue-700 disabled:bg-slate-300 text-white font-semibold py-3.5 text-sm transition-colors active:scale-95 flex items-center justify-center gap-2"
             >
               {acking ? (
-                <><span className="h-4 w-4 border-2 border-white border-t-transparent rounded-full animate-spin" />Memproses...</>
+                <><span className="h-4 w-4 border-2 border-white border-t-transparent rounded-full animate-spin" />{t("customerApproval.processing", "Processing...")}</>
               ) : (
-                <>✅ Saya Sudah Menerima Invoice Ini</>
+                <>✅ {t("common.confirm", "I have received this invoice")}</>
               )}
             </button>
           </div>
         ) : (
           <div className="bg-green-50 border border-green-200 rounded-2xl p-5 text-center">
             <div className="text-3xl mb-2">✅</div>
-            <p className="font-semibold text-green-700">Invoice Dikonfirmasi</p>
+            <p className="font-semibold text-green-700">{t("common.confirm", "Invoice confirmed")}</p>
             <p className="text-xs text-green-500 mt-1">
               {data.acknowledgedAt
-                ? `Dikonfirmasi pada ${fmtDate(data.acknowledgedAt)}`
-                : "Invoice telah Anda konfirmasi."}
+                ? `Dikonfirmasi pada ${fmtDate(data.acknowledgedAt, locale)}`
+                : t("common.confirm", "Invoice confirmed.")}
             </p>
           </div>
         )}
 
         <p className="text-center text-xs text-slate-400 pb-4">
-          Hubungi tim kami jika ada pertanyaan mengenai invoice ini.
+          {t("logisticTrack.contactSupport", "Contact our team if you have questions about this invoice.")}
         </p>
       </div>
     </div>
