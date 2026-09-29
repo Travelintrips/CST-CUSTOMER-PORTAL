@@ -120,6 +120,100 @@ async function fetchRemoteTranslations(locale: string): Promise<Record<string, s
   }
 }
 
+
+
+function flattenStrings(
+  obj: Record<string, unknown>,
+  prefix = "",
+  out: Record<string, string> = {}
+): Record<string, string> {
+  for (const [key, value] of Object.entries(obj)) {
+    const full = prefix ? `${prefix}.${key}` : key;
+    if (typeof value === "string") out[full] = value;
+    else if (value && typeof value === "object" && !Array.isArray(value)) {
+      flattenStrings(value as Record<string, unknown>, full, out);
+    }
+  }
+  return out;
+}
+
+const legacyTextSource = new WeakMap<Text, string>();
+const legacyAttrSource = new WeakMap<Element, Map<string, string>>();
+
+function buildLegacyLiteralMap(dict: Record<string, unknown>) {
+  const current = flattenStrings(dict);
+  const sources = [
+    getCachedLocale("id-ID") as Record<string, unknown> | undefined,
+    getCachedLocale("en-US") as Record<string, unknown> | undefined,
+  ].filter(Boolean) as Record<string, unknown>[];
+
+  const map = new Map<string, string>();
+  for (const source of sources) {
+    const flat = flattenStrings(source);
+    for (const [key, sourceValue] of Object.entries(flat)) {
+      const target = current[key];
+      if (!target || !sourceValue) continue;
+      const normalized = sourceValue.trim();
+      if (normalized.length < 2) continue;
+      if (!map.has(normalized)) map.set(normalized, target);
+    }
+  }
+  return map;
+}
+
+function translateLegacyNode(root: Node, literalMap: Map<string, string>) {
+  const skip = new Set(["SCRIPT", "STYLE", "CODE", "PRE", "TEXTAREA"]);
+
+  const translateText = (node: Text) => {
+    const parent = node.parentElement;
+    if (!parent || skip.has(parent.tagName)) return;
+    const original = legacyTextSource.get(node) ?? node.nodeValue ?? "";
+    const trimmed = original.trim();
+    if (!trimmed) return;
+    const translated = literalMap.get(trimmed);
+    if (!translated) {
+      if (legacyTextSource.has(node) && node.nodeValue !== original) node.nodeValue = original;
+      return;
+    }
+    if (!legacyTextSource.has(node)) legacyTextSource.set(node, original);
+    const next = original.replace(trimmed, translated);
+    if (node.nodeValue !== next) node.nodeValue = next;
+  };
+
+  const translateElement = (el: Element) => {
+    if (skip.has(el.tagName)) return;
+    const attrs = ["placeholder", "title", "aria-label"];
+    let stored = legacyAttrSource.get(el);
+    for (const attr of attrs) {
+      if (!el.hasAttribute(attr)) continue;
+      const currentValue = el.getAttribute(attr) ?? "";
+      const original = stored?.get(attr) ?? currentValue;
+      const translated = literalMap.get(original.trim());
+      if (!translated) {
+        if (stored?.has(attr) && currentValue !== original) el.setAttribute(attr, original);
+        continue;
+      }
+      if (!stored) {
+        stored = new Map<string, string>();
+        legacyAttrSource.set(el, stored);
+      }
+      if (!stored.has(attr)) stored.set(attr, original);
+      if (currentValue !== translated) el.setAttribute(attr, translated);
+    }
+  };
+
+  if (root.nodeType === Node.TEXT_NODE) translateText(root as Text);
+  if (root.nodeType === Node.ELEMENT_NODE) translateElement(root as Element);
+
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_ELEMENT | NodeFilter.SHOW_TEXT);
+  let node = walker.nextNode();
+  while (node) {
+    if (node.nodeType === Node.TEXT_NODE) translateText(node as Text);
+    else translateElement(node as Element);
+    node = walker.nextNode();
+  }
+}
+
 // ── Context ───────────────────────────────────────────────────────────────────
 
 interface LanguageContextValue {
@@ -201,6 +295,39 @@ export function LanguageProvider({ children }: { children: ReactNode }) {
     },
     [dict]
   );
+
+
+  // Transitional bridge for legacy UI literals. It translates only exact strings
+  // that already exist in the canonical locale dictionaries, so dynamic business
+  // data (names, order numbers, addresses, amounts) is left untouched.
+  useEffect(() => {
+    if (typeof document === "undefined") return;
+    const literalMap = buildLegacyLiteralMap(dict);
+    translateLegacyNode(document.body, literalMap);
+
+    const observer = new MutationObserver((mutations) => {
+      for (const mutation of mutations) {
+        if (mutation.type === "characterData") {
+          translateLegacyNode(mutation.target, literalMap);
+          continue;
+        }
+        if (mutation.type === "attributes") {
+          translateLegacyNode(mutation.target, literalMap);
+          continue;
+        }
+        mutation.addedNodes.forEach((node) => translateLegacyNode(node, literalMap));
+      }
+    });
+
+    observer.observe(document.body, {
+      subtree: true,
+      childList: true,
+      characterData: true,
+      attributes: true,
+      attributeFilter: ["placeholder", "title", "aria-label"],
+    });
+    return () => observer.disconnect();
+  }, [dict, locale]);
 
   return (
     <LanguageContext.Provider value={{ locale, setLanguage, t }}>
