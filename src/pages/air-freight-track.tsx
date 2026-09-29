@@ -206,7 +206,7 @@ export default function AirFreightTrackPage() {
         <div className="pb-6">
           <Button variant="outline" className="w-full border-white/20 text-white/70 hover:bg-white/10"
                   onClick={() => setLocation("/")}>
-            Kembali ke Beranda
+            {t("vendor.register.backToHome", "Back to home")}
           </Button>
         </div>
       </div>
