@@ -695,7 +695,7 @@ function ShipmentTab({
       )}
       <Card className="border-blue-200 bg-blue-50">
         <CardContent className="p-4 text-sm text-blue-800">
-          <p className="font-semibold">{t("logisticTrack.status", "Order & shipment status")}<p>
+          <p className="font-semibold">{t("logisticTrack.status", "Order & shipment status")}</p>
           <p className="mt-1 text-xs">
             Customer cukup memantau di sini. Vendor yang memperbarui persiapan/pengiriman dan mengunggah POD.
             Setelah barang diserahkan/tiba dan POD tersedia, konfirmasi penerimaan dilakukan di tab Goods Receipt.
@@ -1117,7 +1117,7 @@ function PaymentTab({ po }: { po: PoDetail }) {
                 <div className="space-y-3 rounded-lg border border-indigo-200 bg-indigo-50/40 p-4">
                   <div className="flex flex-wrap items-start justify-between gap-3">
                     <div>
-                      <p className="text-sm font-semibold text-slate-900">{t("paymentProof.payViaGateway", "Pay via Paylabs")}<p>
+                      <p className="text-sm font-semibold text-slate-900">{t("paymentProof.payViaGateway", "Pay via Paylabs")}</p>
                       <p className="mt-1 text-xs text-slate-600">
                         Bisa untuk DP/cicilan maupun pelunasan. Pembayaran diverifikasi otomatis melalui callback Paylabs.
                       </p>
@@ -1176,7 +1176,7 @@ function PaymentTab({ po }: { po: PoDetail }) {
               {payment.proofAvailable && (
                 <div className="space-y-3 rounded-lg border border-blue-200 bg-blue-50/40 p-4">
                   <div>
-                    <p className="text-sm font-semibold text-slate-800">{t("productOrder.success.proofReceived", "Payment proof saved as an audit trail")}<p>
+                    <p className="text-sm font-semibold text-slate-800">{t("productOrder.success.proofReceived", "Payment proof saved as an audit trail")}</p>
                     <p className="mt-1 text-xs text-slate-600">
                       Untuk keamanan audit, bukti yang sama tidak dapat digunakan ulang. Bukti lama tetap tersimpan meskipun ditolak.
                       {payment.proofUploadedAt ? ` Dikirim ${fmtDateTime(payment.proofUploadedAt, locale)}.` : ""}
@@ -1207,8 +1207,8 @@ function PaymentTab({ po }: { po: PoDetail }) {
               {payment.manualTransferAllowed && payment.paymentStatus !== "paid" && (
                 <div className="space-y-3 rounded-lg border p-4">
                   <div>
-                    <p className="text-sm font-semibold">{t("productOrder.success.uploadTransfer", "Manual bank transfer")}<p>
-                    <p className="mt-1 text-xs font-medium text-slate-700">{t("productOrder.success.uploadTransfer", "Upload transfer proof to CST")}<p>
+                    <p className="text-sm font-semibold">{t("productOrder.success.uploadTransfer", "Manual bank transfer")}</p>
+                    <p className="mt-1 text-xs font-medium text-slate-700">{t("productOrder.success.uploadTransfer", "Upload transfer proof to CST")}</p>
                     <p className="mt-1 text-xs text-slate-500">
                       OCR akan mencocokkan nominal pada bukti dengan nominal pembayaran kali ini, bukan harus selalu sama dengan total PO.
                     </p>
@@ -1770,7 +1770,7 @@ function TimelineTab({ shipmentId }: { shipmentId: number | null }) {
           <CardContent className="p-4 flex flex-wrap items-center gap-3">
             <FileText className="w-4 h-4 text-emerald-600" />
             <div className="flex-1 min-w-0">
-              <p className="text-sm font-semibold text-emerald-800">{t("tracking.podDocs", "Proof of Delivery available")}<p>
+              <p className="text-sm font-semibold text-emerald-800">{t("tracking.podDocs", "Proof of Delivery available")}</p>
               <p className="text-xs text-emerald-700">
                 Diunggah {fmtDateTime(pod.uploadedAt, locale)}{pod.note ? ` — ${pod.note}` : ""}
               </p>
