@@ -169,9 +169,10 @@ export function LanguageProvider({ children }: { children: ReactNode }) {
   }, [locale]);
 
   const setLanguage = useCallback((code: string) => {
-    setLocaleState(code);
-    try { localStorage.setItem(STORAGE_KEY, code); } catch {}
-    applyDocumentLocale(code);
+    const next = SUPPORTED_LOCALES.includes(code as SupportedLocale) ? code : "id-ID";
+    setLocaleState(next);
+    try { localStorage.setItem(STORAGE_KEY, next); } catch {}
+    applyDocumentLocale(next);
   }, []);
 
   const t = useCallback(
