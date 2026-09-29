@@ -49,7 +49,7 @@ type BaseForm = z.infer<typeof baseSchema>;
 
 const vendorSchema = z.object({
   companyName: z.string().min(2, "Nama perusahaan wajib diisi"),
-  nib:         z.string().optional(),
+  nib:         z.string().min(5, "NIB wajib diisi"),
   npwp:        z.string().optional(),
   serviceType: z.string().min(2, "Jenis layanan wajib diisi"),
 });
@@ -160,6 +160,7 @@ export default function OnboardingPage() {
 
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
+  const [documentError, setDocumentError] = useState<string | null>(null);
 
   const ktpInputRef     = useRef<HTMLInputElement>(null);
   const legalityInputRef = useRef<HTMLInputElement>(null);
@@ -340,6 +341,12 @@ export default function OnboardingPage() {
 
   // ── Step navigation ──────────────────────────────────────────────────────────
   async function handleBaseNext(data: BaseForm) {
+    const effectiveRole = registeredRole ?? accountType;
+    if ((effectiveRole === "customer" || effectiveRole === "vendor") && !ktpFile && !ktpUrl) {
+      setDocumentError("KTP wajib diunggah untuk melanjutkan pendaftaran.");
+      return;
+    }
+    setDocumentError(null);
     setBaseData(data);
     setStep("account-type");
   }
@@ -364,7 +371,11 @@ export default function OnboardingPage() {
         return;
       }
       if (!selectedCompanyId && (!companyRequestMode || !requestedCompanyName.trim())) {
-        setCompanyError("Pilih perusahaan canonical atau ajukan perusahaan yang belum terdaftar.");
+        setCompanyError("Pilih perusahaan yang sudah terdaftar atau daftarkan perusahaan baru.");
+        return;
+      }
+      if (!selectedCompanyId && companyRequestMode && !requestedRegistrationNumber.trim()) {
+        setCompanyError("NIB / NPWP wajib diisi untuk perusahaan baru.");
         return;
       }
       setCompanyError(null);
@@ -394,8 +405,18 @@ export default function OnboardingPage() {
 
   // ── Submit ───────────────────────────────────────────────────────────────────
   async function handleSubmit() {
-    setSubmitting(true);
     setSubmitError(null);
+    if ((accountType === "customer" || accountType === "vendor") && !ktpFile && !ktpUrl) {
+      setDocumentError("KTP wajib diunggah untuk menyelesaikan pendaftaran.");
+      setStep("basic");
+      return;
+    }
+    if (accountType === "vendor" && !legalityFile && !legalityUrl) {
+      setSubmitError("Dokumen legalitas vendor wajib diunggah.");
+      setStep("type-specific");
+      return;
+    }
+    setSubmitting(true);
     try {
       // Upload KTP if selected
       let finalKtpUrl = ktpUrl;
@@ -538,7 +559,7 @@ export default function OnboardingPage() {
               <div className="space-y-2">
                 <Label className="flex items-center gap-2">
                   <Camera className="h-4 w-4" />
-                  {t("onboarding.ktp.uploadLabel", "Upload KTP (Opsional, untuk OCR otomatis)")}
+                  {t("onboarding.ktp.uploadLabel", "Upload KTP")} <span className="text-red-500">*</span>
                 </Label>
                 <div
                   className="border-2 border-dashed border-gray-200 rounded-xl p-4 text-center cursor-pointer hover:border-primary/50 hover:bg-primary/5 transition-colors"
@@ -561,6 +582,10 @@ export default function OnboardingPage() {
                   className="hidden"
                   onChange={handleKtpChange}
                 />
+
+                {documentError && (
+                  <p className="text-sm text-red-600">{documentError}</p>
+                )}
 
                 {ocrLoading && (
                   <Alert className="border-blue-200 bg-blue-50">
@@ -607,12 +632,13 @@ export default function OnboardingPage() {
             <div className="space-y-5">
               <h2 className="text-lg font-semibold mb-2">{t("onboarding.accountType.title", "Tipe Akun")}</h2>
               {registeredRole && (
-                <p className="text-sm text-muted-foreground mb-4">
-                  Tipe akun mengikuti pilihan saat pendaftaran dan tidak dapat diubah melalui onboarding.
-                </p>
+                <div className="rounded-lg border border-blue-200 bg-blue-50 p-3 text-sm text-blue-800 mb-4">
+                  Anda mendaftar sebagai <strong>{ACCOUNT_TYPES.find((item) => item.value === registeredRole)?.label ?? registeredRole}</strong>.
+                  Tipe akun dikunci sesuai pilihan saat pendaftaran. Vendor harus dipilih dari halaman registrasi sebagai Vendor; Driver dan Karyawan bukan pilihan registrasi Customer.
+                </div>
               )}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                {ACCOUNT_TYPES.map(({ value, label, desc, icon: Icon }) => (
+                {ACCOUNT_TYPES.filter((item) => registeredRole ? item.value === registeredRole : ["customer", "vendor"].includes(item.value)).map(({ value, label, desc, icon: Icon }) => (
                   <button
                     key={value}
                     type="button"
@@ -700,7 +726,7 @@ export default function OnboardingPage() {
           {step === "type-specific" && (
             <div className="space-y-5">
               <h2 className="text-lg font-semibold mb-4">
-                 {accountType === "customer" && "Pilih Perusahaan"}
+                 {accountType === "customer" && "Data Perusahaan"}
                 {accountType === "vendor"   && t("onboarding.vendorDetail.title", "Detail Vendor")}
                 {accountType === "driver"   && t("onboarding.driverDetail.title", "Detail Driver")}
                 {accountType === "employee" && t("onboarding.employeeDetail.title", "Detail Karyawan")}
@@ -710,12 +736,46 @@ export default function OnboardingPage() {
                {accountType === "customer" && customerType === "company" && (
                  <div className="space-y-4">
                    <div className="rounded-lg border border-blue-200 bg-blue-50 p-3 text-sm text-blue-800">
-                     Pilih perusahaan yang sudah terdaftar agar membership Anda dibuat otomatis. Jika belum ada, ajukan untuk diverifikasi admin.
+                     Daftar di bawah adalah perusahaan yang <strong>sudah ada di sistem CST</strong>. Pilih hanya jika perusahaan Anda memang sudah terdaftar. Jika perusahaan Anda baru, gunakan <strong>Daftarkan perusahaan baru</strong>.
                    </div>
-                   {!companyRequestMode && (
+
+                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                     <button
+                       type="button"
+                       onClick={() => {
+                         setCompanyRequestMode(false);
+                         setRequestedCompanyName("");
+                         setRequestedRegistrationNumber("");
+                         setCompanyError(null);
+                       }}
+                       className={`rounded-xl border-2 p-4 text-left transition ${
+                         !companyRequestMode ? "border-primary bg-primary/5" : "border-gray-200 hover:border-primary/30"
+                       }`}
+                     >
+                       <p className="font-semibold text-sm">Perusahaan sudah terdaftar</p>
+                       <p className="text-xs text-muted-foreground mt-1">Hubungkan akun ke perusahaan yang sudah ada.</p>
+                     </button>
+                     <button
+                       type="button"
+                       onClick={() => {
+                         setCompanyRequestMode(true);
+                         setSelectedCompanyId(null);
+                         setCompanySearch("");
+                         setCompanyError(null);
+                       }}
+                       className={`rounded-xl border-2 p-4 text-left transition ${
+                         companyRequestMode ? "border-emerald-500 bg-emerald-50" : "border-gray-200 hover:border-emerald-300"
+                       }`}
+                     >
+                       <p className="font-semibold text-sm">Daftarkan perusahaan baru</p>
+                       <p className="text-xs text-muted-foreground mt-1">Isi nama perusahaan dan NIB/NPWP perusahaan yang sedang mendaftar.</p>
+                     </button>
+                   </div>
+
+                   {!companyRequestMode ? (
                      <>
                        <div className="space-y-2">
-                         <Label htmlFor="customer-company-search">Cari perusahaan canonical</Label>
+                         <Label htmlFor="customer-company-search">Cari perusahaan yang sudah terdaftar</Label>
                          <Input
                            id="customer-company-search"
                            value={companySearch}
@@ -755,44 +815,20 @@ export default function OnboardingPage() {
                            <p className="p-4 text-sm text-muted-foreground">Perusahaan tidak ditemukan.</p>
                          )}
                        </div>
-                       <button
-                         type="button"
-                         className="text-sm font-medium text-emerald-700 hover:underline"
-                         onClick={() => {
-                           setCompanyRequestMode(true);
-                           setSelectedCompanyId(null);
-                           setCompanyError(null);
-                         }}
-                       >
-                         Perusahaan saya belum terdaftar
-                       </button>
                        {selectedCompanyId && (
                          <p className="text-sm text-emerald-700 flex items-center gap-2">
-                           <CheckCircle2 className="h-4 w-4" /> Perusahaan canonical dipilih. Membership akan dibuat otomatis.
+                           <CheckCircle2 className="h-4 w-4" /> Perusahaan terdaftar dipilih. Membership akan dibuat otomatis.
                          </p>
                        )}
                      </>
-                   )}
-                   {companyRequestMode && (
-                     <div className="space-y-3 rounded-lg border border-amber-200 bg-amber-50 p-4">
-                       <div className="flex items-start justify-between gap-3">
-                         <div>
-                           <p className="font-semibold text-sm text-amber-900">Perusahaan saya belum terdaftar</p>
-                           <p className="text-xs text-amber-800 mt-1">Admin akan memeriksa dan memetakan perusahaan Anda ke data canonical.</p>
-                         </div>
-                         <button
-                           type="button"
-                           className="text-xs text-amber-800 underline"
-                           onClick={() => {
-                             setCompanyRequestMode(false);
-                             setCompanyError(null);
-                           }}
-                         >
-                           Pilih dari daftar
-                         </button>
+                   ) : (
+                     <div className="space-y-4 rounded-lg border border-emerald-200 bg-emerald-50/50 p-4">
+                       <div>
+                         <p className="font-semibold text-sm text-emerald-900">Data perusahaan yang sedang mendaftar</p>
+                         <p className="text-xs text-emerald-800 mt-1">Data ini akan diajukan ke admin untuk verifikasi sebelum perusahaan dihubungkan ke akun Anda.</p>
                        </div>
                        <div className="space-y-2">
-                         <Label htmlFor="requested-company-name">Nama perusahaan</Label>
+                         <Label htmlFor="requested-company-name">Nama perusahaan <span className="text-red-500">*</span></Label>
                          <Input
                            id="requested-company-name"
                            value={requestedCompanyName}
@@ -801,12 +837,12 @@ export default function OnboardingPage() {
                          />
                        </div>
                        <div className="space-y-2">
-                         <Label htmlFor="requested-company-registration">Nomor registrasi (opsional)</Label>
+                         <Label htmlFor="requested-company-registration">NIB / NPWP <span className="text-red-500">*</span></Label>
                          <Input
                            id="requested-company-registration"
                            value={requestedRegistrationNumber}
                            onChange={(event) => setRequestedRegistrationNumber(event.target.value)}
-                           placeholder="NIB / NPWP"
+                           placeholder="Masukkan NIB atau NPWP perusahaan"
                          />
                        </div>
                      </div>
@@ -825,7 +861,7 @@ export default function OnboardingPage() {
                   </div>
                   <div className="grid grid-cols-2 gap-4">
                     <div className="space-y-2">
-                      <Label>{t("onboarding.vendor.nib", "NIB (Opsional)")}</Label>
+                      <Label>{t("onboarding.vendor.nib", "NIB")} <span className="text-red-500">*</span></Label>
                       <Input placeholder={t("onboarding.vendor.nibPlaceholder", "Nomor Induk Berusaha")} {...vendorForm.register("nib")} />
                     </div>
                     <div className="space-y-2">
@@ -839,7 +875,7 @@ export default function OnboardingPage() {
                     {vendorForm.formState.errors.serviceType && <p className="text-sm text-red-500">{vendorForm.formState.errors.serviceType.message}</p>}
                   </div>
                   <div className="space-y-2">
-                    <Label className="flex items-center gap-2"><FileText className="h-4 w-4" />{t("onboarding.vendor.legalityDoc", "Upload Dokumen Legalitas (Opsional)")}</Label>
+                    <Label className="flex items-center gap-2"><FileText className="h-4 w-4" />{t("onboarding.vendor.legalityDoc", "Upload Dokumen Legalitas")} <span className="text-red-500">*</span></Label>
                     <div className="border-2 border-dashed border-gray-200 rounded-xl p-4 text-center cursor-pointer hover:border-primary/50 hover:bg-primary/5 transition-colors"
                       onClick={() => legalityInputRef.current?.click()}>
                       {legalityFile ? (
