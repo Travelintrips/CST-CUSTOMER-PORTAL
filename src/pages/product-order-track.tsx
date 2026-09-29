@@ -294,7 +294,7 @@ export default function ProductOrderTrackPage() {
 
         {/* Items */}
         <div className="bg-white rounded-2xl shadow-sm p-6">
-          <p className="text-xs text-gray-400 uppercase tracking-wide font-medium mb-3">{t("orders.orderDetails", "Order details")}<p>
+          <p className="text-xs text-gray-400 uppercase tracking-wide font-medium mb-3">{t("orders.orderDetails", "Order details")}</p>
           <div className="space-y-3">
             {data.items.map((item, idx) => (
               <div key={idx} className="flex justify-between items-start gap-2">
