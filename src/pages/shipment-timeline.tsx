@@ -12,6 +12,7 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import PageSeo from "@/components/PageSeo";
+import { useLanguage } from "@/i18n/LanguageContext";
 
 const BASE = import.meta.env.BASE_URL?.replace(/\/$/, "") ?? "";
 
@@ -69,8 +70,8 @@ const STATUS_COLORS: Record<string, string> = {
   "Cancelled":   "bg-red-100 text-red-800 border-red-200",
 };
 
-function formatDateTime(iso: string) {
-  return new Date(iso).toLocaleString("id-ID", {
+function formatDateTime(iso: string, locale: string) {
+  return new Date(iso).toLocaleString(locale, {
     day: "2-digit", month: "short", year: "numeric",
     hour: "2-digit", minute: "2-digit",
   });
@@ -85,6 +86,7 @@ async function fetchTracking(orderNumber: string): Promise<TrackingData> {
 }
 
 function OrderStepper({ status }: { status: string }) {
+  const { t } = useLanguage();
   const current = ORDER_STATUS_RANK[status] ?? 0;
   return (
     <div className="flex items-start w-full gap-0">
@@ -112,7 +114,7 @@ function OrderStepper({ status }: { status: string }) {
                 done   ? "text-green-600" :
                           "text-muted-foreground"
               )}>
-                {step.label}
+                {t(`orderStatusLabels.${step.key}`, step.label)}
               </span>
             </div>
             {i < ORDER_STEPS.length - 1 && (
@@ -129,6 +131,7 @@ function OrderStepper({ status }: { status: string }) {
 }
 
 function DriverTimeline({ job }: { job: DriverJob }) {
+  const { locale, t } = useLanguage();
   const current = DRIVER_STATUS_RANK[job.status] ?? 0;
   const isCancelled = job.status === "CANCELLED";
   const visibleSteps = DRIVER_STEPS.filter(
@@ -185,7 +188,7 @@ function DriverTimeline({ job }: { job: DriverJob }) {
               </p>
               {log && (
                 <p className="text-[10px] text-muted-foreground mt-0.5">
-                  {formatDateTime(log.timestamp)}
+                  {formatDateTime(log.timestamp, locale)}
                 </p>
               )}
             </div>
@@ -331,8 +334,8 @@ function TrackingCard({ orderNumber, shipmentType, origin, destination, status, 
                 <div className="bg-amber-50 border border-amber-200 rounded-xl px-4 py-3 flex items-center gap-3">
                   <div className="w-2 h-2 rounded-full bg-amber-500 animate-pulse flex-shrink-0" />
                   <div className="flex-1 min-w-0">
-                    <p className="text-xs font-semibold text-amber-800">Penawaran Harga Menunggu Respons</p>
-                    <p className="text-[10px] text-amber-600 mt-0.5">Buka detail untuk menyetujui atau menolak penawaran</p>
+                    <p className="text-xs font-semibold text-amber-800">{t("mktMyRfqs.actionRequired", "Quote awaiting your response")}</p>
+                    <p className="text-[10px] text-amber-600 mt-0.5">{t("mktMyRfqs.viewDetail", "Open details to approve or reject the quote")}</p>
                   </div>
                 </div>
               )}
@@ -340,7 +343,7 @@ function TrackingCard({ orderNumber, shipmentType, origin, destination, status, 
               {/* Services */}
               {tracking.items.length > 0 && (
                 <div className="bg-muted/40 rounded-xl px-4 py-3">
-                  <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider mb-2">Layanan</p>
+                  <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider mb-2">{t("tracking.service", "Service")}</p>
                   <div className="flex flex-wrap gap-1.5">
                     {tracking.items.map((item) => (
                       <span key={item.id} className="text-[10px] bg-white border border-border rounded-full px-2 py-0.5 text-foreground/70">
@@ -367,6 +370,7 @@ function TrackingCard({ orderNumber, shipmentType, origin, destination, status, 
 }
 
 export default function ShipmentTimelinePage() {
+  const { locale, t } = useLanguage();
   const [, setLocation] = useLocation();
   const authed = isAuthenticated();
 
@@ -417,7 +421,7 @@ export default function ShipmentTimelinePage() {
         {/* Header */}
         <div className="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-4 mb-6">
           <div>
-            <h1 className="text-2xl font-display font-bold">Timeline Pengiriman</h1>
+            <h1 className="text-2xl font-display font-bold">{t("logisticOrder.deliveryTimeline", "Shipment timeline")}</h1>
             <p className="text-sm text-muted-foreground mt-1">
               Status real-time semua pengiriman logistik Anda
             </p>
@@ -454,7 +458,7 @@ export default function ShipmentTimelinePage() {
           <div className="bg-white rounded-2xl border border-red-200 p-8 text-center">
             <AlertCircle className="w-10 h-10 text-red-400 mx-auto mb-3" />
             <p className="font-medium text-foreground">Gagal memuat data pengiriman</p>
-            <p className="text-sm text-muted-foreground mt-1 mb-4">Periksa koneksi internet Anda</p>
+            <p className="text-sm text-muted-foreground mt-1 mb-4">{t("vendorResponse.loadFailedDesc", "Check your internet connection")}</p>
             <Button variant="outline" size="sm" onClick={() => refetch()}>
               <RefreshCw className="w-3.5 h-3.5 mr-2" /> Coba lagi
             </Button>
