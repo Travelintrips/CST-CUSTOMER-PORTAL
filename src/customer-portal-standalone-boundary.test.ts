@@ -307,7 +307,8 @@ describe("standalone Customer Portal API boundary", () => {
     expect(storage).toContain("uploadTruckingPod");
     expect(app).toContain('/trucking/orders/:bookingNumber');
     expect(app).toContain('/trucking/driver/:token');
-    expect(app).toContain('/admin/trucking/:bookingNumber');
+    expect(app).toContain('<Route path="/admin/trucking">');
+    expect(app).not.toContain('<Route path="/admin/trucking/:bookingNumber">');
     expect(customer).toContain("Setujui & Lanjut Pembayaran");
     expect(customer).toContain("Bayar via Paylabs");
     expect(customer).toContain("Upload Bukti");
