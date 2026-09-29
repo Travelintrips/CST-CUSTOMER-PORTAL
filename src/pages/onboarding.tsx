@@ -577,7 +577,7 @@ export default function OnboardingPage() {
               <div className="space-y-2">
                 <Label className="flex items-center gap-2">
                   <Camera className="h-4 w-4" />
-                  {t("onboarding.ktp.uploadLabel", "Upload KTP")} <span className="text-red-500">*</span>
+                  {t("onboarding.registration.ktpUploadRequired", "Upload KTP")} <span className="text-red-500">*</span>
                 </Label>
                 <div
                   className="border-2 border-dashed border-gray-200 rounded-xl p-4 text-center cursor-pointer hover:border-primary/50 hover:bg-primary/5 transition-colors"
@@ -649,7 +649,7 @@ export default function OnboardingPage() {
           {step === "account-type" && (
             <div className="space-y-5">
               <h2 className="text-lg font-semibold mb-2">
-                {registeredRole === "customer" ? "Tipe Customer" : t("onboarding.accountType.title", "Tipe Akun")}
+                {registeredRole === "customer" ? t("onboarding.registration.customerTypeTitle", "Tipe Customer") : t("onboarding.accountType.title", "Tipe Akun")}
               </h2>
 
               {!registeredRole && (
@@ -683,15 +683,15 @@ export default function OnboardingPage() {
               {accountType === "customer" && (
                 <div className="space-y-3 rounded-xl border border-emerald-200 bg-emerald-50/50 p-4">
                   <div>
-                    <p className="font-semibold text-sm">Tipe Customer</p>
+                    <p className="font-semibold text-sm">{t("onboarding.registration.customerTypeTitle", "Tipe Customer")}</p>
                     <p className="text-xs text-muted-foreground mt-1">
-                      Pilihan ini hanya ditampilkan jika data tipe customer dari registrasi sebelumnya belum tersedia.
+                      {t("onboarding.registration.customerTypeHelp", "Pilihan ini hanya ditampilkan jika data tipe customer dari registrasi sebelumnya belum tersedia.")}
                     </p>
                   </div>
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                     {([
-                      { value: "individual" as const, label: "Perorangan", desc: "Tidak memerlukan membership perusahaan.", icon: User },
-                      { value: "company" as const, label: "Perusahaan", desc: "Terhubung ke perusahaan terdaftar atau daftarkan perusahaan baru.", icon: Building2 },
+                      { value: "individual" as const, label: t("onboarding.registration.individual", "Perorangan"), desc: t("onboarding.registration.individualDesc", "Tidak memerlukan membership perusahaan."), icon: User },
+                      { value: "company" as const, label: t("onboarding.registration.company", "Perusahaan"), desc: t("onboarding.registration.companyDesc", "Terhubung ke perusahaan terdaftar atau daftarkan perusahaan baru."), icon: Building2 },
                     ]).map(({ value, label, desc, icon: Icon }) => (
                       <button
                         key={value}
@@ -737,7 +737,7 @@ export default function OnboardingPage() {
           {step === "type-specific" && (
             <div className="space-y-5">
               <h2 className="text-lg font-semibold mb-4">
-                 {accountType === "customer" && "Data Perusahaan"}
+                 {accountType === "customer" && t("onboarding.registration.companyDataTitle", "Data Perusahaan")}
                 {accountType === "vendor"   && t("onboarding.vendorDetail.title", "Detail Vendor")}
                 {accountType === "driver"   && t("onboarding.driverDetail.title", "Detail Driver")}
                 {accountType === "employee" && t("onboarding.employeeDetail.title", "Detail Karyawan")}
@@ -747,7 +747,7 @@ export default function OnboardingPage() {
                {accountType === "customer" && customerType === "company" && (
                  <div className="space-y-4">
                    <div className="rounded-lg border border-blue-200 bg-blue-50 p-3 text-sm text-blue-800">
-                     Daftar di bawah adalah perusahaan yang <strong>sudah ada di sistem CST</strong>. Pilih hanya jika perusahaan Anda memang sudah terdaftar. Jika perusahaan Anda baru, gunakan <strong>Daftarkan perusahaan baru</strong>.
+                     {t("onboarding.registration.companyIntro", "Daftar di bawah adalah perusahaan yang sudah ada di sistem CST. Pilih hanya jika perusahaan Anda memang sudah terdaftar. Jika perusahaan Anda baru, gunakan Daftarkan perusahaan baru.")}
                    </div>
 
                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
@@ -763,8 +763,8 @@ export default function OnboardingPage() {
                          !companyRequestMode ? "border-primary bg-primary/5" : "border-gray-200 hover:border-primary/30"
                        }`}
                      >
-                       <p className="font-semibold text-sm">Perusahaan sudah terdaftar</p>
-                       <p className="text-xs text-muted-foreground mt-1">Hubungkan akun ke perusahaan yang sudah ada.</p>
+                       <p className="font-semibold text-sm">{t("onboarding.registration.existingCompany", "Perusahaan sudah terdaftar")}</p>
+                       <p className="text-xs text-muted-foreground mt-1">{t("onboarding.registration.existingCompanyDesc", "Hubungkan akun ke perusahaan yang sudah ada.")}</p>
                      </button>
                      <button
                        type="button"
@@ -778,15 +778,15 @@ export default function OnboardingPage() {
                          companyRequestMode ? "border-emerald-500 bg-emerald-50" : "border-gray-200 hover:border-emerald-300"
                        }`}
                      >
-                       <p className="font-semibold text-sm">Daftarkan perusahaan baru</p>
-                       <p className="text-xs text-muted-foreground mt-1">Isi nama perusahaan dan NIB/NPWP perusahaan yang sedang mendaftar.</p>
+                       <p className="font-semibold text-sm">{t("onboarding.registration.newCompany", "Daftarkan perusahaan baru")}</p>
+                       <p className="text-xs text-muted-foreground mt-1">{t("onboarding.registration.newCompanyDesc", "Isi nama perusahaan dan NIB/NPWP perusahaan yang sedang mendaftar.")}</p>
                      </button>
                    </div>
 
                    {!companyRequestMode ? (
                      <>
                        <div className="space-y-2">
-                         <Label htmlFor="customer-company-search">Cari perusahaan yang sudah terdaftar</Label>
+                         <Label htmlFor="customer-company-search">{t("onboarding.registration.searchExisting", "Cari perusahaan yang sudah terdaftar")}</Label>
                          <Input
                            id="customer-company-search"
                            value={companySearch}
@@ -794,13 +794,13 @@ export default function OnboardingPage() {
                              setCompanySearch(event.target.value);
                              setSelectedCompanyId(null);
                            }}
-                           placeholder="Ketik nama atau kode perusahaan"
+                           placeholder={t("onboarding.registration.searchPlaceholder", "Ketik nama atau kode perusahaan")}
                          />
                        </div>
                        <div className="rounded-lg border bg-white divide-y max-h-56 overflow-y-auto">
                          {companiesLoading ? (
                            <div className="p-4 text-sm text-muted-foreground flex items-center gap-2">
-                             <Loader2 className="h-4 w-4 animate-spin" /> Memuat perusahaan…
+                             <Loader2 className="h-4 w-4 animate-spin" /> {t("onboarding.registration.loadingCompanies", "Memuat perusahaan…")}
                            </div>
                          ) : companyOptions.length > 0 ? (
                            companyOptions.map((company) => (
@@ -817,43 +817,43 @@ export default function OnboardingPage() {
                              >
                                <span>
                                  <span className="block font-medium text-sm">{company.name}</span>
-                                 <span className="block text-xs text-muted-foreground">{company.code ?? "Tanpa kode"}</span>
+                                 <span className="block text-xs text-muted-foreground">{company.code ?? "—"}</span>
                                </span>
                                {selectedCompanyId === company.id && <CheckCircle2 className="h-5 w-5 text-emerald-600 shrink-0" />}
                              </button>
                            ))
                          ) : (
-                           <p className="p-4 text-sm text-muted-foreground">Perusahaan tidak ditemukan.</p>
+                           <p className="p-4 text-sm text-muted-foreground">{t("onboarding.registration.companyNotFound", "Perusahaan tidak ditemukan.")}</p>
                          )}
                        </div>
                        {selectedCompanyId && (
                          <p className="text-sm text-emerald-700 flex items-center gap-2">
-                           <CheckCircle2 className="h-4 w-4" /> Perusahaan terdaftar dipilih. Membership akan dibuat otomatis.
+                           <CheckCircle2 className="h-4 w-4" /> {t("onboarding.registration.existingSelected", "Perusahaan terdaftar dipilih. Membership akan dibuat otomatis.")}
                          </p>
                        )}
                      </>
                    ) : (
                      <div className="space-y-4 rounded-lg border border-emerald-200 bg-emerald-50/50 p-4">
                        <div>
-                         <p className="font-semibold text-sm text-emerald-900">Data perusahaan yang sedang mendaftar</p>
-                         <p className="text-xs text-emerald-800 mt-1">Data ini akan diajukan ke admin untuk verifikasi sebelum perusahaan dihubungkan ke akun Anda.</p>
+                         <p className="font-semibold text-sm text-emerald-900">{t("onboarding.registration.newCompanyDataTitle", "Data perusahaan yang sedang mendaftar")}</p>
+                         <p className="text-xs text-emerald-800 mt-1">{t("onboarding.registration.newCompanyDataDesc", "Data ini akan diajukan ke admin untuk verifikasi sebelum perusahaan dihubungkan ke akun Anda.")}</p>
                        </div>
                        <div className="space-y-2">
-                         <Label htmlFor="requested-company-name">Nama perusahaan <span className="text-red-500">*</span></Label>
+                         <Label htmlFor="requested-company-name">{t("onboarding.registration.companyName", "Nama perusahaan")} <span className="text-red-500">*</span></Label>
                          <Input
                            id="requested-company-name"
                            value={requestedCompanyName}
                            onChange={(event) => setRequestedCompanyName(event.target.value)}
-                           placeholder="PT Nama Perusahaan"
+                           placeholder={t("onboarding.registration.companyNamePlaceholder", "PT Nama Perusahaan")}
                          />
                        </div>
                        <div className="space-y-2">
-                         <Label htmlFor="requested-company-registration">NIB / NPWP <span className="text-red-500">*</span></Label>
+                         <Label htmlFor="requested-company-registration">{t("onboarding.registration.registrationNumber", "NIB / NPWP")} <span className="text-red-500">*</span></Label>
                          <Input
                            id="requested-company-registration"
                            value={requestedRegistrationNumber}
                            onChange={(event) => setRequestedRegistrationNumber(event.target.value)}
-                           placeholder="Masukkan NIB atau NPWP perusahaan"
+                           placeholder={t("onboarding.registration.registrationNumberPlaceholder", "Masukkan NIB atau NPWP perusahaan")}
                          />
                        </div>
                      </div>
@@ -872,7 +872,7 @@ export default function OnboardingPage() {
                   </div>
                   <div className="grid grid-cols-2 gap-4">
                     <div className="space-y-2">
-                      <Label>{t("onboarding.vendor.nib", "NIB")} <span className="text-red-500">*</span></Label>
+                      <Label>{t("onboarding.registration.vendorNib", "NIB")} <span className="text-red-500">*</span></Label>
                       <Input placeholder={t("onboarding.vendor.nibPlaceholder", "Nomor Induk Berusaha")} {...vendorForm.register("nib")} />
                     </div>
                     <div className="space-y-2">
@@ -886,7 +886,7 @@ export default function OnboardingPage() {
                     {vendorForm.formState.errors.serviceType && <p className="text-sm text-red-500">{vendorForm.formState.errors.serviceType.message}</p>}
                   </div>
                   <div className="space-y-2">
-                    <Label className="flex items-center gap-2"><FileText className="h-4 w-4" />{t("onboarding.vendor.legalityDoc", "Upload Dokumen Legalitas")} <span className="text-red-500">*</span></Label>
+                    <Label className="flex items-center gap-2"><FileText className="h-4 w-4" />{t("onboarding.registration.vendorLegality", "Upload Dokumen Legalitas")} <span className="text-red-500">*</span></Label>
                     <div className="border-2 border-dashed border-gray-200 rounded-xl p-4 text-center cursor-pointer hover:border-primary/50 hover:bg-primary/5 transition-colors"
                       onClick={() => legalityInputRef.current?.click()}>
                       {legalityFile ? (
@@ -1014,18 +1014,18 @@ export default function OnboardingPage() {
                 <Row label={t("onboarding.review.type", "Tipe")} value={ACCOUNT_TYPES.find(a => a.value === accountType)?.label ?? accountType} />
                  {accountType === "customer" && customerType && (
                    <>
-                     <Row label="Tipe Customer" value={customerType === "individual" ? "Perorangan" : "Perusahaan"} />
+                     <Row label={t("onboarding.registration.customerTypeTitle", "Tipe Customer")} value={customerType === "individual" ? t("onboarding.registration.individual", "Perorangan") : t("onboarding.registration.company", "Perusahaan")} />
                      {customerType === "individual" ? (
                        <div className="px-4 py-3 text-sm text-emerald-700 bg-emerald-50">
-                         Customer perorangan — membership perusahaan tidak diperlukan.
+                         {t("onboarding.registration.reviewIndividual", "Customer perorangan — membership perusahaan tidak diperlukan.")}
                        </div>
                      ) : selectedCompanyId ? (
                        <div className="px-4 py-3 text-sm text-emerald-700 bg-emerald-50">
-                         Perusahaan canonical dipilih — membership akan dibuat otomatis.
+                         {t("onboarding.registration.reviewExisting", "Perusahaan terdaftar dipilih — membership akan dibuat otomatis.")}
                        </div>
                      ) : (
                        <div className="px-4 py-3 text-sm text-amber-800 bg-amber-50">
-                         Perusahaan belum terdaftar — permintaan akan dikirim untuk verifikasi admin.
+                         {t("onboarding.registration.reviewNewPending", "Perusahaan baru — permintaan akan dikirim untuk verifikasi admin.")}
                        </div>
                      )}
                    </>
@@ -1063,7 +1063,7 @@ export default function OnboardingPage() {
                  <Alert className="border-amber-200 bg-amber-50">
                    <Eye className="h-4 w-4 text-amber-500" />
                    <AlertDescription className="text-amber-800">
-                     Status setelah disimpan: <strong>Menunggu verifikasi perusahaan</strong>. Anda tidak dapat membuat RFQ perusahaan sampai admin memetakan perusahaan canonical.
+                     {t("onboarding.registration.companyPendingStatus", "Status setelah disimpan: Menunggu verifikasi perusahaan. Anda belum dapat membuat RFQ perusahaan sampai admin menyelesaikan pemetaan.")}
                    </AlertDescription>
                  </Alert>
                )}
@@ -1118,6 +1118,7 @@ function LegacyOrganizationCompletion({
   onLogout: () => void;
 }) {
   const [, setLocation] = useLocation();
+  const { t } = useLanguage();
   const [customerType, setCustomerType] = useState<CustomerType | null>(initialCustomerType);
   const [companySearch, setCompanySearch] = useState("");
   const [companyOptions, setCompanyOptions] = useState<Array<{ id: number; name: string; code: string | null }>>([]);
@@ -1216,9 +1217,9 @@ function LegacyOrganizationCompletion({
               <User className="h-6 w-6" />
             </div>
             <div>
-              <h1 className="text-xl font-bold text-gray-900">Lengkapi jenis akun Customer Portal</h1>
+              <h1 className="text-xl font-bold text-gray-900">{t("onboarding.registration.legacyTitle", "Lengkapi jenis akun Customer Portal")}</h1>
               <p className="text-sm text-gray-600 mt-1">
-                Gunakan Customer Portal sebagai
+                {t("onboarding.registration.legacySubtitle", "Gunakan Customer Portal sebagai")}
               </p>
             </div>
           </div>
@@ -1229,14 +1230,14 @@ function LegacyOrganizationCompletion({
             {([
               {
                 value: "individual" as const,
-                label: "Perorangan",
-                description: "Tidak memerlukan membership perusahaan dan dapat membuat RFQ langsung.",
+                label: t("onboarding.registration.individual", "Perorangan"),
+                description: t("onboarding.registration.legacyIndividualDesc", "Tidak memerlukan membership perusahaan dan dapat membuat RFQ langsung."),
                 icon: User,
               },
               {
                 value: "company" as const,
-                label: "Perusahaan",
-                description: "Pilih perusahaan canonical atau ajukan perusahaan baru untuk diverifikasi admin.",
+                label: t("onboarding.registration.company", "Perusahaan"),
+                description: t("onboarding.registration.legacyCompanyDesc", "Pilih perusahaan terdaftar atau daftarkan perusahaan baru untuk diverifikasi admin."),
                 icon: Building2,
               },
             ]).map(({ value, label, description, icon: Icon }) => (
@@ -1269,7 +1270,7 @@ function LegacyOrganizationCompletion({
               {!companyRequestMode ? (
                 <>
                   <div className="space-y-2">
-                    <Label htmlFor="legacy-company-search">Cari perusahaan yang sudah terdaftar</Label>
+                    <Label htmlFor="legacy-company-search">{t("onboarding.registration.searchExisting", "Cari perusahaan yang sudah terdaftar")}</Label>
                     <Input
                       id="legacy-company-search"
                       value={companySearch}
@@ -1277,13 +1278,13 @@ function LegacyOrganizationCompletion({
                         setCompanySearch(event.target.value);
                         setSelectedCompanyId(null);
                       }}
-                      placeholder="Ketik nama atau kode perusahaan"
+                      placeholder={t("onboarding.registration.searchPlaceholder", "Ketik nama atau kode perusahaan")}
                     />
                   </div>
                   <div className="rounded-lg border bg-white divide-y max-h-52 overflow-y-auto">
                     {loadingCompanies ? (
                       <div className="p-4 text-sm text-muted-foreground flex items-center gap-2">
-                        <Loader2 className="h-4 w-4 animate-spin" /> Memuat perusahaan…
+                        <Loader2 className="h-4 w-4 animate-spin" /> {t("onboarding.registration.loadingCompanies", "Memuat perusahaan…")}
                       </div>
                     ) : companyOptions.length > 0 ? (
                       companyOptions.map((company) => (
@@ -1306,12 +1307,12 @@ function LegacyOrganizationCompletion({
                         </button>
                       ))
                     ) : (
-                      <p className="p-4 text-sm text-muted-foreground">Perusahaan tidak ditemukan.</p>
+                      <p className="p-4 text-sm text-muted-foreground">{t("onboarding.registration.companyNotFound", "Perusahaan tidak ditemukan.")}</p>
                     )}
                   </div>
                   {selectedCompanyId && (
                     <p className="text-sm text-emerald-700 flex items-center gap-2">
-                      <CheckCircle2 className="h-4 w-4" /> Membership akan dibuat atau diaktifkan untuk perusahaan ini.
+                      <CheckCircle2 className="h-4 w-4" /> {t("onboarding.registration.legacyMembershipSelected", "Membership akan dibuat atau diaktifkan untuk perusahaan ini.")}
                     </p>
                   )}
                   <button
@@ -1323,35 +1324,35 @@ function LegacyOrganizationCompletion({
                       setError(null);
                     }}
                   >
-                    Perusahaan saya belum terdaftar
+                    {t("onboarding.registration.newCompany", "Daftarkan perusahaan baru")}
                   </button>
                 </>
               ) : (
                 <div className="space-y-3">
                   <div className="flex items-start justify-between gap-3">
                     <div>
-                      <p className="font-semibold text-sm text-gray-900">Ajukan perusahaan baru</p>
-                      <p className="text-xs text-gray-600 mt-1">Admin akan memeriksa dan memetakan perusahaan Anda ke data canonical.</p>
+                      <p className="font-semibold text-sm text-gray-900">{t("onboarding.registration.newCompany", "Daftarkan perusahaan baru")}</p>
+                      <p className="text-xs text-gray-600 mt-1">{t("onboarding.registration.newCompanyDataDesc", "Data ini akan diajukan ke admin untuk verifikasi sebelum perusahaan dihubungkan ke akun Anda.")}</p>
                     </div>
                     <button
                       type="button"
                       className="text-xs text-emerald-700 underline"
                       onClick={() => setCompanyRequestMode(false)}
                     >
-                      Pilih dari daftar
+                      {t("onboarding.registration.chooseFromList", "Pilih dari daftar")}
                     </button>
                   </div>
                   <div className="space-y-2">
-                    <Label htmlFor="legacy-requested-company-name">Nama perusahaan</Label>
+                    <Label htmlFor="legacy-requested-company-name">{t("onboarding.registration.companyName", "Nama perusahaan")}</Label>
                     <Input
                       id="legacy-requested-company-name"
                       value={requestedCompanyName}
                       onChange={(event) => setRequestedCompanyName(event.target.value)}
-                      placeholder="PT Nama Perusahaan"
+                      placeholder={t("onboarding.registration.companyNamePlaceholder", "PT Nama Perusahaan")}
                     />
                   </div>
                   <div className="space-y-2">
-                    <Label htmlFor="legacy-requested-registration">Nomor registrasi (opsional)</Label>
+                    <Label htmlFor="legacy-requested-registration">{t("onboarding.registration.registrationOptional", "Nomor registrasi (opsional)")}</Label>
                     <Input
                       id="legacy-requested-registration"
                       value={requestedRegistrationNumber}
@@ -1374,19 +1375,19 @@ function LegacyOrganizationCompletion({
           {customerType === "company" && (selectedCompanyId || (companyRequestMode && requestedCompanyName.trim())) && (
             <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
               {selectedCompanyId
-                ? "Setelah disimpan, Anda dapat membuat RFQ dengan konteks perusahaan yang dipilih."
-                : "Perusahaan akan berstatus menunggu verifikasi admin. RFQ perusahaan baru tersedia setelah pemetaan selesai."}
+                ? t("onboarding.registration.legacyReady", "Setelah disimpan, Anda dapat membuat RFQ dengan konteks perusahaan yang dipilih.")
+                : t("onboarding.registration.legacyPending", "Perusahaan akan berstatus menunggu verifikasi admin. RFQ perusahaan baru tersedia setelah pemetaan selesai.")}
             </div>
           )}
 
           <div className="flex gap-3 pt-1">
             <Button variant="outline" className="flex-1 gap-2" onClick={onLogout} disabled={submitting}>
-              <LogOut className="h-4 w-4" /> Keluar
+              <LogOut className="h-4 w-4" /> {t("onboarding.review.logout", "Keluar")}
             </Button>
             <Button className="flex-1 gap-2" onClick={submit} disabled={submitting}>
               {submitting
-                ? <><Loader2 className="h-4 w-4 animate-spin" /> Menyimpan…</>
-                : <><CheckCircle2 className="h-4 w-4" /> Simpan pilihan</>}
+                ? <><Loader2 className="h-4 w-4 animate-spin" /> {t("onboarding.review.saving", "Menyimpan…")}</>
+                : <><CheckCircle2 className="h-4 w-4" /> {t("onboarding.registration.saveChoice", "Simpan pilihan")}</>}
             </Button>
           </div>
         </div>
