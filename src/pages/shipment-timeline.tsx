@@ -283,20 +283,20 @@ function TrackingCard({ orderNumber, shipmentType, origin, destination, status, 
               disabled={isFetching}
               className="hover:text-foreground transition-colors disabled:opacity-50 flex items-center gap-1"
             >
-              <RefreshCw className="w-2.5 h-2.5" /> Perbarui
+              <RefreshCw className="w-2.5 h-2.5" /> {t("common.retry", "Refresh")}
             </button>
           </div>
 
           {isLoading && (
             <div className="flex items-center justify-center py-8 gap-2 text-muted-foreground text-sm">
-              <Loader2 className="w-4 h-4 animate-spin" /> Memuat timeline...
+              <Loader2 className="w-4 h-4 animate-spin" /> {t("common.loading", "Loading timeline...")}
             </div>
           )}
 
           {isError && (
             <div className="flex items-center gap-2 text-sm text-red-600 bg-red-50 rounded-lg px-3 py-2.5">
               <AlertCircle className="w-4 h-4 flex-shrink-0" />
-              Gagal memuat detail tracking. Coba perbarui.
+              {t("common.error", "Failed to load tracking details. Refresh and try again.")}
             </div>
           )}
 
@@ -305,7 +305,7 @@ function TrackingCard({ orderNumber, shipmentType, origin, destination, status, 
               {/* Order Status Stepper */}
               <div>
                 <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider mb-3">
-                  Status Order
+                  {t("productOrderTrack.status", "Order status")}
                 </p>
                 <OrderStepper status={tracking.status} />
               </div>
@@ -315,7 +315,7 @@ function TrackingCard({ orderNumber, shipmentType, origin, destination, status, 
                 <div>
                   <div className="flex items-center gap-2 mb-3">
                     <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">
-                      Tracking Driver
+                      {t("logisticTrack.pageTitle", "Driver tracking")}
                     </p>
                     <span className="text-[10px] text-muted-foreground font-mono bg-muted px-1.5 py-0.5 rounded">
                       {tracking.driverJob.jobNumber}
