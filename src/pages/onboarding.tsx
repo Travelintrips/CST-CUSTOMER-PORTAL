@@ -817,7 +817,7 @@ export default function OnboardingPage() {
                              >
                                <span>
                                  <span className="block font-medium text-sm">{company.name}</span>
-                                 <span className="block text-xs text-muted-foreground">{company.code ?? "Tanpa kode"}</span>
+                                 <span className="block text-xs text-muted-foreground">{company.code ?? "—"}</span>
                                </span>
                                {selectedCompanyId === company.id && <CheckCircle2 className="h-5 w-5 text-emerald-600 shrink-0" />}
                              </button>
@@ -1278,13 +1278,13 @@ function LegacyOrganizationCompletion({
                         setCompanySearch(event.target.value);
                         setSelectedCompanyId(null);
                       }}
-                      placeholder="Ketik nama atau kode perusahaan"
+                      placeholder={t("onboarding.registration.searchPlaceholder", "Ketik nama atau kode perusahaan")}
                     />
                   </div>
                   <div className="rounded-lg border bg-white divide-y max-h-52 overflow-y-auto">
                     {loadingCompanies ? (
                       <div className="p-4 text-sm text-muted-foreground flex items-center gap-2">
-                        <Loader2 className="h-4 w-4 animate-spin" /> Memuat perusahaan…
+                        <Loader2 className="h-4 w-4 animate-spin" /> {t("onboarding.registration.loadingCompanies", "Memuat perusahaan…")}
                       </div>
                     ) : companyOptions.length > 0 ? (
                       companyOptions.map((company) => (
@@ -1307,7 +1307,7 @@ function LegacyOrganizationCompletion({
                         </button>
                       ))
                     ) : (
-                      <p className="p-4 text-sm text-muted-foreground">Perusahaan tidak ditemukan.</p>
+                      <p className="p-4 text-sm text-muted-foreground">{t("onboarding.registration.companyNotFound", "Perusahaan tidak ditemukan.")}</p>
                     )}
                   </div>
                   {selectedCompanyId && (
@@ -1348,7 +1348,7 @@ function LegacyOrganizationCompletion({
                       id="legacy-requested-company-name"
                       value={requestedCompanyName}
                       onChange={(event) => setRequestedCompanyName(event.target.value)}
-                      placeholder="PT Nama Perusahaan"
+                      placeholder={t("onboarding.registration.companyNamePlaceholder", "PT Nama Perusahaan")}
                     />
                   </div>
                   <div className="space-y-2">
