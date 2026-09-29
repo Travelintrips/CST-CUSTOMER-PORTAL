@@ -259,6 +259,19 @@ function enforceRequestPolicy(request) {
     error.statusCode = 403;
     throw error;
   }
+
+  // Cookie-authenticated browser mutations must carry browser provenance.
+  // This closes the gap where a request with a valid session cookie omitted
+  // both Origin and Sec-Fetch-Site, while keeping Bearer/server-to-server
+  // integrations and provider webhooks unaffected.
+  const hasPortalSessionCookie = String(request.headers.cookie ?? "")
+    .split(";")
+    .some((part) => part.trim().startsWith("portal_session="));
+  if (hasPortalSessionCookie && !origin && !fetchSite) {
+    const error = new Error("Mutation request provenance is required.");
+    error.statusCode = 403;
+    throw error;
+  }
 }
 
 async function readRawBody(request, limit = MAX_BODY_BYTES) {
