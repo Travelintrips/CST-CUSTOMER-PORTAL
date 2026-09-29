@@ -1,6 +1,7 @@
 import { useEffect, useState, useCallback, useRef } from "react";
 import { useParams } from "wouter";
 import { usePortalSSE } from "@/hooks/usePortalSSE";
+import { useLanguage } from "@/i18n/LanguageContext";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -39,12 +40,12 @@ interface TrackData {
   isCancelled: boolean;
 }
 
-function idr(n: number) {
-  return new Intl.NumberFormat("id-ID", { style: "currency", currency: "IDR", maximumFractionDigits: 0 }).format(n);
+function idr(n: number, locale: string) {
+  return new Intl.NumberFormat(locale, { style: "currency", currency: "IDR", maximumFractionDigits: 0 }).format(n);
 }
 
-function fmtDate(iso: string) {
-  return new Date(iso).toLocaleString("id-ID", { day: "2-digit", month: "long", year: "numeric", hour: "2-digit", minute: "2-digit" });
+function fmtDate(iso: string, locale: string) {
+  return new Date(iso).toLocaleString(locale, { day: "2-digit", month: "long", year: "numeric", hour: "2-digit", minute: "2-digit" });
 }
 
 interface LiveToast {
@@ -54,6 +55,7 @@ interface LiveToast {
 }
 
 export default function ProductOrderTrackPage() {
+  const { locale, t } = useLanguage();
   const { token } = useParams<{ token: string }>();
   const [data, setData] = useState<TrackData | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -71,7 +73,7 @@ export default function ProductOrderTrackPage() {
     try {
       const r = await fetch(`${BASE}/api/portal-product/track/${token}`);
       const d = await r.json() as TrackData & { error?: string };
-      if (!r.ok) throw new Error(d.error ?? "Order tidak ditemukan");
+      if (!r.ok) throw new Error(d.error ?? t("tracking.notFound", "Order not found"));
       setData(d);
       setError(null);
       prevStatusRef.current = d.status;
@@ -101,14 +103,14 @@ export default function ProductOrderTrackPage() {
 
       if (d.paymentStatus && d.paymentStatus !== prevPaymentRef.current) {
         prevPaymentRef.current = d.paymentStatus;
-        addToast("✅ Pembayaran telah dikonfirmasi!", "payment");
+        addToast(`✅ ${t("tracking.paymentReceived", "Payment confirmed")}`, "payment");
         fetchOrder(true);
         return;
       }
 
       if (d.status && d.status !== prevStatusRef.current) {
         prevStatusRef.current = d.status;
-        addToast(`📦 Status diperbarui: ${d.label ?? d.status}`, "status");
+        addToast(`📦 ${t("logisticTrack.status", "Status")}: ${d.label ?? d.status}`, "status");
         fetchOrder(true);
       }
     }, [orderNumber, fetchOrder, addToast]),
@@ -117,7 +119,7 @@ export default function ProductOrderTrackPage() {
       const d = raw as { orderNumber?: string };
       if (!orderNumber || d?.orderNumber !== orderNumber) return;
       prevPaymentRef.current = "paid";
-      addToast("✅ Pembayaran telah dikonfirmasi!", "payment");
+      addToast(`✅ ${t("tracking.paymentReceived", "Payment confirmed")}`, "payment");
       fetchOrder(true);
     }, [orderNumber, fetchOrder, addToast]),
   }, { enabled: !!orderNumber });
@@ -127,7 +129,7 @@ export default function ProductOrderTrackPage() {
       <div className="min-h-screen flex items-center justify-center bg-gray-50">
         <div className="text-center">
           <div className="w-10 h-10 border-4 border-blue-500 border-t-transparent rounded-full animate-spin mx-auto mb-3" />
-          <p className="text-gray-500 text-sm">Memuat status pesanan...</p>
+          <p className="text-gray-500 text-sm">{t("common.loading", "Loading...")}</p>
         </div>
       </div>
     );
@@ -138,8 +140,8 @@ export default function ProductOrderTrackPage() {
       <div className="min-h-screen flex items-center justify-center bg-gray-50 p-4">
         <div className="bg-white rounded-2xl shadow-md p-8 max-w-sm w-full text-center">
           <div className="text-5xl mb-4">❌</div>
-          <h2 className="text-lg font-semibold text-gray-800 mb-2">Pesanan Tidak Ditemukan</h2>
-          <p className="text-gray-500 text-sm">{error ?? "Link tidak valid atau sudah kadaluarsa."}</p>
+          <h2 className="text-lg font-semibold text-gray-800 mb-2">{t("tracking.notFound", "Order not found")}</h2>
+          <p className="text-gray-500 text-sm">{error ?? t("customerApproval.linkInvalid", "Invalid or expired link.")}</p>
         </div>
       </div>
     );
@@ -170,7 +172,7 @@ export default function ProductOrderTrackPage() {
           <div className="flex items-start justify-between gap-3">
             <div>
               <div className="flex items-center gap-2 mb-1">
-                <p className="text-xs text-gray-400 uppercase tracking-wide font-medium">Nomor Pesanan</p>
+                <p className="text-xs text-gray-400 uppercase tracking-wide font-medium">{t("productOrderTrack.orderNo", "Order number")}</p>
                 {connected ? (
                   <span className="flex items-center gap-1 text-[10px] font-semibold text-green-600 bg-green-50 border border-green-200 px-1.5 py-0.5 rounded-full">
                     <span className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse" />
@@ -184,16 +186,16 @@ export default function ProductOrderTrackPage() {
                 )}
               </div>
               <p className="font-mono font-bold text-lg text-gray-800">{data.orderNumber}</p>
-              <p className="text-sm text-gray-500 mt-1">{fmtDate(data.createdAt)}</p>
+              <p className="text-sm text-gray-500 mt-1">{fmtDate(data.createdAt, locale)}</p>
             </div>
             <div className="text-right shrink-0">
-              <p className="text-xs text-gray-400 mb-1">Total</p>
-              <p className="font-bold text-xl text-blue-600">{idr(data.grandTotal)}</p>
+              <p className="text-xs text-gray-400 mb-1">{t("tracking.total", "Total")}</p>
+              <p className="font-bold text-xl text-blue-600">{idr(data.grandTotal, locale)}</p>
             </div>
           </div>
 
           <div className="mt-4 pt-4 border-t border-gray-100">
-            <p className="text-xs text-gray-400 mb-1">Pemesan</p>
+            <p className="text-xs text-gray-400 mb-1">{t("productOrder.checkout.ordererData", "Customer")}</p>
             <p className="font-medium text-gray-800">{data.customerName}</p>
             <p className="text-sm text-gray-500 mt-0.5">📍 {data.shippingAddress}</p>
           </div>
@@ -203,11 +205,11 @@ export default function ProductOrderTrackPage() {
         {data.isCancelled ? (
           <div className="bg-red-50 border border-red-200 rounded-2xl p-4 text-center">
             <p className="text-2xl mb-1">❌</p>
-            <p className="font-semibold text-red-700">Pesanan Dibatalkan</p>
+            <p className="font-semibold text-red-700">{t("mktPurchaseOrders.statusCancelled", "Order cancelled")}</p>
           </div>
         ) : (
           <div className="bg-white rounded-2xl shadow-sm p-6">
-            <p className="text-xs text-gray-400 uppercase tracking-wide font-medium mb-4">Status Pesanan</p>
+            <p className="text-xs text-gray-400 uppercase tracking-wide font-medium mb-4">{t("productOrderTrack.status", "Order status")}</p>
             <div className="relative">
               {data.timeline.map((step, idx) => (
                 <div key={step.status} className="flex gap-3 relative">
@@ -242,8 +244,8 @@ export default function ProductOrderTrackPage() {
         {/* Product-First Action Buttons */}
         {data.orderType === "product_first" && data.status === "Customer Product Approval" && data.productApproveUrl && (
           <div className="bg-amber-50 border border-amber-200 rounded-2xl p-5">
-            <p className="font-semibold text-sm text-amber-800 mb-1">✍️ Persetujuan Produk Diperlukan</p>
-            <p className="text-xs text-amber-600 mb-3">Vendor produk sudah dipilih. Silakan review dan setujui penawaran produk.</p>
+            <p className="font-semibold text-sm text-amber-800 mb-1">✍️ {t("mktMyRfqs.actionRequired", "Product approval required")}<p>
+            <p className="text-xs text-amber-600 mb-3">{t("productOrder.success.step3", "A product vendor has been selected. Review and approve the offer.")}</p>
             <a
               href={data.productApproveUrl}
               className="block w-full py-3 bg-amber-600 hover:bg-amber-700 text-white font-semibold text-sm text-center rounded-xl transition-colors"
@@ -255,8 +257,8 @@ export default function ProductOrderTrackPage() {
 
         {data.orderType === "product_first" && data.status === "Shipment Selection Pending" && data.shipmentSelectionUrl && (
           <div className="bg-blue-50 border border-blue-200 rounded-2xl p-5">
-            <p className="font-semibold text-sm text-blue-800 mb-1">🚚 Pilih Mode Pengiriman</p>
-            <p className="text-xs text-blue-600 mb-3">Produk sudah dikonfirmasi. Silakan pilih cara pengiriman yang Anda inginkan.</p>
+            <p className="font-semibold text-sm text-blue-800 mb-1">🚚 {t("productOrder.serviceCatalog.title", "Choose shipping method")}<p>
+            <p className="text-xs text-blue-600 mb-3">{t("productOrder.success.step4", "The product is confirmed. Choose your preferred shipping method.")}</p>
             <a
               href={data.shipmentSelectionUrl}
               className="block w-full py-3 bg-blue-600 hover:bg-blue-700 text-white font-semibold text-sm text-center rounded-xl transition-colors"
@@ -292,20 +294,20 @@ export default function ProductOrderTrackPage() {
 
         {/* Items */}
         <div className="bg-white rounded-2xl shadow-sm p-6">
-          <p className="text-xs text-gray-400 uppercase tracking-wide font-medium mb-3">Detail Pesanan</p>
+          <p className="text-xs text-gray-400 uppercase tracking-wide font-medium mb-3">{t("orders.orderDetails", "Order details")}<p>
           <div className="space-y-3">
             {data.items.map((item, idx) => (
               <div key={idx} className="flex justify-between items-start gap-2">
                 <div className="flex-1">
                   <p className="font-medium text-sm text-gray-800">{item.productName}</p>
-                  <p className="text-xs text-gray-400">{item.qty} {item.unit} × {idr(item.unitPrice)}</p>
+                  <p className="text-xs text-gray-400">{item.qty} {item.unit} × {idr(item.unitPrice, locale)}</p>
                 </div>
-                <p className="font-semibold text-sm text-gray-700 shrink-0">{idr(item.subtotal)}</p>
+                <p className="font-semibold text-sm text-gray-700 shrink-0">{idr(item.subtotal, locale)}</p>
               </div>
             ))}
             <div className="pt-3 border-t border-gray-100 flex justify-between items-center">
-              <p className="font-semibold text-sm">Total</p>
-              <p className="font-bold text-base text-blue-600">{idr(data.grandTotal)}</p>
+              <p className="font-semibold text-sm">{t("tracking.total", "Total")}</p>
+              <p className="font-bold text-base text-blue-600">{idr(data.grandTotal, locale)}</p>
             </div>
           </div>
         </div>
