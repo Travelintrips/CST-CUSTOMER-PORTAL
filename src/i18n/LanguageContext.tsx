@@ -51,6 +51,56 @@ function deepMerge(
   return out;
 }
 
+/**
+ * Some legacy locale bundles still contain untranslated Indonesian values.
+ * For non-Indonesian locales, replace an exact Indonesian carry-over with the
+ * English canonical value when one exists. This prevents mixed Indonesian UI
+ * while preserving genuine translations and locale-specific remote overrides.
+ */
+function sanitizeNonIndonesianLocale(
+  locale: string,
+  candidate: Record<string, unknown>,
+  idSource: Record<string, unknown>,
+  enSource: Record<string, unknown>,
+): Record<string, unknown> {
+  if (locale === "id-ID") return candidate;
+  const walk = (
+    current: Record<string, unknown>,
+    idNode: Record<string, unknown> | undefined,
+    enNode: Record<string, unknown> | undefined,
+  ): Record<string, unknown> => {
+    const out: Record<string, unknown> = { ...current };
+    for (const [key, value] of Object.entries(current)) {
+      const idValue = idNode?.[key];
+      const enValue = enNode?.[key];
+      if (typeof value === "string") {
+        if (
+          typeof idValue === "string" &&
+          typeof enValue === "string" &&
+          value.trim() === idValue.trim() &&
+          enValue.trim() !== idValue.trim()
+        ) {
+          out[key] = enValue;
+        }
+        continue;
+      }
+      if (value && typeof value === "object" && !Array.isArray(value)) {
+        out[key] = walk(
+          value as Record<string, unknown>,
+          idValue && typeof idValue === "object" && !Array.isArray(idValue)
+            ? idValue as Record<string, unknown>
+            : undefined,
+          enValue && typeof enValue === "object" && !Array.isArray(enValue)
+            ? enValue as Record<string, unknown>
+            : undefined,
+        );
+      }
+    }
+    return out;
+  };
+  return walk(candidate, idSource, enSource);
+}
+
 // ── localStorage cache ────────────────────────────────────────────────────────
 
 function readCache(locale: string): Record<string, unknown> | null {
@@ -100,8 +150,12 @@ function buildLocaleDict(locale: string, remote?: Record<string, unknown> | null
     getCachedLocale("en-US") ??
     getCachedLocale("id-ID") ??
     {}) as Record<string, unknown>;
-  if (!remote || Object.keys(remote).length === 0) return bundled;
-  return deepMerge(bundled, remote);
+  const merged = !remote || Object.keys(remote).length === 0
+    ? bundled
+    : deepMerge(bundled, remote);
+  const idSource = (getCachedLocale("id-ID") ?? {}) as Record<string, unknown>;
+  const enSource = (getCachedLocale("en-US") ?? {}) as Record<string, unknown>;
+  return sanitizeNonIndonesianLocale(locale, merged, idSource, enSource);
 }
 
 // ── Fetch from API ────────────────────────────────────────────────────────────
