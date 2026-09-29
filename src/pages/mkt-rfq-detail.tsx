@@ -12,6 +12,7 @@ import {
   ThumbsUp, ThumbsDown, ExternalLink, Building2, ClipboardList,
 } from "lucide-react";
 import { toast } from "sonner";
+import { useLanguage } from "@/i18n/LanguageContext";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -94,8 +95,8 @@ const STATUS_LABELS: Record<string, { label: string; color: string }> = {
   expired:         { label: "Kedaluwarsa",               color: "bg-gray-100 text-gray-500" },
 };
 
-const idr = (n: number) =>
-  new Intl.NumberFormat("id-ID", { style: "currency", currency: "IDR", maximumFractionDigits: 0 }).format(n);
+const idr = (n: number, locale: string) =>
+  new Intl.NumberFormat(locale, { style: "currency", currency: "IDR", maximumFractionDigits: 0 }).format(n);
 
 function mapsLink(placeId: string | null, lat: string | number | null, lng: string | number | null): string | null {
   if (placeId && lat != null && lng != null) {
@@ -104,14 +105,29 @@ function mapsLink(placeId: string | null, lat: string | number | null, lng: stri
   return null;
 }
 
-function fmtDate(s: string | null | undefined) {
+function fmtDate(s: string | null | undefined, locale: string) {
   if (!s) return "—";
-  return new Date(s).toLocaleDateString("id-ID", { day: "numeric", month: "long", year: "numeric" });
+  return new Date(s).toLocaleDateString(locale, { day: "numeric", month: "long", year: "numeric" });
+}
+
+function translatedRfqStatus(t: (key: string, fallback?: string) => string, status: string, fallback: string) {
+  const keys: Record<string, string> = {
+    draft: "mktMyRfqs.rfqStatusDraft",
+    submitted: "mktMyRfqs.rfqStatusSubmitted",
+    quoting: "mktMyRfqs.rfqStatusQuoting",
+    quoted: "mktMyRfqs.rfqStatusQuoted",
+    customer_review: "mktMyRfqs.rfqStatusCustomerReview",
+    awarded: "mktMyRfqs.rfqStatusAwarded",
+    cancelled: "mktMyRfqs.rfqStatusCancelled",
+    expired: "mktMyRfqs.rfqStatusExpired",
+  };
+  return keys[status] ? t(keys[status], fallback) : fallback;
 }
 
 // ── Component ─────────────────────────────────────────────────────────────────
 
 export default function MktRfqDetailPage() {
+  const { locale, t } = useLanguage();
   const { rfqId } = useParams<{ rfqId: string }>();
   const [, setLocation] = useLocation();
   const qc = useQueryClient();
@@ -130,7 +146,7 @@ export default function MktRfqDetailPage() {
         credentials: "include",
       });
       if (res.status === 401) { removeAuthToken(); setLocation("/login"); throw new Error("Unauthorized"); }
-      if (!res.ok) throw new Error("Gagal memuat RFQ");
+      if (!res.ok) throw new Error(t("mktMyRfqs.fetchError", "Failed to load RFQ"));
       return res.json();
     },
     enabled: authed && !!rfqIdNum,
@@ -147,7 +163,7 @@ export default function MktRfqDetailPage() {
       const res = await fetch(`/api/mkt/portal/rfqs/${rfqIdNum}/quotation`, {
         credentials: "include",
       });
-      if (!res.ok) throw new Error("Quotation tidak tersedia");
+      if (!res.ok) throw new Error(t("common.error", "Quotation unavailable"));
       return res.json();
     },
     enabled: !!rfqIdNum && (isCustomerReview || isAwarded),
@@ -246,7 +262,7 @@ export default function MktRfqDetailPage() {
       <div className="min-h-screen bg-gray-50 flex items-center justify-center p-8">
         <div className="text-center space-y-3">
           <AlertCircle className="w-12 h-12 text-red-400 mx-auto" />
-          <p className="text-red-700 font-medium">RFQ tidak ditemukan</p>
+          <p className="text-red-700 font-medium">{t("mktMyRfqs.emptyRfq", "RFQ not found")}</p>
           <Link href="/marketplace/my-rfqs">
             <Button variant="outline">
               <ArrowLeft className="w-4 h-4 mr-2" />
@@ -273,7 +289,7 @@ export default function MktRfqDetailPage() {
             </Button>
           </Link>
           <div className="flex-1 min-w-0">
-            <h1 className="font-bold text-gray-900 truncate">Detail RFQ</h1>
+            <h1 className="font-bold text-gray-900 truncate">{t("mktMyRfqs.viewDetail", "RFQ details")}</h1>
             <p className="text-xs font-mono text-muted-foreground">{rfq.rfq_number}</p>
           </div>
           <Badge className={statusConfig.color}>{statusConfig.label}</Badge>
@@ -289,7 +305,7 @@ export default function MktRfqDetailPage() {
               <div className="flex items-center gap-3">
                 <CheckCircle2 className="w-6 h-6 text-green-600 shrink-0" />
                 <div>
-                  <p className="font-semibold text-green-800">Purchase Order Telah Dibuat</p>
+                  <p className="font-semibold text-green-800">{t("mktMyRfqs.poCreated", "Purchase Order created")}<p>
                   <p className="text-sm text-green-700 font-mono">{po.poNumber}</p>
                 </div>
               </div>
@@ -310,7 +326,7 @@ export default function MktRfqDetailPage() {
               <div className="flex items-start gap-3">
                 <AlertCircle className="w-5 h-5 text-orange-600 shrink-0 mt-0.5" />
                 <div>
-                  <p className="font-semibold text-orange-800">Penawaran Menunggu Persetujuan Anda</p>
+                  <p className="font-semibold text-orange-800">{t("mktMyRfqs.rfqStatusCustomerReview", "Quote awaiting your approval")}<p>
                   <p className="text-sm text-orange-700 mt-0.5">
                     Admin telah memilih vendor terbaik. Tinjau detail penawaran di bawah lalu berikan keputusan Anda.
                   </p>
@@ -339,11 +355,11 @@ export default function MktRfqDetailPage() {
                 </div>
               ) : (
                 <div className="space-y-2">
-                  <label className="text-sm font-medium text-orange-800">Alasan penolakan (opsional):</label>
+                  <label className="text-sm font-medium text-orange-800">{t("mktMyRfqs.rejectionReason", "Rejection reason")}</label>
                   <Textarea
                     value={rejectReason}
                     onChange={(e) => setRejectReason(e.target.value)}
-                    placeholder="Jelaskan alasan penolakan agar admin dapat mengevaluasi ulang..."
+                    placeholder={t("customerApproval.rejectReasonPh", "Explain the rejection reason...")}
                     rows={3}
                     className="resize-none bg-white border-orange-200"
                   />
@@ -375,7 +391,7 @@ export default function MktRfqDetailPage() {
         {!isCancelled && (
           <Card>
             <CardHeader className="pb-2">
-              <CardTitle className="text-sm text-muted-foreground uppercase tracking-wider">Progress RFQ</CardTitle>
+              <CardTitle className="text-sm text-muted-foreground uppercase tracking-wider">{t("mktMyRfqs.pageDesc", "RFQ progress")}<CardTitle>
             </CardHeader>
             <CardContent>
               <div className="flex items-start">
@@ -399,7 +415,7 @@ export default function MktRfqDetailPage() {
                       </div>
                       <p className={`text-center text-[9px] mt-1 leading-tight px-0.5 max-w-[56px]
                         ${active ? (activeCr ? "text-orange-700 font-semibold" : "text-green-700 font-semibold") : done ? "text-gray-600" : "text-gray-400"}`}>
-                        {step.label}
+                        {translatedRfqStatus(t, step.key, step.label)}
                       </p>
                     </div>
                   );
@@ -445,7 +461,7 @@ export default function MktRfqDetailPage() {
                     </div>
                     <div>
                       <p className="text-xs text-muted-foreground">Total Penawaran</p>
-                      <p className="font-bold text-green-700 text-lg">{idr(quotation.grandTotal)}</p>
+                      <p className="font-bold text-green-700 text-lg">{idr(quotation.grandTotal, locale)}</p>
                     </div>
                     {quotation.paymentTerms && (
                       <div>
@@ -475,22 +491,22 @@ export default function MktRfqDetailPage() {
 
                   {quotation.lines.length > 0 && (
                     <div className="border-t pt-3 space-y-2">
-                      <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Rincian Item</p>
+                      <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">{t("customerApproval.priceBreakdownTitle", "Item details")}<p>
                       {quotation.lines.map((line, i) => (
                         <div key={i} className="flex items-start justify-between gap-2 py-1.5 border-b border-gray-50 last:border-0">
                           <div className="flex-1 min-w-0">
                             <p className="font-medium text-sm truncate">{line.itemName ?? `Item #${line.rfqLineId}`}</p>
                             <p className="text-xs text-muted-foreground">
-                              {line.offeredQty} × {idr(Number(line.dealUnitPrice))}
+                              {line.offeredQty} × {idr(Number(line.dealUnitPrice), locale)}
                               {line.leadTimeDays != null ? ` · ${line.leadTimeDays} hari` : ""}
                             </p>
                           </div>
-                           <p className="font-semibold text-sm shrink-0">{idr(Number(line.dealSubtotal))}</p>
+                           <p className="font-semibold text-sm shrink-0">{idr(Number(line.dealSubtotal), locale)}</p>
                         </div>
                       ))}
                       <div className="flex justify-between font-bold text-sm pt-1 border-t">
                         <span>Total</span>
-                        <span className="text-green-700">{idr(quotation.grandTotal)}</span>
+                        <span className="text-green-700">{idr(quotation.grandTotal, locale)}</span>
                       </div>
                     </div>
                   )}
@@ -505,7 +521,7 @@ export default function MktRfqDetailPage() {
               )}
 
               {!quotationLoading && !quotation && (
-                <p className="text-muted-foreground text-sm">Detail quotation tidak tersedia.</p>
+                <p className="text-muted-foreground text-sm">{t("common.error", "Quotation details unavailable.")}</p>
               )}
             </CardContent>
           </Card>
@@ -514,32 +530,32 @@ export default function MktRfqDetailPage() {
         {/* RFQ Info */}
         <Card>
           <CardHeader className="pb-2">
-            <CardTitle className="text-sm text-muted-foreground uppercase tracking-wider">Info RFQ</CardTitle>
+            <CardTitle className="text-sm text-muted-foreground uppercase tracking-wider">{t("mktMyRfqs.viewDetail", "RFQ information")}<CardTitle>
           </CardHeader>
           <CardContent className="space-y-2.5 text-sm">
             {rfq.buyer_company && (
               <div className="flex justify-between">
-                <span className="text-muted-foreground">Perusahaan</span>
+                <span className="text-muted-foreground">{t("dashboard.company", "Company")}</span>
                 <span className="font-medium">{rfq.buyer_company}</span>
               </div>
             )}
             <div className="flex justify-between">
-              <span className="text-muted-foreground">Nama Pembeli</span>
+              <span className="text-muted-foreground">{t("customerApproval.forLabel", "Buyer")}</span>
               <span className="font-medium">{rfq.buyer_name}</span>
             </div>
             <div className="flex justify-between">
-              <span className="text-muted-foreground">Tanggal Dibuat</span>
-              <span>{fmtDate(rfq.created_at)}</span>
+              <span className="text-muted-foreground">{t("mktPurchaseOrders.colCreatedAt", "Created")}</span>
+              <span>{fmtDate(rfq.created_at, locale)}</span>
             </div>
             {rfq.required_delivery_date && (
               <div className="flex justify-between">
-                <span className="text-muted-foreground">Diperlukan Tgl</span>
-                <span className="font-medium text-orange-700">{fmtDate(rfq.required_delivery_date)}</span>
+                <span className="text-muted-foreground">{t("mktMyRfqs.requiredLabel", "Required date")}</span>
+                <span className="font-medium text-orange-700">{fmtDate(rfq.required_delivery_date, locale)}</span>
               </div>
             )}
             {rfq.delivery_address && (
               <div className="flex items-start justify-between gap-4">
-                <span className="text-muted-foreground shrink-0">Alamat Pengiriman</span>
+                <span className="text-muted-foreground shrink-0">{t("productOrder.checkout.shippingAddress", "Delivery address")}</span>
                 <span className="text-right">
                   {rfq.delivery_address}
                   {mapsLink(rfq.destination_place_id, rfq.destination_lat, rfq.destination_lng) && (
