@@ -279,19 +279,19 @@ const RECEIPT_TYPE: Record<string, { label: string; color: string; icon: React.R
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-function fmtDate(s: string | null, locale: string, locale): string {
+function fmtDate(s: string | null, locale: string): string {
   if (!s) return "—";
   return new Date(s).toLocaleDateString(locale, { day: "numeric", month: "short", year: "numeric" });
 }
 
-function fmtDateTime(s: string | null, locale: string, locale): string {
+function fmtDateTime(s: string | null, locale: string): string {
   if (!s) return "—";
   return new Date(s).toLocaleString(locale, {
     day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit",
   });
 }
 
-function fmtAmount(amount: string | number | null, currency: string | null, locale: string, locale): string {
+function fmtAmount(amount: string | number | null, currency: string | null, locale: string): string {
   if (amount == null) return "—";
   const num = typeof amount === "string" ? parseFloat(amount) : amount;
   if (isNaN(num)) return "—";
@@ -500,7 +500,7 @@ function ItemsTab({ po }: { po: PoDetail }) {
             <div className="p-5 text-center space-y-2">
               <p className="text-sm text-red-500">{t("common.error", "Failed to load PO items.")}</p>
               <Button size="sm" variant="outline" onClick={() => void refetch()}>
-                <RefreshCw className="w-3.5 h-3.5 mr-1.5" /> Coba Lagi
+                <RefreshCw className="w-3.5 h-3.5 mr-1.5" /> {t("common.retry", "Try again")}
               </Button>
             </div>
           )}
@@ -615,7 +615,7 @@ function ShipmentTab({
       <CardContent className="p-5 text-center space-y-2">
         <p className="text-red-600 text-sm">{t("common.error", "Failed to load shipment.")}</p>
         <Button size="sm" variant="outline" onClick={() => void refetch()}>
-          <RefreshCw className="w-4 h-4 mr-1.5" /> Coba Lagi
+          <RefreshCw className="w-4 h-4 mr-1.5" /> {t("common.retry", "Try again")}
         </Button>
       </CardContent>
     </Card>

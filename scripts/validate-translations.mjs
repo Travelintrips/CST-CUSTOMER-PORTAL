@@ -178,6 +178,11 @@ for (const rel of criticalPages) {
     errors.push(`[${rel}] critical customer page is not connected to LanguageContext`);
     hasError = true;
   }
+  const duplicateLocaleParam = /locale\s*:\s*string\s*,\s*locale(?:\s*:\s*string)?/;
+  if (duplicateLocaleParam.test(page)) {
+    errors.push(`[${rel}] contains a duplicate locale function parameter`);
+    hasError = true;
+  }
   const fixedLocale = /(?:toLocaleString|toLocaleDateString|Intl\.NumberFormat)\(\s*["']id-ID["']/;
   if (fixedLocale.test(page)) {
     errors.push(`[${rel}] still hardcodes id-ID formatting instead of the selected locale`);
