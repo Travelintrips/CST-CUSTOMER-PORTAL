@@ -343,7 +343,7 @@ export default function OnboardingPage() {
   async function handleBaseNext(data: BaseForm) {
     const effectiveRole = registeredRole ?? accountType;
     if ((effectiveRole === "customer" || effectiveRole === "vendor") && !ktpFile && !ktpUrl) {
-      setDocumentError("KTP wajib diunggah untuk melanjutkan pendaftaran.");
+      setDocumentError(t("onboarding.errorRequired", "Harap lengkapi semua field wajib."));
       return;
     }
     setDocumentError(null);
@@ -372,7 +372,7 @@ export default function OnboardingPage() {
   function handleAccountTypeNext() {
     if (accountType === "customer") {
       if (!customerType) {
-        setCompanyError("Pilih tipe customer: Perorangan atau Perusahaan.");
+        setCompanyError(t("onboarding.errorRequired", "Harap lengkapi semua field wajib."));
         return;
       }
       setCompanyError(null);
@@ -389,11 +389,11 @@ export default function OnboardingPage() {
         return;
       }
       if (!selectedCompanyId && (!companyRequestMode || !requestedCompanyName.trim())) {
-        setCompanyError("Pilih perusahaan yang sudah terdaftar atau daftarkan perusahaan baru.");
+        setCompanyError(t("onboarding.errorRequired", "Harap lengkapi semua field wajib."));
         return;
       }
       if (!selectedCompanyId && companyRequestMode && !requestedRegistrationNumber.trim()) {
-        setCompanyError("NIB / NPWP wajib diisi untuk perusahaan baru.");
+        setCompanyError(t("onboarding.errorRequired", "Harap lengkapi semua field wajib."));
         return;
       }
       setCompanyError(null);
@@ -425,12 +425,12 @@ export default function OnboardingPage() {
   async function handleSubmit() {
     setSubmitError(null);
     if ((accountType === "customer" || accountType === "vendor") && !ktpFile && !ktpUrl) {
-      setDocumentError("KTP wajib diunggah untuk menyelesaikan pendaftaran.");
+      setDocumentError(t("onboarding.errorRequired", "Harap lengkapi semua field wajib."));
       setStep("basic");
       return;
     }
     if (accountType === "vendor" && !legalityFile && !legalityUrl) {
-      setSubmitError("Dokumen legalitas vendor wajib diunggah.");
+      setSubmitError(t("onboarding.errorRequired", "Harap lengkapi semua field wajib."));
       setStep("type-specific");
       return;
     }
@@ -1158,7 +1158,7 @@ function LegacyOrganizationCompletion({
   async function submit() {
     setError(null);
     if (!customerType) {
-      setError("Pilih Perorangan atau Perusahaan terlebih dahulu.");
+      setError(t("onboarding.errorRequired", "Harap lengkapi semua field wajib."));
       return;
     }
     if (
@@ -1166,7 +1166,7 @@ function LegacyOrganizationCompletion({
       && !selectedCompanyId
       && (!companyRequestMode || !requestedCompanyName.trim())
     ) {
-      setError("Pilih perusahaan yang sudah terdaftar atau ajukan perusahaan baru.");
+      setError(t("onboarding.errorRequired", "Harap lengkapi semua field wajib."));
       return;
     }
 
@@ -1192,7 +1192,7 @@ function LegacyOrganizationCompletion({
         context?: { status?: string };
       };
       if (!response.ok) {
-        setError(data.error ?? "Gagal menyimpan pilihan organisasi.");
+        setError(data.error ?? t("onboarding.submit.saveFailed", "Gagal menyimpan profil."));
         return;
       }
       clearPortalAuthBootstrap();
@@ -1202,7 +1202,7 @@ function LegacyOrganizationCompletion({
         setLocation("/dashboard");
       }
     } catch {
-      setError("Gagal menghubungi server. Silakan coba lagi.");
+      setError(t("onboarding.submit.serverError", "Gagal menghubungi server."));
     } finally {
       setSubmitting(false);
     }
