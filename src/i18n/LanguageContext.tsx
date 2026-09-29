@@ -770,7 +770,21 @@ const LEGACY_ADMIN_LITERAL_OVERRIDES: Record<string, Record<string, string>> = {
 };
 
 function legacyAdminOverridesFor(locale: string): Record<string, string> {
-  return LEGACY_ADMIN_LITERAL_OVERRIDES[locale] ?? LEGACY_ADMIN_LITERAL_OVERRIDES[locale.split("-")[0]] ?? {};
+  const target = LEGACY_ADMIN_LITERAL_OVERRIDES[locale] ?? LEGACY_ADMIN_LITERAL_OVERRIDES[locale.split("-")[0]] ?? {};
+  if (locale.startsWith("en") || Object.keys(target).length === 0) return target;
+
+  // The locale sanitizer intentionally replaces stale Indonesian bundle values
+  // with English fallbacks. Add English aliases here so the legacy bridge can
+  // still render those admin literals in the selected target language.
+  const english = LEGACY_ADMIN_LITERAL_OVERRIDES.en ?? {};
+  const aliases: Record<string, string> = { ...target };
+  for (const [source, englishValue] of Object.entries(english)) {
+    const translated = target[source];
+    if (translated && englishValue && !aliases[englishValue]) {
+      aliases[englishValue] = translated;
+    }
+  }
+  return aliases;
 }
 
 const LEGACY_LITERAL_KEY_ALIASES: Record<string, string> = {
