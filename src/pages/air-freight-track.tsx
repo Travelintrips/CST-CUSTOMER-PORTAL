@@ -115,7 +115,7 @@ export default function AirFreightTrackPage() {
             <span className="text-white/50">{t("airFreight.summaryChargeable", "Chargeable weight")}</span>
             <span className="text-white font-medium">
               <Weight className="w-3.5 h-3.5 inline mr-1 text-sky-400" />
-              {Number(order.chargeable_weight ?? 0).toLocaleString("id-ID")} kg
+              {Number(order.chargeable_weight ?? 0).toLocaleString(locale)} kg
             </span>
           </div>
           {order.airline && (
