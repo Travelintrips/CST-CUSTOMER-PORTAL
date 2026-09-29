@@ -189,18 +189,18 @@ function WaIcon() {
 
 function buildWaPaymentLink(data: InvoiceData): string {
   const inv = data.invoiceNumber ? `No. Invoice: *${data.invoiceNumber}*` : "";
-  const ord = data.orderNumber ? `No. Order: *${data.orderNumber}*` : "";
+  const ord = data.orderNumber ? `${t("customerApproval.orderLabel", "Order")}: *${data.orderNumber}*` : "";
   const total = data.grandTotal != null
-    ? `Total: *${data.currency ?? "IDR"} ${Math.round(data.grandTotal).toLocaleString("id-ID")}*`
+    ? `${t("tracking.total", "Total")}: *${data.currency ?? "IDR"} ${Math.round(data.grandTotal).toLocaleString(locale)}*`
     : "";
   const paid = data.amountPaid > 0
-    ? `Sudah Dibayar: *${data.currency ?? "IDR"} ${Math.round(data.amountPaid).toLocaleString("id-ID")}*`
+    ? `${t("tracking.paymentReceived", "Paid")}: *${data.currency ?? "IDR"} ${Math.round(data.amountPaid).toLocaleString(locale)}*`
     : "";
   const remaining = data.grandTotal != null && data.amountPaid > 0
-    ? `Sisa: *${data.currency ?? "IDR"} ${Math.round(Math.max(0, data.grandTotal - data.amountPaid)).toLocaleString("id-ID")}*`
+    ? `${t("portalInvoice.totalUnpaid", "Outstanding")}: *${data.currency ?? "IDR"} ${Math.round(Math.max(0, data.grandTotal - data.amountPaid)).toLocaleString(locale)}*`
     : "";
   const lines = [inv, ord, total, paid, remaining].filter(Boolean).join("\n");
-  const msg = `📄 *Konfirmasi Pembayaran Invoice*\n\n${lines}\n\nSaya telah melakukan pembayaran. Mohon dikonfirmasi. Terima kasih.`;
+  const msg = `📄 *${t("common.confirm", "Payment confirmation")}*\n\n${lines}\n\n${t("tracking.contactUs", "I have completed the payment. Please confirm it. Thank you.")}`;
   return `https://wa.me/?text=${encodeURIComponent(msg)}`;
 }
 
@@ -311,7 +311,7 @@ export default function CustomerInvoicePage() {
           <span className="font-semibold text-sm">{statusInfo.text}</span>
           {isLate && (
             <span className="text-xs font-medium bg-red-100 text-red-600 border border-red-200 px-2 py-0.5 rounded-full">
-              Melewati Jatuh Tempo
+              {t("mktMyRfqs.rfqStatusExpired", "Past due")}
             </span>
           )}
         </div>
@@ -356,7 +356,7 @@ export default function CustomerInvoicePage() {
               )}
               {data.taxAmount != null && (
                 <div className="flex justify-between text-sm text-slate-600">
-                  <span>PPN {data.taxRate}% <span className="text-xs text-slate-400">(nominal)</span></span>
+                  <span>PPN {data.taxRate}% <span className="text-xs text-slate-400">{t("vendorQuote.priceLabel", "amount")}</span></span>
                   <span>{fmtNum(data.taxAmount, data.currency, locale)}</span>
                 </div>
               )}
@@ -446,7 +446,7 @@ export default function CustomerInvoicePage() {
               {t("tracking.contactUs", "After payment, send confirmation to our team via WhatsApp.")}
             </p>
             <a
-              href={buildWaPaymentLink(data)}
+              href={buildWaPaymentLink(data, locale, t)}
               target="_blank"
               rel="noopener noreferrer"
               className="flex items-center justify-center gap-2 w-full rounded-xl bg-[#25D366] hover:bg-[#1ebe5a] text-white font-semibold py-3.5 text-sm transition-colors"
