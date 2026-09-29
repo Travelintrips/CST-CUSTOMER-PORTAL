@@ -19,9 +19,13 @@ describe("customer company onboarding contract", () => {
     expect(languageContext).not.toContain('"Perusahaan saya belum terdaftar": "dashboard.notProvided"');
   });
 
-  it("locks onboarding to the registration role without presenting unrelated public roles", () => {
-    expect(onboarding).toContain('registeredRole ? item.value === registeredRole : ["customer", "vendor"].includes(item.value)');
-    expect(onboarding).toContain("Tipe akun dikunci sesuai pilihan saat pendaftaran");
+  it("does not show account-role choices again after registration already fixed the role", () => {
+    expect(onboarding).toContain('if (registeredRole === "vendor")');
+    expect(onboarding).toContain('if (registeredRole === "customer" && customerType === "company")');
+    expect(onboarding).toContain('if (registeredRole === "customer" && customerType === "individual")');
+    expect(onboarding).toContain("{!registeredRole && (");
+    expect(onboarding).toContain('ACCOUNT_TYPES.filter((item) => ["customer", "vendor"].includes(item.value))');
+    expect(onboarding).not.toContain("Driver dan Karyawan bukan pilihan registrasi Customer");
   });
 
   it("requires identity and legal documents at both UI and server boundaries", () => {

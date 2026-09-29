@@ -348,6 +348,24 @@ export default function OnboardingPage() {
     }
     setDocumentError(null);
     setBaseData(data);
+
+    // Role and customer type are chosen on /register. Do not ask the user to
+    // choose Customer/Vendor/Driver/Employee again during onboarding.
+    if (registeredRole === "vendor") {
+      setStep("type-specific");
+      return;
+    }
+    if (registeredRole === "customer" && customerType === "company") {
+      setStep("type-specific");
+      return;
+    }
+    if (registeredRole === "customer" && customerType === "individual") {
+      setStep("review");
+      return;
+    }
+
+    // Compatibility fallback for older/incomplete accounts that do not yet
+    // have a persisted registration intent.
     setStep("account-type");
   }
 
@@ -630,86 +648,79 @@ export default function OnboardingPage() {
           {/* ── STEP 2: Account Type ── */}
           {step === "account-type" && (
             <div className="space-y-5">
-              <h2 className="text-lg font-semibold mb-2">{t("onboarding.accountType.title", "Tipe Akun")}</h2>
-              {registeredRole && (
-                <div className="rounded-lg border border-blue-200 bg-blue-50 p-3 text-sm text-blue-800 mb-4">
-                  Anda mendaftar sebagai <strong>{ACCOUNT_TYPES.find((item) => item.value === registeredRole)?.label ?? registeredRole}</strong>.
-                  Tipe akun dikunci sesuai pilihan saat pendaftaran. Vendor harus dipilih dari halaman registrasi sebagai Vendor; Driver dan Karyawan bukan pilihan registrasi Customer.
-                </div>
-              )}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                {ACCOUNT_TYPES.filter((item) => registeredRole ? item.value === registeredRole : ["customer", "vendor"].includes(item.value)).map(({ value, label, desc, icon: Icon }) => (
-                  <button
-                    key={value}
-                    type="button"
-                    disabled={registeredRole !== null && value !== registeredRole}
-                    onClick={() => {
-                      if (registeredRole !== null && value !== registeredRole) return;
-                      setAccountType(value);
-                    }}
-                    className={`flex items-start gap-3 rounded-xl border-2 p-4 text-left transition-all ${
-                      registeredRole !== null && value !== registeredRole
-                        ? "border-gray-100 bg-gray-50 opacity-45 cursor-not-allowed"
-                        : accountType === value
+              <h2 className="text-lg font-semibold mb-2">
+                {registeredRole === "customer" ? "Tipe Customer" : t("onboarding.accountType.title", "Tipe Akun")}
+              </h2>
+
+              {!registeredRole && (
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  {ACCOUNT_TYPES.filter((item) => ["customer", "vendor"].includes(item.value)).map(({ value, label, desc, icon: Icon }) => (
+                    <button
+                      key={value}
+                      type="button"
+                      onClick={() => setAccountType(value)}
+                      className={`flex items-start gap-3 rounded-xl border-2 p-4 text-left transition-all ${
+                        accountType === value
                           ? "border-primary bg-primary/5 shadow-sm"
                           : "border-gray-100 hover:border-gray-200 hover:bg-gray-50"
-                    }`}
-                  >
-                    <div className={`mt-0.5 p-2 rounded-lg ${accountType === value ? "bg-primary text-white" : "bg-gray-100 text-gray-500"}`}>
-                      <Icon className="h-5 w-5" />
-                    </div>
-                    <div>
-                      <p className="font-semibold text-sm">{label}</p>
-                      <p className="text-xs text-muted-foreground mt-0.5">{desc}</p>
-                      {value !== "customer" && (
-                        <Badge variant="secondary" className="mt-1 text-xs">{t("onboarding.accountType.needsAdminApproval", "Perlu persetujuan admin")}</Badge>
-                      )}
-                    </div>
-                  </button>
-                ))}
-              </div>
+                      }`}
+                    >
+                      <div className={`mt-0.5 p-2 rounded-lg ${accountType === value ? "bg-primary text-white" : "bg-gray-100 text-gray-500"}`}>
+                        <Icon className="h-5 w-5" />
+                      </div>
+                      <div>
+                        <p className="font-semibold text-sm">{label}</p>
+                        <p className="text-xs text-muted-foreground mt-0.5">{desc}</p>
+                        {value === "vendor" && (
+                          <Badge variant="secondary" className="mt-1 text-xs">{t("onboarding.accountType.needsAdminApproval", "Perlu persetujuan admin")}</Badge>
+                        )}
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              )}
 
-               {accountType === "customer" && (
-                 <div className="space-y-3 rounded-xl border border-emerald-200 bg-emerald-50/50 p-4">
-                   <div>
-                     <p className="font-semibold text-sm">Tipe Customer</p>
-                     <p className="text-xs text-muted-foreground mt-1">
-                       Pilihan ini menentukan apakah akun Anda memakai konteks perusahaan.
-                     </p>
-                   </div>
-                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                     {([
-                       { value: "individual" as const, label: "Perorangan", desc: "Tidak memerlukan membership perusahaan.", icon: User },
-                       { value: "company" as const, label: "Perusahaan", desc: "Terhubung ke perusahaan canonical atau ajukan perusahaan baru.", icon: Building2 },
-                     ]).map(({ value, label, desc, icon: Icon }) => (
-                       <button
-                         key={value}
-                         type="button"
-                         onClick={() => {
-                           setCustomerType(value);
-                           setCompanyError(null);
-                           if (value === "individual") {
-                             setSelectedCompanyId(null);
-                             setCompanyRequestMode(false);
-                           }
-                         }}
-                         className={`flex items-start gap-3 rounded-lg border-2 p-3 text-left transition-all ${
-                           customerType === value
-                             ? "border-emerald-500 bg-white shadow-sm"
-                             : "border-white bg-white hover:border-emerald-200"
-                         }`}
-                       >
-                         <Icon className={`mt-0.5 h-5 w-5 ${customerType === value ? "text-emerald-600" : "text-gray-400"}`} />
-                         <span>
-                           <span className="block font-semibold text-sm">{label}</span>
-                           <span className="block text-xs text-muted-foreground mt-0.5">{desc}</span>
-                         </span>
-                       </button>
-                     ))}
-                   </div>
-                   {companyError && <p className="text-sm text-red-600">{companyError}</p>}
-                 </div>
-               )}
+              {accountType === "customer" && (
+                <div className="space-y-3 rounded-xl border border-emerald-200 bg-emerald-50/50 p-4">
+                  <div>
+                    <p className="font-semibold text-sm">Tipe Customer</p>
+                    <p className="text-xs text-muted-foreground mt-1">
+                      Pilihan ini hanya ditampilkan jika data tipe customer dari registrasi sebelumnya belum tersedia.
+                    </p>
+                  </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    {([
+                      { value: "individual" as const, label: "Perorangan", desc: "Tidak memerlukan membership perusahaan.", icon: User },
+                      { value: "company" as const, label: "Perusahaan", desc: "Terhubung ke perusahaan terdaftar atau daftarkan perusahaan baru.", icon: Building2 },
+                    ]).map(({ value, label, desc, icon: Icon }) => (
+                      <button
+                        key={value}
+                        type="button"
+                        onClick={() => {
+                          setCustomerType(value);
+                          setCompanyError(null);
+                          if (value === "individual") {
+                            setSelectedCompanyId(null);
+                            setCompanyRequestMode(false);
+                          }
+                        }}
+                        className={`flex items-start gap-3 rounded-lg border-2 p-3 text-left transition-all ${
+                          customerType === value
+                            ? "border-emerald-500 bg-white shadow-sm"
+                            : "border-white bg-white hover:border-emerald-200"
+                        }`}
+                      >
+                        <Icon className={`mt-0.5 h-5 w-5 ${customerType === value ? "text-emerald-600" : "text-gray-400"}`} />
+                        <span>
+                          <span className="block font-semibold text-sm">{label}</span>
+                          <span className="block text-xs text-muted-foreground mt-0.5">{desc}</span>
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                  {companyError && <p className="text-sm text-red-600">{companyError}</p>}
+                </div>
+              )}
 
               <div className="flex gap-3 pt-2">
                 <Button variant="outline" className="flex-1 gap-2" onClick={goBack}>
