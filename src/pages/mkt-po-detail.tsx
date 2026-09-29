@@ -1988,7 +1988,7 @@ export default function MktPoDetailPage({ params }: { params?: { poId?: string }
               {!selectedShipmentId && (
                 <div className="flex items-center gap-2 p-3 bg-amber-50 border border-amber-200 rounded-lg text-sm text-amber-700">
                   <Info className="w-4 h-4 shrink-0" />
-                  Pilih shipment di tab <button className="underline font-medium" onClick={() => setActiveTab("shipment")}>Shipment</button> terlebih dahulu.
+                  {t("mktVendorPo.shipmentInfo", "Select a shipment first.")} <button className="underline font-medium" onClick={() => setActiveTab("shipment")}>Shipment</button>
                 </div>
               )}
               <GoodsReceiptTab shipmentId={selectedShipmentId} poId={po.id} />
@@ -1999,7 +1999,7 @@ export default function MktPoDetailPage({ params }: { params?: { poId?: string }
               {!selectedShipmentId && (
                 <div className="flex items-center gap-2 p-3 bg-amber-50 border border-amber-200 rounded-lg text-sm text-amber-700">
                   <Info className="w-4 h-4 shrink-0" />
-                  Pilih shipment di tab <button className="underline font-medium" onClick={() => setActiveTab("shipment")}>Shipment</button> terlebih dahulu.
+                  {t("mktVendorPo.shipmentInfo", "Select a shipment first.")} <button className="underline font-medium" onClick={() => setActiveTab("shipment")}>Shipment</button>
                 </div>
               )}
               <TimelineTab shipmentId={selectedShipmentId} />
