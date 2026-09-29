@@ -833,7 +833,7 @@ export default function Register() {
                   className="h-4 w-4 rounded border-gray-300 text-emerald-600 accent-emerald-600 cursor-pointer"
                 />
                 <span className="text-sm text-slate-600 group-hover:text-slate-800 select-none">
-                  Ingat perangkat ini selama <strong>{REMEMBER_DAYS} hari</strong>
+                  {t("registerPage.rememberDevice", "Remember this device for {days} days").replace("{days}", String(REMEMBER_DAYS))}
                 </span>
               </label>
 
