@@ -6,6 +6,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
+import { useLanguage } from "@/i18n/LanguageContext";
 import {
   ArrowLeft,
   Building2,
@@ -278,23 +279,43 @@ const RECEIPT_TYPE: Record<string, { label: string; color: string; icon: React.R
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-function fmtDate(s: string | null): string {
+function fmtDate(s: string | null, locale: string, locale): string {
   if (!s) return "—";
-  return new Date(s).toLocaleDateString("id-ID", { day: "numeric", month: "short", year: "numeric" });
+  return new Date(s).toLocaleDateString(locale, { day: "numeric", month: "short", year: "numeric" });
 }
 
-function fmtDateTime(s: string | null): string {
+function fmtDateTime(s: string | null, locale: string, locale): string {
   if (!s) return "—";
-  return new Date(s).toLocaleString("id-ID", {
+  return new Date(s).toLocaleString(locale, {
     day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit",
   });
 }
 
-function fmtAmount(amount: string | number | null, currency: string | null): string {
+function fmtAmount(amount: string | number | null, currency: string | null, locale: string, locale): string {
   if (amount == null) return "—";
   const num = typeof amount === "string" ? parseFloat(amount) : amount;
   if (isNaN(num)) return "—";
-  return `${currency ?? "IDR"} ${new Intl.NumberFormat("id-ID").format(num)}`;
+  return `${currency ?? "IDR"} ${new Intl.NumberFormat(locale).format(num)}`;
+}
+
+function poStatusLabel(t: (key: string, fallback?: string) => string, status: string, fallback: string) {
+  const keys: Record<string, string> = {
+    draft: "mktPurchaseOrders.statusDraft",
+    issued: "mktPurchaseOrders.statusIssued",
+    vendor_accepted: "mktPurchaseOrders.statusVendorAccepted",
+    vendor_rejected: "mktPurchaseOrders.statusVendorRejected",
+    revision_requested: "mktPurchaseOrders.statusRevisionRequested",
+    production: "mktPurchaseOrders.statusProduction",
+    ready_to_ship: "mktPurchaseOrders.statusReadyToShip",
+    in_transit: "mktPurchaseOrders.statusInTransit",
+    delivered: "mktPurchaseOrders.statusDelivered",
+    completed: "mktPurchaseOrders.statusCompleted",
+    cancelled: "mktPurchaseOrders.statusCancelled",
+    closed: "mktPurchaseOrders.statusClosed",
+    partially_delivered: "mktPurchaseOrders.statusPartiallyDelivered",
+    rejected_goods: "mktPurchaseOrders.statusRejectedGoods",
+  };
+  return keys[status] ? t(keys[status], fallback) : fallback;
 }
 
 function InfoRow({ label, value }: { label: string; value: React.ReactNode }) {
@@ -321,6 +342,7 @@ const TABS: { id: Tab; label: string; icon: React.ReactNode }[] = [
 // ── Sub-components ────────────────────────────────────────────────────────────
 
 function OverviewTab({ po }: { po: PoDetail }) {
+  const { locale, t } = useLanguage();
   const st = PO_STATUS[po.status] ?? { label: po.status, color: "bg-gray-100 text-gray-700" };
 
   return (
@@ -328,22 +350,22 @@ function OverviewTab({ po }: { po: PoDetail }) {
       {/* Status */}
       <Card>
         <CardHeader className="pb-2">
-          <CardTitle className="text-base">Status PO</CardTitle>
+          <CardTitle className="text-base">{t("mktVendorPo.status", "PO status")}<CardTitle>
         </CardHeader>
         <CardContent className="space-y-3">
           <div className="flex items-center gap-3">
             <Badge className={`text-sm px-3 py-1 ${st.color}`} variant="secondary">
-              {st.label}
+              {poStatusLabel(t, po.status, st.label)}
             </Badge>
             {po.cancelledAt && (
               <span className="text-xs text-red-600">
-                Dibatalkan: {fmtDate(po.cancelledAt)}
+                {t("mktPurchaseOrders.statusCancelled", "Cancelled")}: {fmtDate(po.cancelledAt, locale)}
               </span>
             )}
           </div>
           {po.cancelReason && (
             <div className="p-3 bg-red-50 rounded-lg text-sm text-red-700">
-              <span className="font-medium">Alasan: </span>{po.cancelReason}
+              <span className="font-medium">{t("mktMyRfqs.rejectionReason", "Reason")}: </span>{po.cancelReason}
             </div>
           )}
         </CardContent>
@@ -353,19 +375,19 @@ function OverviewTab({ po }: { po: PoDetail }) {
       <Card>
         <CardHeader className="pb-2">
           <CardTitle className="text-base flex items-center gap-2">
-            <Building2 className="w-4 h-4 text-orange-500" /> {po.isInternalVendor ? "Vendor Internal" : "Penyedia"}
+            <Building2 className="w-4 h-4 text-orange-500" /> {po.isInternalVendor ? t("mktVendorPo.vendor", "Internal vendor") : t("mktVendorPo.vendor", "Provider")}
           </CardTitle>
         </CardHeader>
         <CardContent className="space-y-2">
-          <InfoRow label={po.isInternalVendor ? "Nama Vendor" : "Dikelola oleh"} value={po.vendorName ?? po.vendorNameSnapshot} />
+          <InfoRow label={po.isInternalVendor ? t("mktVendorPo.vendor", "Vendor") : t("tracking.vendor", "Managed by")} value={po.vendorName ?? po.vendorNameSnapshot} />
           {po.isInternalVendor && po.vendorAddressSnapshot && (
-            <InfoRow label="Alamat" value={po.vendorAddressSnapshot} />
+            <InfoRow label={t("mktVendorPo.vendorAddress", "Address")} value={po.vendorAddressSnapshot} />
           )}
-          {po.isInternalVendor && po.vendorPhone && <InfoRow label="Telepon" value={po.vendorPhone} />}
+          {po.isInternalVendor && po.vendorPhone && <InfoRow label={t("dashboard.phone", "Phone")} value={po.vendorPhone} />}
           {po.isInternalVendor && po.vendorEmail && <InfoRow label="Email" value={po.vendorEmail} />}
           {!po.isInternalVendor && (
             <p className="text-xs text-slate-500 pt-1">
-              Seluruh komunikasi, pembayaran, dan layanan transaksi ini dikelola melalui PT Cahaya Sejati Teknologi (CST).
+              {t("tracking.contactUs", "All communication, payments, and transaction services are managed through PT Cahaya Sejati Teknologi (CST).")}
             </p>
           )}
         </CardContent>
@@ -375,11 +397,11 @@ function OverviewTab({ po }: { po: PoDetail }) {
       <Card>
         <CardHeader className="pb-2">
           <CardTitle className="text-base flex items-center gap-2">
-            <User className="w-4 h-4 text-blue-500" /> Buyer
+            <User className="w-4 h-4 text-blue-500" /> {t("mktVendorQuote.buyer", "Buyer")}
           </CardTitle>
         </CardHeader>
         <CardContent className="space-y-2">
-          <InfoRow label="Nama" value={po.buyerName} />
+          <InfoRow label={t("register.fullName", "Name")} value={po.buyerName} />
           <InfoRow label="Email" value={po.buyerEmail} />
           <InfoRow label="RFQ Number" value={po.rfqNumber} />
         </CardContent>
@@ -388,25 +410,25 @@ function OverviewTab({ po }: { po: PoDetail }) {
       {/* PO Information */}
       <Card>
         <CardHeader className="pb-2">
-          <CardTitle className="text-base">Informasi PO</CardTitle>
+          <CardTitle className="text-base">{t("mktVendorPo.poInfoTitle", "PO information")}<CardTitle>
         </CardHeader>
         <CardContent className="space-y-2">
-          <InfoRow label="PO Number" value={<span className="font-mono">{po.poNumber}</span>} />
-          {po.quotationNumberSnapshot && <InfoRow label="No. Quotasi" value={po.quotationNumberSnapshot} />}
-          {po.quotationDateSnapshot && <InfoRow label="Tanggal Quotasi" value={fmtDate(po.quotationDateSnapshot)} />}
+          <InfoRow label={t("mktVendorPo.poNumber", "PO number")} value={<span className="font-mono">{po.poNumber}</span>} />
+          {po.quotationNumberSnapshot && <InfoRow label={t("mktVendorPo.quotationNumber", "Quotation no.")} value={po.quotationNumberSnapshot} />}
+          {po.quotationDateSnapshot && <InfoRow label={t("mktVendorPo.quotationDate", "Quotation date")} value={fmtDate(po.quotationDateSnapshot, locale)} />}
           <InfoRow label="Incoterm" value={po.incotermSnapshot} />
-          <InfoRow label="Payment Terms" value={po.paymentTermsSnapshot} />
-          <InfoRow label="Mata Uang" value={po.currencySnapshot} />
-          <InfoRow label="Lead Time" value={po.leadTimeDaysSnapshot ? `${po.leadTimeDaysSnapshot} hari` : "—"} />
-          <InfoRow label="Total" value={fmtAmount(po.totalAmount, po.currencySnapshot)} />
-          {po.taxAmount !== null && <InfoRow label="Pajak" value={fmtAmount(po.taxAmount, po.currencySnapshot)} />}
-          <InfoRow label="Grand Total" value={
+          <InfoRow label={t("mktVendorPo.paymentTerms", "Payment terms")} value={po.paymentTermsSnapshot} />
+          <InfoRow label={t("mktVendorPo.currency", "Currency")} value={po.currencySnapshot} />
+          <InfoRow label={t("mktVendorPo.leadTime", "Lead time")} value={po.leadTimeDaysSnapshot ? `${po.leadTimeDaysSnapshot} hari` : "—"} />
+          <InfoRow label={t("tracking.total", "Total")} value={fmtAmount(po.totalAmount, po.currencySnapshot, locale)} />
+          {po.taxAmount !== null && <InfoRow label={t("mktVendorPo.tax", "Tax")} value={fmtAmount(po.taxAmount, po.currencySnapshot, locale)} />}
+          <InfoRow label={t("mktVendorPo.grandTotal", "Grand total")} value={
             <span className="text-orange-600 font-semibold">
-              {fmtAmount(po.grandTotal, po.currencySnapshot)}
+              {fmtAmount(po.grandTotal, po.currencySnapshot, locale)}
             </span>
           } />
-          <InfoRow label="Dibuat" value={fmtDateTime(po.createdAt)} />
-          <InfoRow label="Dikonfirmasi" value={fmtDateTime(po.confirmedAt)} />
+          <InfoRow label={t("mktPurchaseOrders.colCreatedAt", "Created")} value={fmtDateTime(po.createdAt, locale)} />
+          <InfoRow label={t("common.confirm", "Confirmed")} value={fmtDateTime(po.confirmedAt, locale)} />
         </CardContent>
       </Card>
 
@@ -414,7 +436,7 @@ function OverviewTab({ po }: { po: PoDetail }) {
       {po.rfqNotes && (
         <Card>
           <CardHeader className="pb-2">
-            <CardTitle className="text-base">Catatan RFQ</CardTitle>
+            <CardTitle className="text-base">{t("mktVendorQuote.buyerNotes", "RFQ notes")}<CardTitle>
           </CardHeader>
           <CardContent>
             <p className="text-sm text-gray-700 whitespace-pre-wrap">{po.rfqNotes}</p>
@@ -439,6 +461,7 @@ interface PoLine {
 }
 
 function ItemsTab({ po }: { po: PoDetail }) {
+  const { locale, t } = useLanguage();
   const { data, isLoading, isError, refetch } = useQuery<{ ok: boolean; count: number; data: PoLine[] }>({
     queryKey: ["mkt-po-items", po.id],
     queryFn: async () => {
@@ -475,7 +498,7 @@ function ItemsTab({ po }: { po: PoDetail }) {
           )}
           {isError && (
             <div className="p-5 text-center space-y-2">
-              <p className="text-sm text-red-500">Gagal memuat item PO.</p>
+              <p className="text-sm text-red-500">{t("common.error", "Failed to load PO items.")}</p>
               <Button size="sm" variant="outline" onClick={() => void refetch()}>
                 <RefreshCw className="w-3.5 h-3.5 mr-1.5" /> Coba Lagi
               </Button>
@@ -484,7 +507,7 @@ function ItemsTab({ po }: { po: PoDetail }) {
           {!isLoading && !isError && lines.length === 0 && (
             <div className="p-10 text-center">
               <Package className="w-10 h-10 text-gray-200 mx-auto mb-3" />
-              <p className="text-sm text-gray-400">Tidak ada item pada PO ini.</p>
+              <p className="text-sm text-gray-400">{t("mktVendorPo.noItems", "No items in this PO.")}</p>
             </div>
           )}
           {!isLoading && !isError && lines.length > 0 && (
@@ -493,12 +516,12 @@ function ItemsTab({ po }: { po: PoDetail }) {
                 <thead>
                   <tr className="border-b bg-gray-50 text-xs text-gray-500">
                     <th className="px-4 py-2.5 text-left font-medium w-12">#</th>
-                    <th className="px-4 py-2.5 text-left font-medium">Item</th>
-                    <th className="px-4 py-2.5 text-right font-medium">Qty</th>
-                    <th className="px-4 py-2.5 text-left font-medium">Unit</th>
-                    <th className="px-4 py-2.5 text-right font-medium">Harga Satuan</th>
-                    <th className="px-4 py-2.5 text-right font-medium">Subtotal</th>
-                    <th className="px-4 py-2.5 text-left font-medium hidden lg:table-cell">Catatan</th>
+                    <th className="px-4 py-2.5 text-left font-medium">{t("vendorMiniForm.itemDetail", "Item")}</th>
+                    <th className="px-4 py-2.5 text-right font-medium">{t("mktVendorPo.qty", "Qty")}</th>
+                    <th className="px-4 py-2.5 text-left font-medium">{t("customerApproval.unitCol", "Unit")}</th>
+                    <th className="px-4 py-2.5 text-right font-medium">{t("mktVendorPo.unitPrice", "Unit price")}</th>
+                    <th className="px-4 py-2.5 text-right font-medium">{t("mktVendorPo.subtotal", "Subtotal")}</th>
+                    <th className="px-4 py-2.5 text-left font-medium hidden lg:table-cell">{t("mktVendorQuote.notes", "Notes")}</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -508,8 +531,8 @@ function ItemsTab({ po }: { po: PoDetail }) {
                       <td className="px-4 py-3 font-medium text-gray-800">{line.itemName}</td>
                       <td className="px-4 py-3 text-right tabular-nums">{parseFloat(line.qty).toLocaleString("id-ID")}</td>
                       <td className="px-4 py-3 text-gray-500">{line.unit ?? "—"}</td>
-                      <td className="px-4 py-3 text-right tabular-nums">{fmtAmount(line.unitPrice, po.currencySnapshot)}</td>
-                      <td className="px-4 py-3 text-right tabular-nums font-semibold text-gray-800">{fmtAmount(line.subtotal, po.currencySnapshot)}</td>
+                      <td className="px-4 py-3 text-right tabular-nums">{fmtAmount(line.unitPrice, po.currencySnapshot, locale)}</td>
+                      <td className="px-4 py-3 text-right tabular-nums font-semibold text-gray-800">{fmtAmount(line.subtotal, po.currencySnapshot, locale)}</td>
                       <td className="px-4 py-3 text-gray-400 text-xs hidden lg:table-cell">{line.notes ?? "—"}</td>
                     </tr>
                   ))}
@@ -518,7 +541,7 @@ function ItemsTab({ po }: { po: PoDetail }) {
                   <tr className="border-t bg-gray-50/60">
                     <td colSpan={5} className="px-4 py-2.5 text-right text-xs text-gray-500 font-medium">Grand Total</td>
                     <td className="px-4 py-2.5 text-right font-bold text-orange-600">
-                      {fmtAmount(po.grandTotal, po.currencySnapshot)}
+                      {fmtAmount(po.grandTotal, po.currencySnapshot, locale)}
                     </td>
                     <td className="hidden lg:table-cell" />
                   </tr>
@@ -589,7 +612,7 @@ function ShipmentTab({
   if (isError) return (
     <Card className="border-red-200 bg-red-50">
       <CardContent className="p-5 text-center space-y-2">
-        <p className="text-red-600 text-sm">Gagal memuat shipment.</p>
+        <p className="text-red-600 text-sm">{t("common.error", "Failed to load shipment.")}</p>
         <Button size="sm" variant="outline" onClick={() => void refetch()}>
           <RefreshCw className="w-4 h-4 mr-1.5" /> Coba Lagi
         </Button>
@@ -603,7 +626,7 @@ function ShipmentTab({
         <div className="flex gap-3">
           <Clock className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
           <div>
-            <p className="font-semibold text-amber-900">Menunggu vendor menerima Purchase Order</p>
+            <p className="font-semibold text-amber-900">{t("mktPurchaseOrders.statusIssued", "Waiting for vendor to accept the Purchase Order")}</p>
             <p className="mt-1 text-sm text-amber-800">
               Setelah vendor menekan Terima PO, pilihan metode pengiriman akan terbuka di sini.
             </p>
@@ -663,7 +686,7 @@ function ShipmentTab({
       {poStatus === "issued" && (
         <Card className="border-amber-200 bg-amber-50">
           <CardContent className="p-4 text-sm text-amber-800">
-            <p className="font-semibold">Menunggu vendor menerima Purchase Order</p>
+            <p className="font-semibold">{t("mktPurchaseOrders.statusIssued", "Waiting for vendor to accept the Purchase Order")}</p>
             <p className="mt-1 text-xs">
               Pilihan pengiriman Anda sudah tercatat, tetapi vendor belum dapat memproses shipment sebelum menekan Terima PO.
             </p>
@@ -672,7 +695,7 @@ function ShipmentTab({
       )}
       <Card className="border-blue-200 bg-blue-50">
         <CardContent className="p-4 text-sm text-blue-800">
-          <p className="font-semibold">Status order & pengiriman</p>
+          <p className="font-semibold">{t("logisticTrack.status", "Order & shipment status")}<p>
           <p className="mt-1 text-xs">
             Customer cukup memantau di sini. Vendor yang memperbarui persiapan/pengiriman dan mengunggah POD.
             Setelah barang diserahkan/tiba dan POD tersedia, konfirmasi penerimaan dilakukan di tab Goods Receipt.
@@ -706,7 +729,7 @@ function ShipmentTab({
                     <span className="text-xs text-gray-400 ml-1">({shipmentTypeLabel})</span>
                   )}
                 </div>
-                <Badge className={`text-xs ${st.color}`} variant="secondary">{st.label}</Badge>
+                <Badge className={`text-xs ${st.color}`} variant="secondary">{poStatusLabel(t, po.status, st.label)}</Badge>
               </div>
 
               {s.trackingNumber && !isPickup && (
@@ -743,10 +766,10 @@ function ShipmentTab({
                 </div>
               )}
 
-              {s.estimatedArrival && <p className="text-xs text-gray-500">Est. tiba: {fmtDate(s.estimatedArrival)}</p>}
+              {s.estimatedArrival && <p className="text-xs text-gray-500">Est. tiba: {fmtDate(s.estimatedArrival, locale)}</p>}
               {s.actualArrival && (
                 <p className="text-xs text-emerald-700">
-                  {isPickup ? "Barang sudah diserahkan. Menunggu POD dan konfirmasi penerimaan." : "Tiba: " + fmtDate(s.actualArrival)}
+                  {isPickup ? "Barang sudah diserahkan. Menunggu POD dan konfirmasi penerimaan." : "Tiba: " + fmtDate(s.actualArrival, locale)}
                 </p>
               )}
             </CardContent>
@@ -758,6 +781,7 @@ function ShipmentTab({
 }
 
 function PaymentTab({ po }: { po: PoDetail }) {
+  const { locale, t } = useLanguage();
   const queryClient = useQueryClient();
   const [proofFile, setProofFile] = useState<File | null>(null);
   const [proofPreview, setProofPreview] = useState<string | null>(null);
@@ -904,8 +928,8 @@ function PaymentTab({ po }: { po: PoDetail }) {
     return (
       <Card className="border-red-200 bg-red-50">
         <CardContent className="p-5 text-center">
-          <p className="text-sm text-red-600">Status pembayaran gagal dimuat.</p>
-          <Button size="sm" variant="outline" className="mt-2" onClick={() => void refetch()}>Coba Lagi</Button>
+          <p className="text-sm text-red-600">{t("common.error", "Failed to load payment status.")}</p>
+          <Button size="sm" variant="outline" className="mt-2" onClick={() => void refetch()}>{t("common.retry", "Try again")}</Button>
         </CardContent>
       </Card>
     );
@@ -980,7 +1004,7 @@ function PaymentTab({ po }: { po: PoDetail }) {
     <div className="space-y-4">
       <Card>
         <CardHeader>
-          <CardTitle className="text-base">Pembayaran Customer ke CST</CardTitle>
+          <CardTitle className="text-base">{t("portalInvoice.title", "Customer payment to CST")}<CardTitle>
         </CardHeader>
         <CardContent className="space-y-4">
           {payment.termsMissing ? (
@@ -994,26 +1018,26 @@ function PaymentTab({ po }: { po: PoDetail }) {
                 label="Status"
                 value={<Badge className={statusClass[payment.paymentStatus] ?? "bg-gray-100 text-gray-700"} variant="secondary">{statusLabel[payment.paymentStatus] ?? payment.paymentStatus}</Badge>}
               />
-              {payment.paymentDueAt && <InfoRow label="Jatuh Tempo Pelunasan" value={fmtDateTime(payment.paymentDueAt)} />}
+              {payment.paymentDueAt && <InfoRow label="Jatuh Tempo Pelunasan" value={fmtDateTime(payment.paymentDueAt, locale)} />}
 
               <div className="grid gap-3 sm:grid-cols-3">
                 <div className="rounded-xl border bg-slate-50 p-3">
                   <p className="text-xs text-slate-500">Total Tagihan</p>
-                  <p className="mt-1 text-base font-bold text-slate-900">{fmtAmount(payment.amount, payment.currency)}</p>
+                  <p className="mt-1 text-base font-bold text-slate-900">{fmtAmount(payment.amount, payment.currency, locale)}</p>
                 </div>
                 <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-3">
                   <p className="text-xs text-emerald-700">Sudah Dibayar</p>
-                  <p className="mt-1 text-base font-bold text-emerald-800">{fmtAmount(payment.paidAmount, payment.currency)}</p>
+                  <p className="mt-1 text-base font-bold text-emerald-800">{fmtAmount(payment.paidAmount, payment.currency, locale)}</p>
                 </div>
                 <div className="rounded-xl border border-orange-200 bg-orange-50 p-3">
                   <p className="text-xs text-orange-700">Sisa Tagihan</p>
-                  <p className="mt-1 text-base font-bold text-orange-800">{fmtAmount(payment.remainingAmount, payment.currency)}</p>
+                  <p className="mt-1 text-base font-bold text-orange-800">{fmtAmount(payment.remainingAmount, payment.currency, locale)}</p>
                 </div>
               </div>
 
               {payment.overpaidAmount > 0 && (
                 <div className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">
-                  Terdeteksi kelebihan pembayaran {fmtAmount(payment.overpaidAmount, payment.currency)}. Hubungi admin CST untuk pemeriksaan/refund.
+                  Terdeteksi kelebihan pembayaran {fmtAmount(payment.overpaidAmount, payment.currency, locale)}. Hubungi admin CST untuk pemeriksaan/refund.
                 </div>
               )}
 
@@ -1025,23 +1049,23 @@ function PaymentTab({ po }: { po: PoDetail }) {
                 }`}>
                   <p className="font-semibold">Ketentuan DP {payment.paymentDpPercent}%</p>
                   <p className="mt-1">
-                    Minimum sebelum barang diserahkan/dikirim: {fmtAmount(payment.requiredBeforeHandoverAmount, payment.currency)}.
+                    Minimum sebelum barang diserahkan/dikirim: {fmtAmount(payment.requiredBeforeHandoverAmount, payment.currency, locale)}.
                     {payment.handoverPaymentSatisfied
-                      ? ` DP sudah terpenuhi. Sisa ${fmtAmount(payment.remainingAmount, payment.currency)} dapat dilunasi setelah barang diterima.`
-                      : ` Masih kurang ${fmtAmount(payment.requiredBeforeHandoverRemaining, payment.currency)} untuk memenuhi DP.`}
+                      ? ` DP sudah terpenuhi. Sisa ${fmtAmount(payment.remainingAmount, payment.currency, locale)} dapat dilunasi setelah barang diterima.`
+                      : ` Masih kurang ${fmtAmount(payment.requiredBeforeHandoverRemaining, payment.currency, locale)} untuk memenuhi DP.`}
                   </p>
                 </div>
               )}
 
               {payment.paymentTermCode === "prepaid" && !payment.handoverPaymentSatisfied && (
                 <div className="rounded-lg border border-orange-200 bg-orange-50 p-3 text-sm text-orange-800">
-                  Pembayaran harus lunas sebelum vendor dapat menyerahkan atau mengirim barang. Kekurangan saat ini {fmtAmount(payment.requiredBeforeHandoverRemaining, payment.currency)}.
+                  Pembayaran harus lunas sebelum vendor dapat menyerahkan atau mengirim barang. Kekurangan saat ini {fmtAmount(payment.requiredBeforeHandoverRemaining, payment.currency, locale)}.
                 </div>
               )}
 
               {payment.paymentTermCode?.startsWith("net_") && payment.paymentStatus !== "paid" && (
                 <div className="rounded-lg border border-blue-200 bg-blue-50 p-3 text-sm text-blue-800">
-                  Barang dapat diproses sesuai fulfillment. Sisa pembayaran {fmtAmount(payment.remainingAmount, payment.currency)} tetap tercatat sebagai piutang sampai lunas.
+                  Barang dapat diproses sesuai fulfillment. Sisa pembayaran {fmtAmount(payment.remainingAmount, payment.currency, locale)} tetap tercatat sebagai piutang sampai lunas.
                 </div>
               )}
 
@@ -1072,7 +1096,7 @@ function PaymentTab({ po }: { po: PoDetail }) {
                         setScanError(null);
                       }}
                       className="h-10 flex-1 rounded-md border px-3 text-sm"
-                      placeholder="Masukkan nominal pembayaran"
+                      placeholder={t("paymentProof.totalBill", "Enter payment amount")}
                     />
                     <Button variant="outline" size="sm" className="h-10" onClick={() => selectAmount(payment.remainingAmount)}>
                       Bayar Sisa Penuh
@@ -1093,7 +1117,7 @@ function PaymentTab({ po }: { po: PoDetail }) {
                 <div className="space-y-3 rounded-lg border border-indigo-200 bg-indigo-50/40 p-4">
                   <div className="flex flex-wrap items-start justify-between gap-3">
                     <div>
-                      <p className="text-sm font-semibold text-slate-900">Bayar melalui Paylabs</p>
+                      <p className="text-sm font-semibold text-slate-900">{t("paymentProof.payViaGateway", "Pay via Paylabs")}<p>
                       <p className="mt-1 text-xs text-slate-600">
                         Bisa untuk DP/cicilan maupun pelunasan. Pembayaran diverifikasi otomatis melalui callback Paylabs.
                       </p>
@@ -1108,7 +1132,7 @@ function PaymentTab({ po }: { po: PoDetail }) {
                       <div className="rounded-lg bg-white p-3 text-sm">
                         <p className="font-medium">Pembayaran Paylabs sedang menunggu penyelesaian.</p>
                         <p className="mt-1 text-xs text-slate-500">
-                          Nominal: {fmtAmount(pendingPaylabs.amount, payment.currency)} · Metode: {pendingPaylabs.paymentMethod ?? "Paylabs"}.
+                          Nominal: {fmtAmount(pendingPaylabs.amount, payment.currency, locale)} · Metode: {pendingPaylabs.paymentMethod ?? "Paylabs"}.
                         </p>
                       </div>
                       <Button size="sm" onClick={() => window.location.assign(pendingPaylabs.paymentUrl!)}>
@@ -1142,7 +1166,7 @@ function PaymentTab({ po }: { po: PoDetail }) {
                       >
                         {createPaylabsPayment.isPending
                           ? "Membuat pembayaran…"
-                          : `Bayar ${validSelectedAmount ? fmtAmount(selectedAmount, payment.currency) : ""} via Paylabs`}
+                          : `Bayar ${validSelectedAmount ? fmtAmount(selectedAmount, payment.currency, locale) : ""} via Paylabs`}
                       </Button>
                     </div>
                   )}
@@ -1152,10 +1176,10 @@ function PaymentTab({ po }: { po: PoDetail }) {
               {payment.proofAvailable && (
                 <div className="space-y-3 rounded-lg border border-blue-200 bg-blue-50/40 p-4">
                   <div>
-                    <p className="text-sm font-semibold text-slate-800">Bukti pembayaran tersimpan sebagai audit trail</p>
+                    <p className="text-sm font-semibold text-slate-800">{t("productOrder.success.proofReceived", "Payment proof saved as an audit trail")}<p>
                     <p className="mt-1 text-xs text-slate-600">
                       Untuk keamanan audit, bukti yang sama tidak dapat digunakan ulang. Bukti lama tetap tersimpan meskipun ditolak.
-                      {payment.proofUploadedAt ? ` Dikirim ${fmtDateTime(payment.proofUploadedAt)}.` : ""}
+                      {payment.proofUploadedAt ? ` Dikirim ${fmtDateTime(payment.proofUploadedAt, locale)}.` : ""}
                     </p>
                   </div>
                   {payment.proofUrl && payment.proofMimeType?.startsWith("image/") && (
@@ -1166,11 +1190,11 @@ function PaymentTab({ po }: { po: PoDetail }) {
                   <div className="grid gap-2 rounded-lg bg-white p-3 text-sm sm:grid-cols-3">
                     <div>
                       <p className="text-xs text-slate-500">Nominal diajukan</p>
-                      <p className="font-semibold">{payment.proofExpectedAmount == null ? "—" : fmtAmount(payment.proofExpectedAmount, payment.currency)}</p>
+                      <p className="font-semibold">{payment.proofExpectedAmount == null ? "—" : fmtAmount(payment.proofExpectedAmount, payment.currency, locale)}</p>
                     </div>
                     <div>
                       <p className="text-xs text-slate-500">Nominal hasil OCR</p>
-                      <p className="font-semibold">{payment.ocrAmount == null ? "Tidak terbaca" : fmtAmount(payment.ocrAmount, payment.currency)}</p>
+                      <p className="font-semibold">{payment.ocrAmount == null ? "Tidak terbaca" : fmtAmount(payment.ocrAmount, payment.currency, locale)}</p>
                     </div>
                     <div>
                       <p className="text-xs text-slate-500">Status bukti</p>
@@ -1183,8 +1207,8 @@ function PaymentTab({ po }: { po: PoDetail }) {
               {payment.manualTransferAllowed && payment.paymentStatus !== "paid" && (
                 <div className="space-y-3 rounded-lg border p-4">
                   <div>
-                    <p className="text-sm font-semibold">Transfer Bank Manual</p>
-                    <p className="mt-1 text-xs font-medium text-slate-700">Upload bukti transfer ke CST</p>
+                    <p className="text-sm font-semibold">{t("productOrder.success.uploadTransfer", "Manual bank transfer")}<p>
+                    <p className="mt-1 text-xs font-medium text-slate-700">{t("productOrder.success.uploadTransfer", "Upload transfer proof to CST")}<p>
                     <p className="mt-1 text-xs text-slate-500">
                       OCR akan mencocokkan nominal pada bukti dengan nominal pembayaran kali ini, bukan harus selalu sama dengan total PO.
                     </p>
@@ -1220,7 +1244,7 @@ function PaymentTab({ po }: { po: PoDetail }) {
                           <p className="text-sm font-semibold text-blue-700">
                             {proofFile ? "Klik untuk ganti bukti pembayaran" : "Klik di area ini untuk unggah bukti pembayaran"}
                           </p>
-                          <p className="mt-1 text-xs text-slate-500">JPG atau PNG · nominal yang dipilih {validSelectedAmount ? fmtAmount(selectedAmount, payment.currency) : "belum valid"}</p>
+                          <p className="mt-1 text-xs text-slate-500">JPG atau PNG · nominal yang dipilih {validSelectedAmount ? fmtAmount(selectedAmount, payment.currency, locale) : "belum valid"}</p>
                         </div>
                       </div>
                     </label>
@@ -1269,11 +1293,11 @@ function PaymentTab({ po }: { po: PoDetail }) {
                       <div className="grid gap-2 sm:grid-cols-2">
                         <div>
                           <p className="text-xs opacity-70">Nominal terbaca OCR</p>
-                          <p className="font-semibold">{scanResult.extractedAmount == null ? "Belum terbaca" : fmtAmount(scanResult.extractedAmount, payment.currency)}</p>
+                          <p className="font-semibold">{scanResult.extractedAmount == null ? "Belum terbaca" : fmtAmount(scanResult.extractedAmount, payment.currency, locale)}</p>
                         </div>
                         <div>
                           <p className="text-xs opacity-70">Nominal pembayaran kali ini</p>
-                          <p className="font-semibold">{fmtAmount(scanResult.expectedAmount, payment.currency)}</p>
+                          <p className="font-semibold">{fmtAmount(scanResult.expectedAmount, payment.currency, locale)}</p>
                         </div>
                       </div>
                       <p className="mt-2 font-medium">
@@ -1282,7 +1306,7 @@ function PaymentTab({ po }: { po: PoDetail }) {
                           : scanResult.timedOut
                             ? "Pembacaan nominal melewati batas waktu. Pilih gambar yang lebih jelas."
                             : scanResult.extractedAmount != null
-                              ? `Nominal OCR ${fmtAmount(scanResult.extractedAmount, payment.currency)} berbeda dari nominal pembayaran ${fmtAmount(scanResult.expectedAmount, payment.currency)}.`
+                              ? `Nominal OCR ${fmtAmount(scanResult.extractedAmount, payment.currency, locale)} berbeda dari nominal pembayaran ${fmtAmount(scanResult.expectedAmount, payment.currency, locale)}.`
                               : "Nominal belum terbaca. Pilih bukti yang lebih jelas."}
                       </p>
                       {!scanResult.matchesExpected
@@ -1296,7 +1320,7 @@ function PaymentTab({ po }: { po: PoDetail }) {
                           className="mt-3 bg-white"
                           onClick={() => selectAmount(scanResult.extractedAmount!)}
                         >
-                          Gunakan {fmtAmount(scanResult.extractedAmount, payment.currency)} sebagai pembayaran kali ini
+                          Gunakan {fmtAmount(scanResult.extractedAmount, payment.currency, locale)} sebagai pembayaran kali ini
                         </Button>
                       )}
                     </div>
@@ -1306,7 +1330,7 @@ function PaymentTab({ po }: { po: PoDetail }) {
                   {uploadProof.isError && <p className="text-sm text-red-600">{(uploadProof.error as Error).message}</p>}
 
                   <Button size="sm" onClick={() => uploadProof.mutate()} disabled={!canSubmit || uploadProof.isPending}>
-                    {uploadProof.isPending ? "Mengunggah…" : `Kirim Bukti ${validSelectedAmount ? fmtAmount(selectedAmount, payment.currency) : ""}`}
+                    {uploadProof.isPending ? "Mengunggah…" : `Kirim Bukti ${validSelectedAmount ? fmtAmount(selectedAmount, payment.currency, locale) : ""}`}
                   </Button>
                 </div>
               )}
@@ -1316,7 +1340,7 @@ function PaymentTab({ po }: { po: PoDetail }) {
                   {payment.verifiedBy === "paylabs:webhook"
                     ? "Pembayaran berhasil dikonfirmasi otomatis oleh Paylabs"
                     : "Pembayaran sudah diperiksa dan diverifikasi CST"}
-                  {payment.verifiedAt ? ` pada ${fmtDateTime(payment.verifiedAt)}` : ""}.
+                  {payment.verifiedAt ? ` pada ${fmtDateTime(payment.verifiedAt, locale)}` : ""}.
                 </div>
               )}
             </>
@@ -1328,6 +1352,7 @@ function PaymentTab({ po }: { po: PoDetail }) {
 }
 
 function GoodsReceiptTab({ shipmentId, poId }: { shipmentId: number | null; poId: number }) {
+  const { locale, t } = useLanguage();
   const queryClient = useQueryClient();
   const [receiptMode, setReceiptMode] = useState<"full" | "partial" | "rejected">("full");
   const [partialQty, setPartialQty] = useState<Record<number, string>>({});
@@ -1488,7 +1513,7 @@ function GoodsReceiptTab({ shipmentId, poId }: { shipmentId: number | null; poId
   if (isError) return (
     <Card className="border-red-200 bg-red-50">
       <CardContent className="p-5 text-center space-y-2">
-        <p className="text-red-600 text-sm">Gagal memuat goods receipts.</p>
+        <p className="text-red-600 text-sm">{t("common.error", "Failed to load goods receipts.")}</p>
         <Button size="sm" variant="outline" onClick={() => void refetch()}>
           <RefreshCw className="w-4 h-4 mr-1.5" /> Coba Lagi
         </Button>
@@ -1576,7 +1601,7 @@ function GoodsReceiptTab({ shipmentId, poId }: { shipmentId: number | null; poId
               <textarea
                 value={receiptNotes}
                 onChange={(event) => setReceiptNotes(event.target.value)}
-                placeholder="Catatan penerimaan (opsional)"
+                placeholder={t("vendorDashboard.notesOptional", "Receipt notes (optional)")}
                 className="min-h-20 w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm"
               />
 
@@ -1614,7 +1639,7 @@ function GoodsReceiptTab({ shipmentId, poId }: { shipmentId: number | null; poId
                     {rt.label}
                   </Badge>
                   <span className="text-xs text-gray-400 ml-auto">
-                    {fmtDateTime(r.receivedAt)}
+                    {fmtDateTime(r.receivedAt, locale)}
                   </span>
                 </div>
                 <div className="grid grid-cols-2 gap-2 text-sm">
@@ -1636,6 +1661,7 @@ function GoodsReceiptTab({ shipmentId, poId }: { shipmentId: number | null; poId
 }
 
 function TimelineTab({ shipmentId }: { shipmentId: number | null }) {
+  const { locale, t } = useLanguage();
   const { data, isLoading, isError, refetch } = useQuery<{ ok: boolean; data: TimelineEvent[] }>({
     queryKey: ["mkt-shipment-timeline", shipmentId],
     queryFn: async () => {
@@ -1674,7 +1700,7 @@ function TimelineTab({ shipmentId }: { shipmentId: number | null }) {
   if (isError) return (
     <Card className="border-red-200 bg-red-50">
       <CardContent className="p-5 text-center space-y-2">
-        <p className="text-red-600 text-sm">Gagal memuat timeline.</p>
+        <p className="text-red-600 text-sm">{t("common.error", "Failed to load timeline.")}</p>
         <Button size="sm" variant="outline" onClick={() => void refetch()}>
           <RefreshCw className="w-4 h-4 mr-1.5" /> Coba Lagi
         </Button>
@@ -1689,7 +1715,7 @@ function TimelineTab({ shipmentId }: { shipmentId: number | null }) {
     <Card className="border-dashed">
       <CardContent className="p-10 text-center">
         <Clock className="w-10 h-10 text-gray-300 mx-auto mb-3" />
-        <p className="text-gray-500 text-sm">Belum ada event timeline untuk shipment ini.</p>
+        <p className="text-gray-500 text-sm">{t("logisticTrack.noTracking", "No timeline events for this shipment.")}</p>
       </CardContent>
     </Card>
   );
@@ -1723,7 +1749,7 @@ function TimelineTab({ shipmentId }: { shipmentId: number | null }) {
                     )}
                   </div>
                   <span className="text-xs text-gray-400 whitespace-nowrap">
-                    {fmtDateTime(ev.createdAt)}
+                    {fmtDateTime(ev.createdAt, locale)}
                   </span>
                 </div>
                 {ev.note && (
@@ -1744,9 +1770,9 @@ function TimelineTab({ shipmentId }: { shipmentId: number | null }) {
           <CardContent className="p-4 flex flex-wrap items-center gap-3">
             <FileText className="w-4 h-4 text-emerald-600" />
             <div className="flex-1 min-w-0">
-              <p className="text-sm font-semibold text-emerald-800">Proof of Delivery tersedia</p>
+              <p className="text-sm font-semibold text-emerald-800">{t("tracking.podDocs", "Proof of Delivery available")}<p>
               <p className="text-xs text-emerald-700">
-                Diunggah {fmtDateTime(pod.uploadedAt)}{pod.note ? ` — ${pod.note}` : ""}
+                Diunggah {fmtDateTime(pod.uploadedAt, locale)}{pod.note ? ` — ${pod.note}` : ""}
               </p>
             </div>
             <a
@@ -1765,6 +1791,7 @@ function TimelineTab({ shipmentId }: { shipmentId: number | null }) {
 }
 
 function ActivityTab({ poId }: { poId: number }) {
+  const { locale, t } = useLanguage();
   const { data, isLoading, isError, refetch } = useQuery<{ ok: boolean; data: ActivityEvent[] }>({
     queryKey: ["mkt-po-activity", poId],
     queryFn: async () => {
@@ -1784,7 +1811,7 @@ function ActivityTab({ poId }: { poId: number }) {
     return (
       <Card className="border-red-200 bg-red-50">
         <CardContent className="p-5 text-center space-y-2">
-          <p className="text-red-600 text-sm">Gagal memuat activity log.</p>
+          <p className="text-red-600 text-sm">{t("common.error", "Failed to load activity log.")}</p>
           <Button size="sm" variant="outline" onClick={() => void refetch()}>
             <RefreshCw className="w-4 h-4 mr-1.5" /> Coba Lagi
           </Button>
@@ -1799,7 +1826,7 @@ function ActivityTab({ poId }: { poId: number }) {
       <Card className="border-dashed">
         <CardContent className="p-10 text-center">
           <Clock className="w-10 h-10 text-gray-300 mx-auto mb-3" />
-          <p className="text-gray-500 text-sm">Belum ada activity log untuk PO ini.</p>
+          <p className="text-gray-500 text-sm">{t("common.loading", "No activity log for this PO.")}</p>
         </CardContent>
       </Card>
     );
@@ -1816,7 +1843,7 @@ function ActivityTab({ poId }: { poId: number }) {
               <div className="min-w-0 flex-1">
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <p className="text-sm font-semibold text-gray-800">{event.action.replace(/_/g, " ")}</p>
-                  <span className="text-xs text-gray-400">{fmtDateTime(event.createdAt)}</span>
+                  <span className="text-xs text-gray-400">{fmtDateTime(event.createdAt, locale)}</span>
                 </div>
                 {(event.statusFrom || event.statusTo) && (
                   <p className="text-xs text-gray-500 mt-1">
@@ -1841,6 +1868,7 @@ function ActivityTab({ poId }: { poId: number }) {
 // ── Main page ─────────────────────────────────────────────────────────────────
 
 export default function MktPoDetailPage({ params }: { params?: { poId?: string } } = {}) {
+  const { locale, t } = useLanguage();
   const [location, setLocation] = useLocation();
   const authed = isAuthenticated();
   const routePoId = location.split("/").filter(Boolean).at(-1);
@@ -1880,12 +1908,12 @@ export default function MktPoDetailPage({ params }: { params?: { poId?: string }
     <div className="min-h-screen bg-gray-50">
       <div className="max-w-4xl mx-auto px-4 py-8 space-y-4">
         <Link href="/marketplace/my-purchase-orders" className="flex items-center gap-1.5 text-sm text-gray-500 hover:text-gray-700">
-          <ArrowLeft className="w-4 h-4" /> Kembali ke Daftar PO
+          <ArrowLeft className="w-4 h-4" /> {t("mktPurchaseOrders.pageTitle", "Back to PO list")}
         </Link>
         <Card className="border-red-200 bg-red-50">
           <CardContent className="p-8 text-center space-y-3">
             <XCircle className="w-10 h-10 text-red-400 mx-auto" />
-            <p className="text-red-700 font-medium">Purchase order tidak ditemukan.</p>
+            <p className="text-red-700 font-medium">{t("mktPurchaseOrders.emptyPo", "Purchase order not found.")}</p>
             <Button size="sm" variant="outline" onClick={() => void refetch()}>
               <RefreshCw className="w-4 h-4 mr-1.5" /> Coba Lagi
             </Button>
@@ -1904,7 +1932,7 @@ export default function MktPoDetailPage({ params }: { params?: { poId?: string }
           href="/marketplace/my-purchase-orders"
           className="flex items-center gap-1.5 text-sm text-gray-500 hover:text-gray-700 w-fit"
         >
-          <ArrowLeft className="w-4 h-4" /> Kembali ke Daftar PO
+          <ArrowLeft className="w-4 h-4" /> {t("mktPurchaseOrders.pageTitle", "Back to PO list")}
         </Link>
 
         {/* PO Header */}
@@ -1915,7 +1943,7 @@ export default function MktPoDetailPage({ params }: { params?: { poId?: string }
           </div>
           {st && (
             <Badge className={`text-sm px-3 py-1 ${st.color}`} variant="secondary">
-              {st.label}
+              {poStatusLabel(t, po.status, st.label)}
             </Badge>
           )}
         </div>
@@ -1934,7 +1962,7 @@ export default function MktPoDetailPage({ params }: { params?: { poId?: string }
               ].join(" ")}
             >
               {t.icon}
-              {t.label}
+              {({ overview: t("mktVendorPo.poInfoTitle", "Overview"), items: t("mktVendorPo.itemsTitle", "Items"), shipment: t("mktVendorPo.shipmentInfo", "Shipment"), payment: t("portalInvoice.title", "Payment"), "goods-receipt": t("tracking.podDocs", "Goods Receipt"), timeline: t("logisticOrder.deliveryTimeline", "Timeline"), activity: t("orders.title", "Activity log") } as Record<Tab, string>)[t.id]}
             </button>
           ))}
         </div>
