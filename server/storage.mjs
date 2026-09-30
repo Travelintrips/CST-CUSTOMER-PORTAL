@@ -1083,18 +1083,159 @@ function mergeKtpAttempts(attempts) {
   };
 }
 
+async function ocrKtpWithVision({ imageBuffer, mimeType }) {
+  const apiKey = process.env.OPENAI_API_KEY?.trim();
+  if (!apiKey) return null;
+
+  const model = (process.env.OPENAI_KTP_OCR_MODEL || "gpt-4o-mini").trim();
+  const dataUrl = `data:${mimeType};base64,${imageBuffer.toString("base64")}`;
+
+  const prompt = [
+    "Anda membaca KTP Indonesia dari gambar.",
+    "Ekstrak HANYA teks yang benar-benar terlihat. Jangan menebak, jangan melengkapi data yang tidak terbaca.",
+    "Jika sebuah field tidak yakin, isi null.",
+    "Khusus nama: jangan keluarkan noise OCR, simbol, label, atau potongan huruf.",
+    "Khusus alamat: gabungkan alamat utama + RT/RW + Kel/Desa + Kecamatan jika terlihat.",
+    "Kembalikan JSON valid dengan key berikut saja:",
+    "nik, name, birthPlace, birthDate, gender, address, rtRw, village, district, religion, maritalStatus, occupation, confidence.",
+    "confidence adalah angka 0 sampai 1 untuk kualitas ekstraksi keseluruhan.",
+  ].join("\n");
+
+  let response;
+  try {
+    response = await fetch("https://api.openai.com/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        model,
+        temperature: 0,
+        max_tokens: 500,
+        response_format: { type: "json_object" },
+        messages: [{
+          role: "user",
+          content: [
+            { type: "text", text: prompt },
+            { type: "image_url", image_url: { url: dataUrl, detail: "high" } },
+          ],
+        }],
+      }),
+    });
+  } catch (error) {
+    console.warn("[customer-portal-api] KTP vision OCR unavailable", error?.message ?? error);
+    return null;
+  }
+
+  const payload = await response.json().catch(() => null);
+  if (!response.ok) {
+    console.warn("[customer-portal-api] KTP vision OCR provider error", response.status, payload?.error?.message ?? "");
+    return null;
+  }
+
+  const raw = payload?.choices?.[0]?.message?.content;
+  if (!raw) return null;
+
+  let data;
+  try {
+    data = JSON.parse(raw);
+  } catch {
+    return null;
+  }
+
+  const nikDigits = String(data.nik || "").replace(/\D/g, "");
+  const nik = nikDigits.length === 16 ? nikDigits : undefined;
+
+  const name = cleanKtpNameCandidate(data.name);
+  const safeName = scoreKtpNameCandidate(name, { labelled: true, distance: 1 }) >= 4
+    ? name.toUpperCase()
+    : undefined;
+
+  const street = cleanAddressValue(data.address);
+  const rtRw = cleanAddressValue(data.rtRw);
+  const village = cleanAddressValue(data.village);
+  const district = cleanAddressValue(data.district);
+
+  const addressParts = [];
+  if (street) addressParts.push(street);
+  if (rtRw) addressParts.push(/^RT\/RW\b/i.test(rtRw) ? rtRw : `RT/RW ${rtRw}`);
+  if (village) addressParts.push(/^(Kel\/Desa|Kelurahan|Desa)\b/i.test(village) ? village : `Kel/Desa ${village}`);
+  if (district) addressParts.push(/^Kecamatan\b/i.test(district) ? district : `Kecamatan ${district}`);
+  const fullAddress = [...new Set(addressParts)].join(", ");
+
+  const confidence = Number(data.confidence);
+  return {
+    nik,
+    name: safeName,
+    birthPlace: cleanAddressValue(data.birthPlace) || undefined,
+    birthDate: cleanAddressValue(data.birthDate) || undefined,
+    gender: cleanAddressValue(data.gender) || undefined,
+    address: fullAddress || undefined,
+    religion: cleanAddressValue(data.religion) || undefined,
+    maritalStatus: cleanAddressValue(data.maritalStatus) || undefined,
+    occupation: cleanAddressValue(data.occupation) || undefined,
+    confidence: Number.isFinite(confidence) ? Math.max(0, Math.min(1, confidence)) : undefined,
+    source: "vision",
+    text: undefined,
+  };
+}
+
+function mergeVisionAndTesseract(vision, tesseract) {
+  if (!vision) return { ...tesseract, source: "tesseract" };
+
+  const result = {
+    ...tesseract,
+    ...vision,
+    nik: vision.nik || tesseract?.nik,
+    name: vision.name || tesseract?.name,
+    birthPlace: vision.birthPlace || tesseract?.birthPlace,
+    birthDate: vision.birthDate || tesseract?.birthDate,
+    gender: vision.gender || tesseract?.gender,
+    address: vision.address || tesseract?.address,
+    religion: vision.religion || tesseract?.religion,
+    maritalStatus: vision.maritalStatus || tesseract?.maritalStatus,
+    occupation: vision.occupation || tesseract?.occupation,
+    source: vision.address || vision.name ? "vision" : "tesseract",
+    text: tesseract?.text,
+  };
+
+  // Never autofill obviously unreliable identity fields.
+  if (result.name && scoreKtpNameCandidate(result.name, { labelled: true, distance: 1 }) < 4) {
+    result.name = undefined;
+  }
+  if (result.nik && !/^\d{16}$/.test(result.nik)) result.nik = undefined;
+  if (result.address && scoreKtpAddress(result.address) < 0) result.address = undefined;
+
+  return result;
+}
+
 export async function ocrKtp(file) {
-  validateDocumentFile(file, { ocr: true });
+  const { mimeType } = validateDocumentFile(file, { ocr: true });
+  const imageBuffer = Buffer.from(await file.arrayBuffer());
+
+  const vision = await ocrKtpWithVision({ imageBuffer, mimeType });
+
+  // If vision extracted the two most important fields with reasonable
+  // confidence, use it directly and avoid a slower local OCR pass.
+  if (
+    vision?.name &&
+    vision?.address &&
+    Number(vision?.confidence ?? 0) >= 0.72
+  ) {
+    return vision;
+  }
+
   let tesseract;
   try {
     tesseract = await import("tesseract.js");
   } catch {
+    if (vision) return vision;
     const error = new Error("Dependency KTP OCR belum tersedia di development.");
     error.statusCode = 501;
     throw error;
   }
 
-  const imageBuffer = Buffer.from(await file.arrayBuffer());
   const worker = await tesseract.createWorker("ind");
   try {
     const attempts = [];
@@ -1121,7 +1262,7 @@ export async function ocrKtp(file) {
       attempts.push(parseKtpText(result.data?.text?.trim() || ""));
     }
 
-    return mergeKtpAttempts(attempts);
+    return mergeVisionAndTesseract(vision, mergeKtpAttempts(attempts));
   } finally {
     await worker.terminate();
   }
