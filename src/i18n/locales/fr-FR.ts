@@ -1,6 +1,7 @@
 // @refresh reset
 // @ts-nocheck
 import type { DeepRecord } from "./types";
+import enGB from "./en-GB";
 
 const locale: DeepRecord = {
   nav: {
@@ -9180,5 +9181,7 @@ if (!locale["vendorProductApproval"] || typeof locale["vendorProductApproval"] !
 locale["vendorProductApproval"]["vendorPhonePlaceholder"] = "Contoh: 08123456789";
 if (!locale["vendorProductApproval"] || typeof locale["vendorProductApproval"] !== 'object') locale["vendorProductApproval"] = {};
 locale["vendorProductApproval"]["vendorResponse"] = "Vendor Response";
+
+locale.vendorDashboard = { ...enGB.vendorDashboard, ...locale.vendorDashboard };
 
 export default locale;
