@@ -664,21 +664,140 @@ function normalizeKtpOcrText(value) {
     .trim();
 }
 
+function normalizedLabel(value) {
+  return String(value || "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]/g, "");
+}
+
+function looksLikeLabel(line, aliases) {
+  const compact = normalizedLabel(line);
+  return aliases.some((alias) => {
+    const target = normalizedLabel(alias);
+    return compact === target || compact.startsWith(target);
+  });
+}
+
 function ktpField(lines, aliases) {
-  const normalizedAliases = aliases.map((alias) => alias.toLowerCase().replace(/[^a-z0-9/ ]/g, "").trim());
-  for (const line of lines) {
-    const clean = line.replace(/^[^A-Za-z0-9]+/, "").trim();
-    const lower = clean.toLowerCase();
-    for (const alias of normalizedAliases) {
-      const comparable = lower.replace(/[^a-z0-9/ :.-]/g, "");
-      if (!comparable.startsWith(alias)) continue;
-      const rest = clean.slice(Math.min(clean.length, alias.length))
-        .replace(/^\s*[:;=\-]?\s*/, "")
-        .trim();
-      if (rest) return rest;
+  for (let index = 0; index < lines.length; index += 1) {
+    const clean = lines[index].replace(/^[^A-Za-z0-9]+/, "").trim();
+    const compact = normalizedLabel(clean);
+    for (const alias of aliases) {
+      const target = normalizedLabel(alias);
+      if (!target || !compact.startsWith(target)) continue;
+
+      const explicitSeparator = clean.match(/[:;=\-]\s*(.+)$/);
+      if (explicitSeparator?.[1]?.trim()) return explicitSeparator[1].trim();
+
+      const words = clean.split(/\s+/);
+      const aliasWords = String(alias).trim().split(/\s+/).length;
+      const inline = words.slice(aliasWords).join(" ").trim();
+      if (inline && normalizedLabel(inline) !== target) return inline;
+
+      const next = lines[index + 1]?.trim();
+      if (next && !isKtpSectionLabel(next)) return next;
     }
   }
   return "";
+}
+
+function isKtpSectionLabel(line) {
+  return looksLikeLabel(line, [
+    "nik",
+    "nama",
+    "name",
+    "tempat/tgl lahir",
+    "tempat tgl lahir",
+    "jenis kelamin",
+    "kelamin",
+    "alamat",
+    "rt/rw",
+    "kel/desa",
+    "kelurahan/desa",
+    "kecamatan",
+    "agama",
+    "status perkawinan",
+    "pekerjaan",
+    "kewarganegaraan",
+    "berlaku hingga",
+  ]);
+}
+
+function inferNameFromKtp(lines, nik) {
+  const nameByLabel = ktpField(lines, ["nama", "name"]);
+  if (nameByLabel) return nameByLabel;
+
+  const nikIndex = lines.findIndex((line) => nik && line.includes(nik));
+  const candidateIndexes = nikIndex >= 0
+    ? [nikIndex + 1, nikIndex + 2, nikIndex + 3]
+    : [1, 2, 3, 4];
+
+  for (const index of candidateIndexes) {
+    const line = lines[index]?.trim();
+    if (!line || isKtpSectionLabel(line)) continue;
+
+    const cleaned = line
+      .replace(/^[^A-Za-z]+/, "")
+      .replace(/\b\d{2}[-/]\d{2}[-/]\d{4}\b.*$/, "")
+      .replace(/\s{2,}/g, " ")
+      .trim();
+
+    if (
+      cleaned.length >= 4 &&
+      cleaned.length <= 80 &&
+      /[A-Za-z]{2}/.test(cleaned) &&
+      !/provinsi|kabupaten|kota|nik|tempat|lahir|alamat|agama|status|pekerjaan|kelamin/i.test(cleaned)
+    ) {
+      return cleaned;
+    }
+  }
+
+  return "";
+}
+
+function extractCompleteAddress(lines) {
+  let startIndex = lines.findIndex((line) => looksLikeLabel(line, ["alamat"]));
+  if (startIndex < 0) return "";
+
+  const first = ktpField(lines, ["alamat"]);
+  const parts = [];
+  if (first) parts.push(first);
+
+  for (let index = startIndex + 1; index < lines.length; index += 1) {
+    const line = lines[index].trim();
+    if (!line) continue;
+    if (looksLikeLabel(line, [
+      "agama",
+      "status perkawinan",
+      "pekerjaan",
+      "kewarganegaraan",
+      "berlaku hingga",
+    ])) break;
+
+    const rtRw = ktpField([line], ["rt/rw"]);
+    if (looksLikeLabel(line, ["rt/rw"])) {
+      if (rtRw) parts.push(`RT/RW ${rtRw}`);
+      continue;
+    }
+
+    const kelDesa = ktpField([line], ["kel/desa", "kelurahan/desa", "kelurahan"]);
+    if (looksLikeLabel(line, ["kel/desa", "kelurahan/desa", "kelurahan"])) {
+      if (kelDesa) parts.push(`Kel/Desa ${kelDesa}`);
+      continue;
+    }
+
+    const kecamatan = ktpField([line], ["kecamatan"]);
+    if (looksLikeLabel(line, ["kecamatan"])) {
+      if (kecamatan) parts.push(`Kecamatan ${kecamatan}`);
+      continue;
+    }
+
+    if (!isKtpSectionLabel(line) && !/^(LAKI[- ]?LAKI|PEREMPUAN)$/i.test(line)) {
+      parts.push(line);
+    }
+  }
+
+  return [...new Set(parts.map((part) => part.trim()).filter(Boolean))].join(", ");
 }
 
 function parseKtpText(rawText) {
@@ -689,7 +808,8 @@ function parseKtpText(rawText) {
     .filter(Boolean);
 
   const nikMatch = text.match(/(?:NIK\s*[:;=\-]?\s*)?\b(\d{16})\b/i);
-  const name = ktpField(lines, ["nama", "name"])
+  const nik = nikMatch?.[1] || "";
+  const name = inferNameFromKtp(lines, nik)
     .replace(/^[.:;=\-\s]+/, "")
     .replace(/\s{2,}/g, " ")
     .trim();
@@ -712,13 +832,13 @@ function parseKtpText(rawText) {
       ? "LAKI-LAKI"
       : genderRaw;
 
-  const address = ktpField(lines, ["alamat"]);
+  const address = extractCompleteAddress(lines);
   const religion = ktpField(lines, ["agama"]);
-  const maritalStatus = ktpField(lines, ["status perkawinan", "status perkawinan"]);
+  const maritalStatus = ktpField(lines, ["status perkawinan"]);
   const occupation = ktpField(lines, ["pekerjaan"]);
 
   return {
-    nik: nikMatch?.[1] || undefined,
+    nik: nik || undefined,
     name: name || undefined,
     birthPlace: birthPlace || undefined,
     birthDate: birthDateMatch?.[1] || undefined,
@@ -731,6 +851,19 @@ function parseKtpText(rawText) {
   };
 }
 
+function scoreKtpData(data) {
+  let score = 0;
+  if (data.nik) score += 4;
+  if (data.name) score += 4;
+  if (data.birthDate) score += 2;
+  if (data.gender) score += 1;
+  if (data.address) score += Math.min(4, 1 + Math.floor(data.address.length / 25));
+  if (data.religion) score += 1;
+  if (data.maritalStatus) score += 1;
+  if (data.occupation) score += 1;
+  return score;
+}
+
 export async function ocrKtp(file) {
   validateDocumentFile(file, { ocr: true });
   let tesseract;
@@ -741,10 +874,24 @@ export async function ocrKtp(file) {
     error.statusCode = 501;
     throw error;
   }
+
+  const imageBuffer = Buffer.from(await file.arrayBuffer());
   const worker = await tesseract.createWorker("ind");
   try {
-    const result = await worker.recognize(Buffer.from(await file.arrayBuffer()));
-    return parseKtpText(result.data?.text?.trim() || "");
+    const firstResult = await worker.recognize(imageBuffer);
+    let best = parseKtpText(firstResult.data?.text?.trim() || "");
+
+    if (!best.name || !best.nik || !best.address || best.address.length < 20) {
+      await worker.setParameters({
+        tessedit_pageseg_mode: "6",
+        preserve_interword_spaces: "1",
+      });
+      const blockResult = await worker.recognize(imageBuffer);
+      const blockData = parseKtpText(blockResult.data?.text?.trim() || "");
+      if (scoreKtpData(blockData) > scoreKtpData(best)) best = blockData;
+    }
+
+    return best;
   } finally {
     await worker.terminate();
   }
