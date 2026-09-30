@@ -828,6 +828,66 @@ function extractLabelValueLoose(line, aliases) {
   return "";
 }
 
+function stripLikelyKtpLabel(value) {
+  const line = cleanAddressValue(value);
+  return line
+    .replace(/^(?:alamat|alarnat|alamal|rt\/?rw|rtrw|kel\/?desa|kelurahan\/?desa|kelurahan|desa|kecamatan|kec)\s*[:;=—-]?\s*/i, "")
+    .replace(/^[A-Za-z .]{1,18}\s*[:;=—-]\s*/, "")
+    .trim();
+}
+
+function inferAddressByPosition(lines) {
+  const candidates = [];
+
+  const stopLine = (line) =>
+    looksLikeLabel(line, ["agama", "status perkawinan", "pekerjaan", "kewarganegaraan", "berlaku hingga"]) ||
+    /\b(?:ISLAM|KRISTEN|KATOLIK|HINDU|BUDDHA|KAWIN|BELUM KAWIN|WIRASWASTA|KARYAWAN|PELAJAR|MAHASISWA|WNI|WNA)\b/i.test(line);
+
+  const pushWindow = (start, end) => {
+    const parts = [];
+    for (let i = Math.max(0, start); i <= Math.min(lines.length - 1, end); i += 1) {
+      let line = lines[i]?.trim();
+      if (!line) continue;
+      if (stopLine(line)) break;
+      if (/^(LAKI[- ]?LAKI|PEREMPUAN)$/i.test(line)) continue;
+
+      line = stripLikelyKtpLabel(line)
+        .replace(/\bGol\.?\s*Darah\b.*$/i, "")
+        .trim();
+
+      if (!line || line.length < 2) continue;
+      if (/^(?:NIK|NAMA|TEMPAT|TGL|LAHIR|JENIS|KELAMIN)$/i.test(line)) continue;
+      parts.push(line);
+    }
+
+    const value = [...new Set(parts)].join(", ");
+    if (value) candidates.push(value);
+  };
+
+  // Strongest anchor: an RT/RW-looking value, even when its label is mangled.
+  for (let i = 0; i < lines.length; i += 1) {
+    if (/\b\d{3}\s*[\/-]\s*\d{3}\b/.test(lines[i])) {
+      pushWindow(i - 1, i + 3);
+    }
+  }
+
+  // Common KTP layout: address block follows Jenis Kelamin/Gol. Darah.
+  const genderIndex = lines.findIndex((line) => /LAKI[- ]?LAKI|PEREMPUAN/i.test(line));
+  if (genderIndex >= 0) pushWindow(genderIndex + 1, genderIndex + 5);
+
+  // If Alamat text itself is OCR-corrupted, scan the middle KTP region between
+  // birth/gender data and the religion/status section.
+  const birthIndex = lines.findIndex((line) => /\d{2}[-/]\d{2}[-/]\d{4}/.test(line));
+  const religionIndex = lines.findIndex((line) => stopLine(line));
+  if (birthIndex >= 0 && religionIndex > birthIndex + 1) {
+    pushWindow(birthIndex + 1, Math.min(religionIndex - 1, birthIndex + 7));
+  }
+
+  return candidates
+    .map((value) => ({ value, score: scoreKtpAddress(value) }))
+    .sort((a, b) => b.score - a.score)[0]?.value || "";
+}
+
 function extractCompleteAddress(lines) {
   const addressAliases = ["alamat", "alarnat", "alamal", "alarnal", "alamat ktp"];
   const rtAliases = ["rt/rw", "rt rw", "rtrw"];
@@ -905,7 +965,12 @@ function extractCompleteAddress(lines) {
     }
   }
 
-  return [...new Set(parts.map((part) => part.trim()).filter(Boolean))].join(", ");
+  const structured = [...new Set(parts.map((part) => part.trim()).filter(Boolean))].join(", ");
+  const positional = inferAddressByPosition(lines);
+
+  if (!structured) return positional;
+  if (!positional) return structured;
+  return scoreKtpAddress(positional) > scoreKtpAddress(structured) ? positional : structured;
 }
 
 function parseKtpText(rawText) {
