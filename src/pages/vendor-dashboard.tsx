@@ -65,9 +65,9 @@ const RFQ_STATUS: Record<string, { label: string; cls: string }> = {
 };
 
 const QUOTE_STATUS: Record<string, { label: string; cls: string }> = {
-  pending:  { label: "Menunggu", cls: "bg-yellow-100 text-yellow-800" },
-  approved: { label: "Dipilih",  cls: "bg-green-100 text-green-800" },
-  rejected: { label: "Ditolak",  cls: "bg-red-100 text-red-800" },
+  pending:  { label: "Pending", cls: "bg-yellow-100 text-yellow-800" },
+  approved: { label: "Selected", cls: "bg-green-100 text-green-800" },
+  rejected: { label: "Rejected", cls: "bg-red-100 text-red-800" },
 };
 
 // ── New types for added sections ───────────────────────────────────────────────
@@ -961,14 +961,14 @@ function VendorFeaturedSection({
         }),
       });
       const j = await r.json() as { error?: string };
-      if (!r.ok) throw new Error(j.error ?? "Gagal mengajukan");
+      if (!r.ok) throw new Error(j.error ?? t("vendorDashboard.errorFeaturedApply"));
       setSubmitOk(true);
       setApplyItemId(null);
       setApplyPackageId(null);
       void qc.invalidateQueries({ queryKey: ["vendor-featured-requests"] });
       onRefreshRequests();
     } catch (e: unknown) {
-      setSubmitError(e instanceof Error ? e.message : "Gagal mengajukan");
+      setSubmitError(e instanceof Error ? e.message : t("vendorDashboard.errorFeaturedApply"));
     } finally {
       setSubmitting(false);
     }
@@ -984,7 +984,7 @@ function VendorFeaturedSection({
       });
       if (!r.ok) {
         const j = await r.json().catch(() => ({})) as { error?: string };
-        throw new Error(j.error ?? "Gagal membatalkan");
+        throw new Error(j.error ?? t("vendorDashboard.errorFeaturedCancel"));
       }
       void qc.invalidateQueries({ queryKey: ["vendor-featured-requests"] });
       onRefreshRequests();
@@ -1009,7 +1009,7 @@ function VendorFeaturedSection({
         body: fd,
       });
       const j = await r.json().catch(() => ({})) as { error?: string };
-      if (!r.ok) throw new Error(j.error ?? "Upload gagal");
+      if (!r.ok) throw new Error(j.error ?? t("vendorDashboard.errorUpload"));
       void qc.invalidateQueries({ queryKey: ["vendor-featured-requests"] });
       onRefreshRequests();
     } catch (e: unknown) {
@@ -1472,11 +1472,11 @@ export default function VendorDashboard() {
         body: JSON.stringify(payload),
       });
       const body = await response.json().catch(() => ({})) as { error?: string; message?: string };
-      if (!response.ok) throw new Error(body.error ?? body.message ?? "Gagal menyimpan profil");
+      if (!response.ok) throw new Error(body.error ?? body.message ?? t("vendorDashboard.errorSaveProfile"));
       setEditingVendorProfile(false);
       await refetchVendorProfile();
     } catch (error) {
-      setVendorProfileFormError(error instanceof Error ? error.message : "Gagal menyimpan profil");
+      setVendorProfileFormError(error instanceof Error ? error.message : t("vendorDashboard.errorSaveProfile"));
     } finally {
       setSavingVendorProfile(false);
     }
@@ -2497,16 +2497,16 @@ export default function VendorDashboard() {
                 <div className="flex justify-end">
                   {!editingVendorProfile ? (
                     <Button size="sm" variant="outline" onClick={() => { setVendorProfileFormError(""); setEditingVendorProfile(true); }}>
-                      <Pencil className="h-3.5 w-3.5 mr-1.5" /> Edit profil
+                      <Pencil className="h-3.5 w-3.5 mr-1.5" /> {t("vendorDashboard.editProfileData")}
                     </Button>
                   ) : (
                     <div className="flex gap-2">
                       <Button size="sm" variant="ghost" onClick={() => setEditingVendorProfile(false)} disabled={savingVendorProfile}>
-                        <X className="h-3.5 w-3.5 mr-1.5" /> Batal
+                        <X className="h-3.5 w-3.5 mr-1.5" /> {t("vendorDashboard.cancelBtn")}
                       </Button>
                       <Button size="sm" onClick={() => void saveVendorProfile()} disabled={savingVendorProfile}>
                         {savingVendorProfile ? <RefreshCw className="h-3.5 w-3.5 mr-1.5 animate-spin" /> : null}
-                        Simpan
+                        {t("vendorDashboard.saveBtn")}
                       </Button>
                     </div>
                   )}
@@ -2518,9 +2518,15 @@ export default function VendorDashboard() {
                     </CardHeader>
                     <CardContent className="pt-4 grid grid-cols-1 sm:grid-cols-2 gap-3">
                       {([
-                        ["picName", "Nama PIC"], ["phone", "Nomor telepon/WhatsApp"], ["email", "Email PIC"],
-                        ["fullAddress", "Alamat lengkap"], ["province", "Provinsi"], ["city", "Kota"],
-                        ["postalCode", "Kode pos"], ["bankName", "Nama bank"], ["bankAccountName", "Nama pemilik rekening"],
+                        ["picName", t("vendorDashboard.fieldPicName")],
+                        ["phone", t("vendorDashboard.fieldPicPhone")],
+                        ["email", t("vendorDashboard.fieldPicEmail")],
+                        ["fullAddress", t("vendorDashboard.fieldAddress")],
+                        ["province", t("vendorDashboard.fieldProvince")],
+                        ["city", t("vendorDashboard.fieldCity")],
+                        ["postalCode", t("vendorDashboard.fieldPostalCode")],
+                        ["bankName", t("vendorDashboard.fieldBank")],
+                        ["bankAccountName", t("vendorDashboard.fieldBankName")],
                       ] as [keyof VendorProfileForm, string][]).map(([key, label]) => (
                         <label key={key} className={key === "fullAddress" ? "sm:col-span-2 text-xs font-medium" : "text-xs font-medium"}>
                           {label}
@@ -2532,7 +2538,7 @@ export default function VendorDashboard() {
                         </label>
                       ))}
                       <label className="text-xs font-medium">
-                        Nomor rekening
+                        {t("vendorDashboard.bankAccountNumberLabel")}
                         <Input className="mt-1" value={vendorProfileForm.bankAccountNumber} placeholder={t("vendorDashboard.placeholderNewAccountNumber")} onChange={e => setVendorProfileForm(f => ({ ...f, bankAccountNumber: e.target.value }))} />
                       </label>
                       <p className="sm:col-span-2 text-xs text-muted-foreground">{t("vendorDashboard.bankAccountMaskHint")}</p>
