@@ -851,6 +851,19 @@ function parseKtpText(rawText) {
   };
 }
 
+function scoreKtpData(data) {
+  let score = 0;
+  if (data.nik) score += 4;
+  if (data.name) score += 4;
+  if (data.birthDate) score += 2;
+  if (data.gender) score += 1;
+  if (data.address) score += Math.min(4, 1 + Math.floor(data.address.length / 25));
+  if (data.religion) score += 1;
+  if (data.maritalStatus) score += 1;
+  if (data.occupation) score += 1;
+  return score;
+}
+
 export async function ocrKtp(file) {
   validateDocumentFile(file, { ocr: true });
   let tesseract;
@@ -861,10 +874,24 @@ export async function ocrKtp(file) {
     error.statusCode = 501;
     throw error;
   }
+
+  const imageBuffer = Buffer.from(await file.arrayBuffer());
   const worker = await tesseract.createWorker("ind");
   try {
-    const result = await worker.recognize(Buffer.from(await file.arrayBuffer()));
-    return parseKtpText(result.data?.text?.trim() || "");
+    const firstResult = await worker.recognize(imageBuffer);
+    let best = parseKtpText(firstResult.data?.text?.trim() || "");
+
+    if (!best.name || !best.nik || !best.address || best.address.length < 20) {
+      await worker.setParameters({
+        tessedit_pageseg_mode: "6",
+        preserve_interword_spaces: "1",
+      });
+      const blockResult = await worker.recognize(imageBuffer);
+      const blockData = parseKtpText(blockResult.data?.text?.trim() || "");
+      if (scoreKtpData(blockData) > scoreKtpData(best)) best = blockData;
+    }
+
+    return best;
   } finally {
     await worker.terminate();
   }
