@@ -3,7 +3,7 @@ import { createContext, useContext, useState, useEffect, useCallback, ReactNode 
 import { SUPPORTED_LOCALES, RTL_LOCALES, loadLocale, getCachedLocale, type SupportedLocale } from "./translations";
 
 const STORAGE_KEY = "app_language";
-const CACHE_PREFIX = "trs_cache_v3_";
+const CACHE_PREFIX = "trs_cache_v4_";
 const CACHE_TTL_MS = 60 * 60 * 1000; // 1 hour
 
 // ── Helpers ──────────────────────────────────────────────────────────────────

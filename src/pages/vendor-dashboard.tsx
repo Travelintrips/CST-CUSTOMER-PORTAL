@@ -872,14 +872,6 @@ const FEATURED_STATUS_CLS: Record<string, string> = {
   cancelled: "bg-gray-100 text-gray-600",
 };
 
-const PAYMENT_STATUS_MAP: Record<string, { label: string; cls: string }> = {
-  unpaid:               { label: t("vendorDashboard.paymentUnpaid"),         cls: "bg-red-100 text-red-700" },
-  pending_verification: { label: t("vendorDashboard.paymentPendingVerif"), cls: "bg-yellow-100 text-yellow-800" },
-  verified:             { label: "Terverifikasi",        cls: "bg-green-100 text-green-800" },
-  rejected:             { label: "Ditolak",              cls: "bg-red-100 text-red-700" },
-  refunded:             { label: "Direfund",             cls: "bg-purple-100 text-purple-700" },
-};
-
 // ── Featured product types ─────────────────────────────────────────────────────
 interface FeaturedPackage {
   id: number; code: string; name: string; description: string | null;
@@ -1691,7 +1683,7 @@ export default function VendorDashboard() {
     });
     if (!response.ok) {
       const body = await response.json().catch(() => ({})) as { message?: string };
-      window.alert(body.message ?? "RFQ tidak dapat ditolak");
+      window.alert(body.message ?? t("vendorDashboard.marketplaceDeclineError"));
       return;
     }
     await loadProfile();
