@@ -1096,9 +1096,15 @@ async function ocrKtpWithVision({ imageBuffer, mimeType }) {
     "Jika sebuah field tidak yakin, isi null.",
     "Khusus nama: jangan keluarkan noise OCR, simbol, label, atau potongan huruf.",
     "Khusus alamat: gabungkan alamat utama + RT/RW + Kel/Desa + Kecamatan jika terlihat.",
+    "Sebelum mengekstrak data, tentukan apakah gambar benar-benar KTP Indonesia.",
+    "Kembalikan isKtp=false jika dokumen adalah SIM, KK, paspor, kartu BPJS, kartu bank, kartu anggota, barcode/QR, struk, screenshot, foto orang, atau dokumen lain yang bukan KTP Indonesia.",
+    "Jangan menganggap sebuah gambar sebagai KTP hanya karena terdapat nama atau angka.",
+    "Untuk isKtp=true, harus ada bukti visual yang kuat bahwa dokumen adalah KTP Indonesia, misalnya layout KTP, label NIK/Nama/Alamat, identitas Republik Indonesia, dan struktur field KTP.",
     "Kembalikan JSON valid dengan key berikut saja:",
-    "nik, name, birthPlace, birthDate, gender, address, rtRw, village, district, religion, maritalStatus, occupation, confidence.",
-    "confidence adalah angka 0 sampai 1 untuk kualitas ekstraksi keseluruhan.",
+    "isKtp, documentType, documentConfidence, rejectionReason, nik, name, birthPlace, birthDate, gender, address, rtRw, village, district, religion, maritalStatus, occupation, confidence.",
+    "documentType harus KTP_INDONESIA jika isKtp=true; selain itu NON_KTP.",
+    "documentConfidence dan confidence adalah angka 0 sampai 1.",
+    "Jika isKtp=false, semua field identitas harus null dan rejectionReason jelaskan singkat jenis dokumen/gambar yang terlihat."
   ].join("\n");
 
   let response;
@@ -1144,6 +1150,23 @@ async function ocrKtpWithVision({ imageBuffer, mimeType }) {
     return null;
   }
 
+  const isKtp = data.isKtp === true;
+  const documentType = String(data.documentType || "").trim().toUpperCase();
+  const documentConfidenceRaw = Number(data.documentConfidence);
+  const documentConfidence = Number.isFinite(documentConfidenceRaw)
+    ? Math.max(0, Math.min(1, documentConfidenceRaw))
+    : undefined;
+
+  if (!isKtp || documentType !== "KTP_INDONESIA" || Number(documentConfidence ?? 0) < 0.8) {
+    return {
+      isKtp: false,
+      documentType: documentType || "NON_KTP",
+      documentConfidence,
+      rejectionReason: cleanAddressValue(data.rejectionReason) || "Dokumen tidak terdeteksi sebagai KTP Indonesia.",
+      source: "vision",
+    };
+  }
+
   const nikDigits = String(data.nik || "").replace(/\D/g, "");
   const nik = nikDigits.length === 16 ? nikDigits : undefined;
 
@@ -1166,6 +1189,10 @@ async function ocrKtpWithVision({ imageBuffer, mimeType }) {
 
   const confidence = Number(data.confidence);
   return {
+    isKtp: true,
+    documentType: "KTP_INDONESIA",
+    documentConfidence,
+    rejectionReason: undefined,
     nik,
     name: safeName,
     birthPlace: cleanAddressValue(data.birthPlace) || undefined,
@@ -1182,7 +1209,8 @@ async function ocrKtpWithVision({ imageBuffer, mimeType }) {
 }
 
 function mergeVisionAndTesseract(vision, tesseract) {
-  if (!vision) return { ...tesseract, source: "tesseract" };
+  if (vision?.isKtp === false) return vision;
+  if (!vision) return { ...tesseract, isKtp: undefined, source: "tesseract" };
 
   const result = {
     ...tesseract,
@@ -1215,6 +1243,15 @@ export async function ocrKtp(file) {
   const imageBuffer = Buffer.from(await file.arrayBuffer());
 
   const vision = await ocrKtpWithVision({ imageBuffer, mimeType });
+
+  if (vision?.isKtp === false) {
+    const error = new Error(
+      vision.rejectionReason || "Dokumen yang diunggah tidak terdeteksi sebagai KTP Indonesia."
+    );
+    error.statusCode = 422;
+    error.code = "NOT_KTP";
+    throw error;
+  }
 
   // If vision extracted the two most important fields with reasonable
   // confidence, use it directly and avoid a slower local OCR pass.
@@ -1262,7 +1299,34 @@ export async function ocrKtp(file) {
       attempts.push(parseKtpText(result.data?.text?.trim() || ""));
     }
 
-    return mergeVisionAndTesseract(vision, mergeKtpAttempts(attempts));
+    const fallback = mergeKtpAttempts(attempts);
+    const merged = mergeVisionAndTesseract(vision, fallback);
+
+    if (!vision) {
+      const rawText = String(fallback?.text || "");
+      const labelHits = [
+        /\bNIK\b/i,
+        /\bNama\b/i,
+        /\bAlamat\b/i,
+        /\bRT\s*\/\s*RW\b/i,
+        /\bKel(?:urahan|\/Desa)?\b/i,
+        /\bKecamatan\b/i,
+        /\bAgama\b/i,
+        /\bStatus\s+Perkawinan\b/i,
+      ].filter((pattern) => pattern.test(rawText)).length;
+      const validNik = /^\d{16}$/.test(String(fallback?.nik || ""));
+      if (!validNik || labelHits < 3) {
+        const error = new Error("Dokumen yang diunggah tidak terdeteksi sebagai KTP Indonesia. Silakan unggah foto KTP yang jelas.");
+        error.statusCode = 422;
+        error.code = "NOT_KTP";
+        throw error;
+      }
+      merged.isKtp = true;
+      merged.documentType = "KTP_INDONESIA";
+      merged.documentConfidence = undefined;
+    }
+
+    return merged;
   } finally {
     await worker.terminate();
   }
