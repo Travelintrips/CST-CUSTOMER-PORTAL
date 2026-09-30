@@ -972,6 +972,52 @@ function scoreKtpData(data) {
   return score;
 }
 
+function scoreKtpAddress(value) {
+  const address = cleanAddressValue(value);
+  if (!address) return -100;
+  let score = Math.min(12, Math.floor(address.length / 8));
+  if (/rt\/rw/i.test(address)) score += 6;
+  if (/kel\/desa|kelurahan|desa/i.test(address)) score += 5;
+  if (/kecamatan/i.test(address)) score += 5;
+  if (/\b\d{3}\/\d{3}\b/.test(address)) score += 3;
+  if (/agama|pekerjaan|status perkawinan|kewarganegaraan/i.test(address)) score -= 8;
+  return score;
+}
+
+function mergeKtpAttempts(attempts) {
+  const byOverall = attempts.slice().sort((a, b) => scoreKtpData(b) - scoreKtpData(a));
+  const base = { ...(byOverall[0] || {}) };
+
+  const bestName = attempts
+    .filter((item) => item?.name)
+    .map((item) => ({
+      value: item.name,
+      score: scoreKtpNameCandidate(item.name, { labelled: true, distance: 1 }),
+    }))
+    .sort((a, b) => b.score - a.score)[0];
+
+  const bestAddress = attempts
+    .filter((item) => item?.address)
+    .map((item) => ({ value: item.address, score: scoreKtpAddress(item.address) }))
+    .sort((a, b) => b.score - a.score)[0];
+
+  const firstValue = (key) => attempts.find((item) => item?.[key])?.[key];
+
+  return {
+    ...base,
+    nik: firstValue("nik") || base.nik,
+    name: bestName?.score >= 4 ? bestName.value : undefined,
+    birthPlace: firstValue("birthPlace") || base.birthPlace,
+    birthDate: firstValue("birthDate") || base.birthDate,
+    address: bestAddress?.score >= 0 ? bestAddress.value : undefined,
+    gender: firstValue("gender") || base.gender,
+    religion: firstValue("religion") || base.religion,
+    maritalStatus: firstValue("maritalStatus") || base.maritalStatus,
+    occupation: firstValue("occupation") || base.occupation,
+    text: attempts.map((item) => item?.text).filter(Boolean).join("\n\n--- OCR ATTEMPT ---\n\n"),
+  };
+}
+
 export async function ocrKtp(file) {
   validateDocumentFile(file, { ocr: true });
   let tesseract;
@@ -991,17 +1037,15 @@ export async function ocrKtp(file) {
     const firstResult = await worker.recognize(imageBuffer);
     attempts.push(parseKtpText(firstResult.data?.text?.trim() || ""));
 
-    for (const pageSegMode of ["6", "11"]) {
-      const currentBest = attempts
-        .slice()
-        .sort((a, b) => scoreKtpData(b) - scoreKtpData(a))[0];
+    for (const pageSegMode of ["6", "4", "11"]) {
+      const merged = mergeKtpAttempts(attempts);
 
       if (
-        currentBest?.name &&
-        scoreKtpNameCandidate(currentBest.name, { labelled: true, distance: 1 }) >= 10 &&
-        currentBest?.nik &&
-        currentBest?.address &&
-        currentBest.address.length >= 20
+        merged?.name &&
+        scoreKtpNameCandidate(merged.name, { labelled: true, distance: 1 }) >= 10 &&
+        merged?.nik &&
+        merged?.address &&
+        scoreKtpAddress(merged.address) >= 8
       ) break;
 
       await worker.setParameters({
@@ -1012,15 +1056,7 @@ export async function ocrKtp(file) {
       attempts.push(parseKtpText(result.data?.text?.trim() || ""));
     }
 
-    attempts.sort((a, b) => {
-      const nameDelta =
-        scoreKtpNameCandidate(b.name, { labelled: true, distance: 1 }) -
-        scoreKtpNameCandidate(a.name, { labelled: true, distance: 1 });
-      if (nameDelta !== 0) return nameDelta;
-      return scoreKtpData(b) - scoreKtpData(a);
-    });
-
-    return attempts[0];
+    return mergeKtpAttempts(attempts);
   } finally {
     await worker.terminate();
   }
