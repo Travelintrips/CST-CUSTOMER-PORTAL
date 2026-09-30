@@ -801,45 +801,107 @@ function inferNameFromKtp(lines, nik) {
   return best && best.score >= 4 ? best.value : "";
 }
 
+function cleanAddressValue(value) {
+  return String(value || "")
+    .replace(/^[.:;=\-—\s]+/, "")
+    .replace(/\s{2,}/g, " ")
+    .trim();
+}
+
+function extractLabelValueLoose(line, aliases) {
+  const clean = String(line || "").trim();
+  const compact = normalizedLabel(clean);
+  for (const alias of aliases) {
+    const target = normalizedLabel(alias);
+    if (!target) continue;
+    const pos = compact.indexOf(target);
+    if (pos < 0 || pos > 3) continue;
+
+    const separator = clean.match(/[:;=—-]\s*(.+)$/);
+    if (separator?.[1]?.trim()) return cleanAddressValue(separator[1]);
+
+    const tokens = clean.split(/\s+/);
+    const aliasWords = String(alias).trim().split(/\s+/).length;
+    const inline = tokens.slice(aliasWords).join(" ").trim();
+    if (inline) return cleanAddressValue(inline);
+  }
+  return "";
+}
+
 function extractCompleteAddress(lines) {
-  let startIndex = lines.findIndex((line) => looksLikeLabel(line, ["alamat"]));
-  if (startIndex < 0) return "";
+  const addressAliases = ["alamat", "alarnat", "alamal", "alarnal", "alamat ktp"];
+  const rtAliases = ["rt/rw", "rt rw", "rtrw"];
+  const kelAliases = ["kel/desa", "kel desa", "kelurahan/desa", "kelurahan", "desa"];
+  const kecAliases = ["kecamatan", "kecarnatan", "kecarnatan", "kec"];
 
-  const first = ktpField(lines, ["alamat"]);
+  const addressIndex = lines.findIndex((line) => looksLikeLabel(line, addressAliases));
+  const rtIndex = lines.findIndex((line) => looksLikeLabel(line, rtAliases));
+  const kelIndex = lines.findIndex((line) => looksLikeLabel(line, kelAliases));
+  const kecIndex = lines.findIndex((line) => looksLikeLabel(line, kecAliases));
+
   const parts = [];
-  if (first) parts.push(first);
 
-  for (let index = startIndex + 1; index < lines.length; index += 1) {
-    const line = lines[index].trim();
-    if (!line) continue;
-    if (looksLikeLabel(line, [
-      "agama",
-      "status perkawinan",
-      "pekerjaan",
-      "kewarganegaraan",
-      "berlaku hingga",
-    ])) break;
+  // Main street/address line. Prefer an explicit Alamat label, but if OCR misses
+  // that label use the line immediately before RT/RW as the KTP address.
+  if (addressIndex >= 0) {
+    const explicit = extractLabelValueLoose(lines[addressIndex], addressAliases)
+      || ktpField(lines.slice(addressIndex, addressIndex + 2), addressAliases);
+    if (explicit) parts.push(cleanAddressValue(explicit));
+  }
 
-    const rtRw = ktpField([line], ["rt/rw"]);
-    if (looksLikeLabel(line, ["rt/rw"])) {
-      if (rtRw) parts.push(`RT/RW ${rtRw}`);
-      continue;
+  if (parts.length === 0 && rtIndex > 0) {
+    for (let index = rtIndex - 1; index >= Math.max(0, rtIndex - 3); index -= 1) {
+      const candidate = cleanAddressValue(lines[index]);
+      if (
+        candidate &&
+        !isKtpSectionLabel(candidate) &&
+        !/^(LAKI[- ]?LAKI|PEREMPUAN)$/i.test(candidate) &&
+        !/gol\.?\s*darah|agama|status|pekerjaan/i.test(candidate)
+      ) {
+        const stripped = candidate.replace(/^.*?(?:alamat|alarnat|alamal)\s*[:;=—-]?\s*/i, "");
+        if (stripped) {
+          parts.push(cleanAddressValue(stripped));
+          break;
+        }
+      }
     }
+  }
 
-    const kelDesa = ktpField([line], ["kel/desa", "kelurahan/desa", "kelurahan"]);
-    if (looksLikeLabel(line, ["kel/desa", "kelurahan/desa", "kelurahan"])) {
-      if (kelDesa) parts.push(`Kel/Desa ${kelDesa}`);
-      continue;
-    }
+  if (rtIndex >= 0) {
+    const value = extractLabelValueLoose(lines[rtIndex], rtAliases)
+      || ktpField([lines[rtIndex]], rtAliases);
+    if (value) parts.push(`RT/RW ${cleanAddressValue(value)}`);
+  }
 
-    const kecamatan = ktpField([line], ["kecamatan"]);
-    if (looksLikeLabel(line, ["kecamatan"])) {
-      if (kecamatan) parts.push(`Kecamatan ${kecamatan}`);
-      continue;
-    }
+  if (kelIndex >= 0) {
+    const value = extractLabelValueLoose(lines[kelIndex], kelAliases)
+      || ktpField([lines[kelIndex]], kelAliases);
+    if (value) parts.push(`Kel/Desa ${cleanAddressValue(value)}`);
+  }
 
-    if (!isKtpSectionLabel(line) && !/^(LAKI[- ]?LAKI|PEREMPUAN)$/i.test(line)) {
-      parts.push(line);
+  if (kecIndex >= 0) {
+    const value = extractLabelValueLoose(lines[kecIndex], kecAliases)
+      || ktpField([lines[kecIndex]], kecAliases);
+    if (value) parts.push(`Kecamatan ${cleanAddressValue(value)}`);
+  }
+
+  // Preserve continuation lines that sit between Alamat and Agama, while
+  // avoiding duplicate structural labels already handled above.
+  const startIndex = addressIndex >= 0 ? addressIndex + 1 : (rtIndex >= 0 ? rtIndex + 1 : -1);
+  if (startIndex >= 0) {
+    for (let index = startIndex; index < lines.length; index += 1) {
+      const line = lines[index].trim();
+      if (!line) continue;
+      if (looksLikeLabel(line, ["agama", "status perkawinan", "pekerjaan", "kewarganegaraan", "berlaku hingga"])) break;
+      if (
+        looksLikeLabel(line, rtAliases) ||
+        looksLikeLabel(line, kelAliases) ||
+        looksLikeLabel(line, kecAliases)
+      ) continue;
+      if (!isKtpSectionLabel(line) && !/^(LAKI[- ]?LAKI|PEREMPUAN)$/i.test(line)) {
+        const value = cleanAddressValue(line);
+        if (value && value.length >= 3) parts.push(value);
+      }
     }
   }
 
