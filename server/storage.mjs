@@ -656,6 +656,81 @@ export async function signedVendorInvitationAssetUrl({ token, path }) {
   return data.signedUrl;
 }
 
+function normalizeKtpOcrText(value) {
+  return String(value || "")
+    .replace(/\r/g, "")
+    .replace(/[|]/g, "I")
+    .replace(/[ \t]+/g, " ")
+    .trim();
+}
+
+function ktpField(lines, aliases) {
+  const normalizedAliases = aliases.map((alias) => alias.toLowerCase().replace(/[^a-z0-9/ ]/g, "").trim());
+  for (const line of lines) {
+    const clean = line.replace(/^[^A-Za-z0-9]+/, "").trim();
+    const lower = clean.toLowerCase();
+    for (const alias of normalizedAliases) {
+      const comparable = lower.replace(/[^a-z0-9/ :.-]/g, "");
+      if (!comparable.startsWith(alias)) continue;
+      const rest = clean.slice(Math.min(clean.length, alias.length))
+        .replace(/^\s*[:;=\-]?\s*/, "")
+        .trim();
+      if (rest) return rest;
+    }
+  }
+  return "";
+}
+
+function parseKtpText(rawText) {
+  const text = normalizeKtpOcrText(rawText);
+  const lines = text
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean);
+
+  const nikMatch = text.match(/(?:NIK\s*[:;=\-]?\s*)?\b(\d{16})\b/i);
+  const name = ktpField(lines, ["nama", "name"])
+    .replace(/^[.:;=\-\s]+/, "")
+    .replace(/\s{2,}/g, " ")
+    .trim();
+
+  const birthRaw = ktpField(lines, [
+    "tempat/tgl lahir",
+    "tempat / tgl lahir",
+    "tempat, tgl lahir",
+    "tempat tgl lahir",
+  ]);
+  const birthDateMatch = birthRaw.match(/(\d{2}[-/]\d{2}[-/]\d{4})/);
+  const birthPlace = birthRaw
+    .replace(/[, ]*\d{2}[-/]\d{2}[-/]\d{4}.*$/, "")
+    .trim();
+
+  const genderRaw = ktpField(lines, ["jenis kelamin", "kelamin"]);
+  const gender = /perempuan|wanita/i.test(genderRaw)
+    ? "PEREMPUAN"
+    : /laki|pria/i.test(genderRaw)
+      ? "LAKI-LAKI"
+      : genderRaw;
+
+  const address = ktpField(lines, ["alamat"]);
+  const religion = ktpField(lines, ["agama"]);
+  const maritalStatus = ktpField(lines, ["status perkawinan", "status perkawinan"]);
+  const occupation = ktpField(lines, ["pekerjaan"]);
+
+  return {
+    nik: nikMatch?.[1] || undefined,
+    name: name || undefined,
+    birthPlace: birthPlace || undefined,
+    birthDate: birthDateMatch?.[1] || undefined,
+    address: address || undefined,
+    gender: gender || undefined,
+    religion: religion || undefined,
+    maritalStatus: maritalStatus || undefined,
+    occupation: occupation || undefined,
+    text,
+  };
+}
+
 export async function ocrKtp(file) {
   validateDocumentFile(file, { ocr: true });
   let tesseract;
@@ -669,8 +744,7 @@ export async function ocrKtp(file) {
   const worker = await tesseract.createWorker("ind");
   try {
     const result = await worker.recognize(Buffer.from(await file.arrayBuffer()));
-    const text = result.data?.text?.trim() || "";
-    return { text };
+    return parseKtpText(result.data?.text?.trim() || "");
   } finally {
     await worker.terminate();
   }
