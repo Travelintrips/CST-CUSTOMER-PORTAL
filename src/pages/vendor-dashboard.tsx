@@ -54,8 +54,8 @@ const emptyForm = (): QuoteFormState => ({
   vendorPrice: "", estimatedPickup: "", estimatedDelivery: "", estimatedDays: "", vendorNotes: "",
 });
 
-function fmt(n: number) {
-  return "Rp " + Math.round(n).toLocaleString("id-ID");
+function fmt(n: number, locale: string) {
+  return "Rp " + Math.round(n).toLocaleString(locale || "id-ID");
 }
 
 const RFQ_STATUS: Record<string, { label: string; cls: string }> = {
@@ -65,9 +65,9 @@ const RFQ_STATUS: Record<string, { label: string; cls: string }> = {
 };
 
 const QUOTE_STATUS: Record<string, { label: string; cls: string }> = {
-  pending:  { label: "Menunggu", cls: "bg-yellow-100 text-yellow-800" },
-  approved: { label: "Dipilih",  cls: "bg-green-100 text-green-800" },
-  rejected: { label: "Ditolak",  cls: "bg-red-100 text-red-800" },
+  pending:  { label: "Pending", cls: "bg-yellow-100 text-yellow-800" },
+  approved: { label: "Selected", cls: "bg-green-100 text-green-800" },
+  rejected: { label: "Rejected", cls: "bg-red-100 text-red-800" },
 };
 
 // ── New types for added sections ───────────────────────────────────────────────
@@ -182,7 +182,7 @@ interface VendorCatalog {
 // ── Vendor Etalase Section (photo overview — quick upload for dashboard tab) ──
 function VendorEtalaseSection() {
   const qc = useQueryClient();
-  const { t } = useLanguage();
+  const { t, locale } = useLanguage();
   const fileInputRefs = useRef<Record<number, HTMLInputElement | null>>({});
   const [uploading, setUploading] = useState<Record<number, boolean>>({});
   const [deleting, setDeleting] = useState<Record<string, boolean>>({});
@@ -195,7 +195,7 @@ function VendorEtalaseSection() {
       const r = await fetch("/api/portal/vendor/catalog", { credentials: "include" });
       if (!r.ok) {
         const j = await r.json().catch(() => ({})) as { message?: string };
-        throw new Error(j.message ?? "Gagal memuat katalog");
+        throw new Error(j.message ?? t("vendorDashboard.errorLoadCatalog"));
       }
       return r.json() as Promise<VendorCatalog>;
     },
@@ -215,7 +215,7 @@ function VendorEtalaseSection() {
         body: fd,
       });
       const j = await r.json() as { message?: string; url?: string; objectPath?: string; mimeType?: string; sizeBytes?: number };
-      if (!r.ok) throw new Error(j.message ?? "Upload gagal");
+      if (!r.ok) throw new Error(j.message ?? t("vendorDashboard.errorUpload"));
       const existing: MediaAssetEntry[] = item.mediaAssets ?? [];
       const hasImgPrimary = existing.some(a => { const t = (a.type ?? "image").toLowerCase(); return (t === "image" || !t) && a.isPrimary; });
       const newAsset: MediaAssetEntry = {
@@ -230,11 +230,11 @@ function VendorEtalaseSection() {
       });
       if (!pr.ok) {
         const pj = await pr.json().catch(() => ({})) as { message?: string };
-        throw new Error(pj.message ?? "Gagal menyimpan media");
+        throw new Error(pj.message ?? t("vendorDashboard.errorSaveMedia"));
       }
       void qc.invalidateQueries({ queryKey: ["vendor-catalog"] });
     } catch (e: unknown) {
-      setUploadError((p) => ({ ...p, [itemId]: e instanceof Error ? e.message : "Upload gagal" }));
+      setUploadError((p) => ({ ...p, [itemId]: e instanceof Error ? e.message : t("vendorDashboard.errorUpload") }));
     } finally {
       setUploading((p) => ({ ...p, [itemId]: false }));
       if (fileInputRefs.current[itemId]) fileInputRefs.current[itemId]!.value = "";
@@ -415,13 +415,13 @@ function CatalogFormFields({ form, setForm, onSave, onCancel, saving, formError,
   formError: string | null;
   isAdd?: boolean;
 }) {
-  const { t } = useLanguage();
+  const { t, locale } = useLanguage();
   const f = (field: keyof CatalogItemForm, val: string) => setForm({ ...form, [field]: val });
   return (
     <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 p-4 bg-slate-50 rounded-xl border-t border-border/40">
       <div className="sm:col-span-2">
         <label className="text-xs font-medium text-muted-foreground mb-1 block">{t("vendorDashboard.fieldNameLabel")} <span className="text-red-500">*</span></label>
-        <Input value={form.name} onChange={e => f("name", e.target.value)} placeholder="Cth: Bawang Merah Premium" />
+        <Input value={form.name} onChange={e => f("name", e.target.value)} placeholder={t("vendorDashboard.placeholderProductName")} />
       </div>
       <div>
         <label className="text-xs font-medium text-muted-foreground mb-1 block">{t("vendorDashboard.fieldTypeLabel")}</label>
@@ -433,31 +433,31 @@ function CatalogFormFields({ form, setForm, onSave, onCancel, saving, formError,
       </div>
       <div>
         <label className="text-xs font-medium text-muted-foreground mb-1 block">{t("vendorDashboard.fieldCategoryLabel")}</label>
-        <Input value={form.kategori} onChange={e => f("kategori", e.target.value)} placeholder="Cth: Sayuran, Sembako" />
+        <Input value={form.kategori} onChange={e => f("kategori", e.target.value)} placeholder={t("vendorDashboard.placeholderCategory")} />
       </div>
       <div className="sm:col-span-2">
         <label className="text-xs font-medium text-muted-foreground mb-1 block">{t("vendorDashboard.fieldDescLabel")}</label>
-        <Textarea value={form.description} onChange={e => f("description", e.target.value)} placeholder="Deskripsi produk/layanan..." rows={2} />
+        <Textarea value={form.description} onChange={e => f("description", e.target.value)} placeholder={t("vendorDashboard.placeholderDescription")} rows={2} />
       </div>
       <div>
         <label className="text-xs font-medium text-muted-foreground mb-1 block">{t("vendorDashboard.fieldPriceLabel")}</label>
-        <Input value={form.priceSell} onChange={e => f("priceSell", e.target.value)} placeholder="Cth: 50000" />
+        <Input value={form.priceSell} onChange={e => f("priceSell", e.target.value)} placeholder={t("vendorDashboard.placeholderPrice")} />
       </div>
       <div>
         <label className="text-xs font-medium text-muted-foreground mb-1 block">{t("vendorDashboard.fieldUnitLabel")}</label>
-        <Input value={form.unit} onChange={e => f("unit", e.target.value)} placeholder="Cth: kg, karton, unit" />
+        <Input value={form.unit} onChange={e => f("unit", e.target.value)} placeholder={t("vendorDashboard.placeholderUnit")} />
       </div>
       <div>
         <label className="text-xs font-medium text-muted-foreground mb-1 block">{t("vendorDashboard.fieldMoqLabel")}</label>
-        <Input value={form.moq} onChange={e => f("moq", e.target.value)} placeholder="Cth: 100" />
+        <Input value={form.moq} onChange={e => f("moq", e.target.value)} placeholder={t("vendorDashboard.placeholderMoq")} />
       </div>
       <div>
         <label className="text-xs font-medium text-muted-foreground mb-1 block">{t("vendorDashboard.fieldOriginLabel")}</label>
-        <Input value={form.origin} onChange={e => f("origin", e.target.value)} placeholder="Cth: Brebes, Jawa Tengah" />
+        <Input value={form.origin} onChange={e => f("origin", e.target.value)} placeholder={t("vendorDashboard.placeholderOrigin")} />
       </div>
       <div>
         <label className="text-xs font-medium text-muted-foreground mb-1 block">{t("vendorDashboard.fieldHsCodeLabel")}</label>
-        <Input value={form.hsCode} onChange={e => f("hsCode", e.target.value)} placeholder="Cth: 0703.10.10" />
+        <Input value={form.hsCode} onChange={e => f("hsCode", e.target.value)} placeholder={t("vendorDashboard.placeholderHsCode")} />
       </div>
       {formError && (
         <div className="sm:col-span-2 flex items-center gap-2 text-sm text-red-700 bg-red-50 border border-red-200 rounded-lg px-3 py-2">
@@ -476,14 +476,14 @@ function CatalogFormFields({ form, setForm, onSave, onCancel, saving, formError,
 
 function VendorCatalogManagementSection() {
   const qc = useQueryClient();
-  const { t } = useLanguage();
+  const { t, locale } = useLanguage();
   const fileInputRefs = useRef<Record<string, HTMLInputElement | null>>({});
 
   const { data, isLoading } = useQuery<VendorCatalog>({
     queryKey: ["vendor-catalog"],
     queryFn: async () => {
       const r = await fetch("/api/portal/vendor/catalog", { credentials: "include" });
-      if (!r.ok) throw new Error("Gagal memuat katalog");
+      if (!r.ok) throw new Error(t("vendorDashboard.errorLoadCatalog"));
       return r.json() as Promise<VendorCatalog>;
     },
     staleTime: 30_000,
@@ -575,7 +575,7 @@ function VendorCatalogManagementSection() {
         method: "POST", headers: {}, body: fd,
       });
       const j = await r.json() as { message?: string; url?: string; objectPath?: string; mimeType?: string; sizeBytes?: number };
-      if (!r.ok) throw new Error(j.message ?? "Upload gagal");
+      if (!r.ok) throw new Error(j.message ?? t("vendorDashboard.errorUpload"));
       const mime = j.mimeType ?? file.type;
       const type = mime.startsWith("video/") ? "video" : mime === "application/pdf" ? "pdf" : "image";
       const existing = item.mediaAssets ?? [];
@@ -585,7 +585,7 @@ function VendorCatalogManagementSection() {
         sortOrder: existing.length, objectPath: j.objectPath, mimeType: mime, sizeBytes: j.sizeBytes, visibility: "public",
       }]);
     } catch (e: unknown) {
-      setUploadError(p => ({ ...p, [item.id]: e instanceof Error ? e.message : "Upload gagal" }));
+      setUploadError(p => ({ ...p, [item.id]: e instanceof Error ? e.message : t("vendorDashboard.errorUpload") }));
     } finally {
       setUploadingId(null);
       const key = `img-${item.id}`;
@@ -671,8 +671,8 @@ function VendorCatalogManagementSection() {
 
           const statusMap: Record<string, { label: string; cls: string }> = {
             published: { label: t("vendorDashboard.statusPublished"), cls: "bg-emerald-100 text-emerald-800 border-emerald-200" },
-            pending_review: { label: "Menunggu persetujuan admin", cls: "bg-blue-100 text-blue-800 border-blue-200" },
-            rejected:  { label: "Ditolak — dapat diperbaiki", cls: "bg-red-100 text-red-800 border-red-200" },
+            pending_review: { label: t("vendorDashboard.catalogStatusPendingAdmin"), cls: "bg-blue-100 text-blue-800 border-blue-200" },
+            rejected:  { label: t("vendorDashboard.catalogStatusRejectedFixable"), cls: "bg-red-100 text-red-800 border-red-200" },
             draft:     { label: t("vendorDashboard.statusDraft"),      cls: "bg-amber-100 text-amber-800 border-amber-200" },
             archived:  { label: t("vendorDashboard.statusArchived"),   cls: "bg-gray-100 text-gray-600 border-gray-200" },
           };
@@ -873,8 +873,8 @@ const FEATURED_STATUS_CLS: Record<string, string> = {
 };
 
 const PAYMENT_STATUS_MAP: Record<string, { label: string; cls: string }> = {
-  unpaid:               { label: "Belum Bayar",         cls: "bg-red-100 text-red-700" },
-  pending_verification: { label: "Menunggu Verifikasi", cls: "bg-yellow-100 text-yellow-800" },
+  unpaid:               { label: t("vendorDashboard.paymentUnpaid"),         cls: "bg-red-100 text-red-700" },
+  pending_verification: { label: t("vendorDashboard.paymentPendingVerif"), cls: "bg-yellow-100 text-yellow-800" },
   verified:             { label: "Terverifikasi",        cls: "bg-green-100 text-green-800" },
   rejected:             { label: "Ditolak",              cls: "bg-red-100 text-red-700" },
   refunded:             { label: "Direfund",             cls: "bg-purple-100 text-purple-700" },
@@ -914,7 +914,7 @@ function VendorFeaturedSection({
   catalog, catalogLoading, onRefreshRequests,
 }: VendorFeaturedSectionProps) {
   const qc = useQueryClient();
-  const { t } = useLanguage();
+  const { t, locale } = useLanguage();
 
   // Apply flow state: step 1 = pick item, step 2 = pick package + confirm
   const [applyItemId, setApplyItemId] = useState<number | null>(null);
@@ -961,14 +961,14 @@ function VendorFeaturedSection({
         }),
       });
       const j = await r.json() as { error?: string };
-      if (!r.ok) throw new Error(j.error ?? "Gagal mengajukan");
+      if (!r.ok) throw new Error(j.error ?? t("vendorDashboard.errorFeaturedApply"));
       setSubmitOk(true);
       setApplyItemId(null);
       setApplyPackageId(null);
       void qc.invalidateQueries({ queryKey: ["vendor-featured-requests"] });
       onRefreshRequests();
     } catch (e: unknown) {
-      setSubmitError(e instanceof Error ? e.message : "Gagal mengajukan");
+      setSubmitError(e instanceof Error ? e.message : t("vendorDashboard.errorFeaturedApply"));
     } finally {
       setSubmitting(false);
     }
@@ -984,7 +984,7 @@ function VendorFeaturedSection({
       });
       if (!r.ok) {
         const j = await r.json().catch(() => ({})) as { error?: string };
-        throw new Error(j.error ?? "Gagal membatalkan");
+        throw new Error(j.error ?? t("vendorDashboard.errorFeaturedCancel"));
       }
       void qc.invalidateQueries({ queryKey: ["vendor-featured-requests"] });
       onRefreshRequests();
@@ -1009,11 +1009,11 @@ function VendorFeaturedSection({
         body: fd,
       });
       const j = await r.json().catch(() => ({})) as { error?: string };
-      if (!r.ok) throw new Error(j.error ?? "Upload gagal");
+      if (!r.ok) throw new Error(j.error ?? t("vendorDashboard.errorUpload"));
       void qc.invalidateQueries({ queryKey: ["vendor-featured-requests"] });
       onRefreshRequests();
     } catch (e: unknown) {
-      setUploadError((p) => ({ ...p, [id]: e instanceof Error ? e.message : "Upload gagal" }));
+      setUploadError((p) => ({ ...p, [id]: e instanceof Error ? e.message : t("vendorDashboard.errorUpload") }));
     } finally {
       setUploadingId(null);
       if (proofInputRefs.current[id]) proofInputRefs.current[id]!.value = "";
@@ -1155,7 +1155,7 @@ function VendorFeaturedSection({
                           )}
                           <div className="flex items-center gap-3 mt-1">
                             <span className="text-base font-bold text-amber-600">
-                              {fmt(pkg.price)} <span className="text-xs font-normal text-muted-foreground">{pkg.currency}</span>
+                              {fmt(pkg.price, locale)} <span className="text-xs font-normal text-muted-foreground">{pkg.currency}</span>
                             </span>
                             <span className="text-xs text-muted-foreground">· {pkg.durationDays} hari</span>
                           </div>
@@ -1260,7 +1260,7 @@ function VendorFeaturedSection({
                           </p>
                         )}
                         <p className="text-xs text-muted-foreground">
-                          {t("vendorDashboard.submittedDateLabel")} {new Date(req.createdAt).toLocaleDateString("id-ID", { day: "numeric", month: "long", year: "numeric" })}
+                          {t("vendorDashboard.submittedDateLabel")} {new Date(req.createdAt).toLocaleDateString(locale, { day: "numeric", month: "long", year: "numeric" })}
                         </p>
                       </div>
                       <div className="flex flex-col items-end gap-1 shrink-0">
@@ -1274,15 +1274,15 @@ function VendorFeaturedSection({
                       {req.price != null && (
                         <div>
                           <span className="text-xs text-muted-foreground block">{t("vendorDashboard.priceHeaderLabel")}</span>
-                          <span className="font-semibold">{fmt(req.price)} <span className="text-xs font-normal text-muted-foreground">{req.currency ?? ""}</span></span>
+                          <span className="font-semibold">{fmt(req.price, locale)} <span className="text-xs font-normal text-muted-foreground">{req.currency ?? ""}</span></span>
                         </div>
                       )}
                       {req.requestedStartAt && (
                         <div>
                           <span className="text-xs text-muted-foreground block">{t("vendorDashboard.periodSubmitted")}</span>
                           <span className="text-sm">
-                            {new Date(req.requestedStartAt).toLocaleDateString("id-ID")}
-                            {req.requestedEndAt ? ` – ${new Date(req.requestedEndAt).toLocaleDateString("id-ID")}` : ""}
+                            {new Date(req.requestedStartAt).toLocaleDateString(locale)}
+                            {req.requestedEndAt ? ` – ${new Date(req.requestedEndAt).toLocaleDateString(locale)}` : ""}
                           </span>
                         </div>
                       )}
@@ -1290,8 +1290,8 @@ function VendorFeaturedSection({
                         <div>
                           <span className="text-xs text-muted-foreground block">{t("vendorDashboard.periodApproved")}</span>
                           <span className="text-sm">
-                            {new Date(req.approvedStartAt).toLocaleDateString("id-ID")}
-                            {req.approvedEndAt ? ` – ${new Date(req.approvedEndAt).toLocaleDateString("id-ID")}` : ""}
+                            {new Date(req.approvedStartAt).toLocaleDateString(locale)}
+                            {req.approvedEndAt ? ` – ${new Date(req.approvedEndAt).toLocaleDateString(locale)}` : ""}
                           </span>
                         </div>
                       )}
@@ -1376,7 +1376,7 @@ type DashTab = "dashboard" | "profile" | "catalog" | "notifications" | "featured
 // ── Main Dashboard ────────────────────────────────────────────────────────────
 export default function VendorDashboard() {
   const [, setLocation] = useLocation();
-  const { t } = useLanguage();
+  const { t, locale } = useLanguage();
   const rfqStatusLabel = (status: string) => ({
     open: t("vendorDashboard.rfqStatusOpen"),
     closed: t("vendorDashboard.rfqStatusClosed"),
@@ -1472,11 +1472,11 @@ export default function VendorDashboard() {
         body: JSON.stringify(payload),
       });
       const body = await response.json().catch(() => ({})) as { error?: string; message?: string };
-      if (!response.ok) throw new Error(body.error ?? body.message ?? "Gagal menyimpan profil");
+      if (!response.ok) throw new Error(body.error ?? body.message ?? t("vendorDashboard.errorSaveProfile"));
       setEditingVendorProfile(false);
       await refetchVendorProfile();
     } catch (error) {
-      setVendorProfileFormError(error instanceof Error ? error.message : "Gagal menyimpan profil");
+      setVendorProfileFormError(error instanceof Error ? error.message : t("vendorDashboard.errorSaveProfile"));
     } finally {
       setSavingVendorProfile(false);
     }
@@ -1534,7 +1534,7 @@ export default function VendorDashboard() {
       const r = await fetch("/api/portal/vendor/catalog", { credentials: "include" });
       if (!r.ok) {
         const j = await r.json().catch(() => ({})) as { message?: string };
-        throw new Error(j.message ?? "Gagal memuat katalog");
+        throw new Error(j.message ?? t("vendorDashboard.errorLoadCatalog"));
       }
       return r.json() as Promise<VendorCatalog>;
     },
@@ -1563,9 +1563,9 @@ export default function VendorDashboard() {
           // Show an error state instead. This happens when user_profiles.status !== 'active'
           // (i.e. admin has not yet approved the vendor account).
           const j = await r.json().catch(() => ({})) as { message?: string; profileStatus?: string };
-          throw new Error(j.message ?? "Akun vendor belum aktif. Menunggu persetujuan admin.");
+          throw new Error(j.message ?? t("vendorDashboard.accountInactiveWaiting"));
         }
-        if (!r.ok) throw new Error("Gagal memuat profil vendor");
+        if (!r.ok) throw new Error(t("vendorDashboard.errorLoadProfile"));
         const data = await r.json() as VendorProfile;
         if (data.portalCustomer.role !== "vendor") { setLocation("/dashboard"); return; }
         setProfile(data);
@@ -1684,7 +1684,7 @@ export default function VendorDashboard() {
   const totalPendingRfqs = pendingRfqs.length + marketplacePendingRfqs.length;
 
   async function declineMarketplaceRfq(rfq: MarketplaceRfq) {
-    if (!window.confirm(`Tolak undangan ${rfq.rfqNumber}?`)) return;
+    if (!window.confirm(t("vendorDashboard.marketplaceDeclineConfirm").replace("{number}", rfq.rfqNumber))) return;
     const response = await fetch(`/api/portal/vendor/marketplace-quotes/${rfq.quoteId}/decline`, {
       method: "POST",
       credentials: "include",
@@ -1945,7 +1945,7 @@ export default function VendorDashboard() {
                             <p className="text-xs text-muted-foreground">{t("vendorDashboard.commodityLabel")} {rfq.commodity}</p>
                           )}
                           <p className="text-xs text-muted-foreground mt-1">
-                            {new Date(rfq.createdAt).toLocaleDateString("id-ID", { day: "numeric", month: "long", year: "numeric" })}
+                            {new Date(rfq.createdAt).toLocaleDateString(locale, { day: "numeric", month: "long", year: "numeric" })}
                           </p>
                         </div>
 
@@ -1988,7 +1988,7 @@ export default function VendorDashboard() {
                           <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-sm">
                             <div>
                               <span className="text-xs text-muted-foreground">{t("vendorDashboard.priceHeaderLabel")}</span>
-                              <p className="font-semibold">{fmt(existingQuote.vendorPrice)}</p>
+                              <p className="font-semibold">{fmt(existingQuote.vendorPrice, locale)}</p>
                             </div>
                             <div>
                               <span className="text-xs text-muted-foreground">{t("vendorDashboard.quoteDetailStatusLabel")}</span>
@@ -2015,8 +2015,8 @@ export default function VendorDashboard() {
                             <p className="text-xs text-muted-foreground italic mt-1">{existingQuote.vendorNotes}</p>
                           )}
                           <p className="text-xs text-muted-foreground">
-                            Via {existingQuote.replySource === "whatsapp" ? "WhatsApp" : existingQuote.replySource === "portal" ? "Portal" : "Manual"} ·{" "}
-                            {new Date(existingQuote.createdAt).toLocaleDateString("id-ID")}
+                            {t("vendorDashboard.viaLabel")} {existingQuote.replySource === "whatsapp" ? "WhatsApp" : existingQuote.replySource === "portal" ? "Portal" : t("vendorDashboard.manualLabel")} ·{" "}
+                            {new Date(existingQuote.createdAt).toLocaleDateString(locale)}
                           </p>
                         </div>
                       )}
@@ -2115,10 +2115,10 @@ export default function VendorDashboard() {
               <div className="pt-5 space-y-3">
                 <div>
                   <h2 className="text-lg font-semibold flex items-center gap-2">
-                    <ShoppingBag className="h-4 w-4" /> RFQ Marketplace
+                    <ShoppingBag className="h-4 w-4" /> {t("vendorDashboard.marketplaceRfqTitle")}
                   </h2>
                   <p className="text-sm text-muted-foreground">
-                    Undangan dari Customer Portal. Masukkan harga per item melalui formulir penawaran.
+                    {t("vendorDashboard.marketplaceRfqDesc")}
                   </p>
                 </div>
 
@@ -2126,14 +2126,14 @@ export default function VendorDashboard() {
                   const isActionable = ["invited", "opened", "requote_requested"].includes(rfq.quoteStatus)
                     && !["cancelled", "expired"].includes(rfq.rfqStatus);
                   const quoteStatusLabels: Record<string, string> = {
-                    invited: "Menunggu respons",
-                    opened: "Sedang diisi",
-                    requote_requested: "Diminta revisi",
-                    submitted: "Penawaran terkirim",
-                    selected: "Terpilih",
-                    rejected: "Ditolak",
-                    expired: "Kedaluwarsa",
-                    withdrawn: "Dibatalkan",
+                    invited: t("vendorDashboard.marketplaceQuoteInvited"),
+                    opened: t("vendorDashboard.marketplaceQuoteOpened"),
+                    requote_requested: t("vendorDashboard.marketplaceQuoteRevisionRequested"),
+                    submitted: t("vendorDashboard.marketplaceQuoteSubmitted"),
+                    selected: t("vendorDashboard.marketplaceQuoteSelected"),
+                    rejected: t("vendorDashboard.marketplaceQuoteRejected"),
+                    expired: t("vendorDashboard.marketplaceQuoteExpired"),
+                    withdrawn: t("vendorDashboard.marketplaceQuoteWithdrawn"),
                   };
                   const statusLabel = quoteStatusLabels[rfq.quoteStatus] ?? rfq.quoteStatus;
                   const statusClass = isActionable
@@ -2157,15 +2157,15 @@ export default function VendorDashboard() {
                               {rfq.buyerCompany || rfq.buyerName}
                             </p>
                             <p className="text-xs text-muted-foreground">
-                              {rfq.lineCount} item · diterima {new Date(rfq.createdAt).toLocaleDateString("id-ID", { day: "numeric", month: "long", year: "numeric" })}
+                              {t("vendorDashboard.marketplaceItemsReceived").replace("{count}", String(rfq.lineCount)).replace("{date}", new Date(rfq.createdAt).toLocaleDateString(locale, { day: "numeric", month: "long", year: "numeric" }))}
                             </p>
                           </div>
                           <ShoppingBag className="h-5 w-5 text-primary/70 flex-shrink-0" />
                         </div>
 
                         <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs text-muted-foreground">
-                          {rfq.requiredDeliveryDate && <span>Target kirim: {new Date(rfq.requiredDeliveryDate).toLocaleDateString("id-ID")}</span>}
-                          {rfq.deliveryAddress && <span className="truncate" title={rfq.deliveryAddress}>Lokasi: {rfq.deliveryAddress}</span>}
+                          {rfq.requiredDeliveryDate && <span>{t("vendorDashboard.marketplaceTargetDelivery")}: {new Date(rfq.requiredDeliveryDate).toLocaleDateString(locale)}</span>}
+                          {rfq.deliveryAddress && <span className="truncate" title={rfq.deliveryAddress}>{t("vendorDashboard.marketplaceLocation")}: {rfq.deliveryAddress}</span>}
                         </div>
                         {rfq.notes && <p className="text-xs text-muted-foreground italic border-l-2 pl-2">{rfq.notes}</p>}
 
@@ -2175,12 +2175,12 @@ export default function VendorDashboard() {
                               {rfq.quoteUrl ? (
                                 <Button asChild size="sm" className="gap-2">
                                   <a href={rfq.quoteUrl}>
-                                    <Send className="h-4 w-4" /> Isi harga & kirim penawaran
+                                    <Send className="h-4 w-4" /> {t("vendorDashboard.marketplaceFillAndSendQuote")}
                                   </a>
                                 </Button>
                               ) : (
                                 <Button size="sm" disabled className="gap-2">
-                                  <Send className="h-4 w-4" /> Link penawaran belum tersedia
+                                  <Send className="h-4 w-4" /> {t("vendorDashboard.marketplaceQuoteLinkUnavailable")}
                                 </Button>
                               )}
                               <Button
@@ -2189,25 +2189,25 @@ export default function VendorDashboard() {
                                 className="text-red-600 hover:text-red-700"
                                 onClick={() => void declineMarketplaceRfq(rfq)}
                               >
-                                Tolak RFQ
+                                {t("vendorDashboard.marketplaceDeclineRfq")}
                               </Button>
                             </>
                           )}
                           {!isActionable && ["submitted", "selected", "rejected"].includes(rfq.quoteStatus) && (
                             rfq.quoteUrl ? (
                               <Button asChild variant="outline" size="sm" className="gap-2">
-                                <a href={rfq.quoteUrl}>Lihat penawaran</a>
+                                <a href={rfq.quoteUrl}>{t("vendorDashboard.marketplaceViewQuote")}</a>
                               </Button>
                             ) : (
                               <Button variant="outline" size="sm" disabled>
-                                Link penawaran belum tersedia
+                                {t("vendorDashboard.marketplaceQuoteLinkUnavailable")}
                               </Button>
                             )
                           )}
                         </div>
                         {rfq.validUntil && (
                           <p className="text-[11px] text-muted-foreground">
-                            Batas respons: {new Date(rfq.validUntil).toLocaleString("id-ID")}
+                            {t("vendorDashboard.marketplaceResponseDeadline")}: {new Date(rfq.validUntil).toLocaleString(locale)}
                           </p>
                         )}
                       </CardContent>
@@ -2221,24 +2221,24 @@ export default function VendorDashboard() {
               <div className="pt-5 space-y-3">
                 <div>
                   <h2 className="text-lg font-semibold flex items-center gap-2">
-                    <Package className="h-4 w-4" /> Purchase Order Marketplace
+                    <Package className="h-4 w-4" /> {t("vendorDashboard.marketplacePoTitle")}
                   </h2>
                   <p className="text-sm text-muted-foreground">
-                    PO yang sudah diterbitkan customer. Buka detail untuk menerima, menolak, atau meminta revisi.
+                    {t("vendorDashboard.marketplacePoDesc")}
                   </p>
                 </div>
                 {marketplaceOrders.map((order) => {
                   const poStatusLabels: Record<string, string> = {
-                    pending: "Menunggu penerbitan",
-                    issued: "Menunggu respons vendor",
-                    vendor_accepted: "Diterima vendor",
-                    revision_requested: "Revisi diminta",
-                    vendor_rejected: "Ditolak vendor",
-                    production: "Dalam produksi",
-                    ready_to_ship: "Siap dikirim",
-                    in_transit: "Dalam pengiriman",
-                    closed: "Selesai",
-                    cancelled: "Dibatalkan",
+                    pending: t("vendorDashboard.poStatusPending"),
+                    issued: t("vendorDashboard.poStatusIssued"),
+                    vendor_accepted: t("vendorDashboard.poStatusAccepted"),
+                    revision_requested: t("vendorDashboard.poStatusRevision"),
+                    vendor_rejected: t("vendorDashboard.poStatusRejected"),
+                    production: t("vendorDashboard.poStatusProduction"),
+                    ready_to_ship: t("vendorDashboard.poStatusReadyShip"),
+                    in_transit: t("vendorDashboard.poStatusTransit"),
+                    closed: t("vendorDashboard.poStatusClosed"),
+                    cancelled: t("vendorDashboard.poStatusCancelled"),
                   };
                   const canRespond = order.status === "issued" || order.status === "revision_requested";
                   return (
@@ -2255,25 +2255,25 @@ export default function VendorDashboard() {
                             </Badge>
                           </div>
                           <p className="font-semibold text-sm mt-1">
-                            {new Intl.NumberFormat("id-ID", {
+                            {new Intl.NumberFormat(locale, {
                               style: "currency",
                               currency: order.currency || "IDR",
                               maximumFractionDigits: 0,
                             }).format(order.grandTotal)}
                           </p>
                           <p className="text-xs text-muted-foreground">
-                            Diterbitkan {new Date(order.createdAt).toLocaleDateString("id-ID")}
+                            {t("vendorDashboard.poIssuedOn")} {new Date(order.createdAt).toLocaleDateString(locale)}
                           </p>
                         </div>
                         {order.poUrl ? (
                           <Button asChild size="sm" variant={canRespond ? "default" : "outline"} className="gap-2">
                             <a href={order.poUrl}>
-                              {canRespond ? "Tindak lanjuti PO" : "Lihat PO"}
+                              {canRespond ? t("vendorDashboard.poFollowUp") : t("vendorDashboard.poView")}
                             </a>
                           </Button>
                         ) : (
                           <Button size="sm" variant="outline" disabled>
-                            Link PO belum tersedia
+                            {t("vendorDashboard.poLinkUnavailable")}
                           </Button>
                         )}
                       </CardContent>
@@ -2316,15 +2316,15 @@ export default function VendorDashboard() {
                             <p className="font-mono text-xs font-medium text-primary">{q.rfqNumber}</p>
                             <Badge className={st.cls} variant="secondary">{st.label}</Badge>
                           </div>
-                          <p className="font-semibold text-sm">{fmt(q.vendorPrice)}</p>
+                          <p className="font-semibold text-sm">{fmt(q.vendorPrice, locale)}</p>
                           <div className="flex flex-wrap gap-x-3 text-xs text-muted-foreground">
                             {q.estimatedPickup && <span>{t("vendorDashboard.estPickup")}: {q.estimatedPickup}</span>}
                             {q.estimatedDelivery && <span>{t("vendorDashboard.estDelivery")}: {q.estimatedDelivery}</span>}
                           </div>
                           {q.vendorNotes && <p className="text-xs text-muted-foreground italic">{q.vendorNotes}</p>}
                           <p className="text-xs text-muted-foreground">
-                            Via {q.replySource === "whatsapp" ? "WhatsApp" : q.replySource === "portal" ? "Portal" : "Manual"} ·{" "}
-                            {new Date(q.createdAt).toLocaleDateString("id-ID")}
+                            {t("vendorDashboard.viaLabel")} {q.replySource === "whatsapp" ? "WhatsApp" : q.replySource === "portal" ? "Portal" : t("vendorDashboard.manualLabel")} ·{" "}
+                            {new Date(q.createdAt).toLocaleDateString(locale)}
                           </p>
                         </div>
                       );
@@ -2404,7 +2404,7 @@ export default function VendorDashboard() {
                       </div>
                       {isVerified && vp?.approvedAt && (
                         <p className="text-xs text-emerald-700">
-                          {t("vendorDashboard.approvedOn").replace("{date}", new Date(vp.approvedAt).toLocaleDateString("id-ID", { day: "numeric", month: "long", year: "numeric" }))}
+                          {t("vendorDashboard.approvedOn").replace("{date}", new Date(vp.approvedAt).toLocaleDateString(locale, { day: "numeric", month: "long", year: "numeric" }))}
                         </p>
                       )}
                       {/* Submission link */}
@@ -2423,7 +2423,7 @@ export default function VendorDashboard() {
                             </a>
                             {vendorProfileDetail.submissionLink.expiresAt && (
                               <p className="text-xs text-muted-foreground mt-0.5">
-                                {t("vendorDashboard.validUntilLabel").replace("{date}", new Date(vendorProfileDetail.submissionLink.expiresAt).toLocaleDateString("id-ID", { day: "numeric", month: "long", year: "numeric" }))}
+                                {t("vendorDashboard.validUntilLabel").replace("{date}", new Date(vendorProfileDetail.submissionLink.expiresAt).toLocaleDateString(locale, { day: "numeric", month: "long", year: "numeric" }))}
                               </p>
                             )}
                           </div>
@@ -2485,7 +2485,7 @@ export default function VendorDashboard() {
                     {rows.map(([label, val]) => (
                       <div key={label}>
                         <dt className="text-xs text-muted-foreground mb-0.5">{label}</dt>
-                        <dd className={`text-sm font-medium ${!val ? "text-muted-foreground italic" : ""}`}>{val || "Belum diisi"}</dd>
+                        <dd className={`text-sm font-medium ${!val ? "text-muted-foreground italic" : ""}`}>{val || t("vendorDashboard.notFilled")}</dd>
                       </div>
                     ))}
                   </dl>
@@ -2497,16 +2497,16 @@ export default function VendorDashboard() {
                 <div className="flex justify-end">
                   {!editingVendorProfile ? (
                     <Button size="sm" variant="outline" onClick={() => { setVendorProfileFormError(""); setEditingVendorProfile(true); }}>
-                      <Pencil className="h-3.5 w-3.5 mr-1.5" /> Edit profil
+                      <Pencil className="h-3.5 w-3.5 mr-1.5" /> {t("vendorDashboard.editProfileData")}
                     </Button>
                   ) : (
                     <div className="flex gap-2">
                       <Button size="sm" variant="ghost" onClick={() => setEditingVendorProfile(false)} disabled={savingVendorProfile}>
-                        <X className="h-3.5 w-3.5 mr-1.5" /> Batal
+                        <X className="h-3.5 w-3.5 mr-1.5" /> {t("vendorDashboard.cancelBtn")}
                       </Button>
                       <Button size="sm" onClick={() => void saveVendorProfile()} disabled={savingVendorProfile}>
                         {savingVendorProfile ? <RefreshCw className="h-3.5 w-3.5 mr-1.5 animate-spin" /> : null}
-                        Simpan
+                        {t("vendorDashboard.saveBtn")}
                       </Button>
                     </div>
                   )}
@@ -2514,13 +2514,19 @@ export default function VendorDashboard() {
                 {editingVendorProfile && (
                   <Card className="border-none shadow-sm">
                     <CardHeader className="border-b border-border/40 pb-3">
-                      <CardTitle className="text-sm font-semibold text-muted-foreground uppercase tracking-wide">Edit data profil</CardTitle>
+                      <CardTitle className="text-sm font-semibold text-muted-foreground uppercase tracking-wide">{t("vendorDashboard.editProfileData")}</CardTitle>
                     </CardHeader>
                     <CardContent className="pt-4 grid grid-cols-1 sm:grid-cols-2 gap-3">
                       {([
-                        ["picName", "Nama PIC"], ["phone", "Nomor telepon/WhatsApp"], ["email", "Email PIC"],
-                        ["fullAddress", "Alamat lengkap"], ["province", "Provinsi"], ["city", "Kota"],
-                        ["postalCode", "Kode pos"], ["bankName", "Nama bank"], ["bankAccountName", "Nama pemilik rekening"],
+                        ["picName", t("vendorDashboard.fieldPicName")],
+                        ["phone", t("vendorDashboard.fieldPicPhone")],
+                        ["email", t("vendorDashboard.fieldPicEmail")],
+                        ["fullAddress", t("vendorDashboard.fieldAddress")],
+                        ["province", t("vendorDashboard.fieldProvince")],
+                        ["city", t("vendorDashboard.fieldCity")],
+                        ["postalCode", t("vendorDashboard.fieldPostalCode")],
+                        ["bankName", t("vendorDashboard.fieldBank")],
+                        ["bankAccountName", t("vendorDashboard.fieldBankName")],
                       ] as [keyof VendorProfileForm, string][]).map(([key, label]) => (
                         <label key={key} className={key === "fullAddress" ? "sm:col-span-2 text-xs font-medium" : "text-xs font-medium"}>
                           {label}
@@ -2532,10 +2538,10 @@ export default function VendorDashboard() {
                         </label>
                       ))}
                       <label className="text-xs font-medium">
-                        Nomor rekening
-                        <Input className="mt-1" value={vendorProfileForm.bankAccountNumber} placeholder="Isi nomor rekening baru (opsional)" onChange={e => setVendorProfileForm(f => ({ ...f, bankAccountNumber: e.target.value }))} />
+                        {t("vendorDashboard.bankAccountNumberLabel")}
+                        <Input className="mt-1" value={vendorProfileForm.bankAccountNumber} placeholder={t("vendorDashboard.placeholderNewAccountNumber")} onChange={e => setVendorProfileForm(f => ({ ...f, bankAccountNumber: e.target.value }))} />
                       </label>
-                      <p className="sm:col-span-2 text-xs text-muted-foreground">Nomor rekening yang tersimpan ditampilkan dengan masking. Kosongkan jika tidak ingin mengubahnya.</p>
+                      <p className="sm:col-span-2 text-xs text-muted-foreground">{t("vendorDashboard.bankAccountMaskHint")}</p>
                       {vendorProfileFormError && <p className="sm:col-span-2 text-sm text-red-600">{vendorProfileFormError}</p>}
                     </CardContent>
                   </Card>
@@ -2598,8 +2604,8 @@ export default function VendorDashboard() {
                               <p className="text-xs text-red-600 mt-1 italic">{t("vendorDashboard.submissionRejectionNote")} {s.reviewNotes}</p>
                             )}
                             <p className="text-xs text-muted-foreground mt-1.5">
-                              {t("vendorDashboard.submittedDateLabel2")} {new Date(s.createdAt).toLocaleDateString("id-ID")}
-                              {s.reviewedAt && ` · ${t("vendorDashboard.reviewDateLabel")} ${new Date(s.reviewedAt).toLocaleDateString("id-ID")}`}
+                              {t("vendorDashboard.submittedDateLabel2")} {new Date(s.createdAt).toLocaleDateString(locale)}
+                              {s.reviewedAt && ` · ${t("vendorDashboard.reviewDateLabel")} ${new Date(s.reviewedAt).toLocaleDateString(locale)}`}
                             </p>
                           </div>
                           <Badge className={st.cls} variant="secondary">{st.label}</Badge>
