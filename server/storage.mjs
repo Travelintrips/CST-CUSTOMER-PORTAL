@@ -723,36 +723,82 @@ function isKtpSectionLabel(line) {
   ]);
 }
 
-function inferNameFromKtp(lines, nik) {
-  const nameByLabel = ktpField(lines, ["nama", "name"]);
-  if (nameByLabel) return nameByLabel;
+function cleanKtpNameCandidate(value) {
+  return String(value || "")
+    .replace(/^[^A-Za-z]+/, "")
+    .replace(/\b\d{2}[-/]\d{2}[-/]\d{4}\b.*$/, "")
+    .replace(/[^A-Za-z.' -]/g, " ")
+    .replace(/\s{2,}/g, " ")
+    .trim();
+}
 
-  const nikIndex = lines.findIndex((line) => nik && line.includes(nik));
-  const candidateIndexes = nikIndex >= 0
-    ? [nikIndex + 1, nikIndex + 2, nikIndex + 3]
-    : [1, 2, 3, 4];
+function scoreKtpNameCandidate(value, { distance = 99, labelled = false } = {}) {
+  const name = cleanKtpNameCandidate(value);
+  if (name.length < 3 || name.length > 60) return -100;
+  if (/provinsi|kabupaten|kota|nik|tempat|lahir|alamat|agama|status|pekerjaan|kelamin|kecamatan|kelurahan|desa/i.test(name)) return -100;
 
-  for (const index of candidateIndexes) {
-    const line = lines[index]?.trim();
-    if (!line || isKtpSectionLabel(line)) continue;
+  const words = name.split(/\s+/).filter(Boolean);
+  if (words.length > 6) return -40;
 
-    const cleaned = line
-      .replace(/^[^A-Za-z]+/, "")
-      .replace(/\b\d{2}[-/]\d{2}[-/]\d{4}\b.*$/, "")
-      .replace(/\s{2,}/g, " ")
-      .trim();
+  let score = 0;
+  if (labelled) score += 10;
+  score += Math.max(0, 8 - distance * 2);
 
-    if (
-      cleaned.length >= 4 &&
-      cleaned.length <= 80 &&
-      /[A-Za-z]{2}/.test(cleaned) &&
-      !/provinsi|kabupaten|kota|nik|tempat|lahir|alamat|agama|status|pekerjaan|kelamin/i.test(cleaned)
-    ) {
-      return cleaned;
-    }
+  const alpha = name.replace(/[^A-Za-z]/g, "");
+  const upper = alpha.replace(/[^A-Z]/g, "");
+  const lower = alpha.replace(/[^a-z]/g, "");
+  const upperRatio = alpha.length ? upper.length / alpha.length : 0;
+  if (upperRatio >= 0.9) score += 8;
+  else if (upperRatio >= 0.7) score += 4;
+  else if (lower.length > 0 && upper.length > 0) score -= 6;
+
+  for (const word of words) {
+    if (word.length === 1) score -= 5;
+    if (word.length === 2) score -= 2;
+    if (/(.)\1\1/i.test(word)) score -= 3;
   }
 
-  return "";
+  if (/^[A-Z][A-Z ]+$/.test(name)) score += 3;
+  if (/\b(?:EA|AA|MAA|RAR|SAE)\b/i.test(name)) score -= 8;
+  return score;
+}
+
+function inferNameFromKtp(lines, nik) {
+  const candidates = [];
+  const nikIndex = lines.findIndex((line) => nik && line.includes(nik));
+
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index]?.trim();
+    if (!line) continue;
+
+    if (looksLikeLabel(line, ["nama", "name"])) {
+      const labelled = ktpField([line, lines[index + 1]].filter(Boolean), ["nama", "name"]);
+      if (labelled) {
+        candidates.push({
+          value: labelled,
+          score: scoreKtpNameCandidate(labelled, {
+            labelled: true,
+            distance: nikIndex >= 0 ? Math.abs(index - nikIndex) : 2,
+          }),
+        });
+      }
+    }
+
+    const cleaned = cleanKtpNameCandidate(line);
+    if (!cleaned || isKtpSectionLabel(line)) continue;
+
+    const distance = nikIndex >= 0 ? Math.abs(index - nikIndex) : index;
+    if (distance > 6) continue;
+
+    candidates.push({
+      value: cleaned,
+      score: scoreKtpNameCandidate(cleaned, { distance }),
+    });
+  }
+
+  candidates.sort((a, b) => b.score - a.score);
+  const best = candidates[0];
+  return best && best.score >= 4 ? best.value : "";
 }
 
 function extractCompleteAddress(lines) {
@@ -878,20 +924,41 @@ export async function ocrKtp(file) {
   const imageBuffer = Buffer.from(await file.arrayBuffer());
   const worker = await tesseract.createWorker("ind");
   try {
-    const firstResult = await worker.recognize(imageBuffer);
-    let best = parseKtpText(firstResult.data?.text?.trim() || "");
+    const attempts = [];
 
-    if (!best.name || !best.nik || !best.address || best.address.length < 20) {
+    const firstResult = await worker.recognize(imageBuffer);
+    attempts.push(parseKtpText(firstResult.data?.text?.trim() || ""));
+
+    for (const pageSegMode of ["6", "11"]) {
+      const currentBest = attempts
+        .slice()
+        .sort((a, b) => scoreKtpData(b) - scoreKtpData(a))[0];
+
+      if (
+        currentBest?.name &&
+        scoreKtpNameCandidate(currentBest.name, { labelled: true, distance: 1 }) >= 10 &&
+        currentBest?.nik &&
+        currentBest?.address &&
+        currentBest.address.length >= 20
+      ) break;
+
       await worker.setParameters({
-        tessedit_pageseg_mode: "6",
+        tessedit_pageseg_mode: pageSegMode,
         preserve_interword_spaces: "1",
       });
-      const blockResult = await worker.recognize(imageBuffer);
-      const blockData = parseKtpText(blockResult.data?.text?.trim() || "");
-      if (scoreKtpData(blockData) > scoreKtpData(best)) best = blockData;
+      const result = await worker.recognize(imageBuffer);
+      attempts.push(parseKtpText(result.data?.text?.trim() || ""));
     }
 
-    return best;
+    attempts.sort((a, b) => {
+      const nameDelta =
+        scoreKtpNameCandidate(b.name, { labelled: true, distance: 1 }) -
+        scoreKtpNameCandidate(a.name, { labelled: true, distance: 1 });
+      if (nameDelta !== 0) return nameDelta;
+      return scoreKtpData(b) - scoreKtpData(a);
+    });
+
+    return attempts[0];
   } finally {
     await worker.terminate();
   }
