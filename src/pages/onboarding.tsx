@@ -150,6 +150,7 @@ export default function OnboardingPage() {
   const [ocrData, setOcrData]       = useState<OcrData | null>(null);
   const [ocrLoading, setOcrLoading] = useState(false);
   const [ocrError, setOcrError]     = useState<string | null>(null);
+  const [ktpVerified, setKtpVerified] = useState(false);
 
   const [legalityFile, setLegalityFile] = useState<File | null>(null);
   const [legalityUrl, setLegalityUrl]   = useState<string | null>(null);
@@ -277,10 +278,17 @@ export default function OnboardingPage() {
   async function handleKtpChange(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
     if (!file) return;
+    if (ocrData?.name && baseForm.getValues("fullName") === ocrData.name) {
+      baseForm.setValue("fullName", "");
+    }
+    if (ocrData?.address && baseForm.getValues("address") === ocrData.address) {
+      baseForm.setValue("address", "");
+    }
     setKtpFile(file);
     setKtpUrl(null);
     setOcrData(null);
     setOcrError(null);
+    setKtpVerified(false);
     const reader = new FileReader();
     reader.onload = (ev) => setKtpPreview(ev.target?.result as string);
     reader.readAsDataURL(file);
@@ -300,8 +308,11 @@ export default function OnboardingPage() {
       });
       const json = await res.json() as { ok?: boolean; data?: OcrData; error?: string };
       if (!res.ok || !json.ok) {
-        setOcrError(json.error ?? t("onboarding.ocr.failed", "OCR gagal. Coba upload ulang."));
+        setKtpVerified(false);
+        setOcrData(null);
+        setOcrError(json.error ?? t("onboarding.ocr.failed", "Dokumen tidak dapat diverifikasi sebagai KTP Indonesia. Silakan unggah foto KTP yang jelas."));
       } else {
+        setKtpVerified(true);
         setOcrData(json.data ?? null);
         // Auto-fill form fields if empty
         if (json.data?.name && !baseForm.getValues("fullName")) {
@@ -312,6 +323,8 @@ export default function OnboardingPage() {
         }
       }
     } catch {
+      setKtpVerified(false);
+      setOcrData(null);
       setOcrError(t("onboarding.ocr.serverError", "Gagal menghubungi server OCR."));
     } finally {
       setOcrLoading(false);
@@ -342,8 +355,12 @@ export default function OnboardingPage() {
   // ── Step navigation ──────────────────────────────────────────────────────────
   async function handleBaseNext(data: BaseForm) {
     const effectiveRole = registeredRole ?? accountType;
-    if ((effectiveRole === "customer" || effectiveRole === "vendor") && !ktpFile && !ktpUrl) {
+    if ((effectiveRole === "customer" || effectiveRole === "vendor") && (!ktpFile && !ktpUrl)) {
       setDocumentError(t("onboarding.errorRequired", "Harap lengkapi semua field wajib."));
+      return;
+    }
+    if ((effectiveRole === "customer" || effectiveRole === "vendor") && ktpFile && !ktpVerified) {
+      setDocumentError("KTP belum berhasil diverifikasi. Unggah foto KTP Indonesia yang valid sebelum melanjutkan.");
       return;
     }
     setDocumentError(null);
@@ -426,6 +443,11 @@ export default function OnboardingPage() {
     setSubmitError(null);
     if ((accountType === "customer" || accountType === "vendor") && !ktpFile && !ktpUrl) {
       setDocumentError(t("onboarding.errorRequired", "Harap lengkapi semua field wajib."));
+      setStep("basic");
+      return;
+    }
+    if ((accountType === "customer" || accountType === "vendor") && ktpFile && !ktpVerified) {
+      setDocumentError("KTP belum berhasil diverifikasi. Unggah foto KTP Indonesia yang valid sebelum melanjutkan.");
       setStep("basic");
       return;
     }
