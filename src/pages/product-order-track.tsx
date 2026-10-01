@@ -276,7 +276,7 @@ export default function ProductOrderTrackPage() {
                 <p className="font-semibold text-sm">
                   {data.paymentStatus === "paid" ? "✅ Pembayaran Diterima" : "💳 Menunggu Pembayaran"}
                 </p>
-                {data.paidAt && <p className="text-xs text-gray-500 mt-0.5">Dibayar: {fmtDate(data.paidAt)}</p>}
+                {data.paidAt && <p className="text-xs text-gray-500 mt-0.5">Dibayar: {fmtDate(data.paidAt, locale)}</p>}
               </div>
               {data.invoiceUrl && data.paymentStatus !== "paid" && (
                 <a
