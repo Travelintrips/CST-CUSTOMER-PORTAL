@@ -2283,6 +2283,8 @@ export interface PortalCustomer {
   email: string;
   phone?: string | null;
   company?: string | null;
+  address?: string | null;
+  avatarUrl?: string | null;
   serviceIds: number[];
   createdAt: string;
 }
