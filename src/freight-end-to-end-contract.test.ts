@@ -16,6 +16,8 @@ describe("freight end-to-end contract", () => {
     expect(freight).not.toContain("'estimated', 'draft', 'customer_portal'");
     expect(server).toContain("isOptionalAuthFreight");
     expect(server).toContain('pathname === "/api/ocean-freight/inquiry"');
+    expect(server).toContain("'vehicleRate','vehicleRates','ratePerVehicle'");
+    expect(server).toContain('rates.get("vehicleRates")');
   });
 
   it("implements signed public approval links for air and ocean freight", () => {
