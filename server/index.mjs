@@ -812,7 +812,7 @@ async function handleAuthMe(request, response) {
     email: user.email,
     phone: user.phone ?? null,
     company: user.company ?? null,
-    address: latestProfile?.company_address ?? legacyOcrAddress || null,
+    address: latestProfile?.company_address ?? (legacyOcrAddress || null),
     avatarUrl: canonicalPublicAssetUrl(user.avatar_url) ?? user.avatar_url ?? null,
     role: user.role,
     serviceIds: services.rows.map((row) => Number(row.service_id)),
