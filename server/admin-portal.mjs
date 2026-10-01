@@ -1851,7 +1851,7 @@ async function handleServiceOperations(ctx) {
     if (!row) return adminError(ctx, 404, "Transaksi canonical tidak ditemukan.");
     const action = text((ctx.body ?? {}).action);
     const reason = text((ctx.body ?? {}).reason) || null;
-    if (!["approve", "request_revision", "reject", "contact", "send_quote", "verify_payment", "reject_payment"].includes(action)) return adminError(ctx, 400, "Action tidak valid.");
+    if (!["approve", "request_revision", "reject", "contact", "send_quote", "request_vendor_rate", "verify_payment", "reject_payment"].includes(action)) return adminError(ctx, 400, "Action tidak valid.");
     if (action === "contact") {
       const rawPhone = String(row.phone ?? row.customer_phone ?? row.buyer_phone ?? "").trim();
       let phone = rawPhone.replace(/\D/g, "");
