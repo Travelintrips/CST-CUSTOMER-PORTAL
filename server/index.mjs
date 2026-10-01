@@ -4351,9 +4351,14 @@ async function route(request, response) {
     const isPublicTracking =
       /^\/api\/air-freight\/public\/track\/[^/]+$/.test(pathname)
       || /^\/api\/ocean-freight\/track\/[^/]+$/.test(pathname);
-    const user = isPublicTracking || isPublicFreight
-      ? null
-      : await requireUser(request, response);
+    const isOptionalAuthFreight =
+      pathname === "/api/ocean-freight/inquiry"
+      || pathname === "/api/ocean-freight-public/inquiry";
+    const user = isOptionalAuthFreight
+      ? (getSession(request) ? await requireUser(request, response) : null)
+      : isPublicTracking || isPublicFreight
+        ? null
+        : await requireUser(request, response);
     if (!isPublicTracking && !isPublicFreight && !user) return;
 
     const isOceanVendorFormPost =
