@@ -6,6 +6,7 @@ import {
   signedDocumentUrl,
   uploadDocument,
 } from "./storage.mjs";
+import { createFreightActionToken } from "./freight-operations.mjs";
 
 const TERMINAL_STATUSES = new Set(["completed", "cancelled", "rejected", "expired", "done"]);
 const SERVICE_LABELS = {
@@ -14,6 +15,8 @@ const SERVICE_LABELS = {
   "product-order": "Marketplace / Product Order",
   "service-request": "Pabean / Custom Clearance / Layanan",
   "quote-request": "Request a Quote",
+  "air-freight": "Air Freight",
+  "ocean-freight": "Ocean / Sea Freight",
 };
 
 function numberOrNull(value) {
@@ -1348,7 +1351,7 @@ function actionList(row) {
 }
 
 async function loadServiceRows() {
-  const [rfqs, logistic, products, serviceRequests, quickQuotes] = await Promise.all([
+  const [rfqs, logistic, products, serviceRequests, quickQuotes, airFreight, oceanFreight] = await Promise.all([
     query(
       `select r.id, r.rfq_number, r.status, r.approval_status,
               coalesce(r.buyer_name, c.name) as buyer_name,
@@ -1395,6 +1398,22 @@ async function loadServiceRows() {
               origin, destination, description, created_at, updated_at, admin_notes
          from public.portal_quick_quotes order by created_at desc limit 500`,
     ),
+    query(
+      `select id, order_number, status, tracking_status, customer_name, customer_email,
+              customer_phone, customer_company, company_id, portal_customer_id,
+              origin_airport, destination_airport, estimated_price_idr, final_price_idr,
+              grand_total, pricing_breakdown, notes, created_at, updated_at
+         from public.air_freight_orders
+        order by created_at desc limit 500`,
+    ),
+    query(
+      `select id, order_number, status, tracking_status, customer_name, customer_email,
+              customer_phone, company_id, portal_customer_id,
+              origin_port, destination_port, estimated_price_idr, final_price_idr,
+              grand_total, pricing_breakdown, notes, created_at, updated_at
+         from public.ocean_freight_orders
+        order by created_at desc limit 500`,
+    ),
   ]);
   const mapped = [
     ...rfqs.rows.map((row) => ({ service_key: "marketplace", service_label: SERVICE_LABELS.marketplace, id: Number(row.id), reference: row.rfq_number ?? `RFQ-${row.id}`, status: row.status ?? row.approval_status ?? "submitted", status_known: Boolean(row.status ?? row.approval_status), company_id: row.company_id, portal_customer_id: row.portal_customer_id, created_at: row.created_at, updated_at: row.updated_at ?? row.created_at, summary: row.delivery_address ?? row.notes ?? "", management_path: `/admin?tab=service-operations`, available_actions: actionList(row), record: row, ...customerFields(row) })),
@@ -1430,6 +1449,46 @@ async function loadServiceRows() {
     ...products.rows.map((row) => ({ service_key: "product-order", service_label: SERVICE_LABELS["product-order"], id: Number(row.id), reference: row.order_number ?? `PRODUCT-${row.id}`, status: row.status ?? "submitted", status_known: true, company_id: row.company_id, portal_customer_id: row.portal_customer_id, created_at: row.created_at, updated_at: row.updated_at ?? row.created_at, summary: row.shipping_address ?? "", management_path: `/admin?tab=service-operations`, available_actions: actionList(row), record: row, ...customerFields(row) })),
     ...serviceRequests.rows.map((row) => ({ service_key: "service-request", service_label: SERVICE_LABELS["service-request"], id: Number(row.id), reference: row.request_number ?? `CSR-${row.id}`, status: row.status ?? "submitted", status_known: true, company_id: row.company_id, portal_customer_id: row.portal_customer_id, created_at: row.created_at, updated_at: row.updated_at ?? row.created_at, summary: row.notes ?? row.request_type ?? "", management_path: `/admin?tab=service-operations`, available_actions: actionList(row), record: row, ...customerFields(row) })),
     ...quickQuotes.rows.map((row) => ({ service_key: "quote-request", service_label: SERVICE_LABELS["quote-request"], id: Number(row.id), reference: row.quote_number ?? `QUOTE-${row.id}`, status: row.status ?? "submitted", status_known: true, company_id: null, portal_customer_id: null, created_at: row.created_at, updated_at: row.updated_at ?? row.created_at, summary: `${row.service_category ?? ""} ${row.origin ?? ""} → ${row.destination ?? ""}`.trim(), management_path: `/admin?tab=service-operations`, available_actions: actionList(row), record: row, ...customerFields(row) })),
+    ...airFreight.rows.map((row) => ({
+      service_key: "air-freight",
+      service_label: SERVICE_LABELS["air-freight"],
+      id: Number(row.id),
+      reference: row.order_number ?? `AFR-${row.id}`,
+      status: row.status ?? row.tracking_status ?? "draft",
+      status_known: true,
+      company_id: row.company_id,
+      portal_customer_id: row.portal_customer_id,
+      created_at: row.created_at,
+      updated_at: row.updated_at ?? row.created_at,
+      summary: `${row.origin_airport ?? ""} → ${row.destination_airport ?? ""}`.trim(),
+      management_path: "/admin?tab=service-operations",
+      available_actions: TERMINAL_STATUSES.has(String(row.status ?? "").toLowerCase()) ? ["contact"] : ["send_quote", "contact"],
+      record: row,
+      customer_name: row.customer_name ?? "",
+      customer_email: row.customer_email ?? "",
+      customer_phone: row.customer_phone ?? "",
+      customer_company: row.customer_company ?? "",
+    })),
+    ...oceanFreight.rows.map((row) => ({
+      service_key: "ocean-freight",
+      service_label: SERVICE_LABELS["ocean-freight"],
+      id: Number(row.id),
+      reference: row.order_number ?? `OCF-${row.id}`,
+      status: row.status ?? row.tracking_status ?? "draft",
+      status_known: true,
+      company_id: row.company_id,
+      portal_customer_id: row.portal_customer_id,
+      created_at: row.created_at,
+      updated_at: row.updated_at ?? row.created_at,
+      summary: `${row.origin_port ?? ""} → ${row.destination_port ?? ""}`.trim(),
+      management_path: "/admin?tab=service-operations",
+      available_actions: TERMINAL_STATUSES.has(String(row.status ?? "").toLowerCase()) ? ["contact"] : ["request_vendor_rate", "send_quote", "contact"],
+      record: row,
+      customer_name: row.customer_name ?? "",
+      customer_email: row.customer_email ?? "",
+      customer_phone: row.customer_phone ?? "",
+      customer_company: "",
+    })),
   ];
   return mapped;
 }
@@ -1853,41 +1912,115 @@ async function handleServiceOperations(ctx) {
       ctx.sendJson(response, 200, { ok: true, action, status: rejected ? "rejected" : "paid", service: row.service_key, id: row.id });
       return;
     }
+    if (action === "request_vendor_rate") {
+      if (row.service_key !== "ocean-freight") return adminError(ctx, 400, "Permintaan vendor rate hanya didukung untuk Ocean Freight.");
+      const token = createFreightActionToken({
+        service: "ocean",
+        orderId: row.id,
+        purpose: "ocean_vendor_rate",
+      });
+      const vendorFormUrl = `/ocean-freight-vendor-form/${token}`;
+      await query(
+        `update public.ocean_freight_orders
+            set status=case when status in ('draft','submitted') then 'waiting_rate' else status end,
+                tracking_status=case when tracking_status in ('draft','submitted') then 'waiting_rate' else tracking_status end,
+                updated_at=now()
+          where id=$1`,
+        [row.id],
+      );
+      ctx.sendJson(response, 200, { ok: true, action, status: "waiting_rate", vendorFormUrl, service: row.service_key, id: row.id });
+      return;
+    }
+
     if (action === "send_quote") {
-      if (row.service_key !== "logistic-order") return adminError(ctx, 400, "Quotation hanya didukung untuk order logistik.");
+      if (!["logistic-order", "air-freight", "ocean-freight"].includes(row.service_key)) {
+        return adminError(ctx, 400, "Quotation tidak didukung untuk layanan ini.");
+      }
       const finalPrice = Number((ctx.body ?? {}).finalPrice);
       const termsConditions = text((ctx.body ?? {}).termsConditions) || null;
       const quoteNotes = text((ctx.body ?? {}).quoteNotes) || null;
       if (!Number.isFinite(finalPrice) || finalPrice <= 0) return adminError(ctx, 400, "Harga final wajib lebih dari 0.");
+
+      if (row.service_key === "logistic-order") {
+        await query(
+          `update public.logistic_orders
+              set final_selling_price=$1,
+                  final_price=$1,
+                  grand_total=$1,
+                  customer_quote_status='pending_customer_approval',
+                  quotation_sent_at=now(),
+                  terms_conditions=$2,
+                  quote_notes=$3,
+                  admin_approval_status='quoted',
+                  updated_at=now()
+            where id=$4 and status not in ('cancelled','rejected')`,
+          [finalPrice, termsConditions, quoteNotes, row.id],
+        );
+        if (row.portal_customer_id) {
+          await query(
+            `insert into public.portal_customer_notifications
+               (portal_customer_id,event_key,type,title,message,payload,is_read,created_at)
+             values ($1,$2,'logistic_quote_ready','Quotation CST siap disetujui',$3,$4::jsonb,false,now())
+             on conflict (portal_customer_id,event_key) do nothing`,
+            [
+              Number(row.portal_customer_id),
+              `logistic:quote:${row.id}:${finalPrice}`,
+              `${row.reference} memiliki quotation Rp${finalPrice.toLocaleString("id-ID")}.`,
+              JSON.stringify({ orderNumber: row.reference, finalPrice }),
+            ],
+          ).catch(() => {});
+        }
+        ctx.sendJson(response, 200, { ok: true, action, status: "quoted", service: row.service_key, id: row.id, finalPrice });
+        return;
+      }
+
+      const isAir = row.service_key === "air-freight";
+      const table = isAir ? "air_freight_orders" : "ocean_freight_orders";
+      const token = createFreightActionToken({
+        service: isAir ? "air" : "ocean",
+        orderId: row.id,
+        purpose: isAir ? "air_customer_approval" : "ocean_customer_approval",
+      });
+      const approvalUrl = isAir
+        ? `/air-freight/approval/${token}`
+        : `/ocean-freight/approval/${token}`;
       await query(
-        `update public.logistic_orders
-            set final_selling_price=$1,
-                final_price=$1,
+        `update public.${table}
+            set final_price_idr=$1,
                 grand_total=$1,
-                customer_quote_status='pending_customer_approval',
-                quotation_sent_at=now(),
-                terms_conditions=$2,
-                quote_notes=$3,
-                admin_approval_status='quoted',
+                pricing_breakdown=coalesce(pricing_breakdown,'{}'::jsonb)
+                  || jsonb_build_object('admin_quote_notes',$2,'terms_conditions',$3),
+                status='quoted',
+                tracking_status='quoted',
                 updated_at=now()
-          where id=$4 and status not in ('cancelled','rejected')`,
-        [finalPrice, termsConditions, quoteNotes, row.id],
+          where id=$4 and status not in ('cancelled','rejected','completed')`,
+        [finalPrice, quoteNotes, termsConditions, row.id],
       );
       if (row.portal_customer_id) {
         await query(
           `insert into public.portal_customer_notifications
              (portal_customer_id,event_key,type,title,message,payload,is_read,created_at)
-           values ($1,$2,'logistic_quote_ready','Quotation CST siap disetujui',$3,$4::jsonb,false,now())
+           values ($1,$2,$3,$4,$5,$6::jsonb,false,now())
            on conflict (portal_customer_id,event_key) do nothing`,
           [
             Number(row.portal_customer_id),
-            `logistic:quote:${row.id}:${finalPrice}`,
+            `freight:quote:${row.service_key}:${row.id}:${finalPrice}`,
+            "freight_quote_ready",
+            "Quotation freight siap disetujui",
             `${row.reference} memiliki quotation Rp${finalPrice.toLocaleString("id-ID")}.`,
-            JSON.stringify({ orderNumber: row.reference, finalPrice }),
+            JSON.stringify({ orderNumber: row.reference, finalPrice, link: approvalUrl }),
           ],
         ).catch(() => {});
       }
-      ctx.sendJson(response, 200, { ok: true, action, status: "quoted", service: row.service_key, id: row.id, finalPrice });
+      ctx.sendJson(response, 200, {
+        ok: true,
+        action,
+        status: "quoted",
+        service: row.service_key,
+        id: row.id,
+        finalPrice,
+        approvalUrl,
+      });
       return;
     }
     if (!row.available_actions.includes(action)) return adminError(ctx, 409, "Action tidak tersedia untuk status canonical saat ini.");

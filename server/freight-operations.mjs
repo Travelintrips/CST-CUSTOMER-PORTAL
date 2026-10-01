@@ -1,5 +1,6 @@
-import { randomUUID } from "node:crypto";
+import { createHmac, randomUUID, timingSafeEqual } from "node:crypto";
 import { query } from "./db.mjs";
+import { uploadOrderDocument } from "./storage.mjs";
 
 function fail(statusCode, message) {
   const error = new Error(message);
@@ -29,6 +30,69 @@ function orderNumber(prefix) {
 
 function jsonValue(value, fallback) {
   return value == null ? fallback : JSON.stringify(value);
+}
+
+function freightTokenSecret() {
+  const secret = process.env.SESSION_SECRET;
+  if (!secret) throw new Error("SESSION_SECRET is required for freight action links.");
+  return secret;
+}
+
+function freightTokenSignature(payload) {
+  return createHmac("sha256", freightTokenSecret()).update(`freight-action:${payload}`).digest("base64url");
+}
+
+export function createFreightActionToken({ service, orderId, purpose, ttlSeconds = 60 * 60 * 24 * 7 }) {
+  const payload = Buffer.from(JSON.stringify({
+    v: 1,
+    service,
+    orderId: Number(orderId),
+    purpose,
+    exp: Math.floor(Date.now() / 1000) + ttlSeconds,
+    nonce: randomUUID(),
+  })).toString("base64url");
+  return `${payload}.${freightTokenSignature(payload)}`;
+}
+
+function verifyFreightActionToken(token, expectedPurpose) {
+  const [payload, signature] = String(token ?? "").split(".");
+  if (!payload || !signature) fail(404, "Link tidak valid.");
+  const expected = freightTokenSignature(payload);
+  const a = Buffer.from(signature);
+  const b = Buffer.from(expected);
+  if (a.length !== b.length || !timingSafeEqual(a, b)) fail(404, "Link tidak valid.");
+  let decoded;
+  try {
+    decoded = JSON.parse(Buffer.from(payload, "base64url").toString("utf8"));
+  } catch {
+    fail(404, "Link tidak valid.");
+  }
+  if (
+    decoded?.v !== 1
+    || !Number.isInteger(Number(decoded.orderId))
+    || decoded.orderId <= 0
+    || decoded.purpose !== expectedPurpose
+    || !decoded.service
+    || !decoded.exp
+    || decoded.exp <= Math.floor(Date.now() / 1000)
+  ) {
+    fail(404, "Link tidak valid atau sudah kedaluwarsa.");
+  }
+  return decoded;
+}
+
+async function freightOrderByToken(token, purpose) {
+  const decoded = verifyFreightActionToken(token, purpose);
+  const table = decoded.service === "air"
+    ? "air_freight_orders"
+    : decoded.service === "ocean"
+      ? "ocean_freight_orders"
+      : null;
+  if (!table) fail(404, "Link tidak valid.");
+  const result = await query(`select * from public.${table} where id = $1 limit 1`, [decoded.orderId]);
+  const row = result.rows[0];
+  if (!row) fail(404, "Order freight tidak ditemukan.");
+  return { decoded, row };
 }
 
 function airVolumetricWeight(rows) {
@@ -294,7 +358,7 @@ async function createAirOrder(body, user) {
       jsonValue(body.pricing_breakdown, {}),
       body.selected_rate_id == null ? null : Number(body.selected_rate_id),
       jsonValue(body.candidate_rate_ids, []),
-      text(body.customer_company, user.company),
+      text(body.customer_company ?? body.company_name, user.company),
       text(body.notes),
     ],
   );
@@ -376,6 +440,153 @@ async function createOceanOrder(body, user = null) {
   return { ok: true, id: Number(result.rows[0].id), order_number: result.rows[0].order_number };
 }
 
+async function publicFreightApproval({ service, token, action, body = {} }) {
+  const purpose = service === "air" ? "air_customer_approval" : "ocean_customer_approval";
+  const { row } = await freightOrderByToken(token, purpose);
+
+  if (!action) {
+    const pricing = row.pricing_breakdown && typeof row.pricing_breakdown === "object"
+      ? row.pricing_breakdown
+      : {};
+    return service === "air"
+      ? {
+          ...mapAirOrder(row),
+          final_breakdown: pricing,
+          admin_notes: pricing.admin_quote_notes ?? row.notes ?? null,
+        }
+      : {
+          ...row,
+          id: Number(row.id),
+          final_price: number(row.final_price_idr, number(row.grand_total, 0)),
+          final_breakdown: pricing,
+          admin_notes: pricing.admin_quote_notes ?? row.notes ?? null,
+        };
+  }
+
+  if (!["quoted", "approved", "quote_declined"].includes(String(row.status ?? ""))) {
+    fail(409, "Penawaran belum tersedia untuk diproses.");
+  }
+  if (row.status === "approved") return { ok: true, message: "Penawaran sudah disetujui sebelumnya." };
+  if (row.status === "quote_declined") return { ok: true, message: "Penawaran sudah ditolak sebelumnya." };
+
+  if (action === "approve") {
+    const table = service === "air" ? "air_freight_orders" : "ocean_freight_orders";
+    await query(
+      `update public.${table}
+          set status='approved', tracking_status='approved', updated_at=now()
+        where id=$1 and status='quoted'`,
+      [row.id],
+    );
+    return { ok: true, message: "Penawaran berhasil disetujui." };
+  }
+
+  if (action === "decline") {
+    const reason = text(body.reason);
+    const table = service === "air" ? "air_freight_orders" : "ocean_freight_orders";
+    await query(
+      `update public.${table}
+          set status='quote_declined',
+              tracking_status='quote_declined',
+              notes=concat_ws(E'\\n', notes, $2),
+              updated_at=now()
+        where id=$1 and status='quoted'`,
+      [row.id, reason ? `Customer decline: ${reason}` : "Customer declined quotation."],
+    );
+    return { ok: true, message: "Penawaran berhasil ditolak." };
+  }
+  fail(405, "Action tidak didukung.");
+}
+
+async function publicOceanVendorForm({ token, form = null }) {
+  const { row } = await freightOrderByToken(token, "ocean_vendor_rate");
+  if (!form) {
+    return {
+      order: {
+        id: Number(row.id),
+        order_number: row.order_number,
+        origin_port: row.origin_port,
+        destination_port: row.destination_port,
+        shipment_type: row.shipment_type,
+        container_type: row.container_type,
+        container_qty: row.container_qty,
+        total_cbm: row.total_cbm,
+        commodity: row.commodity,
+        trade_type: row.trade_type,
+      },
+      status: row.status,
+    };
+  }
+
+  const amount = positive(form.get("ocean_freight_amount"), "Ocean Freight Amount");
+  const currency = text(form.get("currency"), "IDR").toUpperCase();
+  const exchangeRate = currency === "IDR" ? 1 : positive(form.get("exchange_rate"), "Exchange Rate");
+  const feeNames = [
+    "thc_origin", "thc_destination", "doc_fee", "bl_fee", "do_fee",
+    "handling_fee", "trucking_pickup", "trucking_delivery",
+    "customs_clearance_fee", "surcharge_amount",
+  ];
+  const fees = Object.fromEntries(feeNames.map((key) => [key, number(form.get(key), 0)]));
+  const totalSource = amount + Object.values(fees).reduce((sum, value) => sum + Number(value || 0), 0);
+  const totalIdr = Math.round(totalSource * exchangeRate);
+
+  let attachmentPath = null;
+  const attachment = form.get("attachment");
+  if (attachment && typeof attachment.arrayBuffer === "function" && Number(attachment.size) > 0) {
+    const uploaded = await uploadOrderDocument({
+      customerId: row.portal_customer_id ?? row.customer_id ?? row.id,
+      companyId: row.company_id ?? null,
+      file: attachment,
+    });
+    attachmentPath = uploaded.path;
+  }
+
+  const submission = {
+    rate_source_name: text(form.get("rate_source_name")),
+    carrier: text(form.get("carrier")),
+    ocean_freight_amount: amount,
+    currency,
+    exchange_rate: exchangeRate,
+    validity_date: text(form.get("validity_date")),
+    vessel_name: text(form.get("vessel_name")),
+    voyage: text(form.get("voyage")),
+    etd: text(form.get("etd")),
+    eta: text(form.get("eta")),
+    transit_days: number(form.get("transit_days")),
+    direct_or_transshipment: text(form.get("direct_or_transshipment"), "direct"),
+    ...fees,
+    total_source: totalSource,
+    total_idr: totalIdr,
+    notes: text(form.get("notes")),
+    attachment_path: attachmentPath,
+    submitted_at: new Date().toISOString(),
+  };
+
+  await query(
+    `update public.ocean_freight_orders
+        set pricing_breakdown=coalesce(pricing_breakdown,'{}'::jsonb) || jsonb_build_object('vendor_submission',$2::jsonb),
+            carrier=coalesce($3,carrier),
+            vessel_name=coalesce($4,vessel_name),
+            voyage=coalesce($5,voyage),
+            etd=coalesce($6::date,etd),
+            eta=coalesce($7::date,eta),
+            status='rate_received',
+            tracking_status='rate_received',
+            updated_at=now()
+      where id=$1`,
+    [
+      row.id,
+      JSON.stringify(submission),
+      submission.carrier,
+      submission.vessel_name,
+      submission.voyage,
+      submission.etd,
+      submission.eta,
+    ],
+  );
+
+  return { ok: true, message: "Rate berhasil disubmit.", total_idr: totalIdr };
+}
+
 async function airTracking(orderNumberValue, sendJson, response) {
   const result = await query(
     `select id, order_number, origin_airport, destination_airport,
@@ -426,11 +637,57 @@ export async function handleFreightRoute({
   url,
   user,
   body,
+  form,
   sendJson,
   sendError,
 }) {
   const { pathname } = url;
   try {
+    const airApproval = pathname.match(/^\/api\/air-freight\/approval\/([^/]+)(?:\/(approve|decline))?$/);
+    if (airApproval) {
+      const action = airApproval[2] ?? null;
+      if ((!action && request.method !== "GET") || (action && request.method !== "POST")) {
+        sendError(response, 405, "Method tidak didukung.");
+        return true;
+      }
+      sendJson(response, 200, await publicFreightApproval({
+        service: "air",
+        token: decodeURIComponent(airApproval[1]),
+        action,
+        body,
+      }));
+      return true;
+    }
+
+    const oceanQuote = pathname.match(/^\/api\/ocean-freight\/quote\/([^/]+)(?:\/(approve|decline))?$/);
+    if (oceanQuote) {
+      const action = oceanQuote[2] ?? null;
+      if ((!action && request.method !== "GET") || (action && request.method !== "POST")) {
+        sendError(response, 405, "Method tidak didukung.");
+        return true;
+      }
+      sendJson(response, 200, await publicFreightApproval({
+        service: "ocean",
+        token: decodeURIComponent(oceanQuote[1]),
+        action,
+        body,
+      }));
+      return true;
+    }
+
+    const oceanVendorForm = pathname.match(/^\/api\/ocean-freight-form\/([^/]+)$/);
+    if (oceanVendorForm) {
+      if (!["GET", "POST"].includes(request.method ?? "")) {
+        sendError(response, 405, "Method tidak didukung.");
+        return true;
+      }
+      sendJson(response, request.method === "POST" ? 201 : 200, await publicOceanVendorForm({
+        token: decodeURIComponent(oceanVendorForm[1]),
+        form,
+      }));
+      return true;
+    }
+
     if (pathname === "/api/air-freight/public/estimate" && request.method === "POST") {
       sendJson(response, 200, await airEstimate(body));
       return true;

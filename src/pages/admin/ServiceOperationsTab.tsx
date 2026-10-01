@@ -327,6 +327,7 @@ export function ServiceOperationsTab() {
   const [quotePrice, setQuotePrice] = useState("");
   const [quoteTerms, setQuoteTerms] = useState("");
   const [quoteNotes, setQuoteNotes] = useState("");
+  const [generatedLink, setGeneratedLink] = useState("");
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -393,10 +394,18 @@ export function ServiceOperationsTab() {
       const payload = await response.json();
       if (response.ok) {
         setSelected(payload);
-        if (payload.service === "logistic-order") {
-          setQuotePrice(String(payload.record?.final_selling_price ?? payload.record?.grand_total ?? ""));
-          setQuoteTerms(String(payload.record?.terms_conditions ?? ""));
-          setQuoteNotes(String(payload.record?.quote_notes ?? ""));
+        if (["logistic-order", "air-freight", "ocean-freight"].includes(payload.service)) {
+          setQuotePrice(String(
+            payload.record?.final_selling_price
+            ?? payload.record?.final_price_idr
+            ?? payload.record?.grand_total
+            ?? payload.record?.estimated_price_idr
+            ?? "",
+          ));
+          const pricing = payload.record?.pricing_breakdown ?? {};
+          setQuoteTerms(String(payload.record?.terms_conditions ?? pricing?.terms_conditions ?? ""));
+          setQuoteNotes(String(payload.record?.quote_notes ?? pricing?.admin_quote_notes ?? ""));
+          setGeneratedLink("");
         }
       }
     } finally {
@@ -424,8 +433,8 @@ export function ServiceOperationsTab() {
     setUnread((count) => Math.max(0, count - 1));
   }
 
-  async function sendLogisticQuote() {
-    if (!selected || selected.service !== "logistic-order" || actionBusy) return;
+  async function sendCustomerQuote() {
+    if (!selected || !["logistic-order", "air-freight", "ocean-freight"].includes(selected.service) || actionBusy) return;
     const finalPrice = Number(quotePrice);
     if (!Number.isFinite(finalPrice) || finalPrice <= 0) {
       setActionError("Harga final wajib lebih dari 0.");
@@ -447,11 +456,16 @@ export function ServiceOperationsTab() {
       });
       const payload = await response.json();
       if (!response.ok) throw new Error(payload.message ?? payload.error ?? "Gagal mengirim quotation");
+      if (payload.approvalUrl) {
+        setGeneratedLink(String(payload.approvalUrl));
+        try { await navigator.clipboard.writeText(new URL(String(payload.approvalUrl), window.location.origin).toString()); } catch {}
+      }
       await Promise.all([load(), loadNotifications()]);
       await openDetail(rows.find((row) => row.service_key === selected.service && row.id === selected.id) ?? {
         service_key: selected.service,
         id: selected.id,
       } as ServiceRow);
+      if (payload.approvalUrl) setGeneratedLink(String(payload.approvalUrl));
     } catch (cause) {
       setActionError(cause instanceof Error ? cause.message : "Gagal mengirim quotation");
     } finally {
@@ -459,7 +473,7 @@ export function ServiceOperationsTab() {
     }
   }
 
-  async function runAction(action: "approve" | "request_revision" | "reject" | "contact" | "verify_payment" | "reject_payment") {
+  async function runAction(action: "approve" | "request_revision" | "reject" | "contact" | "verify_payment" | "reject_payment" | "request_vendor_rate") {
     if (!selected || actionBusy) return;
     const row = rows.find((item) => item.service_key === selected.service && item.id === selected.id);
     if (action !== "contact" && row?.available_actions && !row.available_actions.includes(action)) return;
@@ -489,6 +503,15 @@ export function ServiceOperationsTab() {
       if (!response.ok) throw new Error(payload.message ?? payload.error ?? "Action gagal dijalankan");
       if (action === "contact" && payload.contactUrl) {
         window.open(payload.contactUrl, "_blank", "noopener,noreferrer");
+      } else if (action === "request_vendor_rate" && payload.vendorFormUrl) {
+        setGeneratedLink(String(payload.vendorFormUrl));
+        try { await navigator.clipboard.writeText(new URL(String(payload.vendorFormUrl), window.location.origin).toString()); } catch {}
+        await Promise.all([load(), loadNotifications()]);
+        await openDetail(rows.find((item) => item.service_key === selected.service && item.id === selected.id) ?? {
+          service_key: selected.service,
+          id: selected.id,
+        } as ServiceRow);
+        setGeneratedLink(String(payload.vendorFormUrl));
       } else {
         setSelected(null);
         await Promise.all([load(), loadNotifications()]);
@@ -883,7 +906,7 @@ export function ServiceOperationsTab() {
                   </div>
                 )}
 
-                {selected.service === "logistic-order" && (
+                {["logistic-order", "air-freight", "ocean-freight"].includes(selected.service) && (
                   <div className="w-full rounded-xl border border-blue-200 bg-blue-50/60 p-4 space-y-3">
                     <div>
                       <p className="text-sm font-semibold text-blue-950">Quotation Customer</p>
@@ -927,15 +950,25 @@ export function ServiceOperationsTab() {
                       <button
                         type="button"
                         disabled={actionBusy}
-                        onClick={() => void sendLogisticQuote()}
+                        onClick={() => void sendCustomerQuote()}
                         className="inline-flex items-center gap-1.5 rounded-lg bg-blue-600 px-3 py-2 text-xs font-semibold text-white hover:bg-blue-700 disabled:opacity-50"
                       >
                         Kirim Quotation ke Customer
                       </button>
-                      {Boolean(selected.record["customer_quote_status"]) && (
+                      {Boolean(selected.record["customer_quote_status"] ?? selected.record["status"]) && (
                         <span className="text-xs text-slate-600">
-                          Status customer: {statusLabel(String(selected.record["customer_quote_status"]))}
+                          Status customer: {statusLabel(String(selected.record["customer_quote_status"] ?? selected.record["status"]))}
                         </span>
+                      )}
+                      {generatedLink && (
+                        <a
+                          href={generatedLink}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="text-xs font-semibold text-blue-700 underline"
+                        >
+                          Buka link yang baru dibuat
+                        </a>
                       )}
                     </div>
                   </div>
@@ -947,6 +980,11 @@ export function ServiceOperationsTab() {
                     initialVendorName={selected.record["vendor_name_selected"] as string | null | undefined}
                     initialQuotedPrice={selected.record["vendor_quoted_price"] as string | number | null | undefined}
                   />
+                )}
+                {(rows.find((row) => row.service_key === selected.service && row.id === selected.id)?.available_actions ?? []).includes("request_vendor_rate") && (
+                  <button type="button" disabled={actionBusy} onClick={() => void runAction("request_vendor_rate")} className="inline-flex items-center gap-1.5 rounded-lg border border-sky-200 bg-sky-50 px-3 py-2 text-xs font-semibold text-sky-700 hover:bg-sky-100 disabled:opacity-50">
+                    Minta Rate Vendor
+                  </button>
                 )}
                 {(rows.find((row) => row.service_key === selected.service && row.id === selected.id)?.available_actions ?? []).includes("approve") && (
                   <button type="button" disabled={actionBusy} onClick={() => void runAction("approve")} className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-600 px-3 py-2 text-xs font-semibold text-white hover:bg-emerald-700 disabled:opacity-50">
