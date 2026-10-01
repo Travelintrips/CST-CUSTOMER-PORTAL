@@ -29,7 +29,7 @@ import {
   handleServiceOperations,
   handleVerification,
 } from "./admin-portal.mjs";
-import { checkStorageReadiness, signedDocumentUrl, signedPaymentProofUrl, uploadPaymentProof, uploadPublicAsset } from "./storage.mjs";
+import { checkStorageReadiness, signedDocumentUrl, signedPaymentProofUrl, uploadPaymentProof, uploadPublicAsset, uploadOrderDocument } from "./storage.mjs";
 import { resolveCustomerPortalFonnteToken } from "./fonnte-config.mjs";
 import { handleMarketplaceRoute } from "./marketplace-service.mjs";
 import { createLogisticPaylabsLink, getLogisticPaylabsState, handlePaylabsAdminRoute, handlePaylabsWebhook } from "./paylabs-service.mjs";
@@ -4293,6 +4293,29 @@ async function route(request, response) {
     await handleTruckingBooking(request, response, user, body);
     return;
   }
+  if (pathname === "/api/portal/order-upload") {
+    const user = await requireUser(request, response);
+    if (!user) return;
+    if (request.method !== "POST") {
+      sendError(response, 405, "Method tidak didukung.");
+      return;
+    }
+    const form = await readMultipartForm(request);
+    const companyIds = await getAccessibleCompanyIds(user);
+    const uploaded = await uploadOrderDocument({
+      customerId: user.id,
+      companyId: companyIds[0] ?? null,
+      file: form.file,
+    });
+    sendJson(response, 201, {
+      objectPath: uploaded.path,
+      fileName: uploaded.fileName,
+      mimeType: uploaded.mimeType,
+      size: uploaded.size,
+    });
+    return;
+  }
+
   if (pathname === "/api/settings/company-pickup-address") {
     const user = await requireUser(request, response);
     if (user) await handleCompanyPickupAddress(request, response, user);
