@@ -65,22 +65,20 @@ function DocUploader({
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [value]);
 
-  const MAX_SIZE_BYTES = 10 * 1024 * 1024;
+  const MAX_SIZE_BYTES = 5 * 1024 * 1024;
   const ALLOWED_TYPES = [
     "application/pdf",
-    "image/jpeg", "image/png", "image/webp", "image/gif",
-    "application/msword",
-    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    "image/jpeg", "image/png",
   ];
-  const ALLOWED_EXT = ["pdf", "jpg", "jpeg", "png", "webp", "gif", "doc", "docx"];
+  const ALLOWED_EXT = ["pdf", "jpg", "jpeg", "png"];
 
   function validateFile(file: File): string | null {
     const ext = file.name.split(".").pop()?.toLowerCase() ?? "";
     if (!ALLOWED_TYPES.includes(file.type) && !ALLOWED_EXT.includes(ext)) {
-      return t("pabean.fileFormatError", `Format tidak didukung (.${ext}). Gunakan PDF, JPG, PNG, DOC, atau DOCX.`).replace("{ext}", ext || "unknown");
+      return t("pabean.fileFormatError", `Format tidak didukung (.${ext}). Gunakan PDF, JPG, atau PNG.`).replace("{ext}", ext || "unknown");
     }
     if (file.size > MAX_SIZE_BYTES) {
-      return t("pabean.fileSizeError", `Ukuran file terlalu besar. Maks 10 MB.`).replace("{size}", (file.size / 1024 / 1024).toFixed(1));
+      return t("pabean.fileSizeError", `Ukuran file terlalu besar. Maks 5 MB.`).replace("{size}", (file.size / 1024 / 1024).toFixed(1));
     }
     return null;
   }
@@ -184,7 +182,7 @@ function DocUploader({
           ref={ref}
           type="file"
           className="hidden"
-          accept="application/pdf,image/*,.doc,.docx"
+          accept="application/pdf,image/jpeg,image/png"
           onChange={(e) => { const f = e.target.files?.[0]; if (f) void handleFile(f); e.target.value = ""; }}
         />
 
