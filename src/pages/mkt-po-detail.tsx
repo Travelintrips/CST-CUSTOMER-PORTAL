@@ -355,7 +355,7 @@ function OverviewTab({ po }: { po: PoDetail }) {
         <CardContent className="space-y-3">
           <div className="flex items-center gap-3">
             <Badge className={`text-sm px-3 py-1 ${st.color}`} variant="secondary">
-              {poStatusLabel(t, s.shipmentStatus, st.label)}
+              {poStatusLabel(t, po.status, st.label)}
             </Badge>
             {po.cancelledAt && (
               <span className="text-xs text-red-600">
@@ -730,7 +730,7 @@ function ShipmentTab({
                     <span className="text-xs text-gray-400 ml-1">({shipmentTypeLabel})</span>
                   )}
                 </div>
-                <Badge className={`text-xs ${st.color}`} variant="secondary">{poStatusLabel(t, po.status, st.label)}</Badge>
+                <Badge className={`text-xs ${st.color}`} variant="secondary">{poStatusLabel(t, s.shipmentStatus, st.label)}</Badge>
               </div>
 
               {s.trackingNumber && !isPickup && (
