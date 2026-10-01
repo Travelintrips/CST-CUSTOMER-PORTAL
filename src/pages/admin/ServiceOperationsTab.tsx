@@ -852,7 +852,7 @@ export function ServiceOperationsTab() {
                   <div className="w-full rounded-xl border border-amber-200 bg-amber-50 p-4">
                     <p className="text-sm font-semibold text-amber-950">Verifikasi Pembayaran Manual</p>
                     <p className="mt-1 text-xs text-amber-700">Customer sudah mengunggah bukti transfer. Verifikasi sebelum order masuk proses operasional.</p>
-                    {selected.record["payment_proof_signed_url"] && (
+                    {Boolean(selected.record["payment_proof_signed_url"]) && (
                       <a
                         href={String(selected.record["payment_proof_signed_url"])}
                         target="_blank"
@@ -932,7 +932,7 @@ export function ServiceOperationsTab() {
                       >
                         Kirim Quotation ke Customer
                       </button>
-                      {selected.record["customer_quote_status"] && (
+                      {Boolean(selected.record["customer_quote_status"]) && (
                         <span className="text-xs text-slate-600">
                           Status customer: {statusLabel(String(selected.record["customer_quote_status"]))}
                         </span>
