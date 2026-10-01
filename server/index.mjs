@@ -784,19 +784,30 @@ async function handleSetCookie(request, response) {
 async function handleAuthMe(request, response) {
   const user = await requireUser(request, response);
   if (!user) return;
-  const services = await query(
-    `select service_id
-       from public.portal_customer_services
-      where customer_id = $1
-      order by service_id`,
-    [user.id],
-  );
+  const [services, profile] = await Promise.all([
+    query(
+      `select service_id
+         from public.portal_customer_services
+        where customer_id = $1
+        order by service_id`,
+      [user.id],
+    ),
+    query(
+      `select company_address
+         from public.portal_customer_profiles
+        where customer_id = $1
+        order by updated_at desc nulls last, id desc
+        limit 1`,
+      [user.id],
+    ),
+  ]);
   sendJson(response, 200, {
     id: user.id,
     name: user.name,
     email: user.email,
     phone: user.phone ?? null,
     company: user.company ?? null,
+    address: profile.rows[0]?.company_address ?? null,
     role: user.role,
     serviceIds: services.rows.map((row) => Number(row.service_id)),
     createdAt: user.created_at ?? null,
