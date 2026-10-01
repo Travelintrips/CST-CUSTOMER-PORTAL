@@ -2421,14 +2421,14 @@ async function calculateCanonicalTruckingEstimate(body) {
         and (rc.valid_from is null or rc.valid_from <= now())
         and (rc.valid_to is null or rc.valid_to >= now())
         and (
-          (rs.rate_key in ('vehicleRate','ratePerVehicle') and lower(regexp_replace(coalesce(rs.vehicle_type,''), '[^a-z0-9]', '', 'g')) = lower(regexp_replace($1, '[^a-z0-9]', '', 'g')))
+          (rs.rate_key in ('vehicleRate','vehicleRates','ratePerVehicle') and lower(regexp_replace(coalesce(rs.vehicle_type,''), '[^a-z0-9]', '', 'g')) = lower(regexp_replace($1, '[^a-z0-9]', '', 'g')))
           or rs.rate_key in ('loadingFee','unloadingFee','overnightFee','multidropFee','multidropFeePerDrop')
         )
       order by rc.updated_at desc nulls last, rc.id desc, rs.id desc`,
     [canonicalVehicle],
   );
   const rates = new Map(result.rows.map((row) => [row.rate_key, Number(row.value_amount)]));
-  const base = rates.get("vehicleRate") ?? rates.get("ratePerVehicle");
+  const base = rates.get("vehicleRate") ?? rates.get("vehicleRates") ?? rates.get("ratePerVehicle");
   if (!Number.isFinite(base)) {
     const error = new Error("Tarif canonical trucking belum dikonfigurasi.");
     error.statusCode = 503;
