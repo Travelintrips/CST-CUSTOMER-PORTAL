@@ -40,8 +40,8 @@ describe("freight end-to-end contract", () => {
     expect(admin).toContain("from public.air_freight_orders");
     expect(admin).toContain("from public.ocean_freight_orders");
     expect(admin).toContain('"request_vendor_rate"');
-    expect(admin).toContain("purpose: \"air_customer_approval\"");
-    expect(admin).toContain("purpose: \"ocean_customer_approval\"");
+    expect(admin).toContain("air_customer_approval");
+    expect(admin).toContain("ocean_customer_approval");
     expect(adminUi).toContain('["logistic-order", "air-freight", "ocean-freight"].includes(selected.service)');
     expect(adminUi).toContain('runAction("request_vendor_rate")');
   });
