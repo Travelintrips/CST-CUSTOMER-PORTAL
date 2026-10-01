@@ -730,7 +730,7 @@ function ShipmentTab({
                     <span className="text-xs text-gray-400 ml-1">({shipmentTypeLabel})</span>
                   )}
                 </div>
-                <Badge className={`text-xs ${st.color}`} variant="secondary">{poStatusLabel(t, po.status, st.label)}</Badge>
+                <Badge className={`text-xs ${st.color}`} variant="secondary">{poStatusLabel(t, s.shipmentStatus, st.label)}</Badge>
               </div>
 
               {s.trackingNumber && !isPickup && (
@@ -1951,19 +1951,19 @@ export default function MktPoDetailPage({ params }: { params?: { poId?: string }
 
         {/* Tabs */}
         <div className="flex gap-1 overflow-x-auto border-b border-gray-200 pb-0 -mb-1">
-          {TABS.map((t) => (
+          {TABS.map((tab) => (
             <button
-              key={t.id}
-              onClick={() => setActiveTab(t.id)}
+              key={tab.id}
+              onClick={() => setActiveTab(tab.id)}
               className={[
                 "flex items-center gap-1.5 px-4 py-2.5 text-sm font-medium whitespace-nowrap border-b-2 transition-colors",
-                activeTab === t.id
+                activeTab === tab.id
                   ? "border-orange-500 text-orange-600"
                   : "border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300",
               ].join(" ")}
             >
-              {t.icon}
-              {({ overview: t("mktVendorPo.poInfoTitle", "Overview"), items: t("mktVendorPo.itemsTitle", "Items"), shipment: t("mktVendorPo.shipmentInfo", "Shipment"), payment: t("portalInvoice.title", "Payment"), "goods-receipt": t("tracking.podDocs", "Goods Receipt"), timeline: t("logisticOrder.deliveryTimeline", "Timeline"), activity: t("orders.title", "Activity log") } as Record<Tab, string>)[t.id]}
+              {tab.icon}
+              {({ overview: t("mktVendorPo.poInfoTitle", "Overview"), items: t("mktVendorPo.itemsTitle", "Items"), shipment: t("mktVendorPo.shipmentInfo", "Shipment"), payment: t("portalInvoice.title", "Payment"), "goods-receipt": t("tracking.podDocs", "Goods Receipt"), timeline: t("logisticOrder.deliveryTimeline", "Timeline"), activity: t("orders.title", "Activity log") } as Record<Tab, string>)[tab.id]}
             </button>
           ))}
         </div>

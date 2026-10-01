@@ -275,7 +275,7 @@ function TrackingCard({ orderNumber, shipmentType, origin, destination, status, 
             <span className="flex items-center gap-1">
               <RefreshCw className={cn("w-2.5 h-2.5", isFetching && "animate-spin")} />
               {isFetching ? "Memperbarui..." : dataUpdatedAt
-                ? `Diperbarui ${formatDateTime(new Date(dataUpdatedAt).toISOString())}`
+                ? `Diperbarui ${formatDateTime(new Date(dataUpdatedAt).toISOString(), locale)}`
                 : ""}
             </span>
             <button

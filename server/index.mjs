@@ -29,7 +29,7 @@ import {
   handleServiceOperations,
   handleVerification,
 } from "./admin-portal.mjs";
-import { checkStorageReadiness, signedDocumentUrl, signedPaymentProofUrl, uploadPaymentProof } from "./storage.mjs";
+import { checkStorageReadiness, signedDocumentUrl, signedPaymentProofUrl, uploadPaymentProof, uploadPublicAsset } from "./storage.mjs";
 import { resolveCustomerPortalFonnteToken } from "./fonnte-config.mjs";
 import { handleMarketplaceRoute } from "./marketplace-service.mjs";
 import { createLogisticPaylabsLink, getLogisticPaylabsState, handlePaylabsAdminRoute, handlePaylabsWebhook } from "./paylabs-service.mjs";
@@ -360,7 +360,7 @@ function normalizeUser(row) {
 
 async function findPortalUser(id) {
   const result = await query(
-    `select id, name, email, phone, company, role, customer_type, account_status, auth_version, created_at
+    `select id, name, email, phone, company, role, customer_type, account_status, auth_version, avatar_url, created_at
        from public.portal_customers
       where id = $1
       limit 1`,
@@ -793,7 +793,7 @@ async function handleAuthMe(request, response) {
       [user.id],
     ),
     query(
-      `select company_address
+      `select company_address, additional_notes
          from public.portal_customer_profiles
         where customer_id = $1
         order by updated_at desc nulls last, id desc
@@ -801,17 +801,101 @@ async function handleAuthMe(request, response) {
       [user.id],
     ),
   ]);
+  const latestProfile = profile.rows[0] ?? null;
+  const legacyNotes = parseJson(latestProfile?.additional_notes, {});
+  const legacyOcrAddress = typeof legacyNotes?.ocrData?.address === "string"
+    ? legacyNotes.ocrData.address.trim()
+    : "";
   sendJson(response, 200, {
     id: user.id,
     name: user.name,
     email: user.email,
     phone: user.phone ?? null,
     company: user.company ?? null,
-    address: profile.rows[0]?.company_address ?? null,
+    address: latestProfile?.company_address ?? (legacyOcrAddress || null),
+    avatarUrl: canonicalPublicAssetUrl(user.avatar_url) ?? user.avatar_url ?? null,
     role: user.role,
     serviceIds: services.rows.map((row) => Number(row.service_id)),
     createdAt: user.created_at ?? null,
   });
+}
+
+async function handlePortalProfileUpdate(request, response) {
+  const user = await requireUser(request, response);
+  if (!user) return;
+  if (request.method !== "PUT") {
+    sendError(response, 405, "Method tidak didukung.");
+    return;
+  }
+  const body = await readJson(request);
+  const name = typeof body.name === "string" ? body.name.trim() : "";
+  const company = typeof body.company === "string" ? body.company.trim() : "";
+  const phone = typeof body.phone === "string" ? body.phone.trim() : "";
+  const address = typeof body.address === "string" ? body.address.trim() : "";
+
+  if (!name || name.length < 3) {
+    sendError(response, 400, "Nama kontak wajib diisi.");
+    return;
+  }
+
+  await query(
+    `update public.portal_customers
+        set name = $1,
+            company = nullif($2, ''),
+            phone = nullif($3, '')
+      where id = $4`,
+    [name, company, phone, user.id],
+  );
+
+  const existing = await query(
+    `select id
+       from public.portal_customer_profiles
+      where customer_id = $1
+      order by updated_at desc nulls last, id desc
+      limit 1`,
+    [user.id],
+  );
+  if (existing.rows[0]) {
+    await query(
+      `update public.portal_customer_profiles
+          set company_address = nullif($1, ''),
+              pic_name = $2,
+              pic_whatsapp = nullif($3, ''),
+              updated_at = now()
+        where id = $4`,
+      [address, name, phone, existing.rows[0].id],
+    );
+  } else {
+    await query(
+      `insert into public.portal_customer_profiles
+        (customer_id, company_name, company_address, pic_name, pic_whatsapp, profile_status, updated_at)
+       values ($1, nullif($2, ''), nullif($3, ''), $4, nullif($5, ''), 'active', now())`,
+      [user.id, company, address, name, phone],
+    );
+  }
+
+  await handleAuthMe(request, response);
+}
+
+async function handlePortalAvatarUpload(request, response) {
+  const user = await requireUser(request, response);
+  if (!user) return;
+  if (request.method !== "POST") {
+    sendError(response, 405, "Method tidak didukung.");
+    return;
+  }
+  const form = await readMultipartForm(request);
+  const uploaded = await uploadPublicAsset({
+    prefix: `portal-avatars/customer-${Number(user.id)}`,
+    file: form.file,
+  });
+  await query(
+    `update public.portal_customers
+        set avatar_url = $1
+      where id = $2`,
+    [uploaded.url, user.id],
+  );
+  sendJson(response, 200, { avatarUrl: uploaded.url });
 }
 
 async function handleBootstrap(request, response, url) {
@@ -4634,8 +4718,16 @@ async function route(request, response) {
     }
     return;
   }
+  if (pathname === "/api/portal/me/avatar") {
+    await handlePortalAvatarUpload(request, response);
+    return;
+  }
   if (request.method === "GET" && pathname === "/api/portal/me") {
     await handleAuthMe(request, response);
+    return;
+  }
+  if (request.method === "PUT" && pathname === "/api/portal/me") {
+    await handlePortalProfileUpdate(request, response);
     return;
   }
   if (

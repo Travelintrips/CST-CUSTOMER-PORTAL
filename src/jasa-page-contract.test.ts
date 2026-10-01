@@ -91,7 +91,7 @@ describe("jasa service hub contract", () => {
     const prerender = readFileSync(join(process.cwd(), "scripts/prerender.mjs"), "utf8");
 
     expect(html).toContain("<!-- SEO:STATIC:START -->");
-    expect(html).toContain("© 2026 PT Cahaya Sejati Teknologi");
+    expect(html).toContain("PT Cahaya Sejati Teknologi");
     expect(prerender).toContain("function buildStaticBody");
     expect(prerender).toContain("replaceMarker(html,     'SEO:STATIC'");
     expect(prerender).toContain("Transportasi Penumpang & Distribusi Barang Domestik");

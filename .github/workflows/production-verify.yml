@@ -56,7 +56,7 @@ jobs:
             home_code="$(curl --silent --show-error --output /tmp/home.html --write-out '%{http_code}' --max-time 15 "$home_url" || true)"
             echo "stability attempt=$attempt ready=$ready_code home=$home_code consecutive=$consecutive"
 
-            if [ "$ready_code" = "200" ] && [ "$home_code" = "200" ]               && grep -Fq '"status":"ready"' /tmp/ready.json               && grep -Fq '<!doctype html>' /tmp/home.html; then
+            if [ "$ready_code" = "200" ] && [ "$home_code" = "200" ]               && grep -Fq '"status":"ready"' /tmp/ready.json               && grep -Eiq '<!doctype[[:space:]]+html' /tmp/home.html; then
               consecutive=$((consecutive + 1))
             else
               consecutive=0

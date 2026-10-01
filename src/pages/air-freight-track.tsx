@@ -163,7 +163,7 @@ export default function AirFreightTrackPage() {
           {order.grand_total && (
             <div className="flex justify-between border-t border-white/10 pt-2.5 mt-1">
               <span className="text-white/50">{t("calculator.total", "Total cost")}</span>
-              <span className="text-emerald-400 font-bold">{IDR(order.grand_total)}</span>
+              <span className="text-emerald-400 font-bold">{IDR(order.grand_total, locale)}</span>
             </div>
           )}
         </div>

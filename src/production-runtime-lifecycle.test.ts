@@ -204,8 +204,8 @@ describe("production runtime availability lifecycle", () => {
     expect(adminPortal).toContain("Tipe akun tidak dapat diubah melalui onboarding");
     expect(adminPortal).toContain("accountType !== ctx.user.role");
     expect(onboarding).toContain("registeredRole");
-    expect(onboarding).toContain("disabled={registeredRole !== null && value !== registeredRole}");
-    expect(onboarding).toContain("Tipe akun mengikuti pilihan saat pendaftaran");
+    expect(onboarding).toContain("{!registeredRole && (");
+    expect(onboarding).toContain("const effectiveRole = registeredRole ?? accountType");
   });
 
 
