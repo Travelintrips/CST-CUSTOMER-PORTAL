@@ -465,6 +465,7 @@ export function ServiceOperationsTab() {
         service_key: selected.service,
         id: selected.id,
       } as ServiceRow);
+      if (payload.approvalUrl) setGeneratedLink(String(payload.approvalUrl));
     } catch (cause) {
       setActionError(cause instanceof Error ? cause.message : "Gagal mengirim quotation");
     } finally {
@@ -510,6 +511,7 @@ export function ServiceOperationsTab() {
           service_key: selected.service,
           id: selected.id,
         } as ServiceRow);
+        setGeneratedLink(String(payload.vendorFormUrl));
       } else {
         setSelected(null);
         await Promise.all([load(), loadNotifications()]);
