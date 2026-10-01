@@ -215,6 +215,29 @@ async function storageRemove(storage, path) {
   if (error) throw error;
 }
 
+export async function uploadOrderDocument({ customerId, companyId, file }) {
+  const { mimeType, size } = validateDocumentFile(file);
+  const storage = client();
+  await ensurePrivateBucket(storage);
+  const buffer = Buffer.from(await file.arrayBuffer());
+  const path = `${customerObjectPrefix(customerId, companyId)}/order-documents/${crypto.randomUUID()}-${safeFileName(file.name || `document.${extensionForMime(mimeType)}`)}`;
+  const { error } = await storage.supabase.storage.from(storage.bucket).upload(path, buffer, {
+    contentType: mimeType,
+    cacheControl: "0",
+    upsert: false,
+  });
+  if (error) {
+    console.error(
+      "[customer-portal-api] order document storage upload failed",
+      error?.statusCode ?? error?.status ?? "",
+    );
+    const failure = new Error("Upload dokumen order ke private storage gagal.");
+    failure.statusCode = 502;
+    throw failure;
+  }
+  return { path, fileName: safeFileName(file.name), mimeType, size };
+}
+
 export async function uploadDocument({ customerId, companyId, documentType: type, file }) {
   const normalizedType = documentType(type);
   const { mimeType, size } = validateDocumentFile(file);
