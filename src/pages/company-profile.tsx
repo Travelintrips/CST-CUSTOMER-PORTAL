@@ -85,7 +85,7 @@ export default function CompanyProfile() {
     setUploadingAvatar(true);
     try {
       const fd = new FormData();
-      fd.append("avatar", file);
+      fd.append("file", file);
       const r = await fetch("/api/portal/me/avatar", {
         method: "POST",
         headers,
