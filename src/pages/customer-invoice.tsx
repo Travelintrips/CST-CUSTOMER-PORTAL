@@ -187,7 +187,11 @@ function WaIcon() {
   );
 }
 
-function buildWaPaymentLink(data: InvoiceData): string {
+function buildWaPaymentLink(
+  data: InvoiceData,
+  locale: string,
+  t: (key: string, fallback: string) => string,
+): string {
   const inv = data.invoiceNumber ? `No. Invoice: *${data.invoiceNumber}*` : "";
   const ord = data.orderNumber ? `${t("customerApproval.orderLabel", "Order")}: *${data.orderNumber}*` : "";
   const total = data.grandTotal != null
