@@ -533,7 +533,7 @@ async function publicOceanVendorForm({ token, form = null }) {
   const attachment = form.get("attachment");
   if (attachment && typeof attachment.arrayBuffer === "function" && Number(attachment.size) > 0) {
     const uploaded = await uploadOrderDocument({
-      customerId: row.portal_customer_id ?? row.customer_id ?? 0,
+      customerId: row.portal_customer_id ?? row.customer_id ?? row.id,
       companyId: row.company_id ?? null,
       file: attachment,
     });
