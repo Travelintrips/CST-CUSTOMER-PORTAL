@@ -668,7 +668,7 @@ describe("standalone Customer Portal API boundary", () => {
     expect(whatsapp).toContain("where channel='whatsapp'");
     expect(whatsapp).toContain("created_at >= $1");
     expect(whatsapp).not.toContain("where q.channel = 'internal'");
-    expect(server).toContain('IS_PRODUCTION && process.env.CUSTOMER_PORTAL_WA_WORKER_ENABLED !== "false"');
+    expect(server).toContain('if (!IS_PRODUCTION || process.env.CUSTOMER_PORTAL_WA_WORKER_ENABLED === "false") return;');
   });
 
   it("supports owned vendor catalog image uploads through standalone API", () => {
@@ -819,8 +819,8 @@ describe("standalone Customer Portal API boundary", () => {
     expect(server).toContain("documents: isInternalVendor ? parseJson(row.documents, []) : []");
     expect(marketplace).toContain('event.actor_type === "vendor"');
     expect(marketplace).toContain("result.rows[0].is_internal_vendor ? line.notes : null");
-    expect(poPage).toContain("Seluruh komunikasi, pembayaran, dan layanan transaksi ini dikelola melalui PT Cahaya Sejati Teknologi (CST).");
-    expect(rfqPage).toContain("Seluruh komunikasi dan transaksi dikelola melalui PT Cahaya Sejati Teknologi (CST).");
+    expect(poPage).toContain('t("tracking.contactUs", "All communication, payments, and transaction services are managed through PT Cahaya Sejati Teknologi (CST).")');
+    expect(rfqPage).toContain('t("tracking.contactUs", "All communication and transactions are managed through PT Cahaya Sejati Teknologi (CST).")');
     expect(detailPage).toContain("external vendor identity stays private");
     expect(detailPage).toContain("COMPANY_CONFIG.legalName");
   });
