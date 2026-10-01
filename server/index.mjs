@@ -4337,13 +4337,17 @@ async function route(request, response) {
     pathname.startsWith("/api/air-freight/")
     || pathname.startsWith("/api/ocean-freight/")
     || pathname.startsWith("/api/ocean-freight-public/")
+    || pathname.startsWith("/api/ocean-freight-form/")
   ) {
     const isPublicFreight =
       pathname === "/api/air-freight/public/estimate"
       || pathname === "/api/ocean-freight/calculate"
       || pathname === "/api/ocean-freight/inquiry"
       || pathname === "/api/ocean-freight-public/estimate"
-      || pathname === "/api/ocean-freight-public/inquiry";
+      || pathname === "/api/ocean-freight-public/inquiry"
+      || /^\/api\/air-freight\/approval\/[^/]+(?:\/(?:approve|decline))?$/.test(pathname)
+      || /^\/api\/ocean-freight\/quote\/[^/]+(?:\/(?:approve|decline))?$/.test(pathname)
+      || /^\/api\/ocean-freight-form\/[^/]+$/.test(pathname);
     const isPublicTracking =
       /^\/api\/air-freight\/public\/track\/[^/]+$/.test(pathname)
       || /^\/api\/ocean-freight\/track\/[^/]+$/.test(pathname);
@@ -4351,7 +4355,12 @@ async function route(request, response) {
       ? null
       : await requireUser(request, response);
     if (!isPublicTracking && !isPublicFreight && !user) return;
-    const body = ["POST", "PUT", "PATCH"].includes(request.method ?? "")
+
+    const isOceanVendorFormPost =
+      request.method === "POST"
+      && /^\/api\/ocean-freight-form\/[^/]+$/.test(pathname);
+    const form = isOceanVendorFormPost ? await readMultipartForm(request) : undefined;
+    const body = ["POST", "PUT", "PATCH"].includes(request.method ?? "") && !isOceanVendorFormPost
       ? await readJson(request)
       : {};
     const handled = await handleFreightRoute({
@@ -4360,6 +4369,7 @@ async function route(request, response) {
       url,
       user,
       body,
+      form,
       sendJson,
       sendError,
     });
