@@ -114,7 +114,7 @@ describe("marketplace audit hardening contract", () => {
   it("forwards the selected Paylabs method to the H5 payment request", () => {
     const source = read("server/paylabs-service.mjs");
     expect(source).toContain("paymentType: method.code");
-    expect(source).toContain("method.code === requestedMethod");
+    expect(source).toContain("methods.find((item) => item.code === requestedMethod)");
   });
 
   it("rejects stale Paylabs callback timestamps before signature processing", () => {
