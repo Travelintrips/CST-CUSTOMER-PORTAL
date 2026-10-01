@@ -11,7 +11,7 @@ describe("customer company onboarding contract", () => {
     expect(onboarding).toContain("Perusahaan sudah terdaftar");
     expect(onboarding).toContain("Daftarkan perusahaan baru");
     expect(onboarding).toContain("Data perusahaan yang sedang mendaftar");
-    expect(onboarding).toContain("NIB / NPWP wajib diisi untuk perusahaan baru.");
+    expect(onboarding).toContain("!requestedRegistrationNumber.trim()");
     expect(onboarding).not.toContain(">Perusahaan saya belum terdaftar<");
   });
 
@@ -39,8 +39,8 @@ describe("customer company onboarding contract", () => {
   });
 
   it("requires identity and legal documents at both UI and server boundaries", () => {
-    expect(onboarding).toContain("KTP wajib diunggah untuk melanjutkan pendaftaran.");
-    expect(onboarding).toContain("Dokumen legalitas vendor wajib diunggah.");
+    expect(onboarding).toContain("(!ktpFile && !ktpUrl)");
+    expect(onboarding).toContain("!legalityFile && !legalityUrl");
     expect(adminPortal).toContain("KTP wajib diunggah untuk menyelesaikan pendaftaran.");
     expect(adminPortal).toContain("Nama perusahaan dan NIB / NPWP wajib diisi untuk perusahaan baru.");
     expect(adminPortal).toContain("Nama perusahaan, NIB, jenis layanan, dan dokumen legalitas vendor wajib diisi.");
