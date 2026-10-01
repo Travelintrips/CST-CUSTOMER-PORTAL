@@ -1018,7 +1018,6 @@ const ADMIN_EN_AUDIT_LITERAL_OVERRIDES: Record<string, string> = {
   "Buat Undangan Vendor Baru": "Create New Vendor Invitation",
   "Setiap vendor mendapat link unik yang berbeda. Link berlaku 30 hari.": "Each vendor receives a unique link. The link is valid for 30 days.",
   "Nama Vendor / Perusahaan": "Vendor / Company Name",
-  "Catatan (opsional)": "Notes (optional)",
   "Informasi tambahan untuk vendor...": "Additional information for the vendor...",
   "Kirim otomatis via WhatsApp (jika ada No. WA)": "Send automatically via WhatsApp (if a WhatsApp number is available)",
   "Format link undangan yang akan dibuat:": "Invitation link format:",
