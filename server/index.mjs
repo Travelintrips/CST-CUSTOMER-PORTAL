@@ -793,7 +793,7 @@ async function handleAuthMe(request, response) {
       [user.id],
     ),
     query(
-      `select company_address
+      `select company_address, additional_notes
          from public.portal_customer_profiles
         where customer_id = $1
         order by updated_at desc nulls last, id desc
@@ -801,13 +801,18 @@ async function handleAuthMe(request, response) {
       [user.id],
     ),
   ]);
+  const latestProfile = profile.rows[0] ?? null;
+  const legacyNotes = parseJson(latestProfile?.additional_notes, {});
+  const legacyOcrAddress = typeof legacyNotes?.ocrData?.address === "string"
+    ? legacyNotes.ocrData.address.trim()
+    : "";
   sendJson(response, 200, {
     id: user.id,
     name: user.name,
     email: user.email,
     phone: user.phone ?? null,
     company: user.company ?? null,
-    address: profile.rows[0]?.company_address ?? null,
+    address: latestProfile?.company_address ?? legacyOcrAddress || null,
     avatarUrl: canonicalPublicAssetUrl(user.avatar_url) ?? user.avatar_url ?? null,
     role: user.role,
     serviceIds: services.rows.map((row) => Number(row.service_id)),
