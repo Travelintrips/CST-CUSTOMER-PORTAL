@@ -324,7 +324,7 @@ async function createAirOrder(body, user) {
         $19, $20::jsonb, $21, $22, $23,
         $24::jsonb, $25, $26,
         $27, $28::jsonb, $29, $30::jsonb,
-        'estimated', 'draft', 'customer_portal', $2, $31, $32,
+        'estimate', 'draft', 'customer_portal', $2, $31, $32,
         'submitted', now(), now())
      returning id, order_number, status, tracking_status`,
     [
