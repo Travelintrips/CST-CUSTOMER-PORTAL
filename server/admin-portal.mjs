@@ -1350,9 +1350,22 @@ function actionList(row) {
   return [...new Set(actions)];
 }
 
+async function safeServiceQuery(source, sql, params = []) {
+  try {
+    return await query(sql, params);
+  } catch (error) {
+    console.error("[admin-service-operations] source query failed", {
+      source,
+      code: error?.code ?? null,
+      message: error?.message ?? String(error),
+    });
+    return { rows: [], rowCount: 0 };
+  }
+}
+
 async function loadServiceRows() {
   const [rfqs, logistic, products, serviceRequests, quickQuotes, airFreight, oceanFreight] = await Promise.all([
-    query(
+    safeServiceQuery("marketplace", 
       `select r.id, r.rfq_number, r.status, r.approval_status,
               coalesce(r.buyer_name, c.name) as buyer_name,
               coalesce(r.buyer_email, c.email) as buyer_email,
@@ -1373,7 +1386,7 @@ async function loadServiceRows() {
         order by r.created_at desc
         limit 500`,
     ),
-    query(
+    safeServiceQuery("logistic-order", 
       `select id, order_number, status, operational_status, admin_approval_status,
               customer_name, email, phone, company_name, company_id, portal_customer_id,
               origin, destination, created_at, updated_at, notes,
@@ -1381,24 +1394,24 @@ async function loadServiceRows() {
               terms_conditions, quote_notes, payment_status, payment_proof_url, grand_total
          from public.logistic_orders order by created_at desc limit 500`,
     ),
-    query(
+    safeServiceQuery("product-order", 
       `select id, order_number, status, customer_name, email, phone, company_id,
               portal_customer_id, created_at, updated_at, notes, shipping_address,
               vendor_name_selected, vendor_quoted_price
          from public.portal_product_orders order by created_at desc limit 500`,
     ),
-    query(
+    safeServiceQuery("service-request", 
       `select id, request_number, status, customer_name, customer_email, customer_phone,
               customer_company, company_id, portal_customer_id, request_type, trade_type,
               notes, admin_notes, created_at, updated_at
          from public.customer_service_requests order by created_at desc limit 500`,
     ),
-    query(
+    safeServiceQuery("quote-request", 
       `select id, quote_number, status, name, email, phone, company, service_category,
               origin, destination, description, created_at, updated_at, admin_notes
          from public.portal_quick_quotes order by created_at desc limit 500`,
     ),
-    query(
+    safeServiceQuery("air-freight", 
       `select id, order_number, status, tracking_status, customer_name, customer_email,
               customer_phone, customer_company, company_id, portal_customer_id,
               origin_airport, destination_airport, estimated_price_idr, final_price_idr,
@@ -1406,7 +1419,7 @@ async function loadServiceRows() {
          from public.air_freight_orders
         order by created_at desc limit 500`,
     ),
-    query(
+    safeServiceQuery("ocean-freight", 
       `select id, order_number, status, tracking_status, customer_name, customer_email,
               customer_phone, company_id, portal_customer_id,
               origin_port, destination_port, estimated_price_idr, final_price_idr,
