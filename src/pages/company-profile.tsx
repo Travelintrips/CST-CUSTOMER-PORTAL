@@ -9,6 +9,7 @@ import {
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { useToast } from "@/hooks/use-toast";
@@ -35,15 +36,23 @@ export default function CompanyProfile() {
     request: { headers, credentials: "include" },
   });
 
-  const [form, setForm] = useState({ name: "", company: "", phone: "", address: "" });
+  const [form, setForm] = useState({
+    name: "",
+    company: "",
+    phone: "",
+    companyAddress: "",
+    ktpAddress: "",
+  });
 
   useEffect(() => {
     if (profile) {
+      const rawProfile = profile as unknown as Record<string, unknown>;
       setForm({
         name:    profile.name    ?? "",
         company: profile.company ?? "",
         phone:   profile.phone   ?? "",
-        address: (profile as unknown as Record<string, unknown>).address as string ?? "",
+        companyAddress: (rawProfile.companyAddress as string | null) ?? "",
+        ktpAddress: (rawProfile.ktpAddress as string | null) ?? (rawProfile.address as string | null) ?? "",
       });
       setAvatarPreview((profile as unknown as Record<string, unknown>).avatarUrl as string ?? null);
     }
@@ -154,11 +163,13 @@ export default function CompanyProfile() {
               <Button variant="ghost" className="gap-2" onClick={() => {
                 // Reset form to original profile values before closing edit mode
                 if (profile) {
+                  const rawProfile = profile as unknown as Record<string, unknown>;
                   setForm({
                     name:    profile.name    ?? "",
                     company: profile.company ?? "",
                     phone:   profile.phone   ?? "",
-                    address: (profile as unknown as Record<string, unknown>).address as string ?? "",
+                    companyAddress: (rawProfile.companyAddress as string | null) ?? "",
+                    ktpAddress: (rawProfile.ktpAddress as string | null) ?? (rawProfile.address as string | null) ?? "",
                   });
                   setAvatarPreview((profile as unknown as Record<string, unknown>).avatarUrl as string ?? null);
                 }
@@ -224,10 +235,10 @@ export default function CompanyProfile() {
                     <p className="text-sm text-slate-500">{profile?.email}</p>
                     {membershipCompany && (
                       <div className="mt-2 rounded-lg border border-sky-100 bg-sky-50 px-3 py-2">
-                        <p className="text-xs font-medium text-slate-500">Membership / Afiliasi</p>
+                        <p className="text-xs font-semibold uppercase tracking-wide text-sky-700">Membership / Afiliasi — bukan pemilik akun</p>
                         <p className="text-sm font-semibold text-sky-800">{membershipCompany}</p>
                         <p className="mt-0.5 text-xs text-slate-500">
-                          Membership tidak mengubah kepemilikan akun atau nama perusahaan Anda.
+                          Ini hanya hubungan membership. Akun dan identitas perusahaan tetap milik {profile?.company || "perusahaan Anda"}.
                         </p>
                       </div>
                     )}
@@ -263,7 +274,10 @@ export default function CompanyProfile() {
                     <Building2 className="h-3.5 w-3.5" /> Nama Perusahaan Pemilik Akun
                   </Label>
                   {editing ? (
-                    <Input value={form.company} onChange={e => setForm(f => ({ ...f, company: e.target.value }))} />
+                    <div>
+                      <Input value={form.company} disabled />
+                      <p className="mt-1 text-xs text-slate-400">Mengikuti nama perusahaan saat registrasi dan tidak berubah karena membership.</p>
+                    </div>
                   ) : (
                     <p className="font-medium text-slate-800">{profile?.company || "—"}</p>
                   )}
@@ -290,13 +304,36 @@ export default function CompanyProfile() {
 
                 <div className="sm:col-span-2 space-y-1.5">
                   <Label className="text-xs text-slate-500 flex items-center gap-1.5">
-                    <MapPin className="h-3.5 w-3.5" /> Alamat
+                    <MapPin className="h-3.5 w-3.5" /> Alamat Perusahaan <span className="text-red-500">*</span>
                   </Label>
                   {editing ? (
-                    <Input value={form.address} onChange={e => setForm(f => ({ ...f, address: e.target.value }))} placeholder="Alamat perusahaan..." />
+                    <Textarea
+                      value={form.companyAddress}
+                      onChange={e => setForm(f => ({ ...f, companyAddress: e.target.value }))}
+                      placeholder="Alamat kantor/perusahaan"
+                      rows={3}
+                    />
                   ) : (
-                    <p className="font-medium text-slate-800">{(profile as Record<string, unknown> | undefined)?.address as string || "—"}</p>
+                    <p className="font-medium text-slate-800">{(profile as Record<string, unknown> | undefined)?.companyAddress as string || "—"}</p>
                   )}
+                  <p className="text-xs text-slate-400">Alamat badan usaha/kantor. Dapat berbeda dari alamat KTP PIC.</p>
+                </div>
+
+                <div className="sm:col-span-2 space-y-1.5">
+                  <Label className="text-xs text-slate-500 flex items-center gap-1.5">
+                    <MapPin className="h-3.5 w-3.5" /> Alamat sesuai KTP PIC <span className="text-red-500">*</span>
+                  </Label>
+                  {editing ? (
+                    <Textarea
+                      value={form.ktpAddress}
+                      onChange={e => setForm(f => ({ ...f, ktpAddress: e.target.value }))}
+                      placeholder="Alamat tempat tinggal sesuai KTP"
+                      rows={3}
+                    />
+                  ) : (
+                    <p className="font-medium text-slate-800">{((profile as Record<string, unknown> | undefined)?.ktpAddress as string) || ((profile as Record<string, unknown> | undefined)?.address as string) || "—"}</p>
+                  )}
+                  <p className="text-xs text-slate-400">Alamat pribadi PIC sesuai KTP, disimpan terpisah dari alamat perusahaan.</p>
                 </div>
               </CardContent>
             </Card>
