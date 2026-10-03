@@ -138,6 +138,8 @@ export default function OnboardingPage() {
   const [companyRequestMode, setCompanyRequestMode] = useState(false);
   const [requestedCompanyName, setRequestedCompanyName] = useState("");
   const [requestedRegistrationNumber, setRequestedRegistrationNumber] = useState("");
+  const [registeredCompanyName, setRegisteredCompanyName] = useState("");
+  const [companyAddress, setCompanyAddress] = useState("");
   const [companyError, setCompanyError] = useState<string | null>(null);
   const [baseData, setBaseData]     = useState<BaseForm | null>(null);
   const [vendorData, setVendorData] = useState<VendorForm | null>(null);
@@ -179,6 +181,7 @@ export default function OnboardingPage() {
 
       const role = bootstrap.role;
       const contextStatus = bootstrap.customerContext.status;
+      setRegisteredCompanyName(bootstrap.user.company?.trim() ?? "");
       const resolvedCustomerType: CustomerType | null =
         bootstrap.customerType === "individual" || bootstrap.customerType === "company"
           ? bootstrap.customerType
@@ -405,6 +408,14 @@ export default function OnboardingPage() {
         setStep("review");
         return;
       }
+      if (!registeredCompanyName.trim()) {
+        setCompanyError("Nama perusahaan dari pendaftaran tidak ditemukan. Silakan kembali ke registrasi atau hubungi admin.");
+        return;
+      }
+      if (!companyAddress.trim() || companyAddress.trim().length < 10) {
+        setCompanyError("Alamat perusahaan wajib diisi minimal 10 karakter.");
+        return;
+      }
       if (!selectedCompanyId && (!companyRequestMode || !requestedCompanyName.trim())) {
         setCompanyError(t("onboarding.errorRequired", "Harap lengkapi semua field wajib."));
         return;
@@ -486,6 +497,7 @@ export default function OnboardingPage() {
         ...baseData,
         accountType,
          customerType: accountType === "customer" ? customerType ?? undefined : undefined,
+         companyAddress: accountType === "customer" && customerType === "company" ? companyAddress.trim() : undefined,
          companyId: accountType === "customer" && selectedCompanyId ? selectedCompanyId : undefined,
          requestedCompanyName: accountType === "customer" && companyRequestMode ? requestedCompanyName.trim() || undefined : undefined,
          requestedRegistrationNumber: accountType === "customer" && companyRequestMode ? requestedRegistrationNumber.trim() || undefined : undefined,
@@ -584,9 +596,9 @@ export default function OnboardingPage() {
               </div>
 
               <div className="space-y-2">
-                <Label>{t("onboarding.basicInfo.address", "Alamat Lengkap")} <span className="text-red-500">*</span></Label>
+                <Label>{accountType === "customer" && customerType === "company" ? "Alamat sesuai KTP" : t("onboarding.basicInfo.address", "Alamat Lengkap")} <span className="text-red-500">*</span></Label>
                 <Textarea
-                  placeholder={t("onboarding.basicInfo.addressPlaceholder", "Jl. Contoh No. 123, Kelurahan, Kecamatan, Kota/Kabupaten")}
+                  placeholder={accountType === "customer" && customerType === "company" ? "Alamat tempat tinggal sesuai KTP PIC" : t("onboarding.basicInfo.addressPlaceholder", "Jl. Contoh No. 123, Kelurahan, Kecamatan, Kota/Kabupaten")}
                   rows={3}
                   {...baseForm.register("address")}
                 />
@@ -768,8 +780,36 @@ export default function OnboardingPage() {
                {/* CUSTOMER COMPANY */}
                {accountType === "customer" && customerType === "company" && (
                  <div className="space-y-4">
-                   <div className="rounded-lg border border-blue-200 bg-blue-50 p-3 text-sm text-blue-800">
-                     {t("onboarding.registration.companyIntro", "Daftar di bawah adalah perusahaan yang sudah ada di sistem CST. Pilih hanya jika perusahaan Anda memang sudah terdaftar. Jika perusahaan Anda baru, gunakan Daftarkan perusahaan baru.")}
+                   <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+                     <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Identitas perusahaan customer</p>
+                     <p className="mt-1 text-base font-semibold text-slate-900">{registeredCompanyName || "Nama perusahaan dari pendaftaran"}</p>
+                     <p className="mt-1 text-xs text-slate-600">
+                       Nama perusahaan mengikuti data saat mendaftar dan tidak akan berubah saat memilih membership.
+                     </p>
+                   </div>
+
+                   <div className="space-y-2">
+                     <Label htmlFor="customer-company-address">Alamat perusahaan <span className="text-red-500">*</span></Label>
+                     <Textarea
+                       id="customer-company-address"
+                       value={companyAddress}
+                       onChange={(event) => {
+                         setCompanyAddress(event.target.value);
+                         setCompanyError(null);
+                       }}
+                       rows={3}
+                       placeholder="Alamat kantor/perusahaan (dapat berbeda dengan alamat KTP PIC)"
+                     />
+                     <p className="text-xs text-muted-foreground">
+                       Wajib diisi terpisah dari alamat KTP karena alamat perusahaan dan alamat PIC dapat berbeda.
+                     </p>
+                   </div>
+
+                   <div className="rounded-lg border border-blue-200 bg-blue-50 p-3 text-sm text-blue-900">
+                     <p className="font-semibold">Membership / Afiliasi</p>
+                     <p className="mt-1">
+                       Pilih perusahaan penyedia membership/afiliasi. Pilihan ini hanya membuat hubungan membership dan tidak mengubah identitas perusahaan customer di atas.
+                     </p>
                    </div>
 
                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
@@ -785,8 +825,8 @@ export default function OnboardingPage() {
                          !companyRequestMode ? "border-primary bg-primary/5" : "border-gray-200 hover:border-primary/30"
                        }`}
                      >
-                       <p className="font-semibold text-sm">{t("onboarding.registration.existingCompany", "Perusahaan sudah terdaftar")}</p>
-                       <p className="text-xs text-muted-foreground mt-1">{t("onboarding.registration.existingCompanyDesc", "Hubungkan akun ke perusahaan yang sudah ada.")}</p>
+                       <p className="font-semibold text-sm">{t("onboarding.registration.existingCompany", "Pilih membership yang tersedia")}</p>
+                       <p className="text-xs text-muted-foreground mt-1">{t("onboarding.registration.existingCompanyDesc", "Hubungkan akun sebagai member/afiliasi tanpa mengubah nama perusahaan Anda.")}</p>
                      </button>
                      <button
                        type="button"
@@ -800,15 +840,15 @@ export default function OnboardingPage() {
                          companyRequestMode ? "border-emerald-500 bg-emerald-50" : "border-gray-200 hover:border-emerald-300"
                        }`}
                      >
-                       <p className="font-semibold text-sm">{t("onboarding.registration.newCompany", "Daftarkan perusahaan baru")}</p>
-                       <p className="text-xs text-muted-foreground mt-1">{t("onboarding.registration.newCompanyDesc", "Isi nama perusahaan dan NIB/NPWP perusahaan yang sedang mendaftar.")}</p>
+                       <p className="font-semibold text-sm">{t("onboarding.registration.newCompany", "Ajukan membership / afiliasi baru")}</p>
+                       <p className="text-xs text-muted-foreground mt-1">{t("onboarding.registration.newCompanyDesc", "Ajukan organisasi membership baru untuk diverifikasi admin.")}</p>
                      </button>
                    </div>
 
                    {!companyRequestMode ? (
                      <>
                        <div className="space-y-2">
-                         <Label htmlFor="customer-company-search">{t("onboarding.registration.searchExisting", "Cari perusahaan yang sudah terdaftar")}</Label>
+                         <Label htmlFor="customer-company-search">{t("onboarding.registration.searchExisting", "Cari penyedia membership / afiliasi")}</Label>
                          <Input
                            id="customer-company-search"
                            value={companySearch}
@@ -850,7 +890,7 @@ export default function OnboardingPage() {
                        </div>
                        {selectedCompanyId && (
                          <p className="text-sm text-emerald-700 flex items-center gap-2">
-                           <CheckCircle2 className="h-4 w-4" /> {t("onboarding.registration.existingSelected", "Perusahaan terdaftar dipilih. Membership akan dibuat otomatis.")}
+                           <CheckCircle2 className="h-4 w-4" /> {t("onboarding.registration.existingSelected", "Membership dipilih. Identitas perusahaan customer tetap tidak berubah.")}
                          </p>
                        )}
                      </>
@@ -1028,7 +1068,7 @@ export default function OnboardingPage() {
                 <div className="px-4 py-3 font-semibold text-xs uppercase text-muted-foreground tracking-wide">{t("onboarding.review.basicInfo", "Informasi Dasar")}</div>
                 <Row label={t("onboarding.review.fullName", "Nama Lengkap")} value={baseData?.fullName} />
                 <Row label={t("onboarding.review.phone", "Nomor HP")} value={baseData?.phone} />
-                <Row label={t("onboarding.review.address", "Alamat")} value={baseData?.address} />
+                <Row label={accountType === "customer" && customerType === "company" ? "Alamat sesuai KTP" : t("onboarding.review.address", "Alamat")} value={baseData?.address} />
                 <Row label={t("onboarding.review.ktp", "KTP")} value={ktpFile ? `✅ ${ktpFile.name}` : t("onboarding.review.notUploaded", "Tidak diupload")} />
                 {ocrData?.nik && <Row label={t("onboarding.review.nikOcr", "NIK (OCR)")} value={ocrData.nik} />}
 
@@ -1037,13 +1077,15 @@ export default function OnboardingPage() {
                  {accountType === "customer" && customerType && (
                    <>
                      <Row label={t("onboarding.registration.customerTypeTitle", "Tipe Customer")} value={customerType === "individual" ? t("onboarding.registration.individual", "Perorangan") : t("onboarding.registration.company", "Perusahaan")} />
+                     {customerType === "company" && <Row label="Nama Perusahaan Customer" value={registeredCompanyName} />}
+                     {customerType === "company" && <Row label="Alamat Perusahaan" value={companyAddress} />}
                      {customerType === "individual" ? (
                        <div className="px-4 py-3 text-sm text-emerald-700 bg-emerald-50">
                          {t("onboarding.registration.reviewIndividual", "Customer perorangan — membership perusahaan tidak diperlukan.")}
                        </div>
                      ) : selectedCompanyId ? (
                        <div className="px-4 py-3 text-sm text-emerald-700 bg-emerald-50">
-                         {t("onboarding.registration.reviewExisting", "Perusahaan terdaftar dipilih — membership akan dibuat otomatis.")}
+                         {t("onboarding.registration.reviewExisting", "Membership / afiliasi dipilih — identitas perusahaan customer tetap sesuai pendaftaran.")}
                        </div>
                      ) : (
                        <div className="px-4 py-3 text-sm text-amber-800 bg-amber-50">
