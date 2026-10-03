@@ -20,6 +20,13 @@ describe("customer profile contract", () => {
     expect(page).toContain('fetch("/api/portal/me"');
   });
 
+
+  it("uses the customer profile company identity instead of membership naming", () => {
+    expect(server).toContain("select company_name, company_address, additional_notes");
+    expect(server).toContain("company: latestProfile?.company_name ?? user.company ?? null");
+    expect(server).toContain("set company_name = nullif($1, '')");
+  });
+
   it("uploads avatars with the same multipart field expected by the server", () => {
     expect(server).toContain('pathname === "/api/portal/me/avatar"');
     expect(server).toContain("handlePortalAvatarUpload");
