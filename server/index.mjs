@@ -793,7 +793,7 @@ async function handleAuthMe(request, response) {
       [user.id],
     ),
     query(
-      `select company_address, additional_notes
+      `select company_name, company_address, additional_notes
          from public.portal_customer_profiles
         where customer_id = $1
         order by updated_at desc nulls last, id desc
@@ -811,7 +811,7 @@ async function handleAuthMe(request, response) {
     name: user.name,
     email: user.email,
     phone: user.phone ?? null,
-    company: user.company ?? null,
+    company: latestProfile?.company_name ?? user.company ?? null,
     address: latestProfile?.company_address ?? (legacyOcrAddress || null),
     avatarUrl: canonicalPublicAssetUrl(user.avatar_url) ?? user.avatar_url ?? null,
     role: user.role,
@@ -858,12 +858,13 @@ async function handlePortalProfileUpdate(request, response) {
   if (existing.rows[0]) {
     await query(
       `update public.portal_customer_profiles
-          set company_address = nullif($1, ''),
-              pic_name = $2,
-              pic_whatsapp = nullif($3, ''),
+          set company_name = nullif($1, ''),
+              company_address = nullif($2, ''),
+              pic_name = $3,
+              pic_whatsapp = nullif($4, ''),
               updated_at = now()
-        where id = $4`,
-      [address, name, phone, existing.rows[0].id],
+        where id = $5`,
+      [company, address, name, phone, existing.rows[0].id],
     );
   } else {
     await query(
