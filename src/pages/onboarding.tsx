@@ -517,9 +517,9 @@ export default function OnboardingPage() {
         credentials: "include",
         body: JSON.stringify(payload),
       });
-       const json = await res.json() as { ok?: boolean; status?: string; error?: string };
+       const json = await res.json() as { ok?: boolean; status?: string; error?: string; message?: string };
       if (!res.ok || !json.ok) {
-        setSubmitError(json.error ?? t("onboarding.submit.saveFailed", "Gagal menyimpan profil."));
+        setSubmitError(json.error ?? json.message ?? t("onboarding.submit.saveFailed", "Gagal menyimpan profil."));
         return;
       }
        clearPortalAuthBootstrap();
