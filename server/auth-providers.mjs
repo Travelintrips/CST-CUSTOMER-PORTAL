@@ -972,46 +972,60 @@ export async function handleEmailOtpRequest(request, response) {
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
     throw errorWithStatus(400, "Format email tidak valid.");
   }
+  if (email.endsWith("@gmaol.com")) {
+    throw errorWithStatus(400, "Domain email tampaknya salah. Gunakan @gmail.com.");
+  }
+
   const ip = requestIp(request);
   enforceRateLimit(`email-otp-request:ip:${ip}`, 5, 15 * 60 * 1000);
   enforceRateLimit(`email-otp-request:email:${email}`, 3, 10 * 60 * 1000);
 
-  const recent = await query(
-    `select count(*)::int as count
-       from public.portal_email_otp_codes
-      where email = $1
-        and created_at >= now() - interval '10 minutes'`,
-    [email],
-  );
-  if (Number(recent.rows[0]?.count ?? 0) >= 3) {
-    throw errorWithStatus(429, "Terlalu banyak permintaan OTP. Coba lagi nanti.");
-  }
-
-  const code = randomCode();
-  const inserted = await query(
-    `insert into public.portal_email_otp_codes (email, code_hash, expires_at)
-     values ($1, $2, now() + interval '10 minutes')
-     returning id`,
-    [email, await bcrypt.hash(code, 10)],
-  );
-  const challengeId = inserted.rows[0]?.id;
-
-  if (!SAFE_DEV_AUTH && !(await emailConfigured())) {
-    await query("delete from public.portal_email_otp_codes where id = $1", [challengeId]);
-    throw errorWithStatus(503, "Layanan email belum dikonfigurasi. Hubungi admin.");
-  }
   try {
-    await sendEmailOtp(email, code);
-  } catch {
-    await query("delete from public.portal_email_otp_codes where id = $1", [challengeId]);
-    throw errorWithStatus(503, "Gagal mengirim email OTP. Coba lagi.");
-  }
-  json(response, 200, {
-    message: SAFE_DEV_AUTH ? "Dev mode: OTP tersedia untuk pengujian aman." : "Kode OTP telah dikirim ke email Anda.",
-    ...(SAFE_DEV_AUTH ? { _dev_code: code } : {}),
-  });
-}
+    const recent = await query(
+      `select count(*)::int as count
+         from public.portal_email_otp_codes
+        where email = $1
+          and created_at >= now() - interval '10 minutes'`,
+      [email],
+    );
+    if (Number(recent.rows[0]?.count ?? 0) >= 3) {
+      throw errorWithStatus(429, "Terlalu banyak permintaan OTP. Coba lagi nanti.");
+    }
 
+    const code = randomCode();
+    const inserted = await query(
+      `insert into public.portal_email_otp_codes (email, code_hash, expires_at)
+       values ($1, $2, now() + interval '10 minutes')
+       returning id`,
+      [email, await bcrypt.hash(code, 10)],
+    );
+    const challengeId = inserted.rows[0]?.id;
+
+    if (!SAFE_DEV_AUTH && !(await emailConfigured())) {
+      await query("delete from public.portal_email_otp_codes where id = $1", [challengeId]).catch(() => {});
+      throw errorWithStatus(503, "Layanan email belum dikonfigurasi. Hubungi admin.");
+    }
+
+    try {
+      await sendEmailOtp(email, code);
+    } catch {
+      await query("delete from public.portal_email_otp_codes where id = $1", [challengeId]).catch(() => {});
+      throw errorWithStatus(503, "Gagal mengirim email OTP. Periksa alamat email lalu coba lagi.");
+    }
+
+    json(response, 200, {
+      message: SAFE_DEV_AUTH ? "Dev mode: OTP tersedia untuk pengujian aman." : "Kode OTP telah dikirim ke email Anda.",
+      ...(SAFE_DEV_AUTH ? { _dev_code: code } : {}),
+    });
+  } catch (error) {
+    if (Number.isInteger(error?.statusCode)) throw error;
+    console.error("[email-otp] request failed", {
+      code: error?.code ?? null,
+      message: error?.message ?? String(error),
+    });
+    throw errorWithStatus(503, "Layanan OTP email sedang bermasalah. Coba lagi beberapa saat.");
+  }
+}
 export async function handleEmailOtpVerify(request, response) {
   const body = await readJson(request);
   const email = normalizedEmail(body.email);
