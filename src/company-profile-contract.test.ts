@@ -27,6 +27,15 @@ describe("customer profile contract", () => {
     expect(server).toContain("set company_name = nullif($1, '')");
   });
 
+
+  it("labels account ownership separately from organization membership", () => {
+    expect(page).toContain("Akun perusahaan");
+    expect(page).toContain("Membership / Afiliasi");
+    expect(page).toContain("Membership tidak mengubah kepemilikan akun");
+    expect(page).toContain("Nama Perusahaan Pemilik Akun");
+    expect(page).toContain('fetch("/api/portal/organization"');
+  });
+
   it("uploads avatars with the same multipart field expected by the server", () => {
     expect(server).toContain('pathname === "/api/portal/me/avatar"');
     expect(server).toContain("handlePortalAvatarUpload");
