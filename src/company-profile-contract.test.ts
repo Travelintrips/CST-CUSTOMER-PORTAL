@@ -16,7 +16,7 @@ describe("customer profile contract", () => {
   it("persists profile edits through the local standalone API", () => {
     expect(server).toContain('request.method === "PUT" && pathname === "/api/portal/me"');
     expect(server).toContain("handlePortalProfileUpdate");
-    expect(server).toContain("company_address = nullif($1, '')");
+    expect(server).toContain("company_address = nullif($2, '')");
     expect(page).toContain('fetch("/api/portal/me"');
   });
 
