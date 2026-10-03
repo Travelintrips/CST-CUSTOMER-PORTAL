@@ -259,6 +259,11 @@ export default function Login() {
       setOtpMsg({ type: "err", text: t("login.invalidEmail") });
       return;
     }
+    const normalizedOtpEmail = otpEmail.trim().toLowerCase();
+    if (normalizedOtpEmail.endsWith("@gmaol.com")) {
+      setOtpMsg({ type: "err", text: "Domain email tampaknya salah. Gunakan @gmail.com." });
+      return;
+    }
     setOtpSending(true);
     try {
       const res = await fetch(`${BASE}/api/portal/auth/otp/request`, {
