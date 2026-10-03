@@ -23,6 +23,7 @@ export default function CompanyProfile() {
   const [saving, setSaving] = useState(false);
   const [uploadingAvatar, setUploadingAvatar] = useState(false);
   const [avatarPreview, setAvatarPreview] = useState<string | null>(null);
+  const [membershipCompany, setMembershipCompany] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -47,6 +48,26 @@ export default function CompanyProfile() {
       setAvatarPreview((profile as unknown as Record<string, unknown>).avatarUrl as string ?? null);
     }
   }, [profile]);
+
+  useEffect(() => {
+    if (!authed) return;
+    let cancelled = false;
+    void fetch("/api/portal/organization", {
+      headers,
+      credentials: "include",
+    })
+      .then(async (response) => {
+        if (!response.ok) return null;
+        return response.json() as Promise<{ company?: { name?: string | null } | null }>;
+      })
+      .then((data) => {
+        if (!cancelled) setMembershipCompany(data?.company?.name ?? null);
+      })
+      .catch(() => {
+        if (!cancelled) setMembershipCompany(null);
+      });
+    return () => { cancelled = true; };
+  }, [authed]);
 
   async function handleSave() {
     setSaving(true);
@@ -198,9 +219,19 @@ export default function CompanyProfile() {
                   </div>
 
                   <div>
+                    <p className="text-xs font-semibold uppercase tracking-wide text-sky-700">Akun perusahaan</p>
                     <p className="font-semibold text-slate-800 text-lg">{profile?.company || profile?.name || "Perusahaan Anda"}</p>
                     <p className="text-sm text-slate-500">{profile?.email}</p>
-                    <p className="text-xs text-slate-400 mt-1">
+                    {membershipCompany && (
+                      <div className="mt-2 rounded-lg border border-sky-100 bg-sky-50 px-3 py-2">
+                        <p className="text-xs font-medium text-slate-500">Membership / Afiliasi</p>
+                        <p className="text-sm font-semibold text-sky-800">{membershipCompany}</p>
+                        <p className="mt-0.5 text-xs text-slate-500">
+                          Membership tidak mengubah kepemilikan akun atau nama perusahaan Anda.
+                        </p>
+                      </div>
+                    )}
+                    <p className="text-xs text-slate-400 mt-2">
                       Klik ikon kamera untuk mengganti logo perusahaan (JPG/PNG/WebP, maks 5MB)
                     </p>
                   </div>
@@ -229,7 +260,7 @@ export default function CompanyProfile() {
 
                 <div className="space-y-1.5">
                   <Label className="text-xs text-slate-500 flex items-center gap-1.5">
-                    <Building2 className="h-3.5 w-3.5" /> Nama Perusahaan
+                    <Building2 className="h-3.5 w-3.5" /> Nama Perusahaan Pemilik Akun
                   </Label>
                   {editing ? (
                     <Input value={form.company} onChange={e => setForm(f => ({ ...f, company: e.target.value }))} />
