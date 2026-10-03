@@ -8,7 +8,7 @@ describe("customer profile contract", () => {
   const schemas = readFileSync(join(process.cwd(), "src/shared/api-client-react/generated/api.schemas.ts"), "utf8");
 
   it("exposes the onboarding address on the authenticated profile", () => {
-    expect(server).toContain("select company_address, additional_notes");
+    expect(server).toContain("select company_name, company_address, additional_notes");
     expect(server).toContain("address: latestProfile?.company_address ?? (legacyOcrAddress || null)");
     expect(schemas).toContain("address?: string | null");
   });
@@ -16,8 +16,15 @@ describe("customer profile contract", () => {
   it("persists profile edits through the local standalone API", () => {
     expect(server).toContain('request.method === "PUT" && pathname === "/api/portal/me"');
     expect(server).toContain("handlePortalProfileUpdate");
-    expect(server).toContain("company_address = nullif($1, '')");
+    expect(server).toContain("company_address = nullif($2, '')");
     expect(page).toContain('fetch("/api/portal/me"');
+  });
+
+
+  it("uses the customer profile company identity instead of membership naming", () => {
+    expect(server).toContain("select company_name, company_address, additional_notes");
+    expect(server).toContain("company: latestProfile?.company_name ?? user.company ?? null");
+    expect(server).toContain("set company_name = nullif($1, '')");
   });
 
   it("uploads avatars with the same multipart field expected by the server", () => {

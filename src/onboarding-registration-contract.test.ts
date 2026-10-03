@@ -38,6 +38,15 @@ describe("customer company onboarding contract", () => {
     expect(onboarding).toContain('t("onboarding.registration.reviewNewPending"');
   });
 
+
+  it("keeps customer company identity separate from canonical membership", () => {
+    expect(adminPortal).toContain("const identityCompanyName");
+    expect(adminPortal).toContain("Existing-company membership must leave");
+    expect(adminPortal).toContain("when $1 = 'individual' then null");
+    expect(adminPortal).toContain("else coalesce(excluded.company_name, portal_customer_profiles.company_name)");
+    expect(adminPortal).not.toContain("company?.name ?? (requestedCompanyName || null)");
+  });
+
   it("requires identity and legal documents at both UI and server boundaries", () => {
     expect(onboarding).toContain("(!ktpFile && !ktpUrl)");
     expect(onboarding).toContain("!legalityFile && !legalityUrl");
