@@ -68,6 +68,15 @@ describe("customer company onboarding contract", () => {
     expect(onboarding).toContain('setLocation("/login")');
   });
 
+
+  it("uses a direct save path for existing company membership during onboarding", () => {
+    expect(adminPortal).toContain('status: "company_mapped"');
+    expect(adminPortal).toContain("Membership / afiliasi yang dipilih tidak ditemukan.");
+    expect(adminPortal).toContain("update public.portal_company_members");
+    expect(adminPortal).toContain("[portal-onboarding] complete failed");
+    expect(adminPortal).toContain("Gagal menyimpan profil di server");
+  });
+
   it("requires identity and legal documents at both UI and server boundaries", () => {
     expect(onboarding).toContain("(!ktpFile && !ktpUrl)");
     expect(onboarding).toContain("!legalityFile && !legalityUrl");
