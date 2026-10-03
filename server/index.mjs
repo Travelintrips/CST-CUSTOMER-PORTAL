@@ -793,7 +793,7 @@ async function handleAuthMe(request, response) {
       [user.id],
     ),
     query(
-      `select company_name, company_address, additional_notes
+      `select company_name, company_address, ktp_address, additional_notes
          from public.portal_customer_profiles
         where customer_id = $1
         order by updated_at desc nulls last, id desc
@@ -806,15 +806,19 @@ async function handleAuthMe(request, response) {
   const legacyOcrAddress = typeof legacyNotes?.ocrData?.address === "string"
     ? legacyNotes.ocrData.address.trim()
     : "";
+  const resolvedKtpAddress = latestProfile?.ktp_address ?? (legacyOcrAddress || null);
   sendJson(response, 200, {
     id: user.id,
     name: user.name,
     email: user.email,
     phone: user.phone ?? null,
     company: latestProfile?.company_name ?? user.company ?? null,
-    address: latestProfile?.company_address ?? (legacyOcrAddress || null),
+    address: resolvedKtpAddress,
+    ktpAddress: resolvedKtpAddress,
+    companyAddress: latestProfile?.company_address ?? null,
     avatarUrl: canonicalPublicAssetUrl(user.avatar_url) ?? user.avatar_url ?? null,
     role: user.role,
+    customerType: user.customer_type ?? null,
     serviceIds: services.rows.map((row) => Number(row.service_id)),
     createdAt: user.created_at ?? null,
   });
@@ -831,10 +835,24 @@ async function handlePortalProfileUpdate(request, response) {
   const name = typeof body.name === "string" ? body.name.trim() : "";
   const company = typeof body.company === "string" ? body.company.trim() : "";
   const phone = typeof body.phone === "string" ? body.phone.trim() : "";
-  const address = typeof body.address === "string" ? body.address.trim() : "";
+  const ktpAddress = typeof body.ktpAddress === "string"
+    ? body.ktpAddress.trim()
+    : typeof body.address === "string"
+      ? body.address.trim()
+      : "";
+  const companyAddress = typeof body.companyAddress === "string" ? body.companyAddress.trim() : "";
 
   if (!name || name.length < 3) {
     sendError(response, 400, "Nama kontak wajib diisi.");
+    return;
+  }
+
+  if (!ktpAddress || ktpAddress.length < 10) {
+    sendError(response, 400, "Alamat sesuai KTP wajib diisi.");
+    return;
+  }
+  if (user.customer_type === "company" && (!companyAddress || companyAddress.length < 10)) {
+    sendError(response, 400, "Alamat perusahaan wajib diisi.");
     return;
   }
 
@@ -860,18 +878,19 @@ async function handlePortalProfileUpdate(request, response) {
       `update public.portal_customer_profiles
           set company_name = nullif($1, ''),
               company_address = nullif($2, ''),
-              pic_name = $3,
-              pic_whatsapp = nullif($4, ''),
+              ktp_address = nullif($3, ''),
+              pic_name = $4,
+              pic_whatsapp = nullif($5, ''),
               updated_at = now()
-        where id = $5`,
-      [company, address, name, phone, existing.rows[0].id],
+        where id = $6`,
+      [company, companyAddress, ktpAddress, name, phone, existing.rows[0].id],
     );
   } else {
     await query(
       `insert into public.portal_customer_profiles
-        (customer_id, company_name, company_address, pic_name, pic_whatsapp, profile_status, updated_at)
-       values ($1, nullif($2, ''), nullif($3, ''), $4, nullif($5, ''), 'active', now())`,
-      [user.id, company, address, name, phone],
+        (customer_id, company_name, company_address, ktp_address, pic_name, pic_whatsapp, profile_status, updated_at)
+       values ($1, nullif($2, ''), nullif($3, ''), nullif($4, ''), $5, nullif($6, ''), 'active', now())`,
+      [user.id, company, companyAddress, ktpAddress, name, phone],
     );
   }
 
