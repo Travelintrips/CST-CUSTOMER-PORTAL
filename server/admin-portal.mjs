@@ -1290,17 +1290,66 @@ async function handleOnboardingComplete(ctx) {
 
     let organization = null;
     if (accountType === "customer") {
-      organization = await applyOrganizationSelection(
-        ctx.user,
-        {
-          customerType,
-          companyId: body.companyId,
-          requestedCompanyName: body.requestedCompanyName,
-          requestedRegistrationNumber: body.requestedRegistrationNumber,
-        },
-        dbQuery,
-        { resolveContext: false },
-      );
+      if (customerType === "company" && Number.isInteger(Number(body.companyId)) && Number(body.companyId) > 0) {
+        const membershipCompanyId = Number(body.companyId);
+        const membershipCompany = await dbQuery(
+          `select id, coalesce(company_name, legal_name, name) as name,
+                  coalesce(company_code, code) as code
+             from public.companies
+            where id = $1 and coalesce(is_active, true) = true
+            limit 1`,
+          [membershipCompanyId],
+        );
+        const selectedMembership = membershipCompany.rows[0] ?? null;
+        if (!selectedMembership) {
+          const error = new Error("Membership / afiliasi yang dipilih tidak ditemukan.");
+          error.statusCode = 404;
+          throw error;
+        }
+
+        await dbQuery(
+          `insert into public.portal_company_members
+            (portal_customer_id, company_id, buyer_role, is_active, invited_by, invited_at, joined_at, created_at, updated_at)
+           values ($1, $2, 'requester', true, $1, now(), now(), now(), now())
+           on conflict (portal_customer_id, company_id)
+           do update set
+             is_active = true,
+             joined_at = coalesce(portal_company_members.joined_at, now()),
+             updated_at = now()`,
+          [ctx.user.id, membershipCompanyId],
+        );
+        await dbQuery(
+          `update public.portal_company_members
+              set is_active = false, updated_at = now()
+            where portal_customer_id = $1
+              and company_id <> $2
+              and is_active = true`,
+          [ctx.user.id, membershipCompanyId],
+        );
+
+        organization = {
+          status: "company_mapped",
+          customerType: "company",
+          companyId: Number(selectedMembership.id),
+          company: {
+            id: Number(selectedMembership.id),
+            name: selectedMembership.name,
+            code: selectedMembership.code ?? null,
+          },
+        };
+      } else {
+        organization = await applyOrganizationSelection(
+          ctx.user,
+          {
+            customerType,
+            companyId: body.companyId,
+            requestedCompanyName: body.requestedCompanyName,
+            requestedRegistrationNumber: body.requestedRegistrationNumber,
+          },
+          dbQuery,
+          { resolveContext: false },
+        );
+      }
     } else {
       await dbQuery(
         `insert into public.onboarding_approvals
@@ -1324,10 +1373,20 @@ async function handleOnboardingComplete(ctx) {
     ctx.sendJson(ctx.response, 200, { ok: true, status, context: organization });
   } catch (error) {
     await client.query("rollback").catch(() => {});
+    console.error("[portal-onboarding] complete failed", {
+      customerId: ctx.user?.id ?? null,
+      accountType,
+      customerType,
+      companyId: body.companyId ?? null,
+      code: error?.code ?? null,
+      constraint: error?.constraint ?? null,
+      message: error?.message ?? String(error),
+    });
     if (Number.isInteger(error?.statusCode)) {
       return adminError(ctx, error.statusCode, error.message);
     }
-    throw error;
+    const safeCode = typeof error?.code === "string" ? ` (${error.code})` : "";
+    return adminError(ctx, 500, `Gagal menyimpan profil di server${safeCode}.`);
   } finally {
     client.release();
   }
