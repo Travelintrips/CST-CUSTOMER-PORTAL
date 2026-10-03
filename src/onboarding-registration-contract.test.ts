@@ -8,8 +8,8 @@ describe("customer company onboarding contract", () => {
   const languageContext = readFileSync(join(process.cwd(), "src/i18n/LanguageContext.tsx"), "utf8");
 
   it("clearly separates existing-company membership from new-company registration", () => {
-    expect(onboarding).toContain("Perusahaan sudah terdaftar");
-    expect(onboarding).toContain("Daftarkan perusahaan baru");
+    expect(onboarding).toContain("Pilih membership yang tersedia");
+    expect(onboarding).toContain("Ajukan membership / afiliasi baru");
     expect(onboarding).toContain("Data perusahaan yang sedang mendaftar");
     expect(onboarding).toContain("!requestedRegistrationNumber.trim()");
     expect(onboarding).not.toContain(">Perusahaan saya belum terdaftar<");
@@ -45,6 +45,18 @@ describe("customer company onboarding contract", () => {
     expect(adminPortal).toContain("when $1 = 'individual' then null");
     expect(adminPortal).toContain("else coalesce(excluded.company_name, portal_customer_profiles.company_name)");
     expect(adminPortal).not.toContain("company?.name ?? (requestedCompanyName || null)");
+  });
+
+
+  it("preserves registered company identity and requires separate company and KTP addresses", () => {
+    expect(onboarding).toContain("Identitas perusahaan customer");
+    expect(onboarding).toContain("Nama perusahaan mengikuti data saat mendaftar");
+    expect(onboarding).toContain("Alamat perusahaan");
+    expect(onboarding).toContain("Alamat sesuai KTP");
+    expect(onboarding).toContain("companyAddress.trim()");
+    expect(adminPortal).toContain("Nama perusahaan customer harus berasal dari data registrasi.");
+    expect(adminPortal).toContain("Alamat perusahaan wajib diisi minimal 10 karakter.");
+    expect(adminPortal).toContain("ktp_address");
   });
 
   it("requires identity and legal documents at both UI and server boundaries", () => {
