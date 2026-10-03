@@ -59,6 +59,15 @@ describe("customer company onboarding contract", () => {
     expect(adminPortal).toContain("ktp_address");
   });
 
+
+  it("resolves the OAuth cookie session before redirecting onboarding to login", () => {
+    expect(onboarding).not.toContain("const authed = isAuthenticated()");
+    expect(onboarding).not.toContain('if (!authed) { setLocation("/login"); return; }');
+    expect(onboarding).toContain("fetchPortalAuthBootstrap(null, { force: true })");
+    expect(onboarding).toContain("setSessionReady(true)");
+    expect(onboarding).toContain('setLocation("/login")');
+  });
+
   it("requires identity and legal documents at both UI and server boundaries", () => {
     expect(onboarding).toContain("(!ktpFile && !ktpUrl)");
     expect(onboarding).toContain("!legalityFile && !legalityUrl");

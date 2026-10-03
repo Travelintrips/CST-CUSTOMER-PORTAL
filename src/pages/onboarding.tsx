@@ -7,7 +7,6 @@ import {
   clearPortalAuthBootstrap,
   fetchPortalAuthBootstrap,
   getCachedPortalAuthBootstrap,
-  isAuthenticated,
   removeAuthToken,
   type PortalAuthBootstrap,
 } from "@/lib/auth";
@@ -123,7 +122,7 @@ function StepIndicator({ current }: { current: Step }) {
 export default function OnboardingPage() {
   const [, setLocation] = useLocation();
   const { t } = useLanguage();
-  const authed = isAuthenticated();
+  const [sessionReady, setSessionReady] = useState(false);
 
   const [organizationCompletion, setOrganizationCompletion] = useState<OrganizationCompletionStatus | null>(null);
   const [statusLoading, setStatusLoading] = useState(true);
@@ -171,14 +170,18 @@ export default function OnboardingPage() {
   const stnkInputRef    = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
-    if (!authed) { setLocation("/login"); return; }
+    let disposed = false;
 
     const applyBootstrap = (bootstrap: PortalAuthBootstrap | null) => {
+      if (disposed) return;
       if (!bootstrap) {
+        setSessionReady(false);
         setStatusLoading(false);
+        setLocation("/login");
         return;
       }
 
+      setSessionReady(true);
       const role = bootstrap.role;
       const contextStatus = bootstrap.customerContext.status;
       setRegisteredCompanyName(bootstrap.user.company?.trim() ?? "");
@@ -223,12 +226,12 @@ export default function OnboardingPage() {
     const cached = getCachedPortalAuthBootstrap();
     if (cached) {
       applyBootstrap(cached);
-      return;
+    } else {
+      void fetchPortalAuthBootstrap(null, { force: true }).then(applyBootstrap);
     }
 
-    void fetchPortalAuthBootstrap().then(applyBootstrap);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [authed, setLocation]);
+    return () => { disposed = true; };
+  }, [setLocation]);
 
   useEffect(() => {
     if (accountType !== "customer" || customerType !== "company") {
@@ -534,8 +537,7 @@ export default function OnboardingPage() {
     }
   }
 
-  if (!authed) return null;
-  if (statusLoading) {
+  if (statusLoading || !sessionReady) {
     return (
       <div className="min-h-screen bg-gray-50 flex items-center justify-center">
         <Loader2 className="h-8 w-8 animate-spin text-primary" />
