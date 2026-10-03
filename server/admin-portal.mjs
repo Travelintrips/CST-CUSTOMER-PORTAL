@@ -963,7 +963,7 @@ async function getOrganizationContext(user, dbQuery = query) {
   };
 }
 
-async function applyOrganizationSelection(user, body, dbQuery = query) {
+async function applyOrganizationSelection(user, body, dbQuery = query, options = {}) {
   const customerType = text(body.customerType);
   const companyId = body.companyId == null ? null : numberOrNull(body.companyId);
   const requestedCompanyName = text(body.requestedCompanyName);
@@ -1091,6 +1091,14 @@ async function applyOrganizationSelection(user, body, dbQuery = query) {
        updated_at = now()`,
     [user.id, identityCompanyName, profileStatus, customerType],
   );
+  if (options.resolveContext === false) {
+    return {
+      status: profileStatus === "pending" ? "company_pending" : customerType === "individual" ? "individual" : "company_mapped",
+      customerType,
+      companyId: company?.id ?? null,
+      company: company ? { id: Number(company.id), name: company.name, code: company.code ?? null } : null,
+    };
+  }
   return getOrganizationContext({ ...user, customer_type: customerType, company: company?.name ?? requestedCompanyName ?? null }, dbQuery);
 }
 
@@ -1291,6 +1299,7 @@ async function handleOnboardingComplete(ctx) {
           requestedRegistrationNumber: body.requestedRegistrationNumber,
         },
         dbQuery,
+        { resolveContext: false },
       );
     } else {
       await dbQuery(
