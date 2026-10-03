@@ -1110,7 +1110,8 @@ async function handleOnboardingComplete(ctx) {
   const accountType = text(body.accountType);
   const fullName = text(body.fullName);
   const phone = text(body.phone) || null;
-  const address = text(body.address) || null;
+  const ktpAddress = text(body.address) || null;
+  const companyAddress = text(body.companyAddress) || null;
   if (!["customer", "vendor", "driver", "employee"].includes(accountType)) {
     return adminError(ctx, 400, "Tipe akun tidak valid.");
   }
@@ -1124,8 +1125,8 @@ async function handleOnboardingComplete(ctx) {
       "Tipe akun tidak dapat diubah melalui onboarding. Hubungi admin untuk perubahan role.",
     );
   }
-  if (!fullName || fullName.length < 3 || !phone || !address || address.length < 10) {
-    return adminError(ctx, 400, "Nama, nomor telepon, dan alamat lengkap wajib diisi.");
+  if (!fullName || fullName.length < 3 || !phone || !ktpAddress || ktpAddress.length < 10) {
+    return adminError(ctx, 400, "Nama, nomor telepon, dan alamat sesuai KTP wajib diisi.");
   }
 
   const customerType = accountType === "customer" ? text(body.customerType) : null;
@@ -1142,6 +1143,12 @@ async function handleOnboardingComplete(ctx) {
   }
 
   if (accountType === "customer" && customerType === "company") {
+    if (!text(ctx.user.company)) {
+      return adminError(ctx, 400, "Nama perusahaan customer harus berasal dari data registrasi.");
+    }
+    if (!companyAddress || companyAddress.length < 10) {
+      return adminError(ctx, 400, "Alamat perusahaan wajib diisi minimal 10 karakter.");
+    }
     const companyId = Number(body.companyId);
     const hasExistingCompany = Number.isInteger(companyId) && companyId > 0;
     const requestedCompanyName = text(body.requestedCompanyName);
@@ -1162,8 +1169,14 @@ async function handleOnboardingComplete(ctx) {
     }
   }
   const profileCompanyName = accountType === "customer"
-    ? text(body.requestedCompanyName) || null
+    ? text(ctx.user.company) || null
     : text(vendor.companyName || employee.companyName) || null;
+  const storedCompanyAddress =
+    accountType === "customer" && customerType === "company"
+      ? companyAddress
+      : accountType === "vendor"
+        ? ktpAddress
+        : null;
   const profileStatus = accountType === "customer" && body.requestedCompanyName
     ? "pending"
     : accountType === "customer"
@@ -1200,7 +1213,8 @@ async function handleOnboardingComplete(ctx) {
 
     const profileValues = [
       profileCompanyName,
-      address,
+      storedCompanyAddress,
+      ktpAddress,
       fullName,
       phone,
       text(vendor.legalityDocUrl) || null,
@@ -1210,13 +1224,14 @@ async function handleOnboardingComplete(ctx) {
     ];
     await dbQuery(
       `insert into public.portal_customer_profiles
-        (customer_id, company_name, company_address, pic_name, pic_whatsapp,
+        (customer_id, company_name, company_address, ktp_address, pic_name, pic_whatsapp,
          legal_doc_url, ktp_pic_url, additional_notes, profile_status, updated_at)
-       values ($1, $2, $3, $4, $5, $6, $7, $8, $9, now())
+       values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, now())
        on conflict (customer_id) where customer_id is not null
        do update set
          company_name = coalesce(excluded.company_name, portal_customer_profiles.company_name),
          company_address = coalesce(excluded.company_address, portal_customer_profiles.company_address),
+         ktp_address = coalesce(excluded.ktp_address, portal_customer_profiles.ktp_address),
          pic_name = coalesce(excluded.pic_name, portal_customer_profiles.pic_name),
          pic_whatsapp = coalesce(excluded.pic_whatsapp, portal_customer_profiles.pic_whatsapp),
          legal_doc_url = coalesce(excluded.legal_doc_url, portal_customer_profiles.legal_doc_url),
@@ -1237,7 +1252,7 @@ async function handleOnboardingComplete(ctx) {
         fullName,
         phone,
         lockedUser.rows[0].email ?? ctx.user.email ?? null,
-        address,
+        ktpAddress,
       ];
       await dbQuery(
         `insert into public.vendor_profiles
