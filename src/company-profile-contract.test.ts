@@ -8,7 +8,7 @@ describe("customer profile contract", () => {
   const schemas = readFileSync(join(process.cwd(), "src/shared/api-client-react/generated/api.schemas.ts"), "utf8");
 
   it("exposes the onboarding address on the authenticated profile", () => {
-    expect(server).toContain("select company_address, additional_notes");
+    expect(server).toContain("select company_name, company_address, additional_notes");
     expect(server).toContain("address: latestProfile?.company_address ?? (legacyOcrAddress || null)");
     expect(schemas).toContain("address?: string | null");
   });
