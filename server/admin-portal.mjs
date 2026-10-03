@@ -1014,14 +1014,26 @@ async function applyOrganizationSelection(user, body, dbQuery = query) {
   }
 
   const profileStatus = customerType === "company" && requestedCompanyName ? "pending" : "active";
+  // The selected canonical company is an organization membership/affiliation,
+  // not the customer's own company identity. Only a newly requested company
+  // may set the customer company name. Existing-company membership must leave
+  // the registered customer company untouched.
+  const identityCompanyName =
+    customerType === "company" && requestedCompanyName
+      ? requestedCompanyName
+      : null;
   await dbQuery(
     `update public.portal_customers
         set customer_type = $1,
-            company = $2
+            company = case
+              when $1 = 'individual' then null
+              when $2 is not null then $2
+              else company
+            end
       where id = $3`,
     [
       customerType,
-      company?.name ?? (requestedCompanyName || null),
+      identityCompanyName,
       user.id,
     ],
   );
@@ -1071,10 +1083,13 @@ async function applyOrganizationSelection(user, body, dbQuery = query) {
      values ($1, $2, $3, now())
      on conflict (customer_id) where customer_id is not null
      do update set
-       company_name = excluded.company_name,
+       company_name = case
+         when $4 = 'individual' then null
+         else coalesce(excluded.company_name, portal_customer_profiles.company_name)
+       end,
        profile_status = excluded.profile_status,
        updated_at = now()`,
-    [user.id, company?.name ?? (requestedCompanyName || null), profileStatus],
+    [user.id, identityCompanyName, profileStatus, customerType],
   );
   return getOrganizationContext({ ...user, customer_type: customerType, company: company?.name ?? requestedCompanyName ?? null }, dbQuery);
 }
