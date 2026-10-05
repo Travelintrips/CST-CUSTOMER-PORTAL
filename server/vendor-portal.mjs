@@ -2,6 +2,7 @@ import crypto from "node:crypto";
 import { pool, query } from "./db.mjs";
 import { createSession, sessionCookies } from "./session.mjs";
 import { normalizePhone, normalizedEmail } from "./auth-providers.mjs";
+import { sendFonnteMessage } from "./whatsapp-service.mjs";
 import {
   signedVendorInvitationAssetUrl,
   signedVendorFeaturedPaymentProofUrl,
@@ -147,6 +148,36 @@ function notificationPayload(resourceId, supplierId) {
     link: "/vendor-dashboard",
     url: "/vendor-dashboard",
   };
+}
+
+function vendorInvitationUrl(token) {
+  const base = text(process.env.CUSTOMER_PORTAL_PUBLIC_URL, "https://cstlogistic.co.id").replace(/\/+$/, "");
+  return `${base}/vendor-register?token=${encodeURIComponent(token)}`;
+}
+
+async function sendVendorInvitationWhatsApp({ id, vendorName, phone, token }) {
+  const target = normalizePhone(phone);
+  if (!target) {
+    const error = new Error("Nomor WhatsApp vendor tidak tersedia.");
+    error.statusCode = 400;
+    throw error;
+  }
+  const link = vendorInvitationUrl(token);
+  const message = [
+    "CST Customer Portal",
+    `Undangan Vendor untuk ${text(vendorName, "Vendor")}`,
+    "Silakan lengkapi pendaftaran vendor melalui link berikut:",
+    link,
+    "Link berlaku 7 hari.",
+  ].join("\n");
+  await sendFonnteMessage({ phone: target, message });
+  await query(
+    `update public.portal_vendor_invitations
+        set sent_via_wa = true
+      where id = $1`,
+    [Number(id)],
+  );
+  return { sent: true, phone: target };
 }
 
 async function findOrCreateSupplier(db, invitation, body, phone, email) {
@@ -624,11 +655,29 @@ export async function handleAdminVendorRoutes({ request, response, url, body, us
         INVITATION_TTL_DAYS,
       ],
     );
+    let sentViaWa = false;
+    let delivery = "manual";
+    let deliveryError = null;
+    if (body?.send_wa === true && normalizePhone(body.phone)) {
+      try {
+        await sendVendorInvitationWhatsApp({
+          id: Number(result.rows[0].id),
+          vendorName,
+          phone: body.phone,
+          token: result.rows[0].token,
+        });
+        sentViaWa = true;
+        delivery = "whatsapp";
+      } catch (error) {
+        deliveryError = text(error?.message, "Gagal mengirim undangan WhatsApp.");
+      }
+    }
     sendJson(response, 201, {
       id: Number(result.rows[0].id),
       token: result.rows[0].token,
-      sent_via_wa: false,
-      delivery: "manual",
+      sent_via_wa: sentViaWa,
+      delivery,
+      delivery_error: deliveryError,
     });
     return true;
   }
@@ -643,6 +692,31 @@ export async function handleAdminVendorRoutes({ request, response, url, body, us
     sendEmpty(response, 204);
     return true;
   }
+  const resendMatch = url.pathname.match(/^\/api\/portal\/admin\/vendor-invitations\/(\d+)\/resend-wa$/);
+  if (resendMatch && request.method === "POST") {
+    const invitation = await query(
+      `select id, vendor_name, phone, token, status, valid_until
+         from public.portal_vendor_invitations
+        where id = $1
+        limit 1`,
+      [Number(resendMatch[1])],
+    );
+    const row = invitation.rows[0];
+    if (!row) return sendError(response, 404, "Undangan vendor tidak ditemukan.");
+    if (row.status !== "pending") return sendError(response, 409, "Hanya undangan pending yang dapat dikirim ulang.");
+    if (row.valid_until && new Date(row.valid_until).getTime() <= Date.now()) {
+      return sendError(response, 410, "Undangan vendor sudah kedaluwarsa.");
+    }
+    await sendVendorInvitationWhatsApp({
+      id: Number(row.id),
+      vendorName: row.vendor_name,
+      phone: row.phone,
+      token: row.token,
+    });
+    sendJson(response, 200, { sent_via_wa: true, delivery: "whatsapp" });
+    return true;
+  }
+
   const approveMatch = url.pathname.match(/^\/api\/portal\/admin\/vendor-invitations\/(\d+)\/approve$/);
   if (approveMatch && request.method === "POST") {
     sendJson(response, 200, await approveInvitation(Number(approveMatch[1]), user.id));
