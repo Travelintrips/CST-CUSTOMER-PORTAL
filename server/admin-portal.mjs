@@ -1262,7 +1262,7 @@ async function handleOnboardingComplete(ctx) {
         lockedUser.rows[0].email ?? ctx.user.email ?? null,
         ktpAddress,
       ];
-      await dbQuery(
+      const vendorProfileResult = await dbQuery(
         `insert into public.vendor_profiles
           (customer_id, company_name, nib, npwp, service_type, legality_doc_url,
            pic_name, phone, whatsapp, email, full_address, verification_status,
@@ -1283,9 +1283,83 @@ async function handleOnboardingComplete(ctx) {
            verification_status = 'pending',
            approved_at = null,
            approval_date = null,
-           updated_at = now()`,
+           updated_at = now()
+         returning id, supplier_id`,
         [ctx.user.id, ...vendorValues],
       );
+
+      // A vendor company and its supplier master represent the same business
+      // entity. Create/reuse the supplier in a pending/inactive state at
+      // onboarding time so the vendor can prepare draft catalog items before
+      // approval without being transaction-ready.
+      let pendingSupplierId = vendorProfileResult.rows[0]?.supplier_id == null
+        ? null
+        : Number(vendorProfileResult.rows[0].supplier_id);
+      if (!pendingSupplierId) {
+        const vendorEmail = String(lockedUser.rows[0].email ?? ctx.user.email ?? "").trim().toLowerCase();
+        const vendorPhone = String(phone ?? "").replace(/[^0-9]/g, "");
+        const supplierMatch = await dbQuery(
+          `select id
+             from public.suppliers
+            where ($1 <> '' and lower(trim(coalesce(contact_email, ''))) = $1)
+               or ($2 <> '' and regexp_replace(coalesce(phone, ''), '[^0-9]', '', 'g') = $2)
+            order by id
+            limit 2
+            for update`,
+          [vendorEmail, vendorPhone],
+        );
+        if (supplierMatch.rows.length > 1) {
+          const error = new Error("Data vendor cocok dengan lebih dari satu supplier. Perlu audit sebelum onboarding dilanjutkan.");
+          error.statusCode = 409;
+          throw error;
+        }
+        pendingSupplierId = supplierMatch.rows[0]?.id == null ? null : Number(supplierMatch.rows[0].id);
+        if (!pendingSupplierId) {
+          const createdSupplier = await dbQuery(
+            `insert into public.suppliers
+              (name, contact_email, phone, portal_phone, contact_person, service_type,
+               is_active, registration_status, self_submitted, status, is_verified,
+               marketplace_status, created_at, updated_at)
+             values ($1,$2,$3,$3,$4,$5,false,'pending',true,'pending',false,'draft',now(),now())
+             returning id`,
+            [
+              text(vendor.companyName) || profileCompanyName,
+              vendorEmail || null,
+              phone || null,
+              fullName,
+              text(vendor.serviceType) || null,
+            ],
+          );
+          pendingSupplierId = Number(createdSupplier.rows[0].id);
+        } else {
+          await dbQuery(
+            `update public.suppliers
+                set name = coalesce(nullif($1, ''), name),
+                    contact_email = coalesce(nullif($2, ''), contact_email),
+                    phone = coalesce(nullif($3, ''), phone),
+                    portal_phone = coalesce(nullif($3, ''), portal_phone),
+                    contact_person = coalesce(nullif($4, ''), contact_person),
+                    service_type = coalesce(nullif($5, ''), service_type),
+                    self_submitted = true,
+                    updated_at = now()
+              where id = $6`,
+            [
+              text(vendor.companyName) || profileCompanyName || "",
+              vendorEmail,
+              phone || "",
+              fullName,
+              text(vendor.serviceType) || "",
+              pendingSupplierId,
+            ],
+          );
+        }
+        await dbQuery(
+          `update public.vendor_profiles
+              set supplier_id = $1, updated_at = now()
+            where id = $2`,
+          [pendingSupplierId, vendorProfileResult.rows[0].id],
+        );
+      }
     }
 
     let organization = null;
