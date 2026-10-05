@@ -190,6 +190,8 @@ export default function VendorRegisterPage() {
   const [message, setMessage]         = useState("");
   const [submitting, setSubmitting]   = useState(false);
   const [submitError, setSubmitError] = useState("");
+  const [passwordSetupLoading, setPasswordSetupLoading] = useState(false);
+  const [passwordSetupMessage, setPasswordSetupMessage] = useState("");
 
   // Legal documents
   const [docs, setDocs]               = useState<Partial<Record<DocSlotKey, UploadedDoc>>>({});
@@ -361,6 +363,40 @@ export default function VendorRegisterPage() {
     }
   };
 
+  const vendorLoginUrl = (method?: "otp" | "wa" | "password") => {
+    const params = new URLSearchParams({ returnTo: "/vendor-dashboard" });
+    if (method) params.set("method", method);
+    return `/login?${params.toString()}`;
+  };
+
+  const handleGoogleVendorLogin = () => {
+    const query = new URLSearchParams({ returnTo: "/vendor-dashboard" });
+    window.location.assign(`/api/login/google?${query.toString()}`);
+  };
+
+  const handleCreatePassword = async () => {
+    setPasswordSetupMessage("");
+    if (!email.trim()) {
+      setPasswordSetupMessage("Tambahkan email pada akun Vendor untuk membuat password.");
+      return;
+    }
+    setPasswordSetupLoading(true);
+    try {
+      const res = await fetch("/api/portal/auth/forgot-password", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: email.trim(), origin: window.location.origin }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.message ?? "Gagal mengirim link pembuatan password.");
+      setPasswordSetupMessage("Link untuk membuat password sudah dikirim ke email Vendor.");
+    } catch (error: any) {
+      setPasswordSetupMessage(error?.message ?? "Gagal mengirim link pembuatan password.");
+    } finally {
+      setPasswordSetupLoading(false);
+    }
+  };
+
   // ── Submit ─────────────────────────────────────────────────────────────────
   const handleSubmit = async () => {
     setSubmitError("");
@@ -464,10 +500,32 @@ export default function VendorRegisterPage() {
             {t("vendor.register.successMsg")}
           </p>
           <div className="rounded-lg bg-green-50 border border-green-200 p-3 text-xs text-green-700">
-            {t("vendor.register.successHint")}
+            Data Vendor sudah dibuat dan sedang menunggu approval admin. Anda tetap dapat menyiapkan akses akun sekarang.
           </div>
-          <Button className="w-full bg-indigo-600 hover:bg-indigo-700" onClick={() => setLocation("/")}>
-            {t("vendor.register.goHome")}
+
+          <div className="space-y-2 text-left">
+            <p className="text-sm font-semibold text-slate-700">Pilih cara masuk ke akun Vendor</p>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+              <Button variant="outline" onClick={handleGoogleVendorLogin}>Masuk dengan Google</Button>
+              <Button variant="outline" onClick={() => setLocation(vendorLoginUrl("otp"))}>Email OTP</Button>
+              <Button variant="outline" onClick={() => setLocation(vendorLoginUrl("wa"))}>WhatsApp OTP</Button>
+              <Button variant="outline" onClick={handleCreatePassword} disabled={passwordSetupLoading || !email.trim()}>
+                {passwordSetupLoading ? "Mengirim..." : "Buat Password"}
+              </Button>
+            </div>
+            {!email.trim() && (
+              <p className="text-xs text-amber-600">Buat Password memerlukan email Vendor. Login WhatsApp tetap dapat digunakan.</p>
+            )}
+            {passwordSetupMessage && (
+              <p className="text-xs text-slate-600 rounded-md bg-slate-50 border p-2">{passwordSetupMessage}</p>
+            )}
+            <p className="text-xs text-slate-500">
+              Jika akun masih menunggu persetujuan, setelah login Anda akan diarahkan ke halaman status approval.
+            </p>
+          </div>
+
+          <Button className="w-full bg-indigo-600 hover:bg-indigo-700" onClick={() => setLocation(vendorLoginUrl())}>
+            Ke Halaman Login Vendor
           </Button>
         </div>
       </div>

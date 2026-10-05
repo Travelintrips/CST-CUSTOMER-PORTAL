@@ -70,7 +70,11 @@ export default function Login() {
   const oauthError = new URLSearchParams(window.location.search).get("oauth_error");
   const oauthCode = new URLSearchParams(window.location.search).get("oauth_code");
 
-  const [mode, setMode] = useState<LoginMode>("otp");
+  const requestedMethod = new URLSearchParams(window.location.search).get("method");
+  const initialMode: LoginMode = requestedMethod === "wa" || requestedMethod === "password" || requestedMethod === "otp"
+    ? requestedMethod
+    : "otp";
+  const [mode, setMode] = useState<LoginMode>(initialMode);
   const [capabilities, setCapabilities] = useState<AuthCapabilities>({
     emailOtp: true, google: true, whatsapp: true, password: true,
   });
