@@ -329,6 +329,11 @@ export async function createOrFindEmailUser(email, registrationIntent = null, db
   const user = created.rows[0] ?? await findUserByEmail(email, dbQuery);
   const isNew = Boolean(created.rows[0]);
   if (user && isNew) {
+    await ensureInitialOnboardingProfile(
+      user.id,
+      { companyName: intent.company || null, fullName: user.name ?? null, phone: user.phone ?? null },
+      dbQuery,
+    );
     if (intent.role === "vendor") {
       await ensureInitialVendorProfile(
         user.id,
@@ -338,12 +343,6 @@ export async function createOrFindEmailUser(email, registrationIntent = null, db
           phone: user.phone ?? null,
           email: user.email ?? email,
         },
-        dbQuery,
-      );
-    } else {
-      await ensureInitialOnboardingProfile(
-        user.id,
-        { companyName: intent.company || null, fullName: user.name ?? null, phone: user.phone ?? null },
         dbQuery,
       );
     }
@@ -1668,6 +1667,15 @@ export async function googleResolveUser(profile, dbQuery = query, registrationIn
     );
     user = inserted.rows[0] ?? await findUserByEmail(profile.email, dbQuery);
     if (inserted.rows[0]) {
+      await ensureInitialOnboardingProfile(
+        user.id,
+        {
+          companyName: intent.company || null,
+          fullName: profile.name,
+          phone: null,
+        },
+        dbQuery,
+      );
       if (intent.role === "vendor") {
         await ensureInitialVendorProfile(
           user.id,
@@ -1676,16 +1684,6 @@ export async function googleResolveUser(profile, dbQuery = query, registrationIn
             fullName: profile.name,
             phone: null,
             email: profile.email,
-          },
-          dbQuery,
-        );
-      } else {
-        await ensureInitialOnboardingProfile(
-          user.id,
-          {
-            companyName: intent.company || null,
-            fullName: profile.name,
-            phone: null,
           },
           dbQuery,
         );
