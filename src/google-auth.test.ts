@@ -60,9 +60,20 @@ function fakeDb(initialUsers: User[] = [user()], initialIdentities: Identity[] =
     pic_whatsapp: string | null;
     profile_status: string;
   }> = [];
+  const vendorProfiles: Array<{
+    id: number;
+    customer_id: number;
+    company_name: string | null;
+    pic_name: string | null;
+    phone: string | null;
+    whatsapp: string | null;
+    email: string | null;
+    verification_status: string;
+  }> = [];
   let nextIdentityId = Math.max(0, ...identities.map((record) => record.id)) + 1;
   let nextUserId = Math.max(0, ...users.map((record) => record.id)) + 1;
   let nextProfileId = 1;
+  let nextVendorProfileId = 1;
 
   const db = async (sql: string, values: unknown[] = []) => {
     const normalizedSql = sql.replace(/\s+/g, " ").trim().toLowerCase();
@@ -142,6 +153,28 @@ function fakeDb(initialUsers: User[] = [user()], initialIdentities: Identity[] =
       return { rows: [{ id: record.id, profile_status: record.profile_status }], rowCount: 1 };
     }
 
+    if (normalizedSql.includes("from public.vendor_profiles")) {
+      const rows = vendorProfiles
+        .filter((record) => record.customer_id === Number(values[0]))
+        .sort((a, b) => b.id - a.id);
+      return { rows: rows.slice(0, 1) };
+    }
+
+    if (normalizedSql.startsWith("insert into public.vendor_profiles")) {
+      const record = {
+        id: nextVendorProfileId++,
+        customer_id: Number(values[0]),
+        company_name: values[1] == null ? null : String(values[1]),
+        pic_name: values[2] == null ? null : String(values[2]),
+        phone: values[3] == null ? null : String(values[3]),
+        whatsapp: values[3] == null ? null : String(values[3]),
+        email: values[4] == null ? null : String(values[4]),
+        verification_status: "unverified",
+      };
+      vendorProfiles.push(record);
+      return { rows: [{ id: record.id, verification_status: record.verification_status }], rowCount: 1 };
+    }
+
     if (normalizedSql.startsWith("insert into public.portal_customers")) {
       const isGoogleInsert = normalizedSql.includes("oauth_provider");
       const record: User = isGoogleInsert
@@ -210,7 +243,7 @@ function fakeDb(initialUsers: User[] = [user()], initialIdentities: Identity[] =
     throw new Error(`Unhandled fake query: ${sql}`);
   };
 
-  return { db, users, identities, profiles };
+  return { db, users, identities, profiles, vendorProfiles };
 }
 
 describe("canonical Google identity linking", () => {
@@ -319,6 +352,14 @@ describe("canonical Google identity linking", () => {
         profile_status: "incomplete",
       }),
     ]);
+    expect(state.vendorProfiles).toEqual([
+      expect.objectContaining({
+        customer_id: result.user.id,
+        company_name: "PT Vendor Baru",
+        email: "vendor@example.com",
+        verification_status: "unverified",
+      }),
+    ]);
   });
 
   it("does not change the role of an existing account from registration intent", async () => {
@@ -356,6 +397,14 @@ describe("registration role creation", () => {
         customer_id: created.user?.id,
         company_name: "PT Email Vendor",
         profile_status: "incomplete",
+      }),
+    ]);
+    expect(state.vendorProfiles).toEqual([
+      expect.objectContaining({
+        customer_id: created.user?.id,
+        company_name: "PT Email Vendor",
+        email: "email-vendor@example.com",
+        verification_status: "unverified",
       }),
     ]);
   });
