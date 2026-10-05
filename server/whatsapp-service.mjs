@@ -1,3 +1,4 @@
+import crypto from "node:crypto";
 import { pool, query } from "./db.mjs";
 import { resolveCustomerPortalFonnteToken } from "./fonnte-config.mjs";
 
@@ -9,6 +10,37 @@ export function normalizeWhatsAppPhone(value) {
   if (raw.startsWith("0")) return `62${raw.slice(1)}`;
   if (raw.startsWith("8")) return `62${raw}`;
   return raw;
+}
+
+async function resolveCustomerPortalGatewayToken() {
+  const result = await query("select value from public.app_config where key='WATI_API_TOKEN' limit 1");
+  const seed = clean(result.rows[0]?.value);
+  if (!seed) return "";
+  return crypto.createHash("sha256")
+    .update(`customer-portal-wa-gateway-v1:${seed}`)
+    .digest("hex");
+}
+
+export async function sendGatewayMessage({ phone, message }) {
+  const target = normalizeWhatsAppPhone(phone), body = clean(message);
+  if (!target || !body) throw new Error("Nomor WhatsApp dan pesan wajib tersedia.");
+  const token = await resolveCustomerPortalGatewayToken();
+  if (!token) throw new Error("Kredensial WA Gateway Customer Portal belum tersedia.");
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 10000);
+  try {
+    const response = await fetch("https://wa.cstlogistic.co.id/v1/messages", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json", Accept: "application/json" },
+      body: JSON.stringify({ deviceId: "primary-01", to: target, type: "text", text: body }),
+      signal: controller.signal,
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok || !["queued", "duplicate"].includes(payload?.status)) {
+      throw new Error(clean(payload?.error) || `WA Gateway HTTP ${response.status}`);
+    }
+    return payload;
+  } finally { clearTimeout(timeout); }
 }
 
 export async function sendFonnteMessage({ phone, message }) {

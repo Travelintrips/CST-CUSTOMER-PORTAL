@@ -2,7 +2,7 @@ import crypto from "node:crypto";
 import { pool, query } from "./db.mjs";
 import { createSession, sessionCookies } from "./session.mjs";
 import { normalizePhone, normalizedEmail } from "./auth-providers.mjs";
-import { sendFonnteMessage } from "./whatsapp-service.mjs";
+import { sendGatewayMessage } from "./whatsapp-service.mjs";
 import {
   signedVendorInvitationAssetUrl,
   signedVendorFeaturedPaymentProofUrl,
@@ -170,7 +170,7 @@ async function sendVendorInvitationWhatsApp({ id, vendorName, phone, token }) {
     link,
     "Link berlaku 7 hari.",
   ].join("\n");
-  await sendFonnteMessage({ phone: target, message });
+  await sendGatewayMessage({ phone: target, message });
   await query(
     `update public.portal_vendor_invitations
         set sent_via_wa = true
