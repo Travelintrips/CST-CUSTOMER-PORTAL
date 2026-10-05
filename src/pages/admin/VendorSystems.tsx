@@ -428,6 +428,22 @@ export function VendorInvitationsTab() {
     });
   };
 
+  const handleResendWa = async (id: number) => {
+    try {
+      const res = await fetch(`/api/portal/admin/vendor-invitations/${id}/resend-wa`, {
+        method: "POST",
+        credentials: "include",
+        headers: getAuthHeaders(),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.message ?? data.error ?? t("vendorSystems.errorGeneric", "Gagal"));
+      toast({ title: t("vendorSystems.inviteSentWa", "Link sudah dikirim via WhatsApp.") });
+      loadList();
+    } catch (e: any) {
+      toast({ title: t("vendorSystems.errorCreateInvite", "Gagal mengirim undangan"), description: e.message, variant: "destructive" });
+    }
+  };
+
   const handleDelete = async (id: number, name: string) => {
     if (!confirm(`${t("vendorSystems.revokeInviteConfirm", "Cabut undangan untuk")} "${name}"?`)) return;
     await fetch(`/api/portal/admin/vendor-invitations/${id}`, {
@@ -689,7 +705,21 @@ Terima kasih 🙏`}
                           <td className="py-2 pr-4">
                             {inv.sent_via_wa
                               ? <Badge className="bg-green-100 text-green-700 text-xs">{t("vendorSystems.waSent", "Terkirim")}</Badge>
-                              : <Badge variant="outline" className="text-xs">{t("vendorSystems.waNotSent", "Belum")}</Badge>}
+                              : (
+                                <div className="flex items-center gap-1">
+                                  <Badge variant="outline" className="text-xs">{t("vendorSystems.waNotSent", "Belum")}</Badge>
+                                  {inv.status === "pending" && inv.phone && (
+                                    <Button
+                                      size="sm"
+                                      variant="ghost"
+                                      className="h-7 px-2 text-xs"
+                                      onClick={() => handleResendWa(inv.id)}
+                                    >
+                                      Kirim WA
+                                    </Button>
+                                  )}
+                                </div>
+                              )}
                           </td>
                           <td className="py-2 pr-4 text-xs text-muted-foreground whitespace-nowrap">
                             {new Date(inv.created_at).toLocaleDateString("id-ID", { day: "numeric", month: "short", year: "numeric" })}
