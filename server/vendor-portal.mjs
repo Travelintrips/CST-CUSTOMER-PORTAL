@@ -719,9 +719,16 @@ export async function handleVendorPortalRoutes({ request, response, url, user, b
   const vendorVerified = ["verified", "approved"].includes(
     String(vendor?.verification_status ?? "").toLowerCase(),
   );
+  const pendingCatalogSafeRoute =
+    (url.pathname === "/api/portal/vendor/catalog" && ["GET", "POST"].includes(request.method ?? ""))
+    || (/^\/api\/portal\/vendor\/catalog\/\d+$/.test(url.pathname) && request.method === "PUT")
+    || (/^\/api\/portal\/vendor\/catalog\/\d+\/media-assets\/upload$/.test(url.pathname) && request.method === "POST")
+    || (/^\/api\/portal\/vendor\/catalog\/\d+\/media-assets$/.test(url.pathname) && request.method === "PATCH")
+    || (/^\/api\/portal\/vendor\/catalog\/\d+\/(?:image|images|upload)$/.test(url.pathname) && request.method === "POST");
   const pendingSafeRoute =
     (url.pathname === "/api/portal/vendor/vendor-profile" && request.method === "GET")
-    || (url.pathname === "/api/portal/vendor/profile" && request.method === "PATCH");
+    || (url.pathname === "/api/portal/vendor/profile" && request.method === "PATCH")
+    || pendingCatalogSafeRoute;
   if (!vendorVerified && !pendingSafeRoute) {
     sendError(
       response,
