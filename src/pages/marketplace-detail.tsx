@@ -1028,7 +1028,7 @@ function SubmitDialog({ item, calc, onClose }: SubmitDialogProps) {
         {/* Item & Price Summary */}
         <div className="bg-slate-50 rounded-xl p-3 text-[12px] space-y-1">
           <p className="font-semibold text-slate-800 text-[13px]">{item.name}</p>
-          <p className="text-slate-500">{item.vendorName}</p>
+          {item.vendorName && <p className="text-slate-500">{item.vendorName}</p>}
           <div className="flex justify-between mt-2 pt-2 border-t border-slate-200">
             <span className="text-slate-600">
               {calc.qty} {calc.unit}
@@ -1686,12 +1686,14 @@ export default function MarketplaceDetailPage() {
             <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden">
               <div className={`h-1.5 w-full ${isProduct ? "bg-gradient-to-r from-emerald-400 to-teal-400" : "bg-gradient-to-r from-sky-400 to-blue-500"}`} />
               <div className="p-5 space-y-3">
-                {/* Vendor + type */}
+                {/* Vendor identity is omitted for external supplier-owned products. */}
                 <div className="flex items-center justify-between gap-2 flex-wrap">
-                  <div className="flex items-center gap-1.5">
-                    <Building2 className="h-4 w-4 text-slate-400" />
-                    <span className="text-[13px] font-semibold text-slate-500">{item.vendorName ?? "Vendor"}</span>
-                  </div>
+                  {item.vendorName ? (
+                    <div className="flex items-center gap-1.5">
+                      <Building2 className="h-4 w-4 text-slate-400" />
+                      <span className="text-[13px] font-semibold text-slate-500">{item.vendorName}</span>
+                    </div>
+                  ) : <span />}
                   <div className="flex items-center gap-2 flex-wrap">
                     <Badge variant="outline" className={`text-[11px] gap-1 ${isProduct ? "border-emerald-300 text-emerald-700 bg-emerald-50" : "border-sky-300 text-sky-700 bg-sky-50"}`}>
                       {isProduct ? <Package className="h-3 w-3" /> : <Truck className="h-3 w-3" />}
