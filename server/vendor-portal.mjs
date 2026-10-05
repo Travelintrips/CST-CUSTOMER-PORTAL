@@ -155,6 +155,22 @@ function vendorInvitationUrl(token) {
   return `${base}/vendor-register?token=${encodeURIComponent(token)}`;
 }
 
+async function retryVendorInviteDependency(operation, { attempts = 3, delayMs = 350 } = {}) {
+  let lastError;
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    try {
+      return await operation();
+    } catch (error) {
+      lastError = error;
+      const statusCode = Number(error?.statusCode ?? 0);
+      const retryable = !statusCode || statusCode >= 500;
+      if (!retryable || attempt >= attempts) throw error;
+      await new Promise((resolve) => setTimeout(resolve, delayMs * attempt));
+    }
+  }
+  throw lastError;
+}
+
 async function sendVendorInvitationWhatsApp({ id, vendorName, phone, token }) {
   const target = normalizePhone(phone);
   if (!target) {
@@ -575,14 +591,35 @@ export async function handleVendorInvitationRoute({ request, response, url, body
     return true;
   }
   if (request.method === "POST" && action === "upload") {
-    const row = await getInvitation(token);
+    let row;
+    try {
+      row = await retryVendorInviteDependency(() => getInvitation(token));
+    } catch (cause) {
+      const error = new Error("Layanan Vendor sedang sibuk. Silakan ulangi upload beberapa detik lagi.");
+      error.statusCode = 503;
+      error.cause = cause;
+      throw error;
+    }
     assertOpenInvitation(row);
     if (!body?.file) {
       const error = new Error("File vendor wajib diunggah.");
       error.statusCode = 400;
       throw error;
     }
-    const uploaded = await uploadVendorInvitationAsset({ token, file: body.file });
+    let uploaded;
+    try {
+      uploaded = await retryVendorInviteDependency(
+        () => uploadVendorInvitationAsset({ token, file: body.file }),
+        { attempts: 3, delayMs: 500 },
+      );
+    } catch (cause) {
+      const statusCode = Number(cause?.statusCode ?? 0);
+      if (statusCode && statusCode < 500) throw cause;
+      const error = new Error("Upload dokumen belum berhasil karena koneksi storage sedang sibuk. Silakan coba lagi.");
+      error.statusCode = 503;
+      error.cause = cause;
+      throw error;
+    }
     sendJson(response, 201, {
       ...uploaded,
       url: `/api/portal/vendor-invite/${encodeURIComponent(token)}/asset?path=${encodeURIComponent(uploaded.path)}`,
