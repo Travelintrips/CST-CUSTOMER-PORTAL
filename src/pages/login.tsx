@@ -440,7 +440,7 @@ export default function Login() {
     setErrorMsg("");
     // Preserve returnTo so the portal callback can redirect correctly after OAuth.
     const rt = new URLSearchParams(window.location.search).get("returnTo");
-    const returnTo = safeCustomerReturnTo(rt);
+    const returnTo = rt ? safeCustomerReturnTo(rt) : "/login";
     if (returnTo !== "/") sessionStorage.setItem("oauth_return_to", returnTo);
     const query = new URLSearchParams({ returnTo, portal: "1" });
     // Use the API's Google OAuth flow for the public portal. Supabase's
