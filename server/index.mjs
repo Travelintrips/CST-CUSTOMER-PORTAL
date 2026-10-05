@@ -3311,8 +3311,10 @@ function mapCatalogItem(row) {
   const isInternalVendor = Boolean(row.is_internal_vendor);
   return {
     id: row.id,
+    // External vendor ownership remains server-side only. Customer Portal must
+    // not expose either the supplier id or a replacement seller identity.
     vendorId: isInternalVendor ? Number(row.vendor_id ?? 0) : 0,
-    vendorName: isInternalVendor ? (row.vendor_name ?? null) : PUBLIC_MARKETPLACE_SELLER_NAME,
+    vendorName: isInternalVendor ? (row.vendor_name ?? null) : null,
     isInternalVendor,
     templateKind: row.template_kind ?? row.type ?? null,
     categoryKey: catalogCategory(row),
