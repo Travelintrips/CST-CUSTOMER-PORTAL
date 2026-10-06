@@ -757,6 +757,56 @@ async function fonnteStatus() {
   }
 }
 
+let googleCredentialProbeCache = null;
+const GOOGLE_CREDENTIAL_PROBE_CACHE_MS = 5 * 60_000;
+
+async function probeGoogleCredentialPair(config) {
+  if (!googleConfigIsUsable(config)) return "unconfigured";
+  if (
+    googleCredentialProbeCache
+    && googleCredentialProbeCache.expiresAt > Date.now()
+    && googleCredentialProbeCache.clientId === config.clientId
+  ) {
+    return googleCredentialProbeCache.status;
+  }
+  try {
+    const redirectUri = normalizeGoogleRedirectBase(
+      config.redirectBaseUrl || "https://cstlogistic.co.id/api/callback/google",
+    );
+    const response = await fetch("https://oauth2.googleapis.com/token", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({
+        code: "cst-diagnostic-invalid-code",
+        client_id: config.clientId,
+        client_secret: config.clientSecret,
+        redirect_uri: redirectUri,
+        grant_type: "authorization_code",
+      }).toString(),
+      signal: AbortSignal.timeout(8_000),
+    });
+    const body = await response.json().catch(() => ({}));
+    const providerError = typeof body?.error === "string" ? body.error : "";
+    // With a deliberately invalid auth code, valid credentials should produce
+    // invalid_grant. invalid_client means the client id / secret pair is wrong.
+    const status = providerError === "invalid_client"
+      ? "invalid_client"
+      : providerError === "invalid_grant"
+        ? "configured"
+        : response.ok
+          ? "configured"
+          : providerError || "unavailable";
+    googleCredentialProbeCache = {
+      clientId: config.clientId,
+      status,
+      expiresAt: Date.now() + GOOGLE_CREDENTIAL_PROBE_CACHE_MS,
+    };
+    return status;
+  } catch {
+    return "unavailable";
+  }
+}
+
 export async function authCapabilities() {
   const [whatsappStatus, googleConfig, emailReady] = await Promise.all([
     fonnteStatus(),
@@ -764,13 +814,14 @@ export async function authCapabilities() {
     emailConfigured(),
   ]);
   const googleReady = googleConfigIsUsable(googleConfig);
+  const googleStatus = googleReady ? await probeGoogleCredentialPair(googleConfig) : "unconfigured";
   return {
-    google: googleReady,
+    google: googleReady && googleStatus === "configured",
     emailOtp: SAFE_DEV_AUTH || emailReady,
     whatsapp: SAFE_DEV_AUTH || whatsappStatus.status === "pass",
     password: true,
     providerStatus: {
-      google: googleReady ? "configured" : "unconfigured",
+      google: googleStatus,
       email: SAFE_DEV_AUTH ? "test" : emailReady ? "configured" : "unconfigured",
       whatsapp: whatsappStatus.status,
     },
