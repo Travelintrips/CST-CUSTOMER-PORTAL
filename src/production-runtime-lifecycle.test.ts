@@ -342,12 +342,14 @@ describe("production runtime availability lifecycle", () => {
   });
 
 
-  it("caps production database connections below the Supabase session pool ceiling", () => {
+  it("keeps production database pooling bounded and resilient", () => {
     const db = readFileSync(join(process.cwd(), "server/db.mjs"), "utf8");
 
-    expect(db).toContain("isProduction ? 1 : 4");
-    expect(db).toContain("? 1");
-    expect(db).toContain("idleTimeoutMillis: isProduction ? 5_000 : 30_000");
+    expect(db).toContain("Math.min(8, requestedPoolSize)");
+    expect(db).toContain("min: isProduction ? 1 : 0");
+    expect(db).toContain("idleTimeoutMillis: 30_000");
+    expect(db).toContain("keepAlive: true");
+    expect(db).toContain("const attempts = isReadOnlySql(text) ? 3 : 1");
   });
 
   it("uses the configured production secret bundle with Customer Portal as the fallback", () => {

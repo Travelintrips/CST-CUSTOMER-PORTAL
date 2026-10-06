@@ -431,6 +431,18 @@ async function acceptInvitation(token, body) {
       vendorProfileId = createdProfile.rows[0]?.id ?? null;
     }
     await insertCatalogItems(client, invitation, supplierId, products);
+    await client.query(
+      `insert into public.onboarding_approvals
+        (customer_id, account_type, status, notified, created_at, updated_at)
+       select $1, 'vendor', 'pending', false, now(), now()
+       where not exists (
+         select 1 from public.onboarding_approvals
+          where customer_id = $1
+            and account_type = 'vendor'
+            and status in ('pending', 'approved')
+       )`,
+      [customerId],
+    );
     const updated = await client.query(
       `update public.portal_vendor_invitations
           set status = 'accepted', accepted_at = now(), contact_name = $1,
