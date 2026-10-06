@@ -818,6 +818,13 @@ export async function authCapabilities() {
   ]);
   const googleReady = googleConfigIsUsable(googleConfig);
   const googleStatus = googleReady ? await probeGoogleCredentialPair(googleConfig) : "unconfigured";
+  const runtimeGoogleEnv = googleEnvConfig();
+  const googleEnvComplete = Boolean(
+    runtimeGoogleEnv.clientId && runtimeGoogleEnv.clientSecret && runtimeGoogleEnv.redirectBaseUrl,
+  );
+  const googleConfigSource = googleEnvComplete && runtimeGoogleEnv.clientId === googleConfig.clientId
+    ? "hostinger_env"
+    : "database_fallback";
   return {
     google: googleReady && googleStatus === "configured",
     emailOtp: SAFE_DEV_AUTH || emailReady,
@@ -825,6 +832,8 @@ export async function authCapabilities() {
     password: true,
     providerStatus: {
       google: googleStatus,
+      googleConfigSource,
+      googleEnvComplete,
       email: SAFE_DEV_AUTH ? "test" : emailReady ? "configured" : "unconfigured",
       whatsapp: whatsappStatus.status,
     },
