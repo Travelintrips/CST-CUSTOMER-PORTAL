@@ -3,6 +3,7 @@ import { pool, query } from "./db.mjs";
 import { createSession, sessionCookies } from "./session.mjs";
 import { normalizePhone, normalizedEmail } from "./auth-providers.mjs";
 import { sendGatewayMessage } from "./whatsapp-service.mjs";
+import { notifyAdmins } from "./notification-service.mjs";
 import {
   signedVendorInvitationAssetUrl,
   signedVendorFeaturedPaymentProofUrl,
@@ -486,6 +487,19 @@ async function acceptInvitation(token, body) {
           where portal_customer_id = $1 and event_key = $2
        )`,
       [customerId, `vendor-invitation:${invitation.id}:accepted`, JSON.stringify(payload)],
+    );
+    await notifyAdmins(
+      (sql, params = []) => client.query(sql, params),
+      {
+        eventKey: `vendor-approval:${invitation.id}:pending`,
+        type: "vendor_approval_pending",
+        title: "Vendor menunggu persetujuan",
+        message: `${text(body.company_name) || invitation.vendor_name} telah menyelesaikan registrasi dan menunggu approval admin.`,
+        resourceType: "vendor_approval",
+        resourceId: customerId,
+        link: "/admin?tab=approvals",
+        payload: { invitationId: Number(invitation.id), customerId, supplierId, vendorProfileId },
+      },
     );
     await client.query("commit");
     return { alreadyProcessed: false, supplierId, customerId, status: "accepted" };

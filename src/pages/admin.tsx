@@ -58,14 +58,12 @@ export default function AdminPage() {
     const loadPendingCount = async () => {
       try {
         const [res, workloadRes] = await Promise.all([
-          fetch("/api/portal/admin/vendor-invitations", { headers: getAuthHeaders(), credentials: "include", cache: "no-store" }),
+          fetch("/api/portal/admin/approvals/stats", { headers: getAuthHeaders(), credentials: "include", cache: "no-store" }),
           fetch("/api/portal/admin/service-operations?limit=1&offset=0", { headers: getAuthHeaders(), credentials: "include", cache: "no-store" }),
         ]);
         if (res.ok) {
           const data = await res.json();
-          const items: any[] = Array.isArray(data) ? data : (data.items ?? []);
-          const count = items.filter(inv => inv.status === "accepted" && !inv.supplier_id).length;
-          if (!cancelled) setPendingVendorApprovals(count);
+          if (!cancelled) setPendingVendorApprovals(Number(data.pending ?? 0));
         }
         if (workloadRes.ok) {
           const workload = await workloadRes.json();
@@ -211,6 +209,9 @@ export default function AdminPage() {
                     onClick={() => { setActiveTab(value); setMobileNavOpen(false); }}
                     className={sidebarBtnCls(value)}>
                     <Icon className="h-4 w-4 shrink-0" strokeWidth={2} />{label}
+                    {value === "approvals" && pendingVendorApprovals > 0 && (
+                      <span className="ml-auto bg-amber-500 text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full min-w-5 text-center">{pendingVendorApprovals}</span>
+                    )}
                   </button>
                 ))}
 
@@ -237,9 +238,6 @@ export default function AdminPage() {
                   className={sidebarBtnCls("vendor-invitations")}>
                   <UserPlus className="h-4 w-4 shrink-0" strokeWidth={2} />
                   <span className="flex-1">{t("adminPage.nav.inviteVendor", "Undang Vendor")}</span>
-                  {pendingVendorApprovals > 0 && (
-                    <span className="ml-auto bg-amber-500 text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full min-w-5 text-center">{pendingVendorApprovals}</span>
-                  )}
                 </button>
                 {[
                   { value: "approvals", icon: UserCheck,     label: t("adminPage.nav.approvals", "Approvals") },
@@ -330,7 +328,13 @@ export default function AdminPage() {
                       <span className="ml-auto bg-amber-500 text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full min-w-5 text-center">{pendingVendorApprovals}</span>
                     )}
                   </TabsTrigger>
-                  <TabsTrigger value="approvals" className={TABS_TRIGGER_CLS}><UserCheck     className="h-4 w-4 shrink-0" strokeWidth={2} />{t("adminPage.nav.approvals", "Approvals")}</TabsTrigger>
+                  <TabsTrigger value="approvals" className={TABS_TRIGGER_CLS}>
+                    <UserCheck className="h-4 w-4 shrink-0" strokeWidth={2} />
+                    <span className="flex-1">{t("adminPage.nav.approvals", "Approvals")}</span>
+                    {pendingVendorApprovals > 0 && (
+                      <span className="ml-auto bg-amber-500 text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full min-w-5 text-center">{pendingVendorApprovals}</span>
+                    )}
+                  </TabsTrigger>
                   <TabsTrigger value="customers" className={TABS_TRIGGER_CLS}><Users         className="h-4 w-4 shrink-0" strokeWidth={2} />{t("adminPage.nav.customers", "Pelanggan")}</TabsTrigger>
                   <TabsTrigger value="wa-logs" className={TABS_TRIGGER_CLS}><MessageCircle className="h-4 w-4 shrink-0" strokeWidth={2} />{t("adminPage.nav.whatsapp", "WhatsApp")}</TabsTrigger>
                   <TabsTrigger value="fonnte-status" className={TABS_TRIGGER_CLS}><Wifi className="h-4 w-4 shrink-0" strokeWidth={2} />Status Koneksi Fonnte</TabsTrigger>
