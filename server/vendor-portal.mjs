@@ -578,7 +578,15 @@ export async function handleVendorInvitationRoute({ request, response, url, body
   const token = invitationToken(decodeURIComponent(match[1]));
   const action = match[2] ?? "";
   if (request.method === "GET" && !action) {
-    const row = await getInvitation(token);
+    let row;
+    try {
+      row = await retryVendorInviteDependency(() => getInvitation(token));
+    } catch (cause) {
+      const error = new Error("Layanan Vendor sedang sibuk. Silakan coba lagi beberapa detik.");
+      error.statusCode = 503;
+      error.cause = cause;
+      throw error;
+    }
     assertOpenInvitation(row);
     sendJson(response, 200, mapInvitation(row));
     return true;

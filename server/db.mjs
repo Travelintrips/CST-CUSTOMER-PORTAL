@@ -32,22 +32,44 @@ if (!connectionString) {
 
 const requestedPoolSize = Math.max(
   1,
-  Number(process.env.CUSTOMER_PORTAL_DB_POOL_SIZE ?? (isProduction ? 1 : 4)) || 1,
+  Number(process.env.CUSTOMER_PORTAL_DB_POOL_SIZE ?? 4) || 4,
 );
-const effectivePoolSize = isProduction
-  ? 1
-  : Math.min(8, requestedPoolSize);
+const effectivePoolSize = Math.min(8, requestedPoolSize);
 
 export const pool = new Pool({
   connectionString,
   max: effectivePoolSize,
-  idleTimeoutMillis: isProduction ? 5_000 : 30_000,
+  min: isProduction ? 1 : 0,
+  idleTimeoutMillis: 30_000,
   connectionTimeoutMillis: 10_000,
+  keepAlive: true,
+  keepAliveInitialDelayMillis: 10_000,
   ssl: { rejectUnauthorized: false },
 });
 
-export function query(text, values = []) {
-  return pool.query(text, values);
+function isReadOnlySql(sql) {
+  return /^\s*(select|show|with\b[^;]*\bselect\b)/i.test(String(sql ?? ""));
+}
+
+function isTransientPgError(error) {
+  const code = String(error?.code ?? "");
+  return ["ECONNRESET", "ETIMEDOUT", "EPIPE", "08000", "08001", "08003", "08006", "08007", "08P01", "57P01", "57P02", "57P03", "53300"].includes(code)
+    || /connection|socket|timeout|terminating connection|server closed/i.test(String(error?.message ?? ""));
+}
+
+export async function query(text, values = []) {
+  const attempts = isReadOnlySql(text) ? 3 : 1;
+  let lastError;
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    try {
+      return await pool.query(text, values);
+    } catch (error) {
+      lastError = error;
+      if (!isTransientPgError(error) || attempt >= attempts) throw error;
+      await new Promise((resolve) => setTimeout(resolve, 200 * attempt));
+    }
+  }
+  throw lastError;
 }
 
 export async function checkDatabase() {

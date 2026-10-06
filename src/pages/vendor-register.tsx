@@ -228,18 +228,45 @@ export default function VendorRegisterPage() {
       setErrorMsg("Link undangan tidak valid. Pastikan Anda menggunakan link yang dikirimkan oleh admin.");
       return;
     }
-    fetch(`/api/portal/vendor-invite/${encodeURIComponent(token)}`)
-      .then(async (r) => {
-        const data = await r.json();
-        if (!r.ok) throw new Error(data.message ?? "Link tidak valid");
-        setInvite(data);
-        setCompanyName(data.vendor_name ?? "");
-        setStatus("valid");
-      })
-      .catch((e) => {
-        setStatus("error");
-        setErrorMsg(e.message ?? "Terjadi kesalahan. Coba lagi nanti.");
-      });
+    let cancelled = false;
+    const loadInvite = async () => {
+      for (let attempt = 1; attempt <= 3; attempt += 1) {
+        try {
+          const response = await fetch(`/api/portal/vendor-invite/${encodeURIComponent(token)}`, { cache: "no-store" });
+          const data = await response.json().catch(() => ({}));
+          if (response.ok) {
+            if (cancelled) return;
+            setInvite(data);
+            setCompanyName(data.vendor_name ?? "");
+            setStatus("valid");
+            return;
+          }
+          if (response.status === 404 || response.status === 410 || response.status === 400) {
+            throw Object.assign(new Error(data.message ?? "Link undangan tidak valid."), { permanent: true });
+          }
+          if (attempt < 3) {
+            await new Promise((resolve) => setTimeout(resolve, 500 * attempt));
+            continue;
+          }
+          throw new Error(data.message ?? "Layanan Vendor sedang sibuk. Silakan coba lagi beberapa detik.");
+        } catch (error: any) {
+          if (cancelled) return;
+          if (error?.permanent) {
+            setStatus("error");
+            setErrorMsg(error.message);
+            return;
+          }
+          if (attempt < 3) {
+            await new Promise((resolve) => setTimeout(resolve, 500 * attempt));
+            continue;
+          }
+          setStatus("error");
+          setErrorMsg(error?.message ?? "Koneksi sementara bermasalah. Silakan refresh beberapa detik lagi.");
+        }
+      }
+    };
+    void loadInvite();
+    return () => { cancelled = true; };
   }, [token]);
 
   // ── Legal doc upload ───────────────────────────────────────────────────────
