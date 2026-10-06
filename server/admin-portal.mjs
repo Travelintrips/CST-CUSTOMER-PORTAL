@@ -436,6 +436,53 @@ async function handleAdminApprovals(ctx) {
               where id = $2`,
             [supplierId, vendorRow.id],
           );
+
+          const invitation = await client.query(
+            `update public.portal_vendor_invitations
+                set approved_at = coalesce(approved_at, now())
+              where supplier_id = $1
+                and status = 'accepted'
+              returning id`,
+            [supplierId],
+          );
+          const invitationId = Number(invitation.rows[0]?.id ?? 0);
+          const approvalPayload = JSON.stringify({
+            audience: "customer",
+            resourceType: "vendor_approval",
+            resourceId: Number(approval.rows[0].customer_id),
+            supplierId,
+            invitationId: invitationId || null,
+            link: "/vendor-dashboard",
+            url: "/vendor-dashboard",
+          });
+          await client.query(
+            `insert into public.portal_customer_notifications
+              (portal_customer_id, event_key, type, title, message, payload)
+             values ($1,$2,'vendor_approved','Vendor disetujui',
+                     'Akun vendor Anda telah disetujui admin dan siap digunakan.', $3::jsonb)
+             on conflict (portal_customer_id, event_key) do nothing`,
+            [
+              approval.rows[0].customer_id,
+              invitationId ? `vendor-invitation:${invitationId}:approved` : `vendor-account:${approval.rows[0].customer_id}:approved`,
+              approvalPayload,
+            ],
+          );
+          await client.query(
+            `insert into public.vendor_notifications
+              (vendor_id, type, title, message, payload)
+             select $1, 'vendor_approved', 'Vendor disetujui',
+                    'Profil vendor Anda telah disetujui admin dan akses Vendor sudah aktif.', $2::jsonb
+             where not exists (
+               select 1 from public.vendor_notifications
+                where vendor_id = $1 and type = 'vendor_approved'
+                  and payload->>'resourceId' = $3
+             )`,
+            [
+              approval.rows[0].customer_id,
+              approvalPayload,
+              String(approval.rows[0].customer_id),
+            ],
+          );
         }
       }
 
