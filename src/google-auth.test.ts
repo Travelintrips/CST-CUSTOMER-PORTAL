@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { authCapabilities, createOrFindEmailUser, googleRedirectUri, resolveGoogleLogin, resolveGoogleOAuthConfig, resolveSmtpConfig } from "../server/auth-providers.mjs";
 import { sessionCookies, verifySession } from "../server/session.mjs";
 
@@ -520,11 +520,27 @@ describe("Google OAuth production capability", () => {
     });
   });
 
-  it("keeps Google login enabled when credentials exist and redirect override is omitted", async () => {
-    const capabilities = await authCapabilities();
-
-    expect(capabilities.google).toBe(true);
-    expect(capabilities.providerStatus.google).toBe("configured");
+  it("keeps Google login enabled when Google accepts the credential pair", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = String(input);
+      if (url.includes("oauth2.googleapis.com/token")) {
+        return new Response(JSON.stringify({ error: "invalid_grant" }), {
+          status: 400,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+      return new Response(JSON.stringify({ status: true }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    });
+    try {
+      const capabilities = await authCapabilities();
+      expect(capabilities.google).toBe(true);
+      expect(capabilities.providerStatus.google).toBe("configured");
+    } finally {
+      fetchMock.mockRestore();
+    }
   });
 
   it("derives the HTTPS Google callback from forwarded production origin", () => {
