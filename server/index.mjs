@@ -452,8 +452,10 @@ async function bootstrapResponse(user, requestedReturnTo, customerContext) {
 
   const profile = profileResult.rows[0] ?? null;
   const approval = approvalResult.rows[0] ?? null;
+  const vendorProfile = user.role === "vendor" ? vendorResult.rows[0] ?? null : null;
+  const hasVendorProfile = Boolean(vendorProfile);
   const vendorApprovalStatus = user.role === "vendor"
-    ? vendorResult.rows[0]?.verification_status
+    ? vendorProfile?.verification_status
       ?? (approval?.status === "approved" ? "verified" : approval?.status ?? "pending")
     : null;
 
@@ -475,10 +477,15 @@ async function bootstrapResponse(user, requestedReturnTo, customerContext) {
       && user.customer_type != null
     )
     || (
-      ["vendor", "driver", "employee"].includes(user.role)
-      && !profile
+      user.role === "vendor"
+      && !hasVendorProfile
       && approvalStatus == null
       && vendorApprovalStatus !== "verified"
+    )
+    || (
+      ["driver", "employee"].includes(user.role)
+      && !profile
+      && approvalStatus == null
     );
 
   const rejected =
@@ -491,7 +498,7 @@ async function bootstrapResponse(user, requestedReturnTo, customerContext) {
     || customerContext?.status === "company_pending"
     || (
       user.role === "vendor"
-      && profile
+      && hasVendorProfile
       && vendorApprovalStatus
       && !["verified", "approved"].includes(String(vendorApprovalStatus).toLowerCase())
       && !needsInitialOnboarding
