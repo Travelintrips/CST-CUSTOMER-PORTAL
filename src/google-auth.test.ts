@@ -500,6 +500,26 @@ describe("Google OAuth production capability", () => {
     });
   });
 
+  it("prefers one coherent database Google credential set in production", async () => {
+    process.env.GOOGLE_CLIENT_ID = "stale-env-client.apps.googleusercontent.com";
+    process.env.GOOGLE_CLIENT_SECRET = "stale-env-secret";
+    process.env.GOOGLE_REDIRECT_BASE_URL = "https://cstlogistic.co.id/api/callback/google";
+
+    const config = await resolveGoogleOAuthConfig(async () => ({
+      rows: [
+        { key: "GOOGLE_CLIENT_ID", value: "db-client.apps.googleusercontent.com" },
+        { key: "GOOGLE_CLIENT_SECRET", value: "db-secret" },
+        { key: "GOOGLE_REDIRECT_BASE_URL", value: "https://cstlogistic.co.id/api/callback/google" },
+      ],
+    }) as any);
+
+    expect(config).toEqual({
+      clientId: "db-client.apps.googleusercontent.com",
+      clientSecret: "db-secret",
+      redirectBaseUrl: "https://cstlogistic.co.id/api/callback/google",
+    });
+  });
+
   it("keeps Google login enabled when credentials exist and redirect override is omitted", async () => {
     const capabilities = await authCapabilities();
 

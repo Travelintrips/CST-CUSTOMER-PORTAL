@@ -680,8 +680,6 @@ const GOOGLE_DB_CONFIG_CACHE_MS = 60_000;
 
 export async function resolveGoogleOAuthConfig(dbQuery = query) {
   const envConfig = googleEnvConfig();
-  if (googleConfigIsUsable(envConfig)) return envConfig;
-
   const useCache = dbQuery === query;
   if (
     useCache
@@ -711,12 +709,24 @@ export async function resolveGoogleOAuthConfig(dbQuery = query) {
     databaseConfig = {};
   }
 
-  const config = {
-    clientId: envConfig.clientId || databaseConfig.GOOGLE_CLIENT_ID || "",
-    clientSecret: envConfig.clientSecret || databaseConfig.GOOGLE_CLIENT_SECRET || "",
-    redirectBaseUrl:
-      envConfig.redirectBaseUrl || databaseConfig.GOOGLE_REDIRECT_BASE_URL || "",
+  const dbConfig = {
+    clientId: databaseConfig.GOOGLE_CLIENT_ID || "",
+    clientSecret: databaseConfig.GOOGLE_CLIENT_SECRET || "",
+    redirectBaseUrl: databaseConfig.GOOGLE_REDIRECT_BASE_URL || "",
   };
+  const productionMode =
+    process.env.APP_ENV === "production"
+    || process.env.NODE_ENV === "production"
+    || process.env.REPLIT_DEPLOYMENT === "1";
+
+  // Keep Google OAuth credentials as one coherent pair. In production the
+  // database config is canonical so a stale Hostinger secret cannot be mixed
+  // with a different client id / redirect URI during token exchange.
+  const config = productionMode && googleConfigIsUsable(dbConfig)
+    ? dbConfig
+    : googleConfigIsUsable(envConfig)
+      ? envConfig
+      : dbConfig;
 
   if (useCache) {
     googleDbConfigCache = {
