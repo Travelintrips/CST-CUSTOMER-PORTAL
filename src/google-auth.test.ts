@@ -500,9 +500,9 @@ describe("Google OAuth production capability", () => {
     });
   });
 
-  it("prefers one coherent database Google credential set in production", async () => {
-    process.env.GOOGLE_CLIENT_ID = "stale-env-client.apps.googleusercontent.com";
-    process.env.GOOGLE_CLIENT_SECRET = "stale-env-secret";
+  it("prefers one complete Hostinger Google credential set in production", async () => {
+    process.env.GOOGLE_CLIENT_ID = "env-client.apps.googleusercontent.com";
+    process.env.GOOGLE_CLIENT_SECRET = "env-secret";
     process.env.GOOGLE_REDIRECT_BASE_URL = "https://cstlogistic.co.id/api/callback/google";
 
     const config = await resolveGoogleOAuthConfig(async () => ({
@@ -514,8 +514,8 @@ describe("Google OAuth production capability", () => {
     }) as any);
 
     expect(config).toEqual({
-      clientId: "db-client.apps.googleusercontent.com",
-      clientSecret: "db-secret",
+      clientId: "env-client.apps.googleusercontent.com",
+      clientSecret: "env-secret",
       redirectBaseUrl: "https://cstlogistic.co.id/api/callback/google",
     });
   });

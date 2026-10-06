@@ -719,14 +719,17 @@ export async function resolveGoogleOAuthConfig(dbQuery = query) {
     || process.env.NODE_ENV === "production"
     || process.env.REPLIT_DEPLOYMENT === "1";
 
-  // Keep Google OAuth credentials as one coherent pair. In production the
-  // database config is canonical so a stale Hostinger secret cannot be mixed
-  // with a different client id / redirect URI during token exchange.
-  const config = productionMode && googleConfigIsUsable(dbConfig)
-    ? dbConfig
-    : googleConfigIsUsable(envConfig)
-      ? envConfig
-      : dbConfig;
+  // Keep Google OAuth credentials as one coherent set. In production, a
+  // complete Hostinger environment set is authoritative; database values are
+  // only the fallback. Never mix client id / secret / redirect across sources.
+  const completeEnvConfig = Boolean(
+    envConfig.clientId && envConfig.clientSecret && envConfig.redirectBaseUrl,
+  );
+  const config = productionMode && completeEnvConfig && googleConfigIsUsable(envConfig)
+    ? envConfig
+    : googleConfigIsUsable(dbConfig)
+      ? dbConfig
+      : envConfig;
 
   if (useCache) {
     googleDbConfigCache = {
