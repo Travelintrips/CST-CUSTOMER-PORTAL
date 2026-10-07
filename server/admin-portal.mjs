@@ -1365,9 +1365,10 @@ async function handleOnboardingComplete(ctx) {
           const createdSupplier = await dbQuery(
             `insert into public.suppliers
               (name, contact_email, phone, portal_phone, contact_person, service_type,
+               address, office_address,
                is_active, registration_status, self_submitted, status, is_verified,
                marketplace_status, created_at, updated_at)
-             values ($1,$2,$3,$3,$4,$5,false,'pending',true,'pending',false,'draft',now(),now())
+             values ($1,$2,$3,$3,$4,$5,$6,$6,false,'pending',true,'pending',false,'draft',now(),now())
              returning id`,
             [
               text(vendor.companyName) || profileCompanyName,
@@ -1375,6 +1376,7 @@ async function handleOnboardingComplete(ctx) {
               phone || null,
               fullName,
               text(vendor.serviceType) || null,
+              companyAddress,
             ],
           );
           pendingSupplierId = Number(createdSupplier.rows[0].id);
