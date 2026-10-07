@@ -1307,6 +1307,30 @@ export async function handleVendorPortalRoutes({ request, response, url, user, b
        vendor.id, user.id, expectedUpdatedAt?.toISOString() ?? null],
     );
     if (!result.rows[0]) return sendError(response, 409, "Profil telah berubah. Muat ulang sebelum menyimpan.");
+    await query(
+      `insert into public.portal_customer_profiles
+        (customer_id, company_address, ktp_address, pic_name, pic_whatsapp, pic_email, profile_status, updated_at)
+       values ($1,$2,$3,$4,$5,$6,'active',now())
+       on conflict (customer_id) where customer_id is not null
+       do update set
+         company_address = coalesce(excluded.company_address, portal_customer_profiles.company_address),
+         ktp_address = coalesce(excluded.ktp_address, portal_customer_profiles.ktp_address),
+         pic_name = coalesce(excluded.pic_name, portal_customer_profiles.pic_name),
+         pic_whatsapp = coalesce(excluded.pic_whatsapp, portal_customer_profiles.pic_whatsapp),
+         pic_email = coalesce(excluded.pic_email, portal_customer_profiles.pic_email),
+         updated_at = now()`,
+      [user.id, values.fullAddress, values.ktpAddress, values.picName, values.phone, values.email],
+    );
+    if (vendor.supplier_id) {
+      await query(
+        `update public.suppliers
+            set address = coalesce($1, address),
+                office_address = coalesce($1, office_address),
+                updated_at = now()
+          where id = $2`,
+        [values.fullAddress, vendor.supplier_id],
+      );
+    }
     sendJson(response, 200, { success: true, id: Number(result.rows[0].id), updatedAt: result.rows[0].updated_at });
     return true;
   }
