@@ -77,6 +77,7 @@ import {
   handleSignup,
   handleGoogleCallback,
   handleGoogleStart,
+  handleGoogleIdToken,
   handleWaLogin,
   handleWaOtpRequest,
   handleWaOtpVerify,
@@ -3889,6 +3890,10 @@ async function route(request, response) {
   }
   if (request.method === "GET" && pathname === "/api/callback/google") {
     await handleGoogleCallback(request, response, url);
+    return;
+  }
+  if (request.method === "POST" && pathname === "/api/portal/auth/google/id-token") {
+    await handleGoogleIdToken(request, response);
     return;
   }
   if (request.method === "POST" && pathname === "/api/portal/auth/dev-login") {
