@@ -679,6 +679,49 @@ export async function signedVendorInvitationAssetUrl({ token, path }) {
   return data.signedUrl;
 }
 
+export async function promoteVendorInvitationAsset({ token, path, vendorId, catalogItemId }) {
+  const normalizedPath = String(path || "");
+  const prefix = vendorInvitePrefix(token);
+  if (!normalizedPath.startsWith(`${prefix}/`)) {
+    const error = new Error("Object path vendor tidak valid.");
+    error.statusCode = 404;
+    throw error;
+  }
+
+  const privateStorage = client();
+  await ensurePrivateBucket(privateStorage);
+  const downloaded = await privateStorage.supabase.storage.from(privateStorage.bucket).download(normalizedPath);
+  if (downloaded.error || !downloaded.data) {
+    const failure = new Error("Media undangan vendor tidak dapat dibaca.");
+    failure.statusCode = 502;
+    throw failure;
+  }
+
+  const publicStorage = publicAssetStorage();
+  const originalName = safeFileName(normalizedPath.split("/").pop() || "asset");
+  const objectPath = `vendor-catalog/vendor-${Number(vendorId)}/item-${Number(catalogItemId)}/${crypto.randomUUID()}-${originalName}`;
+  const bytes = Buffer.from(await downloaded.data.arrayBuffer());
+  const contentType = downloaded.data.type || "application/octet-stream";
+  const uploaded = await publicStorage.supabase.storage.from(publicStorage.bucket).upload(
+    objectPath,
+    bytes,
+    { contentType, cacheControl: "3600", upsert: false },
+  );
+  if (uploaded.error) {
+    const failure = new Error("Promosi media vendor ke katalog publik gagal.");
+    failure.statusCode = 502;
+    throw failure;
+  }
+  const publicData = publicStorage.supabase.storage.from(publicStorage.bucket).getPublicUrl(objectPath);
+  return {
+    objectPath,
+    url: publicData.data?.publicUrl ?? null,
+    fileName: originalName,
+    mimeType: contentType,
+    sizeBytes: bytes.length,
+  };
+}
+
 function normalizeKtpOcrText(value) {
   return String(value || "")
     .replace(/\r/g, "")
