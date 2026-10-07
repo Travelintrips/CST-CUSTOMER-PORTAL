@@ -262,7 +262,8 @@ describe("production runtime availability lifecycle", () => {
     expect(auth).toContain('await client.query("rollback").catch(() => {})');
     expect(auth).toContain("const user = await withTransaction(async (dbQuery) =>");
     expect(auth).toContain("const created = await withTransaction(async (dbQuery) =>");
-    expect(auth).toContain("const user = await withTransaction(\n      (dbQuery) => googleResolveUser");
+    expect(auth).toContain("const user = await withTransaction(async (dbQuery) =>");
+    expect(auth).toContain("return googleResolveUser(profile, dbQuery, registration)");
     expect(auth).toContain("on conflict do nothing");
     expect(auth).toContain('findUserByPhone(phone, dbQuery)');
     expect(auth).toContain('linkIdentity(createdUser.id, "whatsapp", phone, dbQuery)');
