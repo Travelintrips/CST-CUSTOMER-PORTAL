@@ -847,8 +847,14 @@ export async function authCapabilities() {
     lengthOk: runtimeGoogleEnv.clientSecret.length >= 30,
     clientIdMatchesWebClient1:
       runtimeGoogleEnv.clientId === "751551151000-fqrgt8si0pgnchqkn3pfo6nmqienv38f.apps.googleusercontent.com",
-    redirectMatchesProduction:
-      normalizeGoogleRedirectBase(runtimeGoogleEnv.redirectBaseUrl || "") === "https://cstlogistic.co.id/api/callback/google",
+    redirectMatchesProduction: (() => {
+      try {
+        return normalizeGoogleRedirectBase(runtimeGoogleEnv.redirectBaseUrl || "")
+          === "https://cstlogistic.co.id/api/callback/google";
+      } catch {
+        return false;
+      }
+    })(),
   };
   return {
     google: googleReady && googleStatus === "configured",
