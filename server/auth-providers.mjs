@@ -693,17 +693,7 @@ function googleConfigIsUsable(config) {
 let googleDbConfigCache = null;
 const GOOGLE_DB_CONFIG_CACHE_MS = 60_000;
 
-export async function resolveGoogleOAuthConfig(dbQuery = query) {
-  const envConfig = googleEnvConfig();
-  const useCache = dbQuery === query;
-  if (
-    useCache
-      && googleDbConfigCache
-      && googleDbConfigCache.expiresAt > Date.now()
-  ) {
-    return googleDbConfigCache.config;
-  }
-
+async function loadGoogleDbConfig(dbQuery = query) {
   let databaseConfig = {};
   try {
     const result = await dbQuery(
@@ -718,25 +708,38 @@ export async function resolveGoogleOAuthConfig(dbQuery = query) {
     databaseConfig = Object.fromEntries(
       result.rows
         .filter((row) => typeof row?.key === "string" && typeof row?.value === "string")
-        .map((row) => [row.key.trim().toUpperCase(), row.value.trim()]),
+        .map((row) => [row.key.trim().toUpperCase(), cleanEnvValue(row.value)]),
     );
   } catch {
     databaseConfig = {};
   }
-
-  const dbConfig = {
+  return {
     clientId: databaseConfig.GOOGLE_CLIENT_ID || "",
     clientSecret: databaseConfig.GOOGLE_CLIENT_SECRET || "",
     redirectBaseUrl: databaseConfig.GOOGLE_REDIRECT_BASE_URL || "",
   };
+}
+
+export async function resolveGoogleOAuthConfig(dbQuery = query) {
+  const envConfig = googleEnvConfig();
+  const useCache = dbQuery === query;
+  if (
+    useCache
+      && googleDbConfigCache
+      && googleDbConfigCache.expiresAt > Date.now()
+  ) {
+    return googleDbConfigCache.config;
+  }
+
+  const dbConfig = await loadGoogleDbConfig(dbQuery);
   const productionMode =
     process.env.APP_ENV === "production"
     || process.env.NODE_ENV === "production"
     || process.env.REPLIT_DEPLOYMENT === "1";
 
   // Keep Google OAuth credentials as one coherent set. In production, a
-  // complete Hostinger environment set is authoritative; database values are
-  // only the fallback. Never mix client id / secret / redirect across sources.
+  // complete Hostinger environment set is preferred; database values are the
+  // fallback. Never mix client id / secret / redirect across sources.
   const completeEnvConfig = Boolean(
     envConfig.clientId && envConfig.clientSecret && envConfig.redirectBaseUrl,
   );
@@ -753,6 +756,39 @@ export async function resolveGoogleOAuthConfig(dbQuery = query) {
     };
   }
   return config;
+}
+
+function googleConfigFingerprint(config) {
+  return crypto
+    .createHash("sha256")
+    .update(`${config?.clientId ?? ""}\n${config?.clientSecret ?? ""}\n${config?.redirectBaseUrl ?? ""}`)
+    .digest("hex")
+    .slice(0, 20);
+}
+
+export async function resolveWorkingGoogleOAuthConfig(dbQuery = query) {
+  const envConfig = googleEnvConfig();
+  const dbConfig = await loadGoogleDbConfig(dbQuery);
+  const candidates = [
+    { source: "hostinger_env", config: envConfig },
+    { source: "database_fallback", config: dbConfig },
+  ].filter(({ config }, index, all) => (
+    googleConfigIsUsable(config)
+    && all.findIndex((entry) => googleConfigFingerprint(entry.config) === googleConfigFingerprint(config)) === index
+  ));
+
+  for (const candidate of candidates) {
+    const status = await probeGoogleCredentialPair(candidate.config);
+    if (status === "configured") {
+      return { ...candidate.config, source: candidate.source, status };
+    }
+  }
+
+  const fallback = candidates[0] ?? { source: "unconfigured", config: envConfig };
+  const status = googleConfigIsUsable(fallback.config)
+    ? await probeGoogleCredentialPair(fallback.config)
+    : "unconfigured";
+  return { ...fallback.config, source: fallback.source, status };
 }
 
 async function fonnteStatus() {
@@ -783,7 +819,7 @@ async function probeGoogleCredentialPair(config) {
   if (
     googleCredentialProbeCache
     && googleCredentialProbeCache.expiresAt > Date.now()
-    && googleCredentialProbeCache.clientId === config.clientId
+    && googleCredentialProbeCache.fingerprint === googleConfigFingerprint(config)
   ) {
     return googleCredentialProbeCache.status;
   }
@@ -815,7 +851,7 @@ async function probeGoogleCredentialPair(config) {
           ? "configured"
           : providerError || "unavailable";
     googleCredentialProbeCache = {
-      clientId: config.clientId,
+      fingerprint: googleConfigFingerprint(config),
       status,
       expiresAt: Date.now() + GOOGLE_CREDENTIAL_PROBE_CACHE_MS,
     };
@@ -828,18 +864,16 @@ async function probeGoogleCredentialPair(config) {
 export async function authCapabilities() {
   const [whatsappStatus, googleConfig, emailReady] = await Promise.all([
     fonnteStatus(),
-    resolveGoogleOAuthConfig(),
+    resolveWorkingGoogleOAuthConfig(),
     emailConfigured(),
   ]);
   const googleReady = googleConfigIsUsable(googleConfig);
-  const googleStatus = googleReady ? await probeGoogleCredentialPair(googleConfig) : "unconfigured";
+  const googleStatus = googleReady ? googleConfig.status : "unconfigured";
   const runtimeGoogleEnv = googleEnvConfig();
   const googleEnvComplete = Boolean(
     runtimeGoogleEnv.clientId && runtimeGoogleEnv.clientSecret && runtimeGoogleEnv.redirectBaseUrl,
   );
-  const googleConfigSource = googleEnvComplete && runtimeGoogleEnv.clientId === googleConfig.clientId
-    ? "hostinger_env"
-    : "database_fallback";
+  const googleConfigSource = googleConfig.source ?? "unconfigured";
   const googleSecretDiagnostics = {
     masked: runtimeGoogleEnv.clientSecret.includes("*"),
     quoted: /^["'`].*["'`]$/.test(String(process.env.GOOGLE_CLIENT_SECRET ?? "").trim()),
@@ -1573,8 +1607,8 @@ function googleFailureTargetWithCode(returnTo = "/login", code = "google_callbac
 }
 
 export async function handleGoogleStart(request, response, url) {
-  const googleConfig = await resolveGoogleOAuthConfig();
-  if (!googleConfigIsUsable(googleConfig)) {
+  const googleConfig = await resolveWorkingGoogleOAuthConfig();
+  if (!googleConfigIsUsable(googleConfig) || googleConfig.status !== "configured") {
     json(response, 503, { message: "Login Google belum dikonfigurasi." });
     return;
   }
@@ -1607,8 +1641,8 @@ export async function handleGoogleStart(request, response, url) {
 }
 
 async function googleUser(request, code) {
-  const googleConfig = await resolveGoogleOAuthConfig();
-  if (!googleConfigIsUsable(googleConfig)) {
+  const googleConfig = await resolveWorkingGoogleOAuthConfig();
+  if (!googleConfigIsUsable(googleConfig) || googleConfig.status !== "configured") {
     throw oauthError(503, "Login Google belum dikonfigurasi.", "google_provider_unconfigured");
   }
   const redirectUri = googleRedirectUri(request, googleConfig);
