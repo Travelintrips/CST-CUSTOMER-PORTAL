@@ -11,6 +11,7 @@ import {
   uploadVendorFeaturedPaymentProof,
   uploadVendorCatalogImage,
   uploadVendorCatalogAsset,
+  promoteVendorInvitationAsset,
 } from "./storage.mjs";
 
 const REQUIRED_INVITATION_DOCUMENTS = new Set(["npwp", "siup_nib", "ktp_pic"]);
@@ -307,6 +308,70 @@ async function findOrCreateVendorAccount(db, invitation, body, phone, email, sup
   return customerId;
 }
 
+function inviteAssetReference(value) {
+  try {
+    const parsed = new URL(String(value || ""), "https://portal.invalid");
+    const match = parsed.pathname.match(/^\/api\/portal\/vendor-invite\/([^/]+)\/asset$/);
+    const path = parsed.searchParams.get("path");
+    if (!match || !path) return null;
+    return { token: decodeURIComponent(match[1]), path };
+  } catch {
+    return null;
+  }
+}
+
+async function persistCatalogMedia(dbQuery, { itemId, supplierId, mediaAssets }) {
+  for (const asset of mediaAssets) {
+    await dbQuery(
+      `insert into public.product_media
+        (vendor_catalog_item_id, vendor_id, media_type, file_url, storage_path,
+         sort_order, is_primary, is_active, uploaded_by_role, visibility,
+         original_filename, file_size_bytes)
+       select $1,$2,$3,$4,$5,$6,$7,true,'vendor','public',$8,$9
+       where not exists (
+         select 1 from public.product_media
+          where vendor_catalog_item_id=$1 and file_url=$4 and is_active=true
+       )`,
+      [
+        itemId,
+        supplierId,
+        asset.type === "video" ? "video" : "image",
+        asset.url,
+        asset.storagePath ?? null,
+        Number(asset.sortOrder ?? 0),
+        Boolean(asset.isPrimary),
+        asset.originalFilename ?? null,
+        asset.fileSizeBytes ?? null,
+      ],
+    );
+  }
+}
+
+async function promoteInviteMediaAssets({ supplierId, itemId, mediaAssets }) {
+  const promoted = [];
+  for (const asset of mediaAssets) {
+    const reference = inviteAssetReference(asset.url);
+    if (!reference) {
+      promoted.push(asset);
+      continue;
+    }
+    const copied = await promoteVendorInvitationAsset({
+      token: reference.token,
+      path: reference.path,
+      vendorId: supplierId,
+      catalogItemId: itemId,
+    });
+    promoted.push({
+      ...asset,
+      url: copied.url,
+      storagePath: copied.objectPath,
+      originalFilename: copied.fileName,
+      fileSizeBytes: copied.sizeBytes,
+    });
+  }
+  return promoted;
+}
+
 async function insertCatalogItems(db, invitation, supplierId, products) {
   const isMarketplace = !invitation.service_type || invitation.service_type === "marketplace";
   for (const product of products) {
@@ -318,13 +383,14 @@ async function insertCatalogItems(db, invitation, supplierId, products) {
       sortOrder: index,
       visibility: "public",
     }));
-    await db.query(
+    const inserted = await db.query(
       `insert into public.vendor_catalog_items
         (vendor_id, type, name, description, unit, price_base, currency, kategori,
          category_key, service_type, vendor_name, status, is_published, is_active,
          media_assets, documents, source_submission_id)
        values ($1, $2, $3, nullif($4, ''), 'unit', 0, 'IDR', nullif($5, ''),
-               nullif($5, ''), nullif($6, ''), $7, 'draft', false, true, $8::jsonb, '[]'::jsonb, null)`,
+               nullif($5, ''), nullif($6, ''), $7, 'draft', false, true, $8::jsonb, '[]'::jsonb, null)
+       returning id`,
       [
         supplierId,
         isMarketplace ? "product" : "service",
@@ -336,9 +402,25 @@ async function insertCatalogItems(db, invitation, supplierId, products) {
         JSON.stringify(mediaAssets),
       ],
     );
+    const itemId = Number(inserted.rows[0]?.id);
+    if (!itemId) throw new Error("Gagal membuat item katalog vendor.");
+
+    const promotedMedia = await promoteInviteMediaAssets({
+      supplierId,
+      itemId,
+      mediaAssets,
+    });
+    await db.query(
+      "update public.vendor_catalog_items set media_assets=$1::jsonb,updated_at=now() where id=$2",
+      [JSON.stringify(promotedMedia), itemId],
+    );
+    await persistCatalogMedia((sql, params=[]) => db.query(sql, params), {
+      itemId,
+      supplierId,
+      mediaAssets: promotedMedia,
+    });
   }
 }
-
 async function acceptInvitation(token, body) {
   const client = await pool.connect();
   try {
@@ -596,6 +678,47 @@ async function approveInvitation(id, adminId) {
   } finally {
     client.release();
   }
+}
+
+export async function repairLegacyVendorInvitationCatalogMedia() {
+  const rows = await query(
+    `select id, vendor_id, media_assets
+       from public.vendor_catalog_items
+      where is_active = true
+        and media_assets::text like '%/api/portal/vendor-invite/%/asset?path=%'
+      order by id
+      limit 100`,
+  );
+  let repaired = 0;
+  for (const row of rows.rows) {
+    const current = jsonValue(row.media_assets, []);
+    if (!Array.isArray(current) || current.length === 0) continue;
+    try {
+      const promotedMedia = await promoteInviteMediaAssets({
+        supplierId: Number(row.vendor_id),
+        itemId: Number(row.id),
+        mediaAssets: current,
+      });
+      const changed = JSON.stringify(promotedMedia) !== JSON.stringify(current);
+      if (!changed) continue;
+      await query(
+        "update public.vendor_catalog_items set media_assets=$1::jsonb,updated_at=now() where id=$2",
+        [JSON.stringify(promotedMedia), Number(row.id)],
+      );
+      await persistCatalogMedia(query, {
+        itemId: Number(row.id),
+        supplierId: Number(row.vendor_id),
+        mediaAssets: promotedMedia,
+      });
+      repaired += 1;
+    } catch (error) {
+      console.error("[customer-portal-api] legacy vendor media repair failed", {
+        itemId: Number(row.id),
+        message: error?.message ?? String(error),
+      });
+    }
+  }
+  return { repaired };
 }
 
 export async function handleVendorInvitationRoute({ request, response, url, body, sendJson, sendEmpty }) {
