@@ -1307,7 +1307,7 @@ async function handleOnboardingComplete(ctx) {
         fullName,
         phone,
         lockedUser.rows[0].email ?? ctx.user.email ?? null,
-        ktpAddress,
+        companyAddress,
       ];
       const vendorProfileResult = await dbQuery(
         `insert into public.vendor_profiles
