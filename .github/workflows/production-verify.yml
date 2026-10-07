@@ -80,7 +80,7 @@ jobs:
           set -euo pipefail
 
           capabilities_url="https://cstlogistic.co.id/api/portal/auth/capabilities"
-          google_url="https://cstlogistic.co.id/api/login/google?returnTo=%2Fdashboard"
+          google_id_token_url="https://cstlogistic.co.id/api/portal/auth/google/id-token"
 
           cap_code="$(curl --silent --show-error --output /tmp/auth-capabilities.json --write-out '%{http_code}' --max-time 20 "$capabilities_url")"
           if [ "$cap_code" != "200" ]; then
@@ -94,25 +94,30 @@ jobs:
           const body = JSON.parse(fs.readFileSync("/tmp/auth-capabilities.json", "utf8"));
           console.log("auth-capabilities-safe", JSON.stringify({
             google: body.google,
+            googleClientId: body.googleClientId,
             emailOtp: body.emailOtp,
             password: body.password,
             providerStatus: body.providerStatus,
           }));
-          if (body.google !== true) throw new Error("Google login is not configured/live.");
+          if (body.google !== true) throw new Error("Google GIS login is not configured/live.");
+          if (typeof body.googleClientId !== "string" || !body.googleClientId.endsWith(".apps.googleusercontent.com")) {
+            throw new Error("Google GIS client id is missing or invalid.");
+          }
+          if (body.providerStatus?.google !== "gis_configured") {
+            throw new Error("Google primary provider is not GIS.");
+          }
           if (body.emailOtp !== true) throw new Error("Email OTP is not configured/live.");
           if (body.password !== true) throw new Error("Password login is not configured/live.");
           NODE
 
-          google_code="$(curl --silent --show-error --dump-header /tmp/google-headers --output /tmp/google-body --write-out '%{http_code}' --max-time 20 "$google_url")"
-          if [ "$google_code" != "302" ]; then
-            echo "Expected Google login start to redirect with 302, got $google_code"
-            cat /tmp/google-headers || true
-            cat /tmp/google-body || true
+          google_id_token_code="$(curl --silent --show-error --output /tmp/google-id-token.json --write-out '%{http_code}'             --max-time 20             -H 'Content-Type: application/json'             -X POST             --data '{"credential":"invalid.test.token"}'             "$google_id_token_url")"
+          if [ "$google_id_token_code" != "401" ]; then
+            echo "Expected GIS ID-token endpoint to reject an invalid token with 401, got $google_id_token_code"
+            cat /tmp/google-id-token.json || true
             exit 1
           fi
-          grep -Eiq '^location: https://accounts\.google\.com/' /tmp/google-headers
 
-          echo "Google, Email OTP, and password authentication surfaces are live."
+          echo "Google GIS, Email OTP, and password authentication surfaces are live."
 
       - name: Verify storage degradation cannot disable core auth
         shell: bash
