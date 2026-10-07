@@ -1275,6 +1275,7 @@ export async function handleVendorPortalRoutes({ request, response, url, user, b
       phone: clean(body?.phone, 50),
       email: clean(body?.email, 254),
       fullAddress: clean(body?.fullAddress, 1000),
+      ktpAddress: clean(body?.ktpAddress, 1000),
       province: clean(body?.province, 160),
       city: clean(body?.city, 160),
       postalCode: clean(body?.postalCode, 20),
