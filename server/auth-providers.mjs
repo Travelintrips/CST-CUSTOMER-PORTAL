@@ -741,8 +741,14 @@ export async function verifyGoogleIdToken(idToken, dbQuery = query) {
   if (parts.length !== 3) throw errorWithStatus(401, "Credential Google tidak valid.");
 
   const [encodedHeader, encodedPayload, encodedSignature] = parts;
-  const header = decodeGoogleJwtSegment(encodedHeader);
-  const claims = decodeGoogleJwtSegment(encodedPayload);
+  let header;
+  let claims;
+  try {
+    header = decodeGoogleJwtSegment(encodedHeader);
+    claims = decodeGoogleJwtSegment(encodedPayload);
+  } catch {
+    throw errorWithStatus(401, "Credential Google tidak valid.");
+  }
 
   if (header?.alg !== "RS256" || !header?.kid) {
     throw errorWithStatus(401, "Algoritma credential Google tidak valid.");
