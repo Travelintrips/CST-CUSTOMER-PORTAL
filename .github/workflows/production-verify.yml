@@ -92,6 +92,12 @@ jobs:
           node - <<'NODE'
           const fs = require("fs");
           const body = JSON.parse(fs.readFileSync("/tmp/auth-capabilities.json", "utf8"));
+          console.log("auth-capabilities-safe", JSON.stringify({
+            google: body.google,
+            emailOtp: body.emailOtp,
+            password: body.password,
+            providerStatus: body.providerStatus,
+          }));
           if (body.google !== true) throw new Error("Google login is not configured/live.");
           if (body.emailOtp !== true) throw new Error("Email OTP is not configured/live.");
           if (body.password !== true) throw new Error("Password login is not configured/live.");
