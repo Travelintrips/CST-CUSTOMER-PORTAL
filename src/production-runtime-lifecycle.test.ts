@@ -68,6 +68,13 @@ describe("production runtime availability lifecycle", () => {
   });
 
 
+  it("GIS login sets the HttpOnly session cookie before redirecting", () => {
+    const auth = readFileSync(join(process.cwd(), "server/auth-providers.mjs"), "utf8");
+    const match = auth.match(/export async function handleGoogleIdToken[\s\S]*?export async function handlePasswordLogin/);
+    expect(match?.[0]).toContain('{ "Set-Cookie": sessionCookies(result.token) }');
+    expect(match?.[0]).not.toContain('json(\n    response,\n    200,\n    { success: true, user: result.user },\n    sessionCookies(result.token),');
+  });
+
   it("production verification probes GIS and authentication surfaces after deploy", () => {
     const workflow = readFileSync(join(process.cwd(), ".github/workflows/production-verify.yml"), "utf8");
     const login = readFileSync(join(process.cwd(), "src/pages/login.tsx"), "utf8");
