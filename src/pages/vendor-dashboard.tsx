@@ -75,7 +75,7 @@ interface VendorProfileDetail {
   id: number; customerId: number; companyName: string | null; legalName: string | null;
   email: string | null; phone: string | null; nib: string | null; npwp: string | null;
   picName: string | null; picPhone: string | null; picEmail: string | null;
-  serviceType: string | null; address: string | null; fullAddress: string | null;
+  serviceType: string | null; address: string | null; fullAddress: string | null; ktpAddress?: string | null;
   city: string | null; province: string | null; postalCode: string | null;
   bankName: string | null; bankAccountNumber: string | null; bankAccountName: string | null;
   bankAccountNumberMasked?: string | null;
@@ -83,7 +83,7 @@ interface VendorProfileDetail {
 }
 
 type VendorProfileForm = {
-  picName: string; phone: string; email: string; fullAddress: string;
+  picName: string; phone: string; email: string; fullAddress: string; ktpAddress: string;
   province: string; city: string; postalCode: string;
   bankName: string; bankAccountName: string; bankAccountNumber: string;
 };
@@ -1387,7 +1387,7 @@ export default function VendorDashboard() {
   const [savingVendorProfile, setSavingVendorProfile] = useState(false);
   const [vendorProfileFormError, setVendorProfileFormError] = useState("");
   const [vendorProfileForm, setVendorProfileForm] = useState<VendorProfileForm>({
-    picName: "", phone: "", email: "", fullAddress: "", province: "", city: "",
+    picName: "", phone: "", email: "", fullAddress: "", ktpAddress: "", province: "", city: "",
     postalCode: "", bankName: "", bankAccountName: "", bankAccountNumber: "",
   });
 
@@ -1436,6 +1436,7 @@ export default function VendorDashboard() {
       phone: vp.picPhone ?? vp.phone ?? "",
       email: vp.picEmail ?? vp.email ?? "",
       fullAddress: vp.fullAddress ?? vp.address ?? "",
+      ktpAddress: vp.ktpAddress ?? "",
       province: vp.province ?? "",
       city: vp.city ?? "",
       postalCode: vp.postalCode ?? "",
@@ -2457,7 +2458,8 @@ export default function VendorDashboard() {
               [t("vendorDashboard.fieldPicEmail"), vp.picEmail],
             ];
             const addrFields: [string, string | null | undefined][] = [
-              [t("vendorDashboard.fieldAddress"), vp.address || vp.fullAddress],
+              ["Alamat Perusahaan", vp.address || vp.fullAddress],
+              ["Alamat PIC / KTP", vp.ktpAddress],
               [t("vendorDashboard.fieldCity"), vp.city],
               [t("vendorDashboard.fieldProvince"), vp.province],
               [t("vendorDashboard.fieldPostalCode"), vp.postalCode],
@@ -2513,16 +2515,17 @@ export default function VendorDashboard() {
                         ["picName", t("vendorDashboard.fieldPicName")],
                         ["phone", t("vendorDashboard.fieldPicPhone")],
                         ["email", t("vendorDashboard.fieldPicEmail")],
-                        ["fullAddress", t("vendorDashboard.fieldAddress")],
+                        ["fullAddress", "Alamat Perusahaan"],
+                        ["ktpAddress", "Alamat PIC / KTP"],
                         ["province", t("vendorDashboard.fieldProvince")],
                         ["city", t("vendorDashboard.fieldCity")],
                         ["postalCode", t("vendorDashboard.fieldPostalCode")],
                         ["bankName", t("vendorDashboard.fieldBank")],
                         ["bankAccountName", t("vendorDashboard.fieldBankName")],
                       ] as [keyof VendorProfileForm, string][]).map(([key, label]) => (
-                        <label key={key} className={key === "fullAddress" ? "sm:col-span-2 text-xs font-medium" : "text-xs font-medium"}>
+                        <label key={key} className={key === "fullAddress" || key === "ktpAddress" ? "sm:col-span-2 text-xs font-medium" : "text-xs font-medium"}>
                           {label}
-                          {key === "fullAddress" ? (
+                          {key === "fullAddress" || key === "ktpAddress" ? (
                             <Textarea className="mt-1" value={vendorProfileForm[key]} onChange={e => setVendorProfileForm(f => ({ ...f, [key]: e.target.value }))} />
                           ) : (
                             <Input className="mt-1" value={vendorProfileForm[key]} onChange={e => setVendorProfileForm(f => ({ ...f, [key]: e.target.value }))} />
