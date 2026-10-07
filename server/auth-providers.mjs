@@ -1017,7 +1017,9 @@ export async function authCapabilities() {
     whatsapp: SAFE_DEV_AUTH || whatsappStatus.status === "pass",
     password: true,
     providerStatus: {
-      google: googleStatus,
+      google: (runtimeGoogleEnv.clientId || googleConfig?.clientId) ? "gis_configured" : "unconfigured",
+      googlePrimary: "google_identity_services",
+      legacyGoogleOauth: googleStatus,
       googleConfigSource,
       googleEnvComplete,
       googleSecretDiagnostics,
