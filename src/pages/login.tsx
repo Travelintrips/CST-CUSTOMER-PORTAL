@@ -37,6 +37,7 @@ type LoginMode = "password" | "otp" | "wa";
 interface AuthCapabilities {
   emailOtp: boolean;
   google: boolean;
+  googleClientId?: string | null;
   whatsapp: boolean;
   password: boolean;
 }
@@ -79,6 +80,7 @@ export default function Login() {
     emailOtp: true, google: true, whatsapp: true, password: true,
   });
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [googleSdkReady, setGoogleSdkReady] = useState(false);
 
   const [otpEmail, setOtpEmail] = useState("");
   const [otpStep, setOtpStep] = useState<"email" | "code">("email");
@@ -145,6 +147,107 @@ export default function Login() {
         ...current, emailOtp: false, google: false, whatsapp: false,
       })));
   }, []);
+
+  useEffect(() => {
+    const clientId = capabilities.googleClientId;
+    if (!capabilities.google || !clientId) {
+      setGoogleSdkReady(false);
+      return;
+    }
+
+    let cancelled = false;
+    const initializeGoogle = () => {
+      const google = (window as any).google;
+      if (!google?.accounts?.id || cancelled) return;
+
+      google.accounts.id.initialize({
+        client_id: clientId,
+        callback: async (response: { credential?: string }) => {
+          if (!response?.credential) {
+            setErrorMsg("Google tidak mengembalikan credential login.");
+            return;
+          }
+
+          setErrorMsg("");
+          setIsSubmitting(true);
+          try {
+            const params = new URLSearchParams(window.location.search);
+            const registration = {
+              role: params.get("role"),
+              customerType: params.get("customerType"),
+              company: params.get("company"),
+            };
+            const res = await fetch(`${BASE}/api/portal/auth/google/id-token`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              credentials: "include",
+              body: JSON.stringify({ credential: response.credential, registration }),
+            });
+            const json = await res.json() as {
+              success?: boolean;
+              message?: string;
+              user?: { id: number; role: string; name: string; email: string };
+            };
+            if (!res.ok || !json.user) {
+              setErrorMsg(json.message ?? "Login Google gagal. Silakan coba lagi.");
+              return;
+            }
+            setPortalProfile({
+              customerId: json.user.id,
+              role: json.user.role,
+              name: json.user.name,
+              email: json.user.email,
+            });
+            await redirectAfterLogin(json.user.role);
+          } catch {
+            setErrorMsg("Tidak dapat menyelesaikan login Google.");
+          } finally {
+            setIsSubmitting(false);
+          }
+        },
+      });
+
+      const container = document.getElementById("google-signin-button");
+      if (container) {
+        container.innerHTML = "";
+        google.accounts.id.renderButton(container, {
+          theme: "outline",
+          size: "large",
+          width: Math.min(384, container.clientWidth || 384),
+          text: "signin_with",
+          shape: "rectangular",
+        });
+        setGoogleSdkReady(true);
+      }
+    };
+
+    const existing = document.getElementById("google-identity-services") as HTMLScriptElement | null;
+    if (existing) {
+      if ((window as any).google?.accounts?.id) initializeGoogle();
+      else existing.addEventListener("load", initializeGoogle, { once: true });
+      return () => {
+        cancelled = true;
+        existing.removeEventListener("load", initializeGoogle);
+      };
+    }
+
+    const script = document.createElement("script");
+    script.id = "google-identity-services";
+    script.src = "https://accounts.google.com/gsi/client";
+    script.async = true;
+    script.defer = true;
+    script.onload = initializeGoogle;
+    script.onerror = () => {
+      if (!cancelled) setGoogleSdkReady(false);
+    };
+    document.head.appendChild(script);
+
+    return () => {
+      cancelled = true;
+      script.onload = null;
+      script.onerror = null;
+    };
+  }, [capabilities.google, capabilities.googleClientId]);
 
   const loginSchema = z.object({
     email: z.string().email({ message: t("login.email") }),
@@ -527,10 +630,13 @@ export default function Login() {
             )}
 
             <div className="mb-5">
-              <button type="button" onClick={handleGoogleLogin} disabled={!capabilities.google} className="flex items-center justify-center gap-3 w-full h-11 rounded-lg border border-border bg-white hover:bg-gray-50 text-sm font-medium text-gray-700 transition-colors shadow-sm disabled:cursor-not-allowed disabled:opacity-50">
-                <GoogleIcon />
-                {capabilities.google ? `${t("login.signIn")} Google` : "Google (belum tersedia)"}
-              </button>
+              <div id="google-signin-button" className="w-full flex justify-center min-h-11" />
+              {!googleSdkReady && (
+                <button type="button" onClick={handleGoogleLogin} disabled={!capabilities.google || isSubmitting} className="flex items-center justify-center gap-3 w-full h-11 rounded-lg border border-border bg-white hover:bg-gray-50 text-sm font-medium text-gray-700 transition-colors shadow-sm disabled:cursor-not-allowed disabled:opacity-50">
+                  <GoogleIcon />
+                  {capabilities.google ? `${t("login.signIn")} Google` : "Google (belum tersedia)"}
+                </button>
+              )}
             </div>
             {errorMsg && (
               <Alert variant="destructive" className="mb-4">
