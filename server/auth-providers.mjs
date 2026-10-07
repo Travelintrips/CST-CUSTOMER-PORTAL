@@ -698,6 +698,105 @@ function googleConfigIsUsable(config) {
   }
 }
 
+let googleJwksCache = null;
+
+function decodeGoogleJwtSegment(segment) {
+  return JSON.parse(Buffer.from(segment, "base64url").toString("utf8"));
+}
+
+async function googleTrustedClientIds(dbQuery = query) {
+  const ids = new Set();
+  for (const config of [
+    googleEnvConfig(),
+    googleGcpFallbackConfig(),
+    await loadGoogleDbConfig(dbQuery),
+  ]) {
+    if (config?.clientId) ids.add(config.clientId);
+  }
+  return ids;
+}
+
+async function getGoogleJwks() {
+  const now = Date.now();
+  if (googleJwksCache && googleJwksCache.expiresAt > now) return googleJwksCache.keys;
+  const response = await fetch("https://www.googleapis.com/oauth2/v3/certs", {
+    signal: AbortSignal.timeout(8_000),
+  });
+  if (!response.ok) throw errorWithStatus(502, "Kunci verifikasi Google tidak tersedia.");
+  const payload = await response.json().catch(() => ({}));
+  const keys = Array.isArray(payload?.keys) ? payload.keys : [];
+  if (!keys.length) throw errorWithStatus(502, "Kunci verifikasi Google kosong.");
+  const cacheControl = response.headers.get("cache-control") ?? "";
+  const match = cacheControl.match(/max-age=(\d+)/i);
+  const maxAge = match ? Number(match[1]) : 3600;
+  googleJwksCache = {
+    keys,
+    expiresAt: now + Math.max(300, Math.min(maxAge, 86400)) * 1000,
+  };
+  return keys;
+}
+
+export async function verifyGoogleIdToken(idToken, dbQuery = query) {
+  const parts = String(idToken || "").split(".");
+  if (parts.length !== 3) throw errorWithStatus(401, "Credential Google tidak valid.");
+
+  const [encodedHeader, encodedPayload, encodedSignature] = parts;
+  const header = decodeGoogleJwtSegment(encodedHeader);
+  const claims = decodeGoogleJwtSegment(encodedPayload);
+
+  if (header?.alg !== "RS256" || !header?.kid) {
+    throw errorWithStatus(401, "Algoritma credential Google tidak valid.");
+  }
+
+  const nowSeconds = Math.floor(Date.now() / 1000);
+  if (!claims?.exp || Number(claims.exp) <= nowSeconds) {
+    throw errorWithStatus(401, "Credential Google sudah kedaluwarsa.");
+  }
+  if (claims?.iat && Number(claims.iat) > nowSeconds + 120) {
+    throw errorWithStatus(401, "Waktu credential Google tidak valid.");
+  }
+  if (!["accounts.google.com", "https://accounts.google.com"].includes(String(claims?.iss ?? ""))) {
+    throw errorWithStatus(401, "Penerbit credential Google tidak valid.");
+  }
+
+  const trustedClientIds = await googleTrustedClientIds(dbQuery);
+  const audiences = Array.isArray(claims?.aud) ? claims.aud : [claims?.aud];
+  if (!audiences.some((aud) => trustedClientIds.has(String(aud ?? "")))) {
+    throw errorWithStatus(401, "Audience credential Google tidak sesuai.");
+  }
+
+  let keys = await getGoogleJwks();
+  let jwk = keys.find((key) => key?.kid === header.kid);
+  if (!jwk) {
+    googleJwksCache = null;
+    keys = await getGoogleJwks();
+    jwk = keys.find((key) => key?.kid === header.kid);
+  }
+  if (!jwk) throw errorWithStatus(401, "Kunci credential Google tidak ditemukan.");
+
+  const keyObject = crypto.createPublicKey({ key: jwk, format: "jwk" });
+  const valid = crypto.verify(
+    "RSA-SHA256",
+    Buffer.from(`${encodedHeader}.${encodedPayload}`),
+    keyObject,
+    Buffer.from(encodedSignature, "base64url"),
+  );
+  if (!valid) throw errorWithStatus(401, "Signature credential Google tidak valid.");
+
+  const email = normalizedEmail(claims?.email);
+  if (!claims?.email_verified || !email || !claims?.sub) {
+    throw errorWithStatus(401, "Email Google belum terverifikasi.");
+  }
+
+  return {
+    subject: String(claims.sub),
+    email,
+    name: String(claims.name || email.split("@")[0]).trim().slice(0, 200),
+    avatarUrl: typeof claims.picture === "string" ? claims.picture.slice(0, 1000) : null,
+    emailVerified: true,
+  };
+}
+
 let googleDbConfigCache = null;
 const GOOGLE_DB_CONFIG_CACHE_MS = 60_000;
 
@@ -912,7 +1011,8 @@ export async function authCapabilities() {
     })(),
   };
   return {
-    google: googleReady && googleStatus === "configured",
+    google: Boolean(runtimeGoogleEnv.clientId || googleConfig?.clientId),
+    googleClientId: runtimeGoogleEnv.clientId || googleConfig?.clientId || null,
     emailOtp: SAFE_DEV_AUTH || emailReady,
     whatsapp: SAFE_DEV_AUTH || whatsappStatus.status === "pass",
     password: true,
@@ -1009,6 +1109,30 @@ async function sendWhatsAppOtp(phone, code) {
 
 export async function handleCapabilities(response) {
   json(response, 200, await authCapabilities());
+}
+
+export async function handleGoogleIdToken(request, response) {
+  const body = await readJson(request);
+  const credential = typeof body?.credential === "string" ? body.credential : "";
+  if (!credential) throw errorWithStatus(400, "Credential Google wajib diisi.");
+
+  const registration = normalizeRegistrationIntent(body?.registration ?? null);
+  if (registration) validateRegistrationIntent(registration);
+
+  const ip = requestIp(request);
+  enforceRateLimit(`google-id-token:ip:${ip}`, 20, 15 * 60 * 1000);
+
+  const user = await withTransaction(async (dbQuery) => {
+    const profile = await verifyGoogleIdToken(credential, dbQuery);
+    return googleResolveUser(profile, dbQuery, registration);
+  });
+  const result = await loginUser(user);
+  json(
+    response,
+    200,
+    { success: true, user: result.user },
+    sessionCookies(result.token),
+  );
 }
 
 
