@@ -553,22 +553,6 @@ export default function Login() {
     setForgotLoading(false);
   }
 
-  function handleGoogleLogin() {
-    if (!capabilities.google) {
-      setErrorMsg("Login Google belum tersedia karena provider belum dikonfigurasi.");
-      return;
-    }
-    setErrorMsg("");
-    // Preserve returnTo so the portal callback can redirect correctly after OAuth.
-    const rt = new URLSearchParams(window.location.search).get("returnTo");
-    const returnTo = rt ? safeCustomerReturnTo(rt) : "/login";
-    if (returnTo !== "/") sessionStorage.setItem("oauth_return_to", returnTo);
-    const query = new URLSearchParams({ returnTo, portal: "1" });
-    // Use the API's Google OAuth flow for the public portal. Supabase's
-    // external-provider exchange is unreliable for this production project.
-    window.location.assign(`${BASE}/api/login/google?${query.toString()}`);
-  }
-
   if (!authResolved) {
     return (
       <div className="min-h-[calc(100vh-80px)] flex items-center justify-center bg-background">
