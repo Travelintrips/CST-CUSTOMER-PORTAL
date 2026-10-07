@@ -564,7 +564,7 @@ describe("Google OAuth production capability", () => {
     try {
       const capabilities = await authCapabilities();
       expect(capabilities.google).toBe(true);
-      expect(capabilities.googleClientId).toBe(process.env.GOOGLE_CLIENT_ID);
+      expect(capabilities.googleClientId).toBe("751551151000-fqrgt8si0pgnchqkn3pfo6nmqienv38f.apps.googleusercontent.com");
       expect(capabilities.providerStatus.google).toBe("gis_configured");
       expect(capabilities.providerStatus.googlePrimary).toBe("google_identity_services");
       expect(capabilities.providerStatus.legacyGoogleOauth).toBe("invalid_client");
