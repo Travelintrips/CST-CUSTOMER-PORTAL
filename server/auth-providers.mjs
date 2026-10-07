@@ -893,7 +893,7 @@ export async function authCapabilities() {
     })(),
   };
   return {
-    google: googleReady && googleStatus === "configured",
+    google: googleReady,
     emailOtp: SAFE_DEV_AUTH || emailReady,
     whatsapp: SAFE_DEV_AUTH || whatsappStatus.status === "pass",
     password: true,
