@@ -431,6 +431,11 @@ export default function OnboardingPage() {
     } else if (accountType === "vendor") {
       const valid = await vendorForm.trigger();
       if (!valid) return;
+      if (!companyAddress.trim() || companyAddress.trim().length < 10) {
+        setCompanyError("Alamat perusahaan vendor wajib diisi minimal 10 karakter.");
+        return;
+      }
+      setCompanyError(null);
       setVendorData(vendorForm.getValues());
     } else if (accountType === "driver") {
       const valid = await driverForm.trigger();
@@ -500,7 +505,10 @@ export default function OnboardingPage() {
         ...baseData,
         accountType,
          customerType: accountType === "customer" ? customerType ?? undefined : undefined,
-         companyAddress: accountType === "customer" && customerType === "company" ? companyAddress.trim() : undefined,
+         companyAddress: (
+           (accountType === "customer" && customerType === "company")
+           || accountType === "vendor"
+         ) ? companyAddress.trim() : undefined,
          companyId: accountType === "customer" && selectedCompanyId ? selectedCompanyId : undefined,
          requestedCompanyName: accountType === "customer" && companyRequestMode ? requestedCompanyName.trim() || undefined : undefined,
          requestedRegistrationNumber: accountType === "customer" && companyRequestMode ? requestedRegistrationNumber.trim() || undefined : undefined,
@@ -943,6 +951,22 @@ export default function OnboardingPage() {
                       <Label>{t("onboarding.vendor.npwp", "NPWP (Opsional)")}</Label>
                       <Input placeholder="XX.XXX.XXX.X-XXX.XXX" {...vendorForm.register("npwp")} />
                     </div>
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Alamat Perusahaan <span className="text-red-500">*</span></Label>
+                    <Textarea
+                      value={companyAddress}
+                      onChange={(event) => {
+                        setCompanyAddress(event.target.value);
+                        setCompanyError(null);
+                      }}
+                      rows={3}
+                      placeholder="Alamat kantor/perusahaan (terpisah dari alamat PIC sesuai KTP)"
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      Alamat perusahaan dan alamat PIC/KTP disimpan sebagai data yang berbeda.
+                    </p>
+                    {companyError && <p className="text-sm text-red-600">{companyError}</p>}
                   </div>
                   <div className="space-y-2">
                     <Label>{t("onboarding.vendor.serviceType", "Jenis Layanan Vendor")} <span className="text-red-500">*</span></Label>
