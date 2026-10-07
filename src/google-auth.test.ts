@@ -537,7 +537,37 @@ describe("Google OAuth production capability", () => {
     try {
       const capabilities = await authCapabilities();
       expect(capabilities.google).toBe(true);
-      expect(capabilities.providerStatus.google).toBe("configured");
+      expect(capabilities.providerStatus.google).toBe("gis_configured");
+      expect(capabilities.providerStatus.googlePrimary).toBe("google_identity_services");
+      expect(capabilities.providerStatus.legacyGoogleOauth).toBe("configured");
+    } finally {
+      fetchMock.mockRestore();
+    }
+  });
+
+  it("keeps GIS enabled when legacy OAuth client-secret exchange is invalid", async () => {
+    process.env.GOOGLE_CLIENT_ID = "653506647312-eajc61u3gmc4ssig7cf4phhpkohk7lhe.apps.googleusercontent.com";
+    process.env.GOOGLE_CLIENT_SECRET = "GOCSPX-test-invalid-but-well-formed-secret";
+    process.env.GOOGLE_REDIRECT_BASE_URL = "https://cstlogistic.co.id/api/callback/google";
+
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = String(input);
+      if (url.includes("oauth2.googleapis.com/token")) {
+        return new Response(JSON.stringify({ error: "invalid_client" }), {
+          status: 401,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      throw new Error(`Unexpected fetch: ${url}`);
+    });
+
+    try {
+      const capabilities = await authCapabilities();
+      expect(capabilities.google).toBe(true);
+      expect(capabilities.googleClientId).toBe(process.env.GOOGLE_CLIENT_ID);
+      expect(capabilities.providerStatus.google).toBe("gis_configured");
+      expect(capabilities.providerStatus.googlePrimary).toBe("google_identity_services");
+      expect(capabilities.providerStatus.legacyGoogleOauth).toBe("invalid_client");
     } finally {
       fetchMock.mockRestore();
     }
