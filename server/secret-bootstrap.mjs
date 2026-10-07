@@ -61,22 +61,36 @@ function injectBundle(payload, appEnv, target) {
       .map((key) => key.slice(0, -4)),
   );
 
-  const hostEnvironmentWins = new Set([
+  const GOOGLE_OAUTH_KEYS = [
     "GOOGLE_CLIENT_ID",
     "GOOGLE_CLIENT_SECRET",
     "GOOGLE_REDIRECT_BASE_URL",
-  ]);
+  ];
+  const hasCompleteHostGoogleBundle = appEnv === "production"
+    && GOOGLE_OAUTH_KEYS.every(
+      (key) => typeof target[key] === "string" && target[key].trim(),
+    );
+  const hasCompleteGcpGoogleBundle = GOOGLE_OAUTH_KEYS.every(
+    (key) => typeof payload[key] === "string" && payload[key].trim(),
+  );
+
+  // Google OAuth must stay atomic: never mix a client id from one source with
+  // a secret/redirect from another. Hostinger wins when its whole bundle is
+  // present. Otherwise, if GCP has a complete bundle, use that whole bundle.
+  if (appEnv === "production" && hasCompleteHostGoogleBundle) {
+    for (const key of GOOGLE_OAUTH_KEYS) {
+      delete payload[key];
+    }
+  } else if (appEnv === "production" && hasCompleteGcpGoogleBundle) {
+    for (const key of GOOGLE_OAUTH_KEYS) {
+      target[key] = payload[key];
+      injected.push(key);
+      delete payload[key];
+    }
+  }
 
   const set = (key, value) => {
     if (key === "APP_ENV" || typeof value !== "string" || !value) return;
-    if (
-      appEnv === "production"
-      && hostEnvironmentWins.has(key)
-      && typeof target[key] === "string"
-      && target[key].trim()
-    ) {
-      return;
-    }
     target[key] = value;
     injected.push(key);
   };
