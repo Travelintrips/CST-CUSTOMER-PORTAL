@@ -912,7 +912,7 @@ export async function authCapabilities() {
     })(),
   };
   return {
-    google: googleReady,
+    google: googleReady && googleStatus === "configured",
     emailOtp: SAFE_DEV_AUTH || emailReady,
     whatsapp: SAFE_DEV_AUTH || whatsappStatus.status === "pass",
     password: true,
@@ -1585,18 +1585,18 @@ export function googleRedirectUri(request, config = googleEnvConfig()) {
   return normalizeGoogleRedirectBase(base);
 }
 
-function signedOAuthState(state, returnTo, issuedAt, registration = null) {
+function signedOAuthState(state, returnTo, issuedAt, registration = null, googleSource = null) {
   const registrationPayload = JSON.stringify(registration ?? null);
   return crypto.createHmac("sha256", process.env.SESSION_SECRET)
-    .update(`${state}|${returnTo}|${issuedAt}|${registrationPayload}`)
+    .update(`${state}|${returnTo}|${issuedAt}|${registrationPayload}|${googleSource ?? ""}`)
     .digest("base64url");
 }
 
-function oauthStateCookie(state, returnTo, issuedAt, registration = null) {
+function oauthStateCookie(state, returnTo, issuedAt, registration = null, googleSource = null) {
   const payload = Buffer.from(
-    JSON.stringify({ state, returnTo, issuedAt, registration }),
+    JSON.stringify({ state, returnTo, issuedAt, registration, googleSource }),
   ).toString("base64url");
-  const signature = signedOAuthState(state, returnTo, issuedAt, registration);
+  const signature = signedOAuthState(state, returnTo, issuedAt, registration, googleSource);
   const secure = IS_PRODUCTION ? "; Secure" : "";
   return `portal_oauth_state=${payload}.${signature}; Path=/; HttpOnly; SameSite=Lax${secure}; Max-Age=600`;
 }
@@ -1628,8 +1628,8 @@ function googleFailureTargetWithCode(returnTo = "/login", code = "google_callbac
 }
 
 export async function handleGoogleStart(request, response, url) {
-  const googleConfig = await resolveGoogleOAuthConfig();
-  if (!googleConfigIsUsable(googleConfig)) {
+  const googleConfig = await resolveWorkingGoogleOAuthConfig();
+  if (!googleConfigIsUsable(googleConfig) || googleConfig.status !== "configured") {
     json(response, 503, { message: "Login Google belum dikonfigurasi." });
     return;
   }
@@ -1657,7 +1657,7 @@ export async function handleGoogleStart(request, response, url) {
   redirect(
     response,
     `https://accounts.google.com/o/oauth2/v2/auth?${params.toString()}`,
-    [oauthStateCookie(state, returnTo, issuedAt, registration)],
+    [oauthStateCookie(state, returnTo, issuedAt, registration, googleConfig.source)],
   );
 }
 
@@ -1680,28 +1680,16 @@ async function exchangeGoogleCode(request, code, googleConfig) {
   return { tokenResponse, tokenBody };
 }
 
-async function googleUser(request, code) {
-  const primaryConfig = await resolveGoogleOAuthConfig();
-  if (!googleConfigIsUsable(primaryConfig)) {
+async function googleUser(request, code, googleSource = null) {
+  const selected = googleSource
+    ? await googleConfigBySource(googleSource)
+    : null;
+  const googleConfig = selected?.config ?? await resolveWorkingGoogleOAuthConfig();
+  if (!googleConfigIsUsable(googleConfig)) {
     throw oauthError(503, "Login Google belum dikonfigurasi.", "google_provider_unconfigured");
   }
 
-  let googleConfig = primaryConfig;
-  let { tokenResponse, tokenBody } = await exchangeGoogleCode(request, code, googleConfig);
-
-  if (!tokenResponse.ok && tokenBody?.error === "invalid_client") {
-    const dbConfig = await loadGoogleDbConfig();
-    const differentFallback = googleConfigIsUsable(dbConfig)
-      && googleConfigFingerprint(dbConfig) !== googleConfigFingerprint(primaryConfig);
-    if (differentFallback) {
-      const fallbackAttempt = await exchangeGoogleCode(request, code, dbConfig);
-      if (fallbackAttempt.tokenResponse.ok && fallbackAttempt.tokenBody?.access_token) {
-        googleConfig = dbConfig;
-        tokenResponse = fallbackAttempt.tokenResponse;
-        tokenBody = fallbackAttempt.tokenBody;
-      }
-    }
-  }
+  const { tokenResponse, tokenBody } = await exchangeGoogleCode(request, code, googleConfig);
 
   if (!tokenResponse.ok || !tokenBody.access_token) {
     throw oauthError(502, "Google token exchange gagal.", "google_token_exchange_failed", {
@@ -1910,6 +1898,7 @@ export async function handleGoogleCallback(request, response, url) {
       decoded.returnTo,
       decoded.issuedAt,
       decoded.registration ?? null,
+      decoded.googleSource ?? null,
     );
     if (
       !decoded.state || !decoded.returnTo ||
@@ -1922,6 +1911,7 @@ export async function handleGoogleCallback(request, response, url) {
     context = {
       returnTo: safeReturnTo(decoded.returnTo),
       registration: decoded.registration ?? null,
+      googleSource: decoded.googleSource ?? null,
     };
   } catch {
     redirect(response, googleFailureTargetWithCode("/login", "google_state_invalid"), [clearOAuthStateCookie()]);
@@ -1941,7 +1931,7 @@ export async function handleGoogleCallback(request, response, url) {
     return;
   }
   try {
-    const profile = await googleUser(request, url.searchParams.get("code"));
+    const profile = await googleUser(request, url.searchParams.get("code"), context.googleSource);
     const user = await withTransaction(
       (dbQuery) => googleResolveUser(profile, dbQuery, context.registration),
     );
