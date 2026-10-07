@@ -723,7 +723,7 @@ export async function repairLegacyVendorInvitationCatalogMedia() {
 }
 
 export async function handleVendorInvitationRoute({ request, response, url, body, sendJson, sendEmpty }) {
-  const match = url.pathname.match(/^\/api\/portal\/vendor-invite\/([^/]+)(?:\/(upload|asset|accept|reject))?$/);
+  const match = url.pathname.match(/^\/api\/portal\/vendor-invite\/([^/]+)(?:\/(upload|ktp-ocr|asset|accept|reject))?$/);
   if (!match) return false;
   const token = invitationToken(decodeURIComponent(match[1]));
   const action = match[2] ?? "";
