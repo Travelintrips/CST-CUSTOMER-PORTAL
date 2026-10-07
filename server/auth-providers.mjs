@@ -679,6 +679,14 @@ function googleEnvConfig() {
   };
 }
 
+function googleGcpFallbackConfig() {
+  return {
+    clientId: cleanEnvValue(process.env.GOOGLE_GCP_FALLBACK_CLIENT_ID),
+    clientSecret: cleanEnvValue(process.env.GOOGLE_GCP_FALLBACK_CLIENT_SECRET),
+    redirectBaseUrl: cleanEnvValue(process.env.GOOGLE_GCP_FALLBACK_REDIRECT_BASE_URL),
+  };
+}
+
 function googleConfigIsUsable(config) {
   if (!config?.clientId || !config?.clientSecret) return false;
   if (!config.redirectBaseUrl) return true;
@@ -766,16 +774,27 @@ function googleConfigFingerprint(config) {
     .slice(0, 20);
 }
 
-export async function resolveWorkingGoogleOAuthConfig(dbQuery = query) {
+async function googleConfigCandidates(dbQuery = query) {
   const envConfig = googleEnvConfig();
+  const gcpConfig = googleGcpFallbackConfig();
   const dbConfig = await loadGoogleDbConfig(dbQuery);
-  const candidates = [
+  return [
     { source: "hostinger_env", config: envConfig },
+    { source: "gcp_secret_manager", config: gcpConfig },
     { source: "database_fallback", config: dbConfig },
   ].filter(({ config }, index, all) => (
     googleConfigIsUsable(config)
     && all.findIndex((entry) => googleConfigFingerprint(entry.config) === googleConfigFingerprint(config)) === index
   ));
+}
+
+async function googleConfigBySource(source, dbQuery = query) {
+  const candidates = await googleConfigCandidates(dbQuery);
+  return candidates.find((candidate) => candidate.source === source) ?? null;
+}
+
+export async function resolveWorkingGoogleOAuthConfig(dbQuery = query) {
+  const candidates = await googleConfigCandidates(dbQuery);
 
   for (const candidate of candidates) {
     const status = await probeGoogleCredentialPair(candidate.config);
@@ -784,7 +803,7 @@ export async function resolveWorkingGoogleOAuthConfig(dbQuery = query) {
     }
   }
 
-  const fallback = candidates[0] ?? { source: "unconfigured", config: envConfig };
+  const fallback = candidates[0] ?? { source: "unconfigured", config: googleEnvConfig() };
   const status = googleConfigIsUsable(fallback.config)
     ? await probeGoogleCredentialPair(fallback.config)
     : "unconfigured";
