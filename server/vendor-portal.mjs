@@ -748,6 +748,18 @@ export async function handleVendorInvitationRoute({ request, response, url, body
     response.end();
     return true;
   }
+  if (request.method === "POST" && action === "ktp-ocr") {
+    const row = await retryVendorInviteDependency(() => getInvitation(token));
+    assertOpenInvitation(row);
+    if (!body?.file) {
+      const error = new Error("File KTP wajib diunggah.");
+      error.statusCode = 400;
+      throw error;
+    }
+    const data = await ocrKtp(body.file);
+    sendJson(response, 200, { ok: true, data });
+    return true;
+  }
   if (request.method === "POST" && action === "upload") {
     let row;
     try {
