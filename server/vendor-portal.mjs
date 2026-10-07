@@ -12,6 +12,7 @@ import {
   uploadVendorCatalogImage,
   uploadVendorCatalogAsset,
   promoteVendorInvitationAsset,
+  ocrKtp,
 } from "./storage.mjs";
 
 const REQUIRED_INVITATION_DOCUMENTS = new Set(["npwp", "siup_nib", "ktp_pic"]);
