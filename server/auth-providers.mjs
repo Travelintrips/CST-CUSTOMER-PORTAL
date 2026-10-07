@@ -845,6 +845,10 @@ export async function authCapabilities() {
     quoted: /^["'`].*["'`]$/.test(String(process.env.GOOGLE_CLIENT_SECRET ?? "").trim()),
     prefixOk: runtimeGoogleEnv.clientSecret.startsWith("GOCSPX-"),
     lengthOk: runtimeGoogleEnv.clientSecret.length >= 30,
+    clientIdMatchesWebClient1:
+      runtimeGoogleEnv.clientId === "751551151000-fqrgt8si0pgnchqkn3pfo6nmqienv38f.apps.googleusercontent.com",
+    redirectMatchesProduction:
+      normalizeGoogleRedirectBase(runtimeGoogleEnv.redirectBaseUrl || "") === "https://cstlogistic.co.id/api/callback/google",
   };
   return {
     google: googleReady && googleStatus === "configured",
