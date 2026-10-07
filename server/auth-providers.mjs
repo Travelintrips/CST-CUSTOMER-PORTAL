@@ -879,6 +879,8 @@ export async function authCapabilities() {
     quoted: /^["'`].*["'`]$/.test(String(process.env.GOOGLE_CLIENT_SECRET ?? "").trim()),
     prefixOk: runtimeGoogleEnv.clientSecret.startsWith("GOCSPX-"),
     lengthOk: runtimeGoogleEnv.clientSecret.length >= 30,
+    latestGcpSecretMatch: runtimeGoogleEnv.clientSecret.endsWith("imFb"),
+    staleDatabaseSecretMatch: runtimeGoogleEnv.clientSecret.endsWith("kdnV"),
     clientIdMatchesWebClient1:
       runtimeGoogleEnv.clientId === "751551151000-fqrgt8si0pgnchqkn3pfo6nmqienv38f.apps.googleusercontent.com",
     redirectMatchesProduction: (() => {
