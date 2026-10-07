@@ -1103,6 +1103,7 @@ export async function handleVendorPortalRoutes({ request, response, url, user, b
         serviceType: vendor.service_type ?? null,
         address: vendor.full_address ?? null,
         fullAddress: vendor.full_address ?? null,
+        ktpAddress: null,
         city: vendor.city ?? null,
         province: vendor.province ?? null,
         postalCode: vendor.postal_code ?? null,
