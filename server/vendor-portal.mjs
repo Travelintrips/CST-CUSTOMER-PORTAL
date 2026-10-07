@@ -1053,9 +1053,12 @@ export async function handleVendorPortalRoutes({ request, response, url, user, b
   if (user.role !== "vendor") return false;
   const profile = await query(
     `select vp.*, s.id as supplier_id, s.name as supplier_name, s.status as supplier_status,
-            s.registration_status, s.is_active, s.is_verified, s.marketplace_status
+            s.registration_status, s.is_active, s.is_verified, s.marketplace_status,
+            pcp.company_address as onboarding_company_address,
+            pcp.ktp_address as onboarding_ktp_address
        from public.vendor_profiles vp
        left join public.suppliers s on s.id = vp.supplier_id
+       left join public.portal_customer_profiles pcp on pcp.customer_id = vp.customer_id
       where vp.customer_id = $1
       order by vp.updated_at desc, vp.id desc
       limit 1`,
@@ -1101,9 +1104,9 @@ export async function handleVendorPortalRoutes({ request, response, url, user, b
         picPhone: vendor.phone ?? user.phone ?? null,
         picEmail: vendor.email ?? user.email ?? null,
         serviceType: vendor.service_type ?? null,
-        address: vendor.full_address ?? null,
-        fullAddress: vendor.full_address ?? null,
-        ktpAddress: null,
+        address: vendor.full_address ?? vendor.onboarding_company_address ?? null,
+        fullAddress: vendor.full_address ?? vendor.onboarding_company_address ?? null,
+        ktpAddress: vendor.onboarding_ktp_address ?? null,
         city: vendor.city ?? null,
         province: vendor.province ?? null,
         postalCode: vendor.postal_code ?? null,
