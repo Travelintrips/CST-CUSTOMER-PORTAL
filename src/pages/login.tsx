@@ -157,19 +157,33 @@ export default function Login() {
     defaultValues: { email: "", password: "" },
   });
 
-  async function redirectAfterLogin() {
+  async function redirectAfterLogin(role?: string) {
     const requestedReturnTo = new URLSearchParams(window.location.search).get("returnTo");
-    try {
-      const bootstrap = await fetchPortalAuthBootstrap(
-        requestedReturnTo ? safeCustomerReturnTo(requestedReturnTo) : null,
-        { force: true },
-      );
-      if (bootstrap) {
-        setLocation(bootstrap.allowedDestination);
-        return;
+    for (let attempt = 1; attempt <= 3; attempt += 1) {
+      try {
+        const bootstrap = await fetchPortalAuthBootstrap(
+          requestedReturnTo ? safeCustomerReturnTo(requestedReturnTo) : null,
+          { force: true },
+        );
+        if (bootstrap) {
+          window.location.assign(bootstrap.allowedDestination);
+          return;
+        }
+      } catch {
+        // Retry briefly because Set-Cookie from the login response may not be
+        // visible to the immediately following bootstrap request yet.
       }
-    } catch { /* fallback below */ }
-    setLocation("/login");
+      if (attempt < 3) {
+        await new Promise((resolve) => window.setTimeout(resolve, 250 * attempt));
+      }
+    }
+
+    const fallback = role === "vendor"
+      ? "/vendor-dashboard"
+      : role === "admin"
+        ? "/admin"
+        : "/dashboard";
+    window.location.assign(fallback);
   }
 
   // Cek trusted device saat tab WA dibuka
@@ -191,7 +205,7 @@ export default function Login() {
         const json = await res.json() as { token?: string; user?: { id: number; role: string; name: string; email: string }; expired?: boolean; message?: string };
         if (res.ok && json.token && json.user) {
           setPortalProfile({ customerId: json.user.id, role: json.user.role, name: json.user.name, email: json.user.email });
-          redirectAfterLogin();
+          redirectAfterLogin(json.user?.role);
         } else {
           if (json.expired) clearTrustedDevice();
           setWaTrustedLoading(false);
@@ -302,7 +316,7 @@ export default function Login() {
       if (!res.ok || !json.token) { setOtpMsg({ type: "err", text: json.message ?? t("login.otpInvalid") }); }
       else {
         setPortalProfile({ customerId: json.user!.id, role: json.user!.role, name: json.user!.name, email: json.user!.email });
-        redirectAfterLogin();
+        redirectAfterLogin(json.user?.role);
       }
     } catch { setOtpMsg({ type: "err", text: t("login.serverError") }); }
     setIsSubmitting(false);
@@ -388,7 +402,7 @@ export default function Login() {
           saveTrustedDevice(normalizedPhone, loginJson.deviceToken);
         }
 
-          redirectAfterLogin();
+          redirectAfterLogin(json.user?.role);
       }
     } catch { setWaMsg({ type: "err", text: t("login.serverError") }); }
     setIsSubmitting(false);
@@ -408,7 +422,7 @@ export default function Login() {
       if (!res.ok || !json.token) { setErrorMsg(json.message ?? t("login.emailOrPasswordWrong")); }
       else {
         setPortalProfile({ customerId: json.user!.id, role: json.user!.role, name: json.user!.name, email: json.user!.email });
-        redirectAfterLogin();
+        redirectAfterLogin(json.user?.role);
       }
     } catch { setErrorMsg(t("login.serverErrorRetry")); }
     setIsSubmitting(false);
