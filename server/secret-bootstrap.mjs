@@ -74,6 +74,12 @@ function injectBundle(payload, appEnv, target) {
     (key) => typeof payload[key] === "string" && payload[key].trim(),
   );
 
+  if (appEnv === "production" && hasCompleteGcpGoogleBundle) {
+    target.GOOGLE_GCP_FALLBACK_CLIENT_ID = payload.GOOGLE_CLIENT_ID;
+    target.GOOGLE_GCP_FALLBACK_CLIENT_SECRET = payload.GOOGLE_CLIENT_SECRET;
+    target.GOOGLE_GCP_FALLBACK_REDIRECT_BASE_URL = payload.GOOGLE_REDIRECT_BASE_URL;
+  }
+
   // Google OAuth must stay atomic: never mix a client id from one source with
   // a secret/redirect from another. Hostinger wins when its whole bundle is
   // present. Otherwise, if GCP has a complete bundle, use that whole bundle.
