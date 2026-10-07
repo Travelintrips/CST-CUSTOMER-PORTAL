@@ -402,7 +402,7 @@ export default function Login() {
           saveTrustedDevice(normalizedPhone, loginJson.deviceToken);
         }
 
-          redirectAfterLogin(json.user?.role);
+        redirectAfterLogin(loginJson.user?.role);
       }
     } catch { setWaMsg({ type: "err", text: t("login.serverError") }); }
     setIsSubmitting(false);
