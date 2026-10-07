@@ -465,6 +465,14 @@ async function acceptInvitation(token, body) {
       throw error;
     }
 
+    const companyAddress = text(body.company_address);
+    const ktpAddress = text(body.ktp_address);
+    if (companyAddress.length < 10 || ktpAddress.length < 10) {
+      const error = new Error("Alamat perusahaan dan alamat PIC sesuai KTP wajib diisi.");
+      error.statusCode = 400;
+      throw error;
+    }
+
     const documents = normalizedInviteDocuments(body.documents);
     const products = normalizedInviteProducts(body.products);
     const supplierId = await findOrCreateSupplier(
