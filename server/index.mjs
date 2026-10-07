@@ -87,7 +87,6 @@ import {
   handleAdminVendorRoutes,
   handleVendorInvitationRoute,
   handleVendorPortalRoutes,
-  repairLegacyVendorInvitationCatalogMedia,
 } from "./vendor-portal.mjs";
 import { handleAdminCatalog } from "./admin-catalog.mjs";
 import { handleAdminFeatured } from "./admin-featured.mjs";
@@ -5000,17 +4999,6 @@ async function establishRuntimeReadiness() {
       runtimeState = "ready";
       runtimeReadyAt = new Date().toISOString();
       console.log(`[customer-portal-api] runtime ready release=${process.env.PORTAL_RELEASE_ID ?? "local-development"}`);
-      if (IS_PRODUCTION) {
-        void repairLegacyVendorInvitationCatalogMedia()
-          .then((result) => {
-            if (Number(result?.repaired ?? 0) > 0) {
-              console.info("[customer-portal-api] repaired legacy vendor catalog media", result);
-            }
-          })
-          .catch((error) => {
-            console.error("[customer-portal-api] legacy vendor catalog media repair failed", error?.message ?? error);
-          });
-      }
       startWorkers();
       if (IS_PRODUCTION) startOperationalMonitoring();
       return;
