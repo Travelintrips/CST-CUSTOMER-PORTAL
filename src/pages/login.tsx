@@ -632,9 +632,9 @@ export default function Login() {
             <div className="mb-5">
               <div id="google-signin-button" className="w-full flex justify-center min-h-11" />
               {!googleSdkReady && (
-                <button type="button" onClick={handleGoogleLogin} disabled={!capabilities.google || isSubmitting} className="flex items-center justify-center gap-3 w-full h-11 rounded-lg border border-border bg-white hover:bg-gray-50 text-sm font-medium text-gray-700 transition-colors shadow-sm disabled:cursor-not-allowed disabled:opacity-50">
+                <button type="button" disabled className="flex items-center justify-center gap-3 w-full h-11 rounded-lg border border-border bg-white text-sm font-medium text-gray-700 shadow-sm cursor-not-allowed opacity-60">
                   <GoogleIcon />
-                  {capabilities.google ? `${t("login.signIn")} Google` : "Google (belum tersedia)"}
+                  {capabilities.google ? "Memuat Google…" : "Google (belum tersedia)"}
                 </button>
               )}
             </div>
