@@ -528,6 +528,57 @@ async function acceptInvitation(token, body) {
       );
       vendorProfileId = createdProfile.rows[0]?.id ?? null;
     }
+
+    await client.query(
+      `update public.vendor_profiles
+          set company_name = coalesce(nullif($1, ''), company_name),
+              pic_name = coalesce(nullif($2, ''), pic_name),
+              phone = coalesce(nullif($3, ''), phone),
+              whatsapp = coalesce(nullif($3, ''), whatsapp),
+              email = coalesce(nullif($4, ''), email),
+              full_address = coalesce(nullif($5, ''), full_address),
+              updated_at = now()
+        where customer_id = $6`,
+      [
+        text(body.company_name) || invitation.vendor_name,
+        contactName,
+        phone,
+        email,
+        companyAddress,
+        customerId,
+      ],
+    );
+
+    const ktpDoc = documents.find((doc) => doc?.docType === "ktp_pic");
+    await client.query(
+      `insert into public.portal_customer_profiles
+        (customer_id, company_name, company_address, ktp_address, pic_name,
+         pic_whatsapp, pic_email, ktp_pic_url, profile_status, verification_status, updated_at)
+       values ($1,$2,$3,$4,$5,$6,$7,$8,'pending','PENDING',now())
+       on conflict (customer_id) where customer_id is not null
+       do update set
+         company_name = coalesce(excluded.company_name, portal_customer_profiles.company_name),
+         company_address = coalesce(excluded.company_address, portal_customer_profiles.company_address),
+         ktp_address = coalesce(excluded.ktp_address, portal_customer_profiles.ktp_address),
+         pic_name = coalesce(excluded.pic_name, portal_customer_profiles.pic_name),
+         pic_whatsapp = coalesce(excluded.pic_whatsapp, portal_customer_profiles.pic_whatsapp),
+         pic_email = coalesce(excluded.pic_email, portal_customer_profiles.pic_email),
+         ktp_pic_url = coalesce(excluded.ktp_pic_url, portal_customer_profiles.ktp_pic_url),
+         profile_status = 'pending',
+         verification_status = 'PENDING',
+         updated_at = now()`,
+      [
+        customerId,
+        text(body.company_name) || invitation.vendor_name,
+        companyAddress,
+        ktpAddress,
+        contactName,
+        phone,
+        email,
+        text(ktpDoc?.url) || null,
+      ],
+    );
+
     await insertCatalogItems(client, invitation, supplierId, products);
     await client.query(
       `insert into public.onboarding_approvals
