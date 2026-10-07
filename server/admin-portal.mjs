@@ -1389,15 +1389,18 @@ async function handleOnboardingComplete(ctx) {
                     portal_phone = coalesce(nullif($3, ''), portal_phone),
                     contact_person = coalesce(nullif($4, ''), contact_person),
                     service_type = coalesce(nullif($5, ''), service_type),
+                    address = coalesce(nullif($6, ''), address),
+                    office_address = coalesce(nullif($6, ''), office_address),
                     self_submitted = true,
                     updated_at = now()
-              where id = $6`,
+              where id = $7`,
             [
               text(vendor.companyName) || profileCompanyName || "",
               vendorEmail,
               phone || "",
               fullName,
               text(vendor.serviceType) || "",
+              companyAddress || "",
               pendingSupplierId,
             ],
           );
