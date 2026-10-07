@@ -1150,7 +1150,7 @@ export async function handleGoogleIdToken(request, response) {
     response,
     200,
     { success: true, user: result.user },
-    sessionCookies(result.token),
+    { "Set-Cookie": sessionCookies(result.token) },
   );
 }
 
