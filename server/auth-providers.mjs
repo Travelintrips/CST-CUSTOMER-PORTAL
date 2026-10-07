@@ -679,6 +679,15 @@ function googleEnvConfig() {
   };
 }
 
+const CUSTOMER_PORTAL_GIS_CLIENT_ID = cleanEnvValue(
+  process.env.GOOGLE_GIS_CLIENT_ID
+    || "751551151000-fqrgt8si0pgnchqkn3pfo6nmqienv38f.apps.googleusercontent.com",
+);
+
+function googleGisClientId() {
+  return CUSTOMER_PORTAL_GIS_CLIENT_ID || googleEnvConfig().clientId;
+}
+
 function googleGcpFallbackConfig() {
   return {
     clientId: cleanEnvValue(process.env.GOOGLE_GCP_FALLBACK_CLIENT_ID),
@@ -706,6 +715,8 @@ function decodeGoogleJwtSegment(segment) {
 
 async function googleTrustedClientIds(dbQuery = query) {
   const ids = new Set();
+  const gisClientId = googleGisClientId();
+  if (gisClientId) ids.add(gisClientId);
   for (const config of [
     googleEnvConfig(),
     googleGcpFallbackConfig(),
@@ -1017,13 +1028,13 @@ export async function authCapabilities() {
     })(),
   };
   return {
-    google: Boolean(runtimeGoogleEnv.clientId || googleConfig?.clientId),
-    googleClientId: runtimeGoogleEnv.clientId || googleConfig?.clientId || null,
+    google: Boolean(googleGisClientId()),
+    googleClientId: googleGisClientId(),
     emailOtp: SAFE_DEV_AUTH || emailReady,
     whatsapp: SAFE_DEV_AUTH || whatsappStatus.status === "pass",
     password: true,
     providerStatus: {
-      google: (runtimeGoogleEnv.clientId || googleConfig?.clientId) ? "gis_configured" : "unconfigured",
+      google: googleGisClientId() ? "gis_configured" : "unconfigured",
       googlePrimary: "google_identity_services",
       legacyGoogleOauth: googleStatus,
       googleConfigSource,
