@@ -1607,8 +1607,8 @@ function googleFailureTargetWithCode(returnTo = "/login", code = "google_callbac
 }
 
 export async function handleGoogleStart(request, response, url) {
-  const googleConfig = await resolveWorkingGoogleOAuthConfig();
-  if (!googleConfigIsUsable(googleConfig) || googleConfig.status !== "configured") {
+  const googleConfig = await resolveGoogleOAuthConfig();
+  if (!googleConfigIsUsable(googleConfig)) {
     json(response, 503, { message: "Login Google belum dikonfigurasi." });
     return;
   }
@@ -1640,11 +1640,7 @@ export async function handleGoogleStart(request, response, url) {
   );
 }
 
-async function googleUser(request, code) {
-  const googleConfig = await resolveWorkingGoogleOAuthConfig();
-  if (!googleConfigIsUsable(googleConfig) || googleConfig.status !== "configured") {
-    throw oauthError(503, "Login Google belum dikonfigurasi.", "google_provider_unconfigured");
-  }
+async function exchangeGoogleCode(request, code, googleConfig) {
   const redirectUri = googleRedirectUri(request, googleConfig);
   const tokenResponse = await fetch("https://oauth2.googleapis.com/token", {
     method: "POST",
@@ -1659,6 +1655,35 @@ async function googleUser(request, code) {
     signal: AbortSignal.timeout(10_000),
   });
   const tokenBody = await tokenResponse.json().catch(() => ({}));
+  return { tokenResponse, tokenBody };
+}
+
+async function googleUser(request, code) {
+  const primaryConfig = await resolveGoogleOAuthConfig();
+  if (!googleConfigIsUsable(primaryConfig)) {
+    throw oauthError(503, "Login Google belum dikonfigurasi.", "google_provider_unconfigured");
+  }
+
+  let googleConfig = primaryConfig;
+  let { tokenResponse, tokenBody } = await exchangeGoogleCode(request, code, googleConfig);
+
+  if (
+    !tokenResponse.ok
+    && tokenBody?.error === "invalid_client"
+  ) {
+    const dbConfig = await loadGoogleDbConfig();
+    const differentFallback = googleConfigIsUsable(dbConfig)
+      && googleConfigFingerprint(dbConfig) !== googleConfigFingerprint(primaryConfig);
+    if (differentFallback) {
+      const fallbackAttempt = await exchangeGoogleCode(request, code, dbConfig);
+      if (fallbackAttempt.tokenResponse.ok && fallbackAttempt.tokenBody?.access_token) {
+        googleConfig = dbConfig;
+        tokenResponse = fallbackAttempt.tokenResponse;
+        tokenBody = fallbackAttempt.tokenBody;
+      }
+    }
+  }
+
   if (!tokenResponse.ok || !tokenBody.access_token) {
     throw oauthError(502, "Google token exchange gagal.", "google_token_exchange_failed", {
       providerError: typeof tokenBody.error === "string" ? tokenBody.error : null,
