@@ -34,13 +34,13 @@ const requestedPoolSize = Math.max(
   1,
   Number(process.env.CUSTOMER_PORTAL_DB_POOL_SIZE ?? 4) || 4,
 );
-const effectivePoolSize = Math.min(8, requestedPoolSize);
+const effectivePoolSize = isProduction ? 1 : Math.min(8, requestedPoolSize);
 
 export const pool = new Pool({
   connectionString,
   max: effectivePoolSize,
-  min: isProduction ? 1 : 0,
-  idleTimeoutMillis: 30_000,
+  min: 0,
+  idleTimeoutMillis: isProduction ? 5_000 : 30_000,
   connectionTimeoutMillis: 10_000,
   keepAlive: true,
   keepAliveInitialDelayMillis: 10_000,
