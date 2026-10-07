@@ -220,15 +220,18 @@ async function findOrCreateSupplier(db, invitation, body, phone, email) {
               portal_phone = coalesce(nullif($3, ''), portal_phone),
               contact_person = coalesce(nullif($4, ''), contact_person),
               service_type = coalesce(nullif($5, ''), service_type),
+              address = coalesce(nullif($6, ''), address),
+              office_address = coalesce(nullif($6, ''), office_address),
               self_submitted = true,
               updated_at = now()
-        where id = $6`,
+        where id = $7`,
       [
         text(body.company_name) || invitation.vendor_name,
         email,
         phone,
         text(body.contact_name),
         text(invitation.service_type),
+        text(body.company_address),
         row.id,
       ],
     );
@@ -237,9 +240,11 @@ async function findOrCreateSupplier(db, invitation, body, phone, email) {
   const inserted = await db.query(
     `insert into public.suppliers
       (name, contact_email, phone, portal_phone, contact_person, service_type,
+       address, office_address,
        is_active, registration_status, self_submitted, status, is_verified, marketplace_status)
      values ($1, nullif($2, ''), nullif($3, ''), nullif($3, ''), nullif($4, ''),
-             nullif($5, ''), false, 'pending', true, 'pending', false, 'draft')
+             nullif($5, ''), nullif($6, ''), nullif($6, ''),
+             false, 'pending', true, 'pending', false, 'draft')
      returning id`,
     [
       text(body.company_name) || invitation.vendor_name,
@@ -247,6 +252,7 @@ async function findOrCreateSupplier(db, invitation, body, phone, email) {
       phone,
       text(body.contact_name),
       text(invitation.service_type),
+      text(body.company_address),
     ],
   );
   return Number(inserted.rows[0].id);
