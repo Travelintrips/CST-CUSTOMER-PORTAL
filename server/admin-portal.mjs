@@ -1222,6 +1222,9 @@ async function handleOnboardingComplete(ctx) {
     ) {
       return adminError(ctx, 400, "Nama perusahaan, NIB, jenis layanan, dan dokumen legalitas vendor wajib diisi.");
     }
+    if (!companyAddress || companyAddress.length < 10) {
+      return adminError(ctx, 400, "Alamat perusahaan vendor wajib diisi.");
+    }
   }
   const profileCompanyName = accountType === "customer"
     ? text(ctx.user.company) || null
