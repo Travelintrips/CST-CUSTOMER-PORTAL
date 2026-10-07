@@ -656,11 +656,26 @@ async function emailConfigured() {
   return smtpConfigIsUsable(await resolveSmtpConfig());
 }
 
+function cleanEnvValue(value) {
+  const trimmed = typeof value === "string" ? value.trim() : "";
+  if (
+    trimmed.length >= 2
+    && (
+      (trimmed.startsWith('"') && trimmed.endsWith('"'))
+      || (trimmed.startsWith("'") && trimmed.endsWith("'"))
+      || (trimmed.startsWith("`") && trimmed.endsWith("`"))
+    )
+  ) {
+    return trimmed.slice(1, -1).trim();
+  }
+  return trimmed;
+}
+
 function googleEnvConfig() {
   return {
-    clientId: process.env.GOOGLE_CLIENT_ID?.trim() || "",
-    clientSecret: process.env.GOOGLE_CLIENT_SECRET?.trim() || "",
-    redirectBaseUrl: process.env.GOOGLE_REDIRECT_BASE_URL?.trim() || "",
+    clientId: cleanEnvValue(process.env.GOOGLE_CLIENT_ID),
+    clientSecret: cleanEnvValue(process.env.GOOGLE_CLIENT_SECRET),
+    redirectBaseUrl: cleanEnvValue(process.env.GOOGLE_REDIRECT_BASE_URL),
   };
 }
 
@@ -825,6 +840,12 @@ export async function authCapabilities() {
   const googleConfigSource = googleEnvComplete && runtimeGoogleEnv.clientId === googleConfig.clientId
     ? "hostinger_env"
     : "database_fallback";
+  const googleSecretDiagnostics = {
+    masked: runtimeGoogleEnv.clientSecret.includes("*"),
+    quoted: /^["'`].*["'`]$/.test(String(process.env.GOOGLE_CLIENT_SECRET ?? "").trim()),
+    prefixOk: runtimeGoogleEnv.clientSecret.startsWith("GOCSPX-"),
+    lengthOk: runtimeGoogleEnv.clientSecret.length >= 30,
+  };
   return {
     google: googleReady && googleStatus === "configured",
     emailOtp: SAFE_DEV_AUTH || emailReady,
@@ -834,6 +855,7 @@ export async function authCapabilities() {
       google: googleStatus,
       googleConfigSource,
       googleEnvComplete,
+      googleSecretDiagnostics,
       email: SAFE_DEV_AUTH ? "test" : emailReady ? "configured" : "unconfigured",
       whatsapp: whatsappStatus.status,
     },
