@@ -1642,17 +1642,15 @@ export async function handleGoogleStart(request, response, url) {
   );
 }
 
-async function exchangeGoogleCode(request, code, googleConfig, { includeClientSecret = true } = {}) {
+async function exchangeGoogleCode(request, code, googleConfig) {
   const redirectUri = googleRedirectUri(request, googleConfig);
   const params = new URLSearchParams({
     code,
     client_id: googleConfig.clientId,
+    client_secret: googleConfig.clientSecret,
     redirect_uri: redirectUri,
     grant_type: "authorization_code",
   });
-  if (includeClientSecret && googleConfig.clientSecret) {
-    params.set("client_secret", googleConfig.clientSecret);
-  }
   const tokenResponse = await fetch("https://oauth2.googleapis.com/token", {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
@@ -1673,26 +1671,15 @@ async function googleUser(request, code) {
   let { tokenResponse, tokenBody } = await exchangeGoogleCode(request, code, googleConfig);
 
   if (!tokenResponse.ok && tokenBody?.error === "invalid_client") {
-    const secretlessAttempt = await exchangeGoogleCode(
-      request,
-      code,
-      primaryConfig,
-      { includeClientSecret: false },
-    );
-    if (secretlessAttempt.tokenResponse.ok && secretlessAttempt.tokenBody?.access_token) {
-      tokenResponse = secretlessAttempt.tokenResponse;
-      tokenBody = secretlessAttempt.tokenBody;
-    } else {
-      const dbConfig = await loadGoogleDbConfig();
-      const differentFallback = googleConfigIsUsable(dbConfig)
-        && googleConfigFingerprint(dbConfig) !== googleConfigFingerprint(primaryConfig);
-      if (differentFallback) {
-        const fallbackAttempt = await exchangeGoogleCode(request, code, dbConfig);
-        if (fallbackAttempt.tokenResponse.ok && fallbackAttempt.tokenBody?.access_token) {
-          googleConfig = dbConfig;
-          tokenResponse = fallbackAttempt.tokenResponse;
-          tokenBody = fallbackAttempt.tokenBody;
-        }
+    const dbConfig = await loadGoogleDbConfig();
+    const differentFallback = googleConfigIsUsable(dbConfig)
+      && googleConfigFingerprint(dbConfig) !== googleConfigFingerprint(primaryConfig);
+    if (differentFallback) {
+      const fallbackAttempt = await exchangeGoogleCode(request, code, dbConfig);
+      if (fallbackAttempt.tokenResponse.ok && fallbackAttempt.tokenBody?.access_token) {
+        googleConfig = dbConfig;
+        tokenResponse = fallbackAttempt.tokenResponse;
+        tokenBody = fallbackAttempt.tokenBody;
       }
     }
   }
