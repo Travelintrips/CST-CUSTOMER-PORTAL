@@ -83,6 +83,9 @@ describe("production runtime availability lifecycle", () => {
     expect(login).toContain("/api/portal/auth/google/id-token");
     expect(login).not.toContain('window.location.assign(`${BASE}/api/login/google?');
     expect(server).toContain("/api/portal/auth/google/id-token");
+
+    const authProviders = readFileSync(join(process.cwd(), "server/auth-providers.mjs"), "utf8");
+    expect(authProviders).toContain('{ "Set-Cookie": sessionCookies(result.token) }');
   });
 
 
