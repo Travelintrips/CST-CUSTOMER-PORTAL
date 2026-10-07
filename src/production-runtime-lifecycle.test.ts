@@ -81,6 +81,7 @@ describe("production runtime availability lifecycle", () => {
     expect(workflow).toContain("Expected GIS ID-token endpoint to reject an invalid token with 401");
     expect(login).toContain("https://accounts.google.com/gsi/client");
     expect(login).toContain("/api/portal/auth/google/id-token");
+    expect(login).not.toContain('window.location.assign(`${BASE}/api/login/google?');
     expect(server).toContain("/api/portal/auth/google/id-token");
   });
 
