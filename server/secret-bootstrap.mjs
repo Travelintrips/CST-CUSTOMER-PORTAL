@@ -61,8 +61,22 @@ function injectBundle(payload, appEnv, target) {
       .map((key) => key.slice(0, -4)),
   );
 
+  const hostEnvironmentWins = new Set([
+    "GOOGLE_CLIENT_ID",
+    "GOOGLE_CLIENT_SECRET",
+    "GOOGLE_REDIRECT_BASE_URL",
+  ]);
+
   const set = (key, value) => {
     if (key === "APP_ENV" || typeof value !== "string" || !value) return;
+    if (
+      appEnv === "production"
+      && hostEnvironmentWins.has(key)
+      && typeof target[key] === "string"
+      && target[key].trim()
+    ) {
+      return;
+    }
     target[key] = value;
     injected.push(key);
   };
