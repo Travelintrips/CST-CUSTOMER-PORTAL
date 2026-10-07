@@ -1230,7 +1230,7 @@ async function handleOnboardingComplete(ctx) {
     accountType === "customer" && customerType === "company"
       ? companyAddress
       : accountType === "vendor"
-        ? ktpAddress
+        ? companyAddress
         : null;
   const profileStatus = accountType === "customer" && body.requestedCompanyName
     ? "pending"
