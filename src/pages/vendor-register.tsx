@@ -187,6 +187,10 @@ export default function VendorRegisterPage() {
   const [phone, setPhone]             = useState("");
   const [email, setEmail]             = useState("");
   const [companyName, setCompanyName] = useState("");
+  const [companyAddress, setCompanyAddress] = useState("");
+  const [ktpAddress, setKtpAddress] = useState("");
+  const [ktpOcrLoading, setKtpOcrLoading] = useState(false);
+  const [ktpOcrError, setKtpOcrError] = useState("");
   const [message, setMessage]         = useState("");
   const [submitting, setSubmitting]   = useState(false);
   const [submitError, setSubmitError] = useState("");
@@ -279,6 +283,30 @@ export default function VendorRegisterPage() {
     }
     setUploadingSlot(slot);
     try {
+      if (slot === "ktp_pic") {
+        setKtpOcrLoading(true);
+        setKtpOcrError("");
+        try {
+          const ocrFd = new FormData();
+          ocrFd.append("file", file);
+          const ocrRes = await fetch(`/api/portal/vendor-invite/${encodeURIComponent(token)}/ktp-ocr`, {
+            method: "POST",
+            body: ocrFd,
+          });
+          const ocrJson = await ocrRes.json().catch(() => ({}));
+          if (ocrRes.ok && ocrJson?.data) {
+            if (ocrJson.data.address) setKtpAddress(String(ocrJson.data.address));
+            if (ocrJson.data.name && !contactName.trim()) setContactName(String(ocrJson.data.name));
+          } else {
+            setKtpOcrError(ocrJson?.error ?? ocrJson?.message ?? "KTP belum berhasil dibaca. Isi alamat sesuai KTP secara manual.");
+          }
+        } catch {
+          setKtpOcrError("OCR KTP sementara tidak tersedia. Isi alamat sesuai KTP secara manual.");
+        } finally {
+          setKtpOcrLoading(false);
+        }
+      }
+
       const fd = new FormData();
       fd.append("file", file);
       fd.append("docType", slot);
@@ -432,7 +460,9 @@ export default function VendorRegisterPage() {
       setTermsError("Anda harus menyetujui Syarat dan Ketentuan Vendor untuk melanjutkan.");
       return;
     }
+    if (!companyAddress.trim() || companyAddress.trim().length < 10) { setSubmitError("Alamat perusahaan wajib diisi minimal 10 karakter"); return; }
     if (!contactName.trim()) { setSubmitError("Nama kontak harus diisi"); return; }
+    if (!ktpAddress.trim() || ktpAddress.trim().length < 10) { setSubmitError("Alamat PIC sesuai KTP wajib diisi minimal 10 karakter"); return; }
     if (!phone.trim() && !email.trim()) { setSubmitError("Isi setidaknya No. WhatsApp atau Email"); return; }
     const missingRequired = DOC_SLOTS.filter((s) => s.required && !docs[s.key]);
     if (missingRequired.length > 0) {
@@ -457,7 +487,10 @@ export default function VendorRegisterPage() {
           phone,
           email,
           company_name: companyName,
+          company_address: companyAddress.trim(),
+          ktp_address: ktpAddress.trim(),
           message,
+          documents: Object.values(docs),
           products: filledProducts.map((p) => ({
             name:       p.name.trim(),
             description: p.description.trim(),
@@ -604,8 +637,30 @@ export default function VendorRegisterPage() {
           </div>
 
           <div className="space-y-1.5">
+            <Label>Alamat Perusahaan <span className="text-red-500">*</span></Label>
+            <Textarea
+              value={companyAddress}
+              onChange={e => setCompanyAddress(e.target.value)}
+              rows={3}
+              placeholder="Alamat kantor/perusahaan"
+            />
+          </div>
+
+          <div className="space-y-1.5">
             <Label>{t("vendor.register.contactName")} <span className="text-red-500">*</span></Label>
             <Input value={contactName} onChange={e => setContactName(e.target.value)} placeholder="Nama lengkap Anda" />
+          </div>
+
+          <div className="space-y-1.5">
+            <Label>Alamat PIC sesuai KTP <span className="text-red-500">*</span></Label>
+            <Textarea
+              value={ktpAddress}
+              onChange={e => setKtpAddress(e.target.value)}
+              rows={3}
+              placeholder="Otomatis terisi dari OCR KTP; dapat dikoreksi bila perlu"
+            />
+            {ktpOcrLoading && <p className="text-xs text-indigo-600">Membaca alamat dari KTP…</p>}
+            {ktpOcrError && <p className="text-xs text-amber-600">{ktpOcrError}</p>}
           </div>
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
