@@ -342,12 +342,12 @@ describe("production runtime availability lifecycle", () => {
   });
 
 
-  it("keeps production database pooling bounded and resilient", () => {
+  it("serializes production database pooling to avoid Supabase connection storms", () => {
     const db = readFileSync(join(process.cwd(), "server/db.mjs"), "utf8");
 
-    expect(db).toContain("Math.min(8, requestedPoolSize)");
-    expect(db).toContain("min: isProduction ? 1 : 0");
-    expect(db).toContain("idleTimeoutMillis: 30_000");
+    expect(db).toContain("isProduction ? 1 : Math.min(8, requestedPoolSize)");
+    expect(db).toContain("min: 0");
+    expect(db).toContain("idleTimeoutMillis: isProduction ? 5_000 : 30_000");
     expect(db).toContain("keepAlive: true");
     expect(db).toContain("const attempts = isReadOnlySql(text) ? 3 : 1");
   });
