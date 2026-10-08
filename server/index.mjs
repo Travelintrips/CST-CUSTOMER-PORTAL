@@ -460,6 +460,11 @@ async function bootstrapResponse(user, requestedReturnTo, customerContext) {
   const approval = approvalResult.rows[0] ?? null;
   const vendorProfile = user.role === "vendor" ? vendorResult.rows[0] ?? null : null;
   const hasVendorProfile = Boolean(vendorProfile);
+  const customerExisting =
+    user.role === "customer"
+    && user.account_status === "active"
+    && Boolean(user.created_at)
+    && new Date(user.created_at).getTime() < Date.parse("2026-10-07T00:00:00Z");
   const vendorExisting =
     user.role === "vendor"
     && hasVendorProfile
@@ -583,6 +588,7 @@ async function bootstrapResponse(user, requestedReturnTo, customerContext) {
     },
     vendorApprovalStatus,
     vendorExisting,
+    customerExisting,
     allowedDestination,
     safeReturnTo: safeReturnTo(requestedReturnTo),
   };
