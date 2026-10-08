@@ -1334,13 +1334,51 @@ async function handleOnboardingComplete(ctx) {
         throw error;
       }
 
-      if (
-        String(row.customer_type ?? "").toLowerCase() === "company"
-        && (!companyAddress || companyAddress.length < 10)
-      ) {
+      const storedProfile = await dbQuery(
+        `select company_address, ktp_address
+           from public.portal_customer_profiles
+          where customer_id = $1
+          order by updated_at desc nulls last, id desc
+          limit 1
+          for update`,
+        [ctx.user.id],
+      );
+      const currentProfile = storedProfile.rows[0] ?? {};
+      const currentKtpAddress = text(currentProfile.ktp_address);
+      const currentCompanyAddress = text(currentProfile.company_address);
+
+      const existingType = String(row.customer_type ?? "").toLowerCase();
+      const resolvedType = ["individual", "company"].includes(existingType)
+        ? existingType
+        : customerType;
+
+      if (!["individual", "company"].includes(resolvedType)) {
+        const error = new Error("Pilih tipe customer: Perorangan atau Perusahaan.");
+        error.statusCode = 400;
+        throw error;
+      }
+
+      const resolvedKtpAddress = currentKtpAddress ?? ktpAddress;
+      if (!resolvedKtpAddress || resolvedKtpAddress.length < 10) {
+        const error = new Error("Alamat sesuai KTP wajib diisi minimal 10 karakter.");
+        error.statusCode = 400;
+        throw error;
+      }
+
+      const resolvedCompanyAddress = currentCompanyAddress ?? companyAddress;
+      if (resolvedType === "company" && (!resolvedCompanyAddress || resolvedCompanyAddress.length < 10)) {
         const error = new Error("Alamat perusahaan wajib diisi minimal 10 karakter.");
         error.statusCode = 400;
         throw error;
+      }
+
+      if (!["individual", "company"].includes(existingType)) {
+        await dbQuery(
+          `update public.portal_customers
+              set customer_type = $1
+            where id = $2`,
+          [resolvedType, ctx.user.id],
+        );
       }
 
       await dbQuery(
@@ -1350,20 +1388,31 @@ async function handleOnboardingComplete(ctx) {
          on conflict (customer_id) where customer_id is not null
          do update set
            company_address = case
-             when $2::text is null or length(trim($2::text)) = 0
+             when portal_customer_profiles.company_address is not null
+              and length(trim(portal_customer_profiles.company_address)) >= 10
                then portal_customer_profiles.company_address
-             else $2
+             else excluded.company_address
            end,
-           ktp_address = excluded.ktp_address,
+           ktp_address = case
+             when portal_customer_profiles.ktp_address is not null
+              and length(trim(portal_customer_profiles.ktp_address)) >= 10
+               then portal_customer_profiles.ktp_address
+             else excluded.ktp_address
+           end,
            profile_status = 'active',
            updated_at = now()`,
-        [ctx.user.id, companyAddress, ktpAddress],
+        [
+          ctx.user.id,
+          resolvedType === "company" ? resolvedCompanyAddress : null,
+          resolvedKtpAddress,
+        ],
       );
 
       await client.query("commit");
       ctx.sendJson(ctx.response, 200, {
         ok: true,
         status: "active",
+        customerType: resolvedType,
         existingCustomerCompletion: true,
       });
       return;
