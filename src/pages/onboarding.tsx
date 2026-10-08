@@ -124,6 +124,11 @@ export default function OnboardingPage() {
   const { t } = useLanguage();
   const [sessionReady, setSessionReady] = useState(false);
   const [existingVendorCompletion, setExistingVendorCompletion] = useState(false);
+  const [existingCustomerCompletion, setExistingCustomerCompletion] = useState(false);
+  const [existingCustomerKtpAddress, setExistingCustomerKtpAddress] = useState("");
+  const [existingCustomerCompanyAddress, setExistingCustomerCompanyAddress] = useState("");
+  const [existingCustomerSaving, setExistingCustomerSaving] = useState(false);
+  const [existingCustomerError, setExistingCustomerError] = useState<string | null>(null);
   const [existingVendorKtpAddress, setExistingVendorKtpAddress] = useState("");
   const [existingVendorCompanyAddress, setExistingVendorCompanyAddress] = useState("");
   const [existingVendorSaving, setExistingVendorSaving] = useState(false);
@@ -202,6 +207,11 @@ export default function OnboardingPage() {
       setExistingVendorCompletion(
         role === "vendor"
         && bootstrap.vendorExisting === true
+        && bootstrap.allowedDestination === "/onboarding"
+      );
+      setExistingCustomerCompletion(
+        role === "customer"
+        && bootstrap.customerExisting === true
         && bootstrap.allowedDestination === "/onboarding"
       );
 
@@ -471,6 +481,46 @@ export default function OnboardingPage() {
     }
   }
 
+  async function handleExistingCustomerCompletion() {
+    setExistingCustomerError(null);
+    const ktp = existingCustomerKtpAddress.trim();
+    const company = existingCustomerCompanyAddress.trim();
+    if (ktp.length < 10) {
+      setExistingCustomerError("Alamat sesuai KTP wajib diisi minimal 10 karakter.");
+      return;
+    }
+    if (customerType === "company" && company.length < 10) {
+      setExistingCustomerError("Alamat perusahaan wajib diisi minimal 10 karakter.");
+      return;
+    }
+    setExistingCustomerSaving(true);
+    try {
+      const res = await fetch("/api/portal/onboarding/complete", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({
+          accountType: "customer",
+          existingCustomerCompletion: true,
+          address: ktp,
+          companyAddress: company || undefined,
+        }),
+      });
+      const json = await res.json() as { ok?: boolean; message?: string; error?: string };
+      if (!res.ok || !json.ok) {
+        setExistingCustomerError(json.error ?? json.message ?? "Gagal menyimpan data customer.");
+        return;
+      }
+      clearPortalAuthBootstrap();
+      const refreshed = await fetchPortalAuthBootstrap(null, { force: true });
+      setLocation(refreshed?.allowedDestination ?? "/dashboard");
+    } catch {
+      setExistingCustomerError("Gagal menghubungi server.");
+    } finally {
+      setExistingCustomerSaving(false);
+    }
+  }
+
   async function handleExistingVendorCompletion() {
     setExistingVendorError(null);
     const ktp = existingVendorKtpAddress.trim();
@@ -601,6 +651,83 @@ export default function OnboardingPage() {
       </div>
     );
   }
+  if (existingCustomerCompletion) {
+    return (
+      <div className="min-h-screen bg-gray-50 py-8 px-4">
+        <div className="max-w-2xl mx-auto">
+          <div className="text-center mb-6">
+            <div className="inline-flex mb-4" style={{ background: "rgba(255,255,255,0.95)", borderRadius: "14px", padding: "10px 14px", boxShadow: "0 4px 16px rgba(15,23,42,0.10)" }}>
+              <img src={CUSTOMER_ASSETS.logo} alt="Logo" className="h-8 w-auto object-contain" />
+            </div>
+            <h1 className="text-2xl font-bold text-gray-900">Lengkapi Data Customer</h1>
+            <p className="text-muted-foreground text-sm mt-1">
+              Akun Anda sudah terdaftar. Cukup lengkapi data alamat yang belum tersimpan.
+            </p>
+          </div>
+
+          <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6 sm:p-8 space-y-5">
+            <Alert className="border-emerald-200 bg-emerald-50">
+              <CheckCircle2 className="h-4 w-4 text-emerald-600" />
+              <AlertDescription className="text-emerald-800">
+                Data akun lama tetap digunakan. Anda tidak perlu mendaftar ulang atau mengunggah ulang dokumen registrasi.
+              </AlertDescription>
+            </Alert>
+
+            <div className="space-y-2">
+              <Label htmlFor="existing-customer-ktp-address">
+                Alamat sesuai KTP <span className="text-red-500">*</span>
+              </Label>
+              <Textarea
+                id="existing-customer-ktp-address"
+                value={existingCustomerKtpAddress}
+                onChange={(event) => {
+                  setExistingCustomerKtpAddress(event.target.value);
+                  setExistingCustomerError(null);
+                }}
+                rows={4}
+                placeholder="Masukkan alamat sesuai KTP"
+              />
+            </div>
+
+            {customerType === "company" && (
+              <div className="space-y-2">
+                <Label htmlFor="existing-customer-company-address">
+                  Alamat Perusahaan <span className="text-red-500">*</span>
+                </Label>
+                <Textarea
+                  id="existing-customer-company-address"
+                  value={existingCustomerCompanyAddress}
+                  onChange={(event) => {
+                    setExistingCustomerCompanyAddress(event.target.value);
+                    setExistingCustomerError(null);
+                  }}
+                  rows={4}
+                  placeholder="Masukkan alamat kantor/perusahaan"
+                />
+              </div>
+            )}
+
+            {existingCustomerError && (
+              <Alert variant="destructive">
+                <AlertCircle className="h-4 w-4" />
+                <AlertDescription>{existingCustomerError}</AlertDescription>
+              </Alert>
+            )}
+
+            <Button
+              className="w-full gap-2"
+              onClick={handleExistingCustomerCompletion}
+              disabled={existingCustomerSaving}
+            >
+              {existingCustomerSaving ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
+              Simpan & Lanjut
+            </Button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   if (existingVendorCompletion) {
     return (
       <div className="min-h-screen bg-gray-50 py-8 px-4">
