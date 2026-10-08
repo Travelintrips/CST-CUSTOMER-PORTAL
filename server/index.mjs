@@ -518,17 +518,22 @@ async function bootstrapResponse(user, requestedReturnTo, customerContext) {
       && approvalStatus == null
     );
 
+  const effectiveApprovalStatus =
+    vendorExisting && user.role === "vendor"
+      ? null
+      : approvalStatus;
   const rejected =
     profileStatus === "rejected"
-    || approvalStatus === "rejected"
-    || vendorApprovalStatus === "rejected";
+    || effectiveApprovalStatus === "rejected"
+    || (!vendorExisting && vendorApprovalStatus === "rejected");
   const pending =
     profileStatus === "pending"
-    || approvalStatus === "pending"
+    || effectiveApprovalStatus === "pending"
     || customerContext?.status === "company_pending"
     || (
       user.role === "vendor"
       && hasVendorProfile
+      && !vendorExisting
       && vendorApprovalStatus
       && !["verified", "approved"].includes(String(vendorApprovalStatus).toLowerCase())
       && !needsInitialOnboarding
