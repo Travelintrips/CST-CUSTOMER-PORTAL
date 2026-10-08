@@ -288,15 +288,35 @@ async function handleAdminApprovals(ctx) {
     try {
       await client.query("begin");
       const approval = await client.query(
-        `select id, customer_id, account_type, status
-           from public.onboarding_approvals
-          where id = $1
+        `select a.id, a.customer_id, a.account_type, a.status,
+                (
+                  a.account_type = 'vendor'
+                  and exists (
+                    select 1
+                      from public.vendor_profiles vp
+                      join public.suppliers s on s.id = vp.supplier_id
+                     where vp.customer_id = a.customer_id
+                       and coalesce(s.is_active, false) = true
+                       and coalesce(s.is_verified, false) = true
+                       and lower(coalesce(s.registration_status, '')) = 'approved'
+                  )
+                ) as existing_approved_vendor
+           from public.onboarding_approvals a
+          where a.id = $1
           for update`,
         [id],
       );
       if (!approval.rows[0]) {
         await client.query("rollback");
         return adminError(ctx, 404, "Approval tidak ditemukan.");
+      }
+      if (approval.rows[0].existing_approved_vendor) {
+        await client.query("rollback");
+        return adminError(
+          ctx,
+          409,
+          "Vendor ini sudah pernah disetujui. Tidak perlu approval ulang; hanya lengkapi data alamat yang belum tersimpan.",
+        );
       }
 
       await client.query(
@@ -505,7 +525,20 @@ async function handleAdminApprovals(ctx) {
               count(*) filter (where status = 'pending')::int as pending,
               count(*) filter (where status = 'approved')::int as approved,
               count(*) filter (where status = 'rejected')::int as rejected
-         from public.onboarding_approvals`,
+         from public.onboarding_approvals a
+        where not (
+          a.account_type = 'vendor'
+          and a.status = 'pending'
+          and exists (
+            select 1
+              from public.vendor_profiles vp
+              join public.suppliers s on s.id = vp.supplier_id
+             where vp.customer_id = a.customer_id
+               and coalesce(s.is_active, false) = true
+               and coalesce(s.is_verified, false) = true
+               and lower(coalesce(s.registration_status, '')) = 'approved'
+          )
+        )`,
     );
     const row = result.rows[0] ?? {};
     ctx.sendJson(response, 200, {
@@ -528,6 +561,19 @@ async function handleAdminApprovals(ctx) {
        left join public.portal_customer_profiles p on p.customer_id = c.id
       where ($1 = '' or a.status = $1)
         and ($2 = '' or a.account_type = $2)
+        and not (
+          a.account_type = 'vendor'
+          and a.status = 'pending'
+          and exists (
+            select 1
+              from public.vendor_profiles vp
+              join public.suppliers s on s.id = vp.supplier_id
+             where vp.customer_id = a.customer_id
+               and coalesce(s.is_active, false) = true
+               and coalesce(s.is_verified, false) = true
+               and lower(coalesce(s.registration_status, '')) = 'approved'
+          )
+        )
       order by a.created_at desc
       limit 250`,
     [status, accountType],
@@ -1397,9 +1443,23 @@ async function handleOnboardingComplete(ctx) {
       await dbQuery(
         `update public.vendor_profiles
             set verification_status = 'verified',
+                approved_at = coalesce(approved_at, now()),
+                approval_date = coalesce(approval_date, now()),
                 updated_at = now()
           where id = $1`,
         [row.id],
+      );
+
+      await dbQuery(
+        `update public.onboarding_approvals
+            set status = 'approved',
+                admin_note = coalesce(admin_note, 'Vendor existing: kelengkapan alamat selesai; approval lama tetap berlaku.'),
+                reviewed_at = coalesce(reviewed_at, now()),
+                updated_at = now()
+          where customer_id = $1
+            and account_type = 'vendor'
+            and status = 'pending'`,
+        [ctx.user.id],
       );
 
       await client.query("commit");
