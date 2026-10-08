@@ -1295,15 +1295,18 @@ async function handleOnboardingComplete(ctx) {
         throw error;
       }
 
+      // Stage 1: persist both addresses without activating the profile yet.
+      // The database guard validates an active vendor profile against vendor_profiles,
+      // so vendor/supplier address data must be written first.
       await dbQuery(
         `insert into public.portal_customer_profiles
           (customer_id, company_address, ktp_address, profile_status, updated_at)
-         values ($1,$2,$3,'active',now())
+         values ($1,$2,$3,'incomplete',now())
          on conflict (customer_id) where customer_id is not null
          do update set
            company_address = excluded.company_address,
            ktp_address = excluded.ktp_address,
-           profile_status = 'active',
+           profile_status = 'incomplete',
            updated_at = now()`,
         [ctx.user.id, companyAddress, ktpAddress],
       );
@@ -1311,7 +1314,6 @@ async function handleOnboardingComplete(ctx) {
       await dbQuery(
         `update public.vendor_profiles
             set full_address = $1,
-                verification_status = 'verified',
                 updated_at = now()
           where id = $2`,
         [companyAddress, row.id],
@@ -1327,6 +1329,23 @@ async function handleOnboardingComplete(ctx) {
           [companyAddress, row.supplier_id],
         );
       }
+
+      // Stage 2: activate only after all persisted data satisfies the DB guard.
+      await dbQuery(
+        `update public.portal_customer_profiles
+            set profile_status = 'active',
+                updated_at = now()
+          where customer_id = $1`,
+        [ctx.user.id],
+      );
+
+      await dbQuery(
+        `update public.vendor_profiles
+            set verification_status = 'verified',
+                updated_at = now()
+          where id = $1`,
+        [row.id],
+      );
 
       await client.query("commit");
       ctx.sendJson(ctx.response, 200, {
