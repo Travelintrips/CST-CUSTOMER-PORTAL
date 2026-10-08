@@ -429,8 +429,11 @@ export default function OnboardingPage() {
       }
       setCompanyError(null);
     } else if (accountType === "vendor") {
-      const valid = await vendorForm.trigger();
-      if (!valid) return;
+      const valid = await vendorForm.trigger(undefined, { shouldFocus: true });
+      if (!valid) {
+        setCompanyError("Periksa kembali field vendor yang masih belum valid.");
+        return;
+      }
       if (!companyAddress.trim() || companyAddress.trim().length < 10) {
         setCompanyError("Alamat perusahaan vendor wajib diisi minimal 10 karakter.");
         return;
@@ -939,13 +942,24 @@ export default function OnboardingPage() {
                 <div className="space-y-4">
                   <div className="space-y-2">
                     <Label>{t("onboarding.vendor.companyName", "Nama Perusahaan")} <span className="text-red-500">*</span></Label>
-                    <Input placeholder={t("onboarding.vendor.companyNamePlaceholder", "PT / CV / UD ...")} {...vendorForm.register("companyName")} />
+                    <Input
+                      placeholder={t("onboarding.vendor.companyNamePlaceholder", "PT / CV / UD ...")}
+                      aria-invalid={Boolean(vendorForm.formState.errors.companyName)}
+                      {...vendorForm.register("companyName")}
+                    />
                     {vendorForm.formState.errors.companyName && <p className="text-sm text-red-500">{vendorForm.formState.errors.companyName.message}</p>}
                   </div>
                   <div className="grid grid-cols-2 gap-4">
                     <div className="space-y-2">
                       <Label>{t("onboarding.registration.vendorNib", "NIB")} <span className="text-red-500">*</span></Label>
-                      <Input placeholder={t("onboarding.vendor.nibPlaceholder", "Nomor Induk Berusaha")} {...vendorForm.register("nib")} />
+                      <Input
+                        placeholder={t("onboarding.vendor.nibPlaceholder", "Nomor Induk Berusaha")}
+                        aria-invalid={Boolean(vendorForm.formState.errors.nib)}
+                        {...vendorForm.register("nib")}
+                      />
+                      {vendorForm.formState.errors.nib && (
+                        <p className="text-sm text-red-500">{vendorForm.formState.errors.nib.message}</p>
+                      )}
                     </div>
                     <div className="space-y-2">
                       <Label>{t("onboarding.vendor.npwp", "NPWP (Opsional)")}</Label>
@@ -970,7 +984,11 @@ export default function OnboardingPage() {
                   </div>
                   <div className="space-y-2">
                     <Label>{t("onboarding.vendor.serviceType", "Jenis Layanan Vendor")} <span className="text-red-500">*</span></Label>
-                    <Input placeholder={t("onboarding.vendor.serviceTypePlaceholder", "contoh: Trucking, Forwarding, Warehouse, dll.")} {...vendorForm.register("serviceType")} />
+                    <Input
+                      placeholder={t("onboarding.vendor.serviceTypePlaceholder", "contoh: Trucking, Forwarding, Warehouse, dll.")}
+                      aria-invalid={Boolean(vendorForm.formState.errors.serviceType)}
+                      {...vendorForm.register("serviceType")}
+                    />
                     {vendorForm.formState.errors.serviceType && <p className="text-sm text-red-500">{vendorForm.formState.errors.serviceType.message}</p>}
                   </div>
                   <div className="space-y-2">
