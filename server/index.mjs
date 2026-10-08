@@ -424,7 +424,7 @@ function authResponse(user, token) {
 async function bootstrapResponse(user, requestedReturnTo, customerContext) {
   const [profileResult, approvalResult, vendorResult] = await Promise.all([
     query(
-      `select profile_status, verification_status
+      `select profile_status, verification_status, company_address, ktp_address
          from public.portal_customer_profiles
         where customer_id = $1
         order by updated_at desc nulls last, id desc
@@ -441,7 +441,7 @@ async function bootstrapResponse(user, requestedReturnTo, customerContext) {
     ),
     user.role === "vendor"
       ? query(
-          `select verification_status
+          `select verification_status, full_address, nib, service_type, legality_doc_url
              from public.vendor_profiles
             where customer_id = $1
             order by updated_at desc nulls last, id desc
@@ -466,23 +466,31 @@ async function bootstrapResponse(user, requestedReturnTo, customerContext) {
     .includes(customerContext?.status);
 
   const isAdmin = user.role === "admin";
-  const legacyCustomerWithoutProfile =
-    user.role === "customer"
-    && !profile
-    && user.customer_type == null;
+  const profileKtpAddress = String(profile?.ktp_address ?? "").trim();
+  const profileCompanyAddress = String(profile?.company_address ?? "").trim();
+  const customerProfileComplete =
+    user.role !== "customer"
+    || (
+      Boolean(profile)
+      && profileKtpAddress.length >= 10
+      && (user.customer_type !== "company" || profileCompanyAddress.length >= 10)
+    );
+  const vendorProfileComplete =
+    user.role !== "vendor"
+    || (
+      Boolean(profile)
+      && Boolean(vendorProfile)
+      && profileKtpAddress.length >= 10
+      && profileCompanyAddress.length >= 10
+      && String(vendorProfile?.full_address ?? "").trim().length >= 10
+      && String(vendorProfile?.nib ?? "").trim().length > 0
+      && String(vendorProfile?.service_type ?? "").trim().length > 0
+      && String(vendorProfile?.legality_doc_url ?? "").trim().length > 0
+    );
   const needsInitialOnboarding =
     profileStatus === "incomplete"
-    || (
-      user.role === "customer"
-      && !profile
-      && user.customer_type != null
-    )
-    || (
-      user.role === "vendor"
-      && !hasVendorProfile
-      && approvalStatus == null
-      && vendorApprovalStatus !== "verified"
-    )
+    || (user.role === "customer" && !customerProfileComplete)
+    || (user.role === "vendor" && !vendorProfileComplete)
     || (
       ["driver", "employee"].includes(user.role)
       && !profile
@@ -506,7 +514,6 @@ async function bootstrapResponse(user, requestedReturnTo, customerContext) {
     );
 
   const onboardingComplete = isAdmin
-    || legacyCustomerWithoutProfile
     || (
       !needsInitialOnboarding
       && !pending
