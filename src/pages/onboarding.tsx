@@ -125,6 +125,9 @@ export default function OnboardingPage() {
   const [sessionReady, setSessionReady] = useState(false);
   const [existingVendorCompletion, setExistingVendorCompletion] = useState(false);
   const [existingCustomerCompletion, setExistingCustomerCompletion] = useState(false);
+  const [existingCustomerNeedsType, setExistingCustomerNeedsType] = useState(false);
+  const [existingCustomerHasKtpAddress, setExistingCustomerHasKtpAddress] = useState(false);
+  const [existingCustomerHasCompanyAddress, setExistingCustomerHasCompanyAddress] = useState(false);
   const [existingCustomerKtpAddress, setExistingCustomerKtpAddress] = useState("");
   const [existingCustomerCompanyAddress, setExistingCustomerCompanyAddress] = useState("");
   const [existingCustomerSaving, setExistingCustomerSaving] = useState(false);
@@ -214,6 +217,11 @@ export default function OnboardingPage() {
         && bootstrap.customerExisting === true
         && bootstrap.allowedDestination === "/onboarding"
       );
+      setExistingCustomerNeedsType(Boolean(bootstrap.profileCompletion?.needsCustomerType));
+      setExistingCustomerHasKtpAddress(Boolean(bootstrap.profileCompletion?.hasKtpAddress));
+      setExistingCustomerHasCompanyAddress(Boolean(bootstrap.profileCompletion?.hasCompanyAddress));
+      setExistingCustomerKtpAddress(bootstrap.profileCompletion?.ktpAddress ?? "");
+      setExistingCustomerCompanyAddress(bootstrap.profileCompletion?.companyAddress ?? "");
 
       if (isExistingCustomerWithUnresolvedOrganization) {
         setOrganizationCompletion(contextStatus as OrganizationCompletionStatus);
@@ -485,11 +493,15 @@ export default function OnboardingPage() {
     setExistingCustomerError(null);
     const ktp = existingCustomerKtpAddress.trim();
     const company = existingCustomerCompanyAddress.trim();
-    if (ktp.length < 10) {
+    if (existingCustomerNeedsType && !customerType) {
+      setExistingCustomerError("Pilih tipe customer: Perorangan atau Perusahaan.");
+      return;
+    }
+    if (!existingCustomerHasKtpAddress && ktp.length < 10) {
       setExistingCustomerError("Alamat sesuai KTP wajib diisi minimal 10 karakter.");
       return;
     }
-    if (customerType === "company" && company.length < 10) {
+    if (customerType === "company" && !existingCustomerHasCompanyAddress && company.length < 10) {
       setExistingCustomerError("Alamat perusahaan wajib diisi minimal 10 karakter.");
       return;
     }
@@ -502,7 +514,8 @@ export default function OnboardingPage() {
         body: JSON.stringify({
           accountType: "customer",
           existingCustomerCompletion: true,
-          address: ktp,
+          customerType: customerType ?? undefined,
+          address: ktp || undefined,
           companyAddress: company || undefined,
         }),
       });
@@ -673,38 +686,80 @@ export default function OnboardingPage() {
               </AlertDescription>
             </Alert>
 
-            <div className="space-y-2">
-              <Label htmlFor="existing-customer-ktp-address">
-                Alamat sesuai KTP <span className="text-red-500">*</span>
-              </Label>
-              <Textarea
-                id="existing-customer-ktp-address"
-                value={existingCustomerKtpAddress}
-                onChange={(event) => {
-                  setExistingCustomerKtpAddress(event.target.value);
-                  setExistingCustomerError(null);
-                }}
-                rows={4}
-                placeholder="Masukkan alamat sesuai KTP"
-              />
-            </div>
-
-            {customerType === "company" && (
+            {existingCustomerNeedsType && (
               <div className="space-y-2">
-                <Label htmlFor="existing-customer-company-address">
-                  Alamat Perusahaan <span className="text-red-500">*</span>
+                <Label>Tipe Customer <span className="text-red-500">*</span></Label>
+                <div className="grid grid-cols-2 gap-3">
+                  <Button
+                    type="button"
+                    variant={customerType === "individual" ? "default" : "outline"}
+                    onClick={() => {
+                      setCustomerType("individual");
+                      setExistingCustomerError(null);
+                    }}
+                  >
+                    Perorangan
+                  </Button>
+                  <Button
+                    type="button"
+                    variant={customerType === "company" ? "default" : "outline"}
+                    onClick={() => {
+                      setCustomerType("company");
+                      setExistingCustomerError(null);
+                    }}
+                  >
+                    Perusahaan
+                  </Button>
+                </div>
+              </div>
+            )}
+
+            {!existingCustomerHasKtpAddress ? (
+              <div className="space-y-2">
+                <Label htmlFor="existing-customer-ktp-address">
+                  Alamat sesuai KTP <span className="text-red-500">*</span>
                 </Label>
                 <Textarea
-                  id="existing-customer-company-address"
-                  value={existingCustomerCompanyAddress}
+                  id="existing-customer-ktp-address"
+                  value={existingCustomerKtpAddress}
                   onChange={(event) => {
-                    setExistingCustomerCompanyAddress(event.target.value);
+                    setExistingCustomerKtpAddress(event.target.value);
                     setExistingCustomerError(null);
                   }}
                   rows={4}
-                  placeholder="Masukkan alamat kantor/perusahaan"
+                  placeholder="Masukkan alamat sesuai KTP"
                 />
               </div>
+            ) : (
+              <Alert className="border-slate-200 bg-slate-50">
+                <CheckCircle2 className="h-4 w-4 text-emerald-600" />
+                <AlertDescription>Alamat sesuai KTP sudah tersimpan dan tidak perlu diisi ulang.</AlertDescription>
+              </Alert>
+            )}
+
+            {customerType === "company" && (
+              !existingCustomerHasCompanyAddress ? (
+                <div className="space-y-2">
+                  <Label htmlFor="existing-customer-company-address">
+                    Alamat Perusahaan <span className="text-red-500">*</span>
+                  </Label>
+                  <Textarea
+                    id="existing-customer-company-address"
+                    value={existingCustomerCompanyAddress}
+                    onChange={(event) => {
+                      setExistingCustomerCompanyAddress(event.target.value);
+                      setExistingCustomerError(null);
+                    }}
+                    rows={4}
+                    placeholder="Masukkan alamat kantor/perusahaan"
+                  />
+                </div>
+              ) : (
+                <Alert className="border-slate-200 bg-slate-50">
+                  <CheckCircle2 className="h-4 w-4 text-emerald-600" />
+                  <AlertDescription>Alamat perusahaan sudah tersimpan dan tidak perlu diisi ulang.</AlertDescription>
+                </Alert>
+              )
             )}
 
             {existingCustomerError && (
