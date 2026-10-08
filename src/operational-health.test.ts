@@ -14,6 +14,13 @@ describe("commercial operations hardening", () => {
     expect(ops).toContain("pg_current_wal_lsn()");
   });
 
+  it("enables operational monitoring by default in production", () => {
+    const ops = readFileSync(join(process.cwd(), "server/operational-health.mjs"), "utf8");
+
+    expect(ops).toContain('const IS_PRODUCTION = APP_ENV === "production"');
+    expect(ops).toContain('const enabled = configured === "true" || (IS_PRODUCTION && configured !== "false")');
+  });
+
   it("keeps monitoring lightweight and restart-safe", () => {
     const ops = readFileSync(join(process.cwd(), "server/operational-health.mjs"), "utf8");
 
