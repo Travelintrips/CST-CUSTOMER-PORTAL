@@ -1167,6 +1167,7 @@ async function handleOnboardingComplete(ctx) {
   const phone = text(body.phone) || null;
   const ktpAddress = text(body.address) || null;
   const companyAddress = text(body.companyAddress) || null;
+  const existingVendorCompletion = accountType === "vendor" && body.existingVendorCompletion === true;
   if (!["customer", "vendor", "driver", "employee"].includes(accountType)) {
     return adminError(ctx, 400, "Tipe akun tidak valid.");
   }
@@ -1180,8 +1181,11 @@ async function handleOnboardingComplete(ctx) {
       "Tipe akun tidak dapat diubah melalui onboarding. Hubungi admin untuk perubahan role.",
     );
   }
-  if (!fullName || fullName.length < 3 || !phone || !ktpAddress || ktpAddress.length < 10) {
+  if (!existingVendorCompletion && (!fullName || fullName.length < 3 || !phone || !ktpAddress || ktpAddress.length < 10)) {
     return adminError(ctx, 400, "Nama, nomor telepon, dan alamat sesuai KTP wajib diisi.");
+  }
+  if (existingVendorCompletion && (!ktpAddress || ktpAddress.length < 10 || !companyAddress || companyAddress.length < 10)) {
+    return adminError(ctx, 400, "Alamat sesuai KTP PIC dan alamat perusahaan wajib diisi minimal 10 karakter.");
   }
 
   const customerType = accountType === "customer" ? text(body.customerType) : null;
@@ -1193,7 +1197,7 @@ async function handleOnboardingComplete(ctx) {
   const employee = body.employee && typeof body.employee === "object" ? body.employee : {};
   const driver = body.driver && typeof body.driver === "object" ? body.driver : {};
 
-  if (["customer", "vendor"].includes(accountType) && !text(body.ktpUrl)) {
+  if (!existingVendorCompletion && ["customer", "vendor"].includes(accountType) && !text(body.ktpUrl)) {
     return adminError(ctx, 400, "KTP wajib diunggah untuk menyelesaikan pendaftaran.");
   }
 
@@ -1213,7 +1217,7 @@ async function handleOnboardingComplete(ctx) {
     }
   }
 
-  if (accountType === "vendor") {
+  if (accountType === "vendor" && !existingVendorCompletion) {
     if (
       !text(vendor.companyName)
       || !text(vendor.nib)
@@ -1228,18 +1232,22 @@ async function handleOnboardingComplete(ctx) {
   }
   const profileCompanyName = accountType === "customer"
     ? text(ctx.user.company) || null
-    : text(vendor.companyName || employee.companyName) || null;
+    : existingVendorCompletion
+      ? null
+      : text(vendor.companyName || employee.companyName) || null;
   const storedCompanyAddress =
     accountType === "customer" && customerType === "company"
       ? companyAddress
       : accountType === "vendor"
         ? companyAddress
         : null;
-  const profileStatus = accountType === "customer" && body.requestedCompanyName
-    ? "pending"
-    : accountType === "customer"
-      ? "active"
-      : "pending";
+  const profileStatus = existingVendorCompletion
+    ? "active"
+    : accountType === "customer" && body.requestedCompanyName
+      ? "pending"
+      : accountType === "customer"
+        ? "active"
+        : "pending";
 
   const client = await pool.connect();
   const dbQuery = client.query.bind(client);
@@ -1258,6 +1266,75 @@ async function handleOnboardingComplete(ctx) {
       const error = new Error("Akun portal tidak ditemukan.");
       error.statusCode = 404;
       throw error;
+    }
+
+    if (existingVendorCompletion) {
+      const existingVendor = await dbQuery(
+        `select vp.id, vp.supplier_id, vp.verification_status,
+                coalesce(s.is_active, false) as supplier_active,
+                coalesce(s.is_verified, false) as supplier_verified,
+                s.registration_status as supplier_registration_status
+           from public.vendor_profiles vp
+           left join public.suppliers s on s.id = vp.supplier_id
+          where vp.customer_id = $1
+          order by vp.updated_at desc nulls last, vp.id desc
+          limit 1
+          for update of vp`,
+        [ctx.user.id],
+      );
+      const row = existingVendor.rows[0];
+      const isExistingApprovedVendor = Boolean(
+        row
+        && row.supplier_active === true
+        && row.supplier_verified === true
+        && String(row.supplier_registration_status ?? "").toLowerCase() === "approved"
+      );
+      if (!isExistingApprovedVendor) {
+        const error = new Error("Jalur lengkapi alamat hanya berlaku untuk vendor lama yang sudah terdaftar.");
+        error.statusCode = 409;
+        throw error;
+      }
+
+      await dbQuery(
+        `insert into public.portal_customer_profiles
+          (customer_id, company_address, ktp_address, profile_status, updated_at)
+         values ($1,$2,$3,'active',now())
+         on conflict (customer_id) where customer_id is not null
+         do update set
+           company_address = excluded.company_address,
+           ktp_address = excluded.ktp_address,
+           profile_status = 'active',
+           updated_at = now()`,
+        [ctx.user.id, companyAddress, ktpAddress],
+      );
+
+      await dbQuery(
+        `update public.vendor_profiles
+            set full_address = $1,
+                verification_status = 'verified',
+                updated_at = now()
+          where id = $2`,
+        [companyAddress, row.id],
+      );
+
+      if (row.supplier_id) {
+        await dbQuery(
+          `update public.suppliers
+              set address = coalesce(nullif($1, ''), address),
+                  office_address = coalesce(nullif($1, ''), office_address),
+                  updated_at = now()
+            where id = $2`,
+          [companyAddress, row.supplier_id],
+        );
+      }
+
+      await client.query("commit");
+      ctx.sendJson(ctx.response, 200, {
+        ok: true,
+        status: "active",
+        existingVendorCompletion: true,
+      });
+      return;
     }
 
     const phoneOwner = await dbQuery(
