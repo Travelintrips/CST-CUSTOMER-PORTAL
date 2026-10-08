@@ -1248,7 +1248,7 @@ async function handleOnboardingComplete(ctx) {
     await client.query("select pg_advisory_xact_lock($1)", [Number(ctx.user.id)]);
 
     const lockedUser = await dbQuery(
-      `select id, email, role, account_status
+      `select id, email, phone, role, account_status
          from public.portal_customers
         where id = $1
         for update`,
@@ -1284,11 +1284,20 @@ async function handleOnboardingComplete(ctx) {
         limit 1`,
       [ctx.user.id, phone],
     );
-    if (phoneOwner.rows[0]) {
+    const phoneUsedByAnotherAccount = Boolean(phoneOwner.rows[0]);
+    if (phoneUsedByAnotherAccount && accountType !== "vendor") {
       const error = new Error("Nomor HP / WhatsApp ini sudah digunakan oleh akun lain. Gunakan nomor lain atau login ke akun yang sudah terdaftar.");
       error.statusCode = 409;
       throw error;
     }
+
+    // Vendor PIC/contact numbers are allowed to be shared with another portal
+    // account (e.g. the same PIC manages both customer and vendor accounts).
+    // Keep portal_customers.phone unique for phone/WhatsApp authentication,
+    // while persisting the vendor contact number in the profile/vendor records.
+    const portalLoginPhone = phoneUsedByAnotherAccount && accountType === "vendor"
+      ? lockedUser.rows[0].phone ?? null
+      : phone;
 
     await dbQuery(
       `update public.portal_customers
@@ -1296,7 +1305,7 @@ async function handleOnboardingComplete(ctx) {
               customer_type = case when $3 = 'customer' then $4 else null end,
               company = case when $3 = 'customer' then coalesce($5, company) else $5 end
         where id = $6`,
-      [fullName, phone, accountType, customerType, profileCompanyName, ctx.user.id],
+      [fullName, portalLoginPhone, accountType, customerType, profileCompanyName, ctx.user.id],
     );
 
     const profileValues = [
