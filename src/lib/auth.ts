@@ -83,6 +83,7 @@ export type PortalAuthBootstrap = {
   };
   vendorApprovalStatus: string | null;
   vendorExisting: boolean;
+  customerExisting: boolean;
   allowedDestination: string;
   safeReturnTo: string | null;
   timings?: {
