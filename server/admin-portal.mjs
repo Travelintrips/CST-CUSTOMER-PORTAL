@@ -1168,6 +1168,7 @@ async function handleOnboardingComplete(ctx) {
   const ktpAddress = text(body.address) || null;
   const companyAddress = text(body.companyAddress) || null;
   const existingVendorCompletion = accountType === "vendor" && body.existingVendorCompletion === true;
+  const existingCustomerCompletion = accountType === "customer" && body.existingCustomerCompletion === true;
   if (!["customer", "vendor", "driver", "employee"].includes(accountType)) {
     return adminError(ctx, 400, "Tipe akun tidak valid.");
   }
@@ -1181,15 +1182,18 @@ async function handleOnboardingComplete(ctx) {
       "Tipe akun tidak dapat diubah melalui onboarding. Hubungi admin untuk perubahan role.",
     );
   }
-  if (!existingVendorCompletion && (!fullName || fullName.length < 3 || !phone || !ktpAddress || ktpAddress.length < 10)) {
+  if (!existingVendorCompletion && !existingCustomerCompletion && (!fullName || fullName.length < 3 || !phone || !ktpAddress || ktpAddress.length < 10)) {
     return adminError(ctx, 400, "Nama, nomor telepon, dan alamat sesuai KTP wajib diisi.");
   }
-  if (existingVendorCompletion && (!ktpAddress || ktpAddress.length < 10 || !companyAddress || companyAddress.length < 10)) {
-    return adminError(ctx, 400, "Alamat sesuai KTP PIC dan alamat perusahaan wajib diisi minimal 10 karakter.");
+  if ((existingVendorCompletion || existingCustomerCompletion) && (!ktpAddress || ktpAddress.length < 10)) {
+    return adminError(ctx, 400, "Alamat sesuai KTP wajib diisi minimal 10 karakter.");
+  }
+  if (existingVendorCompletion && (!companyAddress || companyAddress.length < 10)) {
+    return adminError(ctx, 400, "Alamat perusahaan wajib diisi minimal 10 karakter.");
   }
 
   const customerType = accountType === "customer" ? text(body.customerType) : null;
-  if (accountType === "customer" && !["individual", "company"].includes(customerType)) {
+  if (!existingCustomerCompletion && accountType === "customer" && !["individual", "company"].includes(customerType)) {
     return adminError(ctx, 400, "Tipe customer wajib dipilih.");
   }
 
@@ -1197,11 +1201,11 @@ async function handleOnboardingComplete(ctx) {
   const employee = body.employee && typeof body.employee === "object" ? body.employee : {};
   const driver = body.driver && typeof body.driver === "object" ? body.driver : {};
 
-  if (!existingVendorCompletion && ["customer", "vendor"].includes(accountType) && !text(body.ktpUrl)) {
+  if (!existingVendorCompletion && !existingCustomerCompletion && ["customer", "vendor"].includes(accountType) && !text(body.ktpUrl)) {
     return adminError(ctx, 400, "KTP wajib diunggah untuk menyelesaikan pendaftaran.");
   }
 
-  if (accountType === "customer" && customerType === "company") {
+  if (!existingCustomerCompletion && accountType === "customer" && customerType === "company") {
     if (!text(ctx.user.company)) {
       return adminError(ctx, 400, "Nama perusahaan customer harus berasal dari data registrasi.");
     }
@@ -1256,7 +1260,7 @@ async function handleOnboardingComplete(ctx) {
     await client.query("select pg_advisory_xact_lock($1)", [Number(ctx.user.id)]);
 
     const lockedUser = await dbQuery(
-      `select id, email, phone, role, account_status
+      `select id, email, phone, role, customer_type, account_status, created_at
          from public.portal_customers
         where id = $1
         for update`,
@@ -1266,6 +1270,57 @@ async function handleOnboardingComplete(ctx) {
       const error = new Error("Akun portal tidak ditemukan.");
       error.statusCode = 404;
       throw error;
+    }
+
+    if (existingCustomerCompletion) {
+      const row = lockedUser.rows[0];
+      const cutoff = Date.parse("2026-10-07T00:00:00Z");
+      const isExistingCustomer = Boolean(
+        row
+        && row.role === "customer"
+        && row.account_status === "active"
+        && row.created_at
+        && new Date(row.created_at).getTime() < cutoff
+      );
+      if (!isExistingCustomer) {
+        const error = new Error("Jalur lengkapi data hanya berlaku untuk customer lama yang sudah terdaftar.");
+        error.statusCode = 409;
+        throw error;
+      }
+
+      if (
+        String(row.customer_type ?? "").toLowerCase() === "company"
+        && (!companyAddress || companyAddress.length < 10)
+      ) {
+        const error = new Error("Alamat perusahaan wajib diisi minimal 10 karakter.");
+        error.statusCode = 400;
+        throw error;
+      }
+
+      await dbQuery(
+        `insert into public.portal_customer_profiles
+          (customer_id, company_address, ktp_address, profile_status, updated_at)
+         values ($1,$2,$3,'active',now())
+         on conflict (customer_id) where customer_id is not null
+         do update set
+           company_address = case
+             when $2::text is null or length(trim($2::text)) = 0
+               then portal_customer_profiles.company_address
+             else $2
+           end,
+           ktp_address = excluded.ktp_address,
+           profile_status = 'active',
+           updated_at = now()`,
+        [ctx.user.id, companyAddress, ktpAddress],
+      );
+
+      await client.query("commit");
+      ctx.sendJson(ctx.response, 200, {
+        ok: true,
+        status: "active",
+        existingCustomerCompletion: true,
+      });
+      return;
     }
 
     if (existingVendorCompletion) {
