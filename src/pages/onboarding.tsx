@@ -123,6 +123,11 @@ export default function OnboardingPage() {
   const [, setLocation] = useLocation();
   const { t } = useLanguage();
   const [sessionReady, setSessionReady] = useState(false);
+  const [existingVendorCompletion, setExistingVendorCompletion] = useState(false);
+  const [existingVendorKtpAddress, setExistingVendorKtpAddress] = useState("");
+  const [existingVendorCompanyAddress, setExistingVendorCompanyAddress] = useState("");
+  const [existingVendorSaving, setExistingVendorSaving] = useState(false);
+  const [existingVendorError, setExistingVendorError] = useState<string | null>(null);
 
   const [organizationCompletion, setOrganizationCompletion] = useState<OrganizationCompletionStatus | null>(null);
   const [statusLoading, setStatusLoading] = useState(true);
@@ -193,6 +198,12 @@ export default function OnboardingPage() {
         role === "customer"
         && bootstrap.onboardingStatus === "active"
         && (contextStatus === "legacy_unresolved" || contextStatus === "company_unresolved");
+
+      setExistingVendorCompletion(
+        role === "vendor"
+        && bootstrap.vendorExisting === true
+        && bootstrap.allowedDestination === "/onboarding"
+      );
 
       if (isExistingCustomerWithUnresolvedOrganization) {
         setOrganizationCompletion(contextStatus as OrganizationCompletionStatus);
@@ -460,6 +471,41 @@ export default function OnboardingPage() {
     }
   }
 
+  async function handleExistingVendorCompletion() {
+    setExistingVendorError(null);
+    const ktp = existingVendorKtpAddress.trim();
+    const company = existingVendorCompanyAddress.trim();
+    if (ktp.length < 10 || company.length < 10) {
+      setExistingVendorError("Alamat sesuai KTP PIC dan alamat perusahaan wajib diisi minimal 10 karakter.");
+      return;
+    }
+    setExistingVendorSaving(true);
+    try {
+      const res = await fetch("/api/portal/onboarding/complete", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({
+          accountType: "vendor",
+          existingVendorCompletion: true,
+          address: ktp,
+          companyAddress: company,
+        }),
+      });
+      const json = await res.json() as { ok?: boolean; message?: string; error?: string };
+      if (!res.ok || !json.ok) {
+        setExistingVendorError(json.error ?? json.message ?? "Gagal menyimpan alamat vendor.");
+        return;
+      }
+      clearPortalAuthBootstrap();
+      setLocation("/vendor-dashboard");
+    } catch {
+      setExistingVendorError("Gagal menghubungi server.");
+    } finally {
+      setExistingVendorSaving(false);
+    }
+  }
+
   // ── Submit ───────────────────────────────────────────────────────────────────
   async function handleSubmit() {
     setSubmitError(null);
@@ -555,6 +601,81 @@ export default function OnboardingPage() {
       </div>
     );
   }
+  if (existingVendorCompletion) {
+    return (
+      <div className="min-h-screen bg-gray-50 py-8 px-4">
+        <div className="max-w-2xl mx-auto">
+          <div className="text-center mb-6">
+            <div className="inline-flex mb-4" style={{ background: "rgba(255,255,255,0.95)", borderRadius: "14px", padding: "10px 14px", boxShadow: "0 4px 16px rgba(15,23,42,0.10)" }}>
+              <img src={CUSTOMER_ASSETS.logo} alt="Logo" className="h-8 w-auto object-contain" />
+            </div>
+            <h1 className="text-2xl font-bold text-gray-900">Lengkapi Data Vendor</h1>
+            <p className="text-muted-foreground text-sm mt-1">
+              Vendor Anda sudah terdaftar. Cukup lengkapi dua alamat berikut.
+            </p>
+          </div>
+
+          <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6 sm:p-8 space-y-5">
+            <Alert className="border-emerald-200 bg-emerald-50">
+              <CheckCircle2 className="h-4 w-4 text-emerald-600" />
+              <AlertDescription className="text-emerald-800">
+                Data vendor lama tetap digunakan. Anda tidak perlu mengisi ulang NIB, NPWP, jenis layanan, KTP, atau dokumen legalitas.
+              </AlertDescription>
+            </Alert>
+
+            <div className="space-y-2">
+              <Label htmlFor="existing-vendor-ktp-address">
+                Alamat sesuai KTP PIC <span className="text-red-500">*</span>
+              </Label>
+              <Textarea
+                id="existing-vendor-ktp-address"
+                value={existingVendorKtpAddress}
+                onChange={(event) => {
+                  setExistingVendorKtpAddress(event.target.value);
+                  setExistingVendorError(null);
+                }}
+                rows={4}
+                placeholder="Masukkan alamat PIC sesuai KTP"
+              />
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="existing-vendor-company-address">
+                Alamat Perusahaan <span className="text-red-500">*</span>
+              </Label>
+              <Textarea
+                id="existing-vendor-company-address"
+                value={existingVendorCompanyAddress}
+                onChange={(event) => {
+                  setExistingVendorCompanyAddress(event.target.value);
+                  setExistingVendorError(null);
+                }}
+                rows={4}
+                placeholder="Masukkan alamat kantor/perusahaan"
+              />
+            </div>
+
+            {existingVendorError && (
+              <Alert variant="destructive">
+                <AlertCircle className="h-4 w-4" />
+                <AlertDescription>{existingVendorError}</AlertDescription>
+              </Alert>
+            )}
+
+            <Button
+              className="w-full gap-2"
+              onClick={handleExistingVendorCompletion}
+              disabled={existingVendorSaving}
+            >
+              {existingVendorSaving ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
+              Simpan & Lanjut ke Vendor Dashboard
+            </Button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   if (organizationCompletion) {
     return (
       <LegacyOrganizationCompletion
