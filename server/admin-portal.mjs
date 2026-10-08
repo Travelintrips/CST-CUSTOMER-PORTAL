@@ -1260,6 +1260,36 @@ async function handleOnboardingComplete(ctx) {
       throw error;
     }
 
+    const phoneOwner = await dbQuery(
+      `select id
+         from public.portal_customers
+        where id <> $1
+          and (
+            case
+              when regexp_replace(coalesce(phone, ''), '[^0-9]', '', 'g') like '0%'
+                then '62' || substr(regexp_replace(coalesce(phone, ''), '[^0-9]', '', 'g'), 2)
+              when regexp_replace(coalesce(phone, ''), '[^0-9]', '', 'g') like '8%'
+                then '62' || regexp_replace(coalesce(phone, ''), '[^0-9]', '', 'g')
+              else regexp_replace(coalesce(phone, ''), '[^0-9]', '', 'g')
+            end
+          ) = (
+            case
+              when regexp_replace(coalesce($2, ''), '[^0-9]', '', 'g') like '0%'
+                then '62' || substr(regexp_replace(coalesce($2, ''), '[^0-9]', '', 'g'), 2)
+              when regexp_replace(coalesce($2, ''), '[^0-9]', '', 'g') like '8%'
+                then '62' || regexp_replace(coalesce($2, ''), '[^0-9]', '', 'g')
+              else regexp_replace(coalesce($2, ''), '[^0-9]', '', 'g')
+            end
+          )
+        limit 1`,
+      [ctx.user.id, phone],
+    );
+    if (phoneOwner.rows[0]) {
+      const error = new Error("Nomor HP / WhatsApp ini sudah digunakan oleh akun lain. Gunakan nomor lain atau login ke akun yang sudah terdaftar.");
+      error.statusCode = 409;
+      throw error;
+    }
+
     await dbQuery(
       `update public.portal_customers
           set name = $1, phone = $2, role = $3,
@@ -1514,8 +1544,14 @@ async function handleOnboardingComplete(ctx) {
     if (Number.isInteger(error?.statusCode)) {
       return adminError(ctx, error.statusCode, error.message);
     }
-    const safeCode = typeof error?.code === "string" ? ` (${error.code})` : "";
-    return adminError(ctx, 500, `Gagal menyimpan profil di server${safeCode}.`);
+    if (error?.code === "23505" && error?.constraint === "portal_customers_phone_normalized_unique_idx") {
+      return adminError(
+        ctx,
+        409,
+        "Nomor HP / WhatsApp ini sudah digunakan oleh akun lain. Gunakan nomor lain atau login ke akun yang sudah terdaftar.",
+      );
+    }
+    return adminError(ctx, 500, "Gagal menyimpan profil di server. Silakan coba lagi.");
   } finally {
     client.release();
   }
