@@ -82,6 +82,7 @@ export type PortalAuthBootstrap = {
     pendingRequest: unknown;
   };
   vendorApprovalStatus: string | null;
+  vendorExisting: boolean;
   allowedDestination: string;
   safeReturnTo: string | null;
   timings?: {
