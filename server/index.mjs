@@ -594,6 +594,13 @@ async function bootstrapResponse(user, requestedReturnTo, customerContext) {
     vendorApprovalStatus,
     vendorExisting,
     customerExisting,
+    profileCompletion: {
+      ktpAddress: profileKtpAddress || null,
+      companyAddress: profileCompanyAddress || null,
+      hasKtpAddress: profileKtpAddress.length >= 10,
+      hasCompanyAddress: profileCompanyAddress.length >= 10,
+      needsCustomerType: user.role === "customer" && !["individual", "company"].includes(String(user.customer_type ?? "").toLowerCase()),
+    },
     allowedDestination,
     safeReturnTo: safeReturnTo(requestedReturnTo),
   };
