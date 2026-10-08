@@ -441,10 +441,15 @@ async function bootstrapResponse(user, requestedReturnTo, customerContext) {
     ),
     user.role === "vendor"
       ? query(
-          `select verification_status, full_address, nib, service_type, legality_doc_url
-             from public.vendor_profiles
-            where customer_id = $1
-            order by updated_at desc nulls last, id desc
+          `select vp.verification_status, vp.full_address, vp.nib, vp.service_type, vp.legality_doc_url,
+                  vp.supplier_id,
+                  coalesce(s.is_active, false) as supplier_active,
+                  coalesce(s.is_verified, false) as supplier_verified,
+                  s.registration_status as supplier_registration_status
+             from public.vendor_profiles vp
+             left join public.suppliers s on s.id = vp.supplier_id
+            where vp.customer_id = $1
+            order by vp.updated_at desc nulls last, vp.id desc
             limit 1`,
           [user.id],
         )
@@ -455,6 +460,12 @@ async function bootstrapResponse(user, requestedReturnTo, customerContext) {
   const approval = approvalResult.rows[0] ?? null;
   const vendorProfile = user.role === "vendor" ? vendorResult.rows[0] ?? null : null;
   const hasVendorProfile = Boolean(vendorProfile);
+  const vendorExisting =
+    user.role === "vendor"
+    && hasVendorProfile
+    && vendorProfile?.supplier_active === true
+    && vendorProfile?.supplier_verified === true
+    && String(vendorProfile?.supplier_registration_status ?? "").toLowerCase() === "approved";
   const vendorApprovalStatus = user.role === "vendor"
     ? vendorProfile?.verification_status
       ?? (approval?.status === "approved" ? "verified" : approval?.status ?? "pending")
@@ -483,9 +494,14 @@ async function bootstrapResponse(user, requestedReturnTo, customerContext) {
       && profileKtpAddress.length >= 10
       && profileCompanyAddress.length >= 10
       && String(vendorProfile?.full_address ?? "").trim().length >= 10
-      && String(vendorProfile?.nib ?? "").trim().length > 0
-      && String(vendorProfile?.service_type ?? "").trim().length > 0
-      && String(vendorProfile?.legality_doc_url ?? "").trim().length > 0
+      && (
+        vendorExisting
+        || (
+          String(vendorProfile?.nib ?? "").trim().length > 0
+          && String(vendorProfile?.service_type ?? "").trim().length > 0
+          && String(vendorProfile?.legality_doc_url ?? "").trim().length > 0
+        )
+      )
     );
   const needsInitialOnboarding =
     profileStatus === "incomplete"
@@ -566,6 +582,7 @@ async function bootstrapResponse(user, requestedReturnTo, customerContext) {
       pendingRequest: null,
     },
     vendorApprovalStatus,
+    vendorExisting,
     allowedDestination,
     safeReturnTo: safeReturnTo(requestedReturnTo),
   };
