@@ -108,6 +108,15 @@ describe("production runtime availability lifecycle", () => {
     expect(server).toContain('allowedDestination = "/onboarding"');
   });
 
+  it("does not bypass onboarding for legacy customers without persisted profiles", () => {
+    const server = readFileSync(join(process.cwd(), "server/index.mjs"), "utf8");
+
+    expect(server).not.toContain("legacyCustomerWithoutProfile");
+    expect(server).toContain('user.role === "customer" && !customerProfileComplete');
+    expect(server).toContain("profileKtpAddress.length >= 10");
+    expect(server).toContain('user.customer_type !== "company" || profileCompanyAddress.length >= 10');
+  });
+
   it("requires vendor approval before operational vendor APIs", () => {
     const vendorPortal = readFileSync(join(process.cwd(), "server/vendor-portal.mjs"), "utf8");
     const adminPortal = readFileSync(join(process.cwd(), "server/admin-portal.mjs"), "utf8");
