@@ -3,6 +3,8 @@ import { pool, query } from "./db.mjs";
 import { authCapabilities } from "./auth-providers.mjs";
 import { getMarketplaceWhatsAppQueueStats } from "./whatsapp-service.mjs";
 
+const APP_ENV = process.env.APP_ENV ?? process.env.NODE_ENV ?? "development";
+const IS_PRODUCTION = APP_ENV === "production" || process.env.NODE_ENV === "production";
 const INSTANCE_ID = `${process.pid}-${crypto.randomUUID().slice(0, 8)}`;
 const RELEASE_ID = () => process.env.PORTAL_RELEASE_ID ?? "local-development";
 const PUBLIC_ORIGIN = () => {
@@ -280,7 +282,9 @@ async function runRecoveryDrillIfDue() {
 }
 
 export function startOperationalMonitoring() {
-  if (process.env.CUSTOMER_PORTAL_OPERATIONS_MONITOR_ENABLED !== "true") return;
+  const configured = String(process.env.CUSTOMER_PORTAL_OPERATIONS_MONITOR_ENABLED ?? "").trim().toLowerCase();
+  const enabled = configured === "true" || (IS_PRODUCTION && configured !== "false");
+  if (!enabled) return;
   if (healthTimer || publicProbeTimer || recoveryTimer || cleanupTimer) return;
 
   healthTimer = setInterval(() => void runOperationalHealthCheck(), 5 * 60_000);
