@@ -293,6 +293,7 @@ function buildStaticBody(route, cfg) {
       ${serviceLinks}
     </main>
     <footer>
+      <p><a href="https://wa.cstlogistic.co.id/">CST WhatsApp Gateway</a> — Infrastruktur WhatsApp bisnis resmi PT Cahaya Sejati Teknologi.</p>
       <p>&copy; 2026 PT Cahaya Sejati Teknologi. Seluruh hak cipta dilindungi.</p>
     </footer>
   </div>`;
