@@ -146,15 +146,26 @@ export function Footer() {
               {t("footer.description")}
             </p>
 
-            <a
-              href={waHref}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-[#25D366]/20 hover:bg-[#25D366]/35 border border-[#25D366]/40 text-[#4ADE80] text-sm font-medium transition-all duration-200"
-            >
-              <MessageCircle className="h-4 w-4" />
-              WhatsApp
-            </a>
+            <div className="flex flex-wrap gap-2">
+              <a
+                href={waHref}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-[#25D366]/20 hover:bg-[#25D366]/35 border border-[#25D366]/40 text-[#4ADE80] text-sm font-medium transition-all duration-200"
+              >
+                <MessageCircle className="h-4 w-4" />
+                WhatsApp
+              </a>
+              <a
+                href="https://wa.cstlogistic.co.id/"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-white/10 hover:bg-white/15 border border-white/20 text-white/90 text-sm font-medium transition-all duration-200"
+              >
+                <MessageCircle className="h-4 w-4" />
+                CST WhatsApp Gateway
+              </a>
+            </div>
           </div>
 
           {/* Col 2 — Quick Links */}
