@@ -5016,7 +5016,8 @@ async function startupPreflight() {
 }
 
 function startWorkers() {
-  if (!IS_PRODUCTION || process.env.CUSTOMER_PORTAL_WA_WORKER_ENABLED === "false" || whatsappTimer) return;
+  if (!IS_PRODUCTION || process.env.CUSTOMER_PORTAL_WA_WORKER_ENABLED === "false") return;
+  if (whatsappTimer) return;
   const workerStartedAt = new Date().toISOString();
   const run = async () => {
     if (whatsappRunInFlight) return;
