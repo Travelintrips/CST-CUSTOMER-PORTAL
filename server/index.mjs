@@ -34,6 +34,7 @@ import { resolveCustomerPortalFonnteToken } from "./fonnte-config.mjs";
 import { handleMarketplaceRoute } from "./marketplace-service.mjs";
 import { createLogisticPaylabsLink, getLogisticPaylabsState, handlePaylabsAdminRoute, handlePaylabsWebhook } from "./paylabs-service.mjs";
 import { processMarketplaceWhatsAppQueue } from "./whatsapp-service.mjs";
+import { startBackgroundLeadership, stopBackgroundLeadership } from "./background-leader.mjs";
 import {
   getOperationalSummary,
   runOperationalHealthCheck,
@@ -4987,6 +4988,7 @@ const server = http.createServer(async (request, response) => {
 });
 
 let whatsappTimer = null;
+let whatsappRunInFlight = false;
 
 async function startupPreflight() {
   for (let attempt = 1; attempt <= STARTUP_MAX_ATTEMPTS; attempt += 1) {
@@ -5014,13 +5016,15 @@ async function startupPreflight() {
 }
 
 function startWorkers() {
-  if (!IS_PRODUCTION || process.env.CUSTOMER_PORTAL_WA_WORKER_ENABLED === "false") return;
+  if (!IS_PRODUCTION || process.env.CUSTOMER_PORTAL_WA_WORKER_ENABLED === "false" || whatsappTimer) return;
   const workerStartedAt = new Date().toISOString();
   const run = async () => {
+    if (whatsappRunInFlight) return;
+    whatsappRunInFlight = true;
     try {
       const result = await processMarketplaceWhatsAppQueue({ createdAfter: workerStartedAt });
       if (result?.skipped) {
-        console.warn("[customer-portal-api] WhatsApp worker skipped", { reason: result.skipped });
+        console.info("[customer-portal-api] WhatsApp worker idle", { reason: result.skipped });
       } else if (Number(result?.processed ?? 0) > 0 || Number(result?.failed ?? 0) > 0) {
         console.info("[customer-portal-api] WhatsApp worker cycle", {
           processed: Number(result?.processed ?? 0),
@@ -5030,11 +5034,29 @@ function startWorkers() {
       }
     } catch (error) {
       console.error("[customer-portal-api] WhatsApp worker failed", error?.message ?? error);
+    } finally {
+      whatsappRunInFlight = false;
     }
   };
   whatsappTimer = setInterval(() => void run(), 60_000);
   whatsappTimer.unref?.();
   setTimeout(() => void run(), 5_000).unref?.();
+}
+
+function stopWorkers() {
+  if (whatsappTimer) clearInterval(whatsappTimer);
+  whatsappTimer = null;
+  whatsappRunInFlight = false;
+}
+
+function startBackgroundJobs() {
+  startWorkers();
+  if (IS_PRODUCTION) startOperationalMonitoring();
+}
+
+function stopBackgroundJobs() {
+  stopWorkers();
+  stopOperationalMonitoring();
 }
 
 async function establishRuntimeReadiness() {
@@ -5046,8 +5068,12 @@ async function establishRuntimeReadiness() {
       runtimeState = "ready";
       runtimeReadyAt = new Date().toISOString();
       console.log(`[customer-portal-api] runtime ready release=${process.env.PORTAL_RELEASE_ID ?? "local-development"}`);
-      startWorkers();
-      if (IS_PRODUCTION) startOperationalMonitoring();
+      if (IS_PRODUCTION) {
+        startBackgroundLeadership({
+          onAcquired: async () => startBackgroundJobs(),
+          onLost: async () => stopBackgroundJobs(),
+        });
+      }
       return;
     } catch (error) {
       runtimeState = "degraded";
@@ -5083,11 +5109,8 @@ async function shutdown(signal) {
   shutdownPromise = (async () => {
     runtimeState = "draining";
     console.log(`[customer-portal-api] ${signal}, draining for ${DRAIN_DELAY_MS}ms before shutdown`);
-    if (whatsappTimer) {
-      clearInterval(whatsappTimer);
-      whatsappTimer = null;
-    }
-    stopOperationalMonitoring();
+    stopBackgroundJobs();
+    await stopBackgroundLeadership();
 
     // Give the upstream proxy time to observe /api/readyz=503 and stop routing
     // new requests to this instance before we stop accepting connections.
