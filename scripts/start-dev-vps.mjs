@@ -43,4 +43,5 @@ delete process.env.SUPABASE_PG_URL;
 process.env.SUPABASE_URL = url;
 process.env.SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY_DEV;
 process.env.SUPABASE_STORAGE_BUCKET = process.env.SUPABASE_STORAGE_BUCKET_DEV;
+process.env.CUSTOMER_PORTAL_DEV_VPS_SERVE_STATIC = "1";
 await import("../server/index.mjs");
