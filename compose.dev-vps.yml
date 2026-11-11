@@ -1,0 +1,35 @@
+services:
+  customer-portal-dev:
+    build:
+      context: .
+      dockerfile: Dockerfile.dev-vps
+      args:
+        DEV_RELEASE_SHA: ${DEV_RELEASE_SHA:-dev-vps}
+    image: cst-customer-portal-dev:local
+    container_name: cst-customer-portal-dev
+    restart: "no"
+    env_file:
+      - /etc/cst-customer-portal-dev/runtime.env
+    environment:
+      APP_ENV: development
+      NODE_ENV: development
+      PORT: "18444"
+      PORTAL_RELEASE_ID: ${DEV_RELEASE_SHA:-dev-vps}
+    ports:
+      - "127.0.0.1:18444:18444"
+    mem_limit: 1536m
+    cpus: 0.75
+    pids_limit: 128
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:18444/api/readyz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 45s
