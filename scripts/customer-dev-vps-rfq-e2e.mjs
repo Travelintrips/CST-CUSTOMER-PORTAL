@@ -79,12 +79,18 @@ try{
  await api("/api/mkt/admin/rfqs/"+fixture.rfqId+"/send-to-customer",{method:"POST",user:admin,body:{quoteId:fixture.quoteId,notes:"DEV E2E ONLY"}});
  const approved=await api("/api/mkt/portal/rfqs/"+fixture.rfqId+"/customer-approve",{method:"POST",user:customer,headers:{"Idempotency-Key":"DEV-RFQ-"+id},body:{}});
  fixture.poId=Number(approved?.data?.poId||0);
+ const bizportalRfqs=await api("/api/mkt/admin/rfqs",{user:admin});
+ if(!Array.isArray(bizportalRfqs?.data)||!bizportalRfqs.data.some(x=>Number(x.rfqId)===fixture.rfqId))fail("BizPortal RFQ list API missing synthetic RFQ");
+
  if(!fixture.poId)fail("approval did not create purchase order");
+ const bizportalPos=await api("/api/mkt/admin/purchase-orders?limit=200",{user:admin});
+ if(!Array.isArray(bizportalPos?.data)||!bizportalPos.data.some(x=>Number(x.id)===fixture.poId))fail("BizPortal PO list API missing synthetic PO");
+
  const records=(await query("select po.id,po.rfq_id from public.mkt_purchase_orders po where po.id=$1 and po.rfq_id=$2",[fixture.poId,fixture.rfqId])).rows;
  if(records.length!==1)fail("shared database/BizPortal read-back missing PO");
  const feed=await api("/api/portal/order-feed",{user:customer});
  if(!Array.isArray(feed?.marketplaceRfqs)||!feed.marketplaceRfqs.some(x=>Number(x.rfqId)===fixture.rfqId))fail("customer order feed missing RFQ");
- console.log("[dev-rfq-e2e] PASS login-derived session, RFQ submit, vendor quotation, admin send, customer approval, PO read-back, customer feed");
+ console.log("[dev-rfq-e2e] PASS login-derived session, RFQ submit, vendor quotation, admin send, customer approval, PO read-back, BizPortal RFQ/PO list APIs, customer feed");
  passed=true;
 }catch(e){console.error("[dev-rfq-e2e] FAIL "+e.message)}
 finally{try{await cleanup(fixture)}catch(e){console.error("[dev-rfq-e2e] "+e.message);passed=false}await closeDatabase()}
