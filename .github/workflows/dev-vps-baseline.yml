@@ -1,0 +1,59 @@
+name: Customer Portal DEV VPS Baseline
+
+on:
+  push:
+    branches: [dev-vps-srv1792369]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: customer-portal-dev-vps-baseline
+  cancel-in-progress: false
+
+jobs:
+  verify-dev-baseline:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Check out DEV branch
+        uses: actions/checkout@v4
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          run_install: false
+      - name: Set up Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: pnpm
+      - name: Install locked dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Typecheck
+        run: pnpm typecheck
+      - name: Regression unit tests (no live database)
+        run: pnpm test -- --maxWorkers=1
+        env:
+          APP_ENV: development
+          NODE_ENV: test
+          SUPABASE_DATABASE_URL_DEV: postgresql://ci:ci@127.0.0.1:5432/ci
+          SESSION_SECRET: customer-portal-dev-vps-ci-secret-32
+      - name: Build portal bundle
+        run: pnpm build
+        env:
+          APP_ENV: development
+          NODE_ENV: development
+      - name: Verify bundle exists
+        run: |
+          test -f dist/public/index.html
+          test -f dist/server/index.mjs
+          test -f dist/server/secret-bootstrap.mjs
+      - name: Upload DEV artifact (does NOT deploy to PROD)
+        uses: actions/upload-artifact@v4
+        with:
+          name: customer-portal-dev-vps-bundle
+          path: |
+            dist/
+            index.js
+          retention-days: 7
