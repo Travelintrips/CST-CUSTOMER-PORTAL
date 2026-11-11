@@ -7,7 +7,7 @@ services:
         DEV_RELEASE_SHA: ${DEV_RELEASE_SHA:-dev-vps}
     image: cst-customer-portal-dev:local
     container_name: cst-customer-portal-dev
-    restart: "no"
+    restart: unless-stopped
     env_file:
       - /etc/cst-customer-portal-dev/runtime.env
     environment:
