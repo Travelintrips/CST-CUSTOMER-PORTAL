@@ -4963,7 +4963,7 @@ async function route(request, response) {
     return;
   }
 
-  if (!pathname.startsWith("/api/") && IS_PRODUCTION) {
+  if (!pathname.startsWith("/api/") && (IS_PRODUCTION || (APP_ENV === "development" && process.env.CUSTOMER_PORTAL_DEV_VPS_SERVE_STATIC === "1"))) {
     if (await serveStatic(request, response, pathname)) return;
   }
 
