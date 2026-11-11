@@ -57,3 +57,27 @@ jobs:
             dist/
             index.js
           retention-days: 7
+
+  certify-dev-vps:
+    name: Certify DEV commit for VPS pull
+    needs: verify-dev-baseline
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout tested commit
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: true
+      - name: Check branch is still at tested commit
+        shell: bash
+        run: |
+          set -euo pipefail
+          remote_sha="$(git ls-remote origin refs/heads/dev-vps-srv1792369 | cut -f1)"
+          test "$remote_sha" = "$GITHUB_SHA"
+      - name: Publish only CI-PASS commit to DEV certified ref
+        shell: bash
+        run: |
+          set -euo pipefail
+          git push origin "HEAD:refs/heads/dev-vps-certified"
