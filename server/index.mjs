@@ -1146,10 +1146,10 @@ async function handlePortalOrderFeed(request, response) {
          from public.trucking_booking_requests t
         where t.portal_customer_id=$1
            or t.customer_id=$1
-           or t.company_id=any($3::int[])
+           or t.company_id=any($2::int[])
         order by t.created_at desc
         limit 100`,
-      params,
+      [user.id, companyIds],
     ),
     query(
       `select a.id,a.order_number,a.status,a.tracking_status,a.created_at,
