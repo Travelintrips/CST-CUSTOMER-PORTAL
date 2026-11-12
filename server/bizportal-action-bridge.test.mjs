@@ -1,5 +1,5 @@
 import { Readable } from "node:stream";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, afterEach, describe, expect, it, vi } from "vitest";
 
 const stubs = vi.hoisted(() => ({
   query: vi.fn(),
