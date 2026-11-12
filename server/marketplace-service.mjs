@@ -1125,7 +1125,7 @@ async function handleAdminMarketplace(request, response, pathname, body, user) {
       return true;
     }
   }
-  const inviteVendor = pathname.match(/^\\/api\\/mkt\\/admin\\/rfqs\\/(\\d+)\\/invite-vendor$/);
+  const inviteVendor = pathname.match(/^\/api\/mkt\/admin\/rfqs\/(\d+)\/invite-vendor$/);
   if (request.method === "POST" && inviteVendor) {
     const rfqId = integer(inviteVendor[1], "RFQ");
     const vendorId = integer(body.vendorId, "Vendor");
