@@ -79,6 +79,22 @@ try{
  await api("/api/mkt/admin/rfqs/"+fixture.rfqId+"/send-to-customer",{method:"POST",user:admin,body:{quoteId:fixture.quoteId,notes:"DEV E2E ONLY"}});
  const approved=await api("/api/mkt/portal/rfqs/"+fixture.rfqId+"/customer-approve",{method:"POST",user:customer,headers:{"Idempotency-Key":"DEV-RFQ-"+id},body:{}});
  fixture.poId=Number(approved?.data?.poId||0);
+ if(!fixture.poId)fail("first approval failed to create PO");
+ const replay=await api("/api/mkt/portal/rfqs/"+fixture.rfqId+"/customer-approve",{
+   method:"POST",user:customer,headers:{"Idempotency-Key":"DEV-RFQ-"+id},body:{}
+ });
+ if(Number(replay?.data?.poId)!==fixture.poId||replay?.data?.alreadyProcessed!==true)
+   fail("customer approval replay created inconsistent PO");
+ const poCount=(await query("select count(*)::int as n from public.mkt_purchase_orders where rfq_id=$1",[fixture.rfqId])).rows[0].n;
+ if(poCount!==1)fail("duplicate PO after idempotent approval: "+poCount);
+ const eventRows=(await query("select event_key,type,portal_customer_id from public.portal_customer_notifications where event_key like $1 order by id",["rfq-"+fixture.rfqId+"-%"])).rows;
+ const keys=new Set(eventRows.map(e=>e.event_key));
+ if(!keys.has("rfq-"+fixture.rfqId+"-po-created") ||
+    !keys.has("rfq-"+fixture.rfqId+"-customer-review-"+fixture.quoteId))
+   fail("customer/admin notifications missing after quote approval");
+ const delivery=(await query("select id,event_type,status from public.mkt_notification_queue where rfq_id=$1 and event_type='po_created'",[fixture.rfqId])).rows;
+ if(delivery.length!==1)fail("po_created vendor queue count should be 1, got "+delivery.length);
+ console.log("[dev-rfq-e2e] PASS idempotent approval, single PO, customer/admin notification, single vendor delivery queue");
  const bizportalRfqs=await api("/api/mkt/admin/rfqs",{user:admin});
  if(!Array.isArray(bizportalRfqs?.data)||!bizportalRfqs.data.some(x=>Number(x.rfqId)===fixture.rfqId))fail("BizPortal RFQ list API missing synthetic RFQ");
 
