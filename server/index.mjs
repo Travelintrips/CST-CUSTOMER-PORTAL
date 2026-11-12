@@ -32,6 +32,7 @@ import {
 import { checkStorageReadiness, signedDocumentUrl, signedPaymentProofUrl, uploadPaymentProof, uploadPublicAsset, uploadOrderDocument } from "./storage.mjs";
 import { resolveCustomerPortalFonnteToken } from "./fonnte-config.mjs";
 import { handleMarketplaceRoute } from "./marketplace-service.mjs";
+import { handleBizPortalActionBridge } from "./bizportal-action-bridge.mjs";
 import { createLogisticPaylabsLink, getLogisticPaylabsState, handlePaylabsAdminRoute, handlePaylabsWebhook } from "./paylabs-service.mjs";
 import { processMarketplaceWhatsAppQueue } from "./whatsapp-service.mjs";
 import {
@@ -3720,6 +3721,11 @@ async function route(request, response) {
       retryAfterSeconds: 3,
       releaseId: process.env.PORTAL_RELEASE_ID ?? "local-development",
     }, { "Retry-After": "3" });
+    return;
+  }
+
+  if (pathname === "/api/internal/bizportal-marketplace/action") {
+    await handleBizPortalActionBridge({request,response,sendJson});
     return;
   }
 
