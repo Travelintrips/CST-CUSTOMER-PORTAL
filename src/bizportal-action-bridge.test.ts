@@ -110,6 +110,16 @@ describe("DEV BizPortal canonical signed mutation bridge",()=>{
     expect((await dispatch(reqFor())).status).toBe(404);
     expect(stubs.marketplace).not.toHaveBeenCalled();
   });
+  it("accepts individual vendor invitation with verified actor and scoped RFQ",async()=>{
+    const res=await dispatch(reqFor({path:"/api/mkt/admin/rfqs/11/invite-vendor",body:{vendorId:7}}));
+    expect(res.status).toBe(200);
+    expect(stubs.marketplace).toHaveBeenCalledOnce();
+    expect(stubs.marketplace.mock.calls[0][0].body).toEqual({vendorId:7});
+  });
+  it("rejects malformed vendor invitation before touching DB",async()=>{
+    expect((await dispatch(reqFor({path:"/api/mkt/admin/rfqs/11/invite-vendor",body:{vendorId:"7"}}))).status).toBe(422);
+    expect(stubs.query).not.toHaveBeenCalled();
+  });
   it("executes only canonical Marketplace handler, then saves audit result",async()=>{
     expect((await dispatch(reqFor())).status).toBe(200);
     expect(stubs.marketplace).toHaveBeenCalledOnce();
