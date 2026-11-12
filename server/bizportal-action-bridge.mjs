@@ -12,7 +12,7 @@ const REQUEST_MAX_BYTES = 16_384;
 const CLOCK_SKEW_MS = 120_000;
 const UUID = /^[a-f0-9]{8}-[a-f0-9]{4}-[1-8][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/i;
 
-const RFQ_ACTION = /^\/api\/mkt\/admin\/rfqs\/([1-9][0-9]{0,9})\/(approve-and-invite|send-to-customer)$/;
+const RFQ_ACTION = /^\/api\/mkt\/admin\/rfqs\/([1-9][0-9]{0,9})\/(invite-vendor|approve-and-invite|send-to-customer)$/;
 const PO_ACTION = /^\/api\/mkt\/admin\/purchase-orders\/([1-9][0-9]{0,9})\/(issue|production|ready-to-ship|in-transit|delivered|complete|close)$/;
 
 function bridgeEnabled() {
@@ -55,6 +55,10 @@ function sanitizeAction(value) {
   if (JSON.stringify(value.body).length > 8_192) return null;
 
   const body = value.body;
+  if (match[2] === "invite-vendor") {
+    if (!Number.isSafeInteger(body.vendorId) || body.vendorId <= 0
+      || (body.notes !== undefined && (typeof body.notes !== "string" || body.notes.length > 2000))) return null;
+  }
   if (match[2] === "approve-and-invite") {
     if (!Array.isArray(body.vendorIds) || body.vendorIds.length < 1 || body.vendorIds.length > 20
       || !body.vendorIds.every((id) => Number.isSafeInteger(id) && id > 0)) return null;
