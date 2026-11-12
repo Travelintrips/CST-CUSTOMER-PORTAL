@@ -56,6 +56,7 @@ beforeEach(()=>{
     if(s.includes("from public.users"))return {rows:[{id:actorId,email:"admin@dev.test",role:"admin"}],rowCount:1};
     if(s.includes("from public.mkt_rfqs where id"))return {rows:[{id:11}],rowCount:1};
     if(s.includes("from public.mkt_purchase_orders p join public.mkt_rfqs r"))return {rows:[{id:2}],rowCount:1};
+    if(s.includes("from public.mkt_po_shipments s join"))return {rows:[{id:3}],rowCount:1};
     if(s.includes("from public.portal_customers"))return {rows:[{id:1,email:"dev-admin@dev.local",role:"admin"}],rowCount:1};
     if(s.includes("insert into portal_bridge_private"))return {rows:[{action_id:requestId}],rowCount:1};
     if(s.includes("update portal_bridge_private"))return {rowCount:1,rows:[]};
@@ -131,6 +132,14 @@ describe("DEV BizPortal canonical signed mutation bridge",()=>{
     expect(delegated.url.pathname).toBe(path);
     expect(stubs.query.mock.calls.some((call)=>String(call[0]).includes("insert into portal_bridge_private"))).toBe(false);
     expect(stubs.query.mock.calls.some((call)=>String(call[0]).includes("update portal_bridge_private"))).toBe(false);
+  });
+  it("delegates shipment detail read without receipts after validating parent PO scope",async()=>{
+    const result=await dispatch(reqFor({path:"/api/mkt/admin/shipments/3",body:{}}));
+    expect(result.status).toBe(200);
+    expect(stubs.marketplace).toHaveBeenCalledOnce();
+    expect(stubs.marketplace.mock.calls[0][0].request.method).toBe("GET");
+    expect(stubs.query.mock.calls.some((c)=>String(c[0]).includes("from public.mkt_po_shipments s join"))).toBe(true);
+    expect(stubs.query.mock.calls.some((c)=>String(c[0]).includes("insert into portal_bridge_private"))).toBe(false);
   });
   it("denies unsupported PO reads before any database access",async()=>{
     const result=await dispatch(reqFor({path:"/api/mkt/admin/purchase-orders/2/payment",body:{}}));
