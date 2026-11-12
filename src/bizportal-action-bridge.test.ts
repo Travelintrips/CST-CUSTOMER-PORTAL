@@ -9,10 +9,6 @@ const stubs = vi.hoisted(() => ({
 }));
 vi.mock("../server/db.mjs", () => ({ query: stubs.query }));
 vi.mock("../server/marketplace-service.mjs", () => ({ handleMarketplaceRoute: stubs.marketplace }));
-vi.mock("node:crypto", async(importOriginal)=>{
-  const actual=await importOriginal<typeof import("node:crypto")>();
-  return { ...actual, verify: stubs.verify };
-});
 import { handleBizPortalActionBridge, verifyBridgeRequest, signatureMessage } from "../server/bizportal-action-bridge.mjs";
 
 const actorId="5b8a1255-5c22-4973-a1b4-d79aa80c9216";
@@ -45,6 +41,7 @@ async function dispatch(request){
     request,
     response:{},
     sendJson:(_response,status,body)=>{outcome={status,body}},
+    verifyRequest: stubs.verify,
   });
   return outcome;
 }
@@ -85,6 +82,7 @@ describe("DEV BizPortal canonical signed mutation bridge",()=>{
   it("refuses requests with missing or bad signature",async()=>{
     const request=reqFor();
     request.headers["x-cst-bridge-signature"]="bad";
+    stubs.verify.mockReturnValue(false);
     expect((await dispatch(request)).status).toBe(401);
     expect(stubs.query).not.toHaveBeenCalled();
   });
