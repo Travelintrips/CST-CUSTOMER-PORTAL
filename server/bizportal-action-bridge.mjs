@@ -14,6 +14,7 @@ const UUID = /^[a-f0-9]{8}-[a-f0-9]{4}-[1-8][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-
 
 const RFQ_ACTION = /^\/api\/mkt\/admin\/rfqs\/([1-9][0-9]{0,9})\/(invite-vendor|approve-and-invite|send-to-customer)$/;
 const PO_ACTION = /^\/api\/mkt\/admin\/purchase-orders\/([1-9][0-9]{0,9})\/(issue|production|ready-to-ship|in-transit|delivered|complete|close)$/;
+const PO_READ = /^\/api\/mkt\/admin\/purchase-orders\/([1-9][0-9]{0,9})\/(shipments|lines)$/;
 
 function bridgeEnabled() {
   return process.env.APP_ENV === "development"
@@ -46,7 +47,7 @@ export function verifyBridgeRequest({ timestamp, requestId, signature, rawBody, 
 function sanitizeAction(value) {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
   const path = typeof value.path === "string" ? value.path : "";
-  const match = RFQ_ACTION.exec(path) ?? PO_ACTION.exec(path);
+  const match = RFQ_ACTION.exec(path) ?? PO_ACTION.exec(path) ?? PO_READ.exec(path);
   if (!match) return null;
   if (!UUID.test(String(value.actorUserId))) return null;
   if (typeof value.actorEmail !== "string" || value.actorEmail.length > 254
@@ -55,6 +56,8 @@ function sanitizeAction(value) {
   if (JSON.stringify(value.body).length > 8_192) return null;
 
   const body = value.body;
+  const readOnly = PO_READ.test(path);
+  if (readOnly && Object.keys(body).length !== 0) return null;
   if (match[2] === "invite-vendor") {
     if (!Number.isSafeInteger(body.vendorId) || body.vendorId <= 0
       || (body.notes !== undefined && (typeof body.notes !== "string" || body.notes.length > 2000))) return null;
@@ -68,6 +71,7 @@ function sanitizeAction(value) {
 
   return {
     path,
+    readOnly,
     entityType: RFQ_ACTION.test(path) ? "rfq" : "po",
     entityId: Number(match[1]),
     actorUserId: String(value.actorUserId).toLowerCase(),
@@ -156,6 +160,36 @@ export async function handleBizPortalActionBridge({ request, response, sendJson,
   );
   if (!admin.rows[0]) {
     respond(sendJson, response, 503, { error: "Canonical operator unavailable" });
+    return;
+  }
+
+  if (action.readOnly) {
+    // Signed GET only: delegate to the existing canonical Customer Portal reader.
+    // No mutation receipt, no local SQL writes, and no caller-provided Portal cookie.
+    const delegatedRequest = Object.create(request);
+    delegatedRequest.method = "GET";
+    delegatedRequest.url = action.path;
+    delegatedRequest.headers = { "content-type": "application/json" };
+    try {
+      let result = null;
+      const accepted = await handleMarketplaceRoute({
+        request: delegatedRequest,
+        response: {},
+        url: new URL(action.path, "http://customer-portal-dev.internal"),
+        body: {},
+        user: admin.rows[0],
+        isAdmin: true,
+        sendJson: (_response, status, value) => { result = { status, value }; },
+      });
+      if (!accepted || !result) {
+        respond(sendJson, response, 404, { error: "Canonical read unavailable" });
+      } else {
+        respond(sendJson, response, result.status, result.value);
+      }
+    } catch (error) {
+      const status = Number(error?.statusCode);
+      respond(sendJson, response, status >= 400 && status < 500 ? status : 503, { error: "Canonical Marketplace read failed" });
+    }
     return;
   }
 
