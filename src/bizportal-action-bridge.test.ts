@@ -55,6 +55,7 @@ beforeEach(()=>{
     const s=String(sql);
     if(s.includes("from public.users"))return {rows:[{id:actorId,email:"admin@dev.test",role:"admin"}],rowCount:1};
     if(s.includes("from public.mkt_rfqs where id"))return {rows:[{id:11}],rowCount:1};
+    if(s.includes("from public.mkt_purchase_orders p join public.mkt_rfqs r"))return {rows:[{id:2}],rowCount:1};
     if(s.includes("from public.portal_customers"))return {rows:[{id:1,email:"dev-admin@dev.local",role:"admin"}],rowCount:1};
     if(s.includes("insert into portal_bridge_private"))return {rows:[{action_id:requestId}],rowCount:1};
     if(s.includes("update portal_bridge_private"))return {rowCount:1,rows:[]};
@@ -118,6 +119,27 @@ describe("DEV BizPortal canonical signed mutation bridge",()=>{
   });
   it("rejects malformed vendor invitation before touching DB",async()=>{
     expect((await dispatch(reqFor({path:"/api/mkt/admin/rfqs/11/invite-vendor",body:{vendorId:"7"}}))).status).toBe(422);
+    expect(stubs.query).not.toHaveBeenCalled();
+  });
+  it.each(["shipments","lines"])("delegates signed PO %s as GET with no receipt or write",async(resource)=>{
+    const path="/api/mkt/admin/purchase-orders/2/"+resource;
+    const result=await dispatch(reqFor({path,body:{}}));
+    expect(result.status).toBe(200);
+    expect(stubs.marketplace).toHaveBeenCalledOnce();
+    const delegated=stubs.marketplace.mock.calls[0][0];
+    expect(delegated.request.method).toBe("GET");
+    expect(delegated.url.pathname).toBe(path);
+    expect(stubs.query.mock.calls.some((call)=>String(call[0]).includes("insert into portal_bridge_private"))).toBe(false);
+    expect(stubs.query.mock.calls.some((call)=>String(call[0]).includes("update portal_bridge_private"))).toBe(false);
+  });
+  it("denies unsupported PO reads before any database access",async()=>{
+    const result=await dispatch(reqFor({path:"/api/mkt/admin/purchase-orders/2/payment",body:{}}));
+    expect(result.status).toBe(422);
+    expect(stubs.query).not.toHaveBeenCalled();
+  });
+  it("rejects mutation-like body on signed read",async()=>{
+    const result=await dispatch(reqFor({path:"/api/mkt/admin/purchase-orders/2/shipments",body:{create:true}}));
+    expect(result.status).toBe(422);
     expect(stubs.query).not.toHaveBeenCalled();
   });
   it("executes only canonical Marketplace handler, then saves audit result",async()=>{
