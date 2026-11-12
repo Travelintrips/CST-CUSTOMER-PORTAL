@@ -157,7 +157,7 @@ export function Footer() {
                 WhatsApp
               </a>
               <a
-                href="https://wa.cstlogistic.co.id/"
+                href="https://aicst.co.id/"
                 target="_blank"
                 rel="noopener noreferrer"
                 className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-white/10 hover:bg-white/15 border border-white/20 text-white/90 text-sm font-medium transition-all duration-200"
