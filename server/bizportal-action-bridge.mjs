@@ -88,7 +88,7 @@ function respond(sendJson, response, status, payload) {
   return sendJson(response, status, payload);
 }
 
-export async function handleBizPortalActionBridge({ request, response, sendJson }) {
+export async function handleBizPortalActionBridge({ request, response, sendJson, verifyRequest = verifyBridgeRequest }) {
   if (!bridgeEnabled()) {
     respond(sendJson, response, 404, { error: "Not found" });
     return;
@@ -105,7 +105,7 @@ export async function handleBizPortalActionBridge({ request, response, sendJson 
   const requestId = String(request.headers["x-cst-bridge-request-id"] ?? "").toLowerCase();
   const timestamp = request.headers["x-cst-bridge-timestamp"];
   const signature = request.headers["x-cst-bridge-signature"];
-  if (!verifyBridgeRequest({ timestamp, requestId, signature, rawBody })) {
+  if (!verifyRequest({ timestamp, requestId, signature, rawBody })) {
     respond(sendJson, response, 401, { error: "Bridge signature invalid" });
     return;
   }
