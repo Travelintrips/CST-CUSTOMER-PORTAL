@@ -1003,6 +1003,21 @@ async function handleVendorQuote(request, response, pathname, body) {
   return true;
 }
 
+async function inviteVendorsToExistingRfq(db, rfqId, vendorIds) {
+  for (const vendorId of vendorIds) {
+    const vendor = (await db("select id, name, phone, is_active from public.suppliers where id=$1", [vendorId])).rows[0];
+    if (!vendor || vendor.is_active === false) continue;
+    const quote = await db(
+      `insert into public.mkt_vendor_quotes (rfq_id,vendor_id,token,token_hash,valid_until,status)
+       values ($1,$2,$3,encode(sha256(convert_to($3,'UTF8')),'hex'),now()+interval '7 days','invited')
+       on conflict (rfq_id,vendor_id) do update set updated_at=now() returning id`,
+      [rfqId, vendorId, token()],
+    );
+    await queueEvent(db, { eventType: "rfq_vendor_invited", recipientType: "vendor", recipientId: vendorId, recipientPhone: vendor.phone, rfqId, quoteId: quote.rows[0].id, payload: { rfqId, quoteId: quote.rows[0].id, vendorId }, key: `rfq:${rfqId}:vendor:${vendorId}:invited` });
+    await vendorNotification(db, vendorId, "rfq_invitation", "Undangan quotation baru", `Anda diundang untuk memberi quotation RFQ #${rfqId}.`, { rfqId, quoteId: quote.rows[0].id });
+  }
+}
+
 async function handleAdminMarketplace(request, response, pathname, body, user) {
   const rfqList = pathname === "/api/mkt/admin/rfqs";
   if (request.method === "GET" && rfqList) {
@@ -1110,6 +1125,18 @@ async function handleAdminMarketplace(request, response, pathname, body, user) {
       return true;
     }
   }
+  const inviteVendor = pathname.match(/^\\/api\\/mkt\\/admin\\/rfqs\\/(\\d+)\\/invite-vendor$/);
+  if (request.method === "POST" && inviteVendor) {
+    const rfqId = integer(inviteVendor[1], "RFQ");
+    const vendorId = integer(body.vendorId, "Vendor");
+    await withTransaction(async (db) => {
+      const rfq = await loadAdminRfq(rfqId, { client: db, forUpdate: true });
+      if (!["quoting", "quoted"].includes(rfq.status)) fail(409, "RFQ harus disetujui sebelum mengundang vendor.");
+      await inviteVendorsToExistingRfq(db, rfqId, [vendorId]);
+    });
+    response._sendJson(200, { ok: true });
+    return true;
+  }
   const approveInvite = pathname.match(/^\/api\/mkt\/admin\/rfqs\/(\d+)\/approve-and-invite$/);
   if (request.method === "POST" && approveInvite) {
     const rfqId = integer(approveInvite[1], "RFQ");
@@ -1121,18 +1148,7 @@ async function handleAdminMarketplace(request, response, pathname, body, user) {
       if (rfq.status !== "quoting") {
         await transitionRfq(db, rfq, "quoting", user, "RFQ diarahkan ke vendor");
       }
-      for (const vendorId of vendorIds) {
-        const vendor = (await db("select id, name, phone, is_active from public.suppliers where id=$1", [vendorId])).rows[0];
-        if (!vendor || vendor.is_active === false) continue;
-        const quote = await db(
-          `insert into public.mkt_vendor_quotes (rfq_id,vendor_id,token,token_hash,valid_until,status)
-           values ($1,$2,$3,encode(sha256(convert_to($3,'UTF8')),'hex'),now()+interval '7 days','invited')
-           on conflict (rfq_id,vendor_id) do update set updated_at=now() returning id`,
-          [rfqId, vendorId, token()],
-        );
-        await queueEvent(db, { eventType: "rfq_vendor_invited", recipientType: "vendor", recipientId: vendorId, recipientPhone: vendor.phone, rfqId, quoteId: quote.rows[0].id, payload: { rfqId, quoteId: quote.rows[0].id, vendorId }, key: `rfq:${rfqId}:vendor:${vendorId}:invited` });
-        await vendorNotification(db, vendorId, "rfq_invitation", "Undangan quotation baru", `Anda diundang untuk memberi quotation RFQ #${rfqId}.`, { rfqId, quoteId: quote.rows[0].id });
-      }
+      await inviteVendorsToExistingRfq(db, rfqId, vendorIds);
     });
     response._sendJson(200, { ok: true });
     return true;
