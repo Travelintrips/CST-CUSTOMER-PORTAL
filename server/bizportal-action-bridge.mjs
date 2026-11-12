@@ -76,9 +76,10 @@ async function bodyBuffer(request) {
   const blocks = [];
   let bytes = 0;
   for await (const chunk of request) {
-    bytes += chunk.length;
+    const data = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+    bytes += data.length;
     if (bytes > REQUEST_MAX_BYTES) return null;
-    blocks.push(chunk);
+    blocks.push(data);
   }
   return Buffer.concat(blocks);
 }
