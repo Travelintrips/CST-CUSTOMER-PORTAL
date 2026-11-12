@@ -124,7 +124,10 @@ export async function handleBizPortalActionBridge({ request, response, sendJson,
   const actorResult = await query(
     `select id,email,role from public.users
       where id=$1 and lower(email)=lower($2)
-        and lower(role) in ('admin','owner','super_admin') limit 1`,
+        and lower(role) in ('admin','owner','super_admin')
+        and is_active is distinct from false
+        and coalesce(lower(status),'active') not in ('inactive','disabled','suspended','deleted')
+      limit 1`,
     [action.actorUserId, action.actorEmail],
   );
   if (!actorResult.rows[0]) {
