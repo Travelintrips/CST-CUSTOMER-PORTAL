@@ -25,8 +25,16 @@ describe("marketplace audit hardening contract", () => {
     expect(worker).toContain("getMarketplaceWhatsAppQueueStats");
     expect(worker).toContain("stuck_over_10m");
     expect(operations).toContain("/api/mkt/admin/notification-queue/stats");
-    expect(server).toContain("WhatsApp worker skipped");
+    // The single-leader guard uses an idle notification rather than the old
+    // `skipped` log phrase; workers must only start after leadership is held.
+    expect(server).toContain("WhatsApp worker idle");
     expect(server).toContain("WhatsApp worker cycle");
+    expect(server).toContain("startBackgroundLeadership({");
+    expect(server).toContain("onAcquired: async () => startBackgroundJobs()");
+    expect(server).toContain("onLost: async () => stopBackgroundJobs()");
+    const leader = read("server/background-leader.mjs");
+    expect(leader).toContain("pg_try_advisory_lock");
+    expect(leader).toContain("pg_advisory_unlock");
   });
 
   it("keeps Marketplace payment/security tables server-only", () => {
