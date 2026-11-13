@@ -1,6 +1,6 @@
 import pg from "pg";
 
-const { Pool } = pg;
+const { Client, Pool } = pg;
 
 const APP_ENV = process.env.APP_ENV ?? process.env.NODE_ENV ?? "development";
 const isProduction =
@@ -34,18 +34,26 @@ const requestedPoolSize = Math.max(
   1,
   Number(process.env.CUSTOMER_PORTAL_DB_POOL_SIZE ?? 4) || 4,
 );
-const effectivePoolSize = isProduction ? Math.min(4, Math.max(2, requestedPoolSize)) : Math.min(8, requestedPoolSize);
+const effectivePoolSize = isProduction ? Math.min(2, requestedPoolSize) : Math.min(8, requestedPoolSize);
 
-export const pool = new Pool({
+const commonConnectionOptions = {
   connectionString,
-  max: effectivePoolSize,
-  min: 0,
-  idleTimeoutMillis: 30_000,
   connectionTimeoutMillis: 10_000,
   keepAlive: true,
   keepAliveInitialDelayMillis: 10_000,
   ssl: { rejectUnauthorized: false },
+};
+
+export const pool = new Pool({
+  ...commonConnectionOptions,
+  max: effectivePoolSize,
+  min: 0,
+  idleTimeoutMillis: 30_000,
 });
+
+export function createDedicatedDatabaseClient() {
+  return new Client(commonConnectionOptions);
+}
 
 function isReadOnlySql(sql) {
   return /^\s*(select|show|with\b[^;]*\bselect\b)/i.test(String(sql ?? ""));
