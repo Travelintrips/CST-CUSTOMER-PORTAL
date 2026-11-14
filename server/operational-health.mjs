@@ -19,6 +19,20 @@ let healthTimer = null;
 let publicProbeTimer = null;
 let recoveryTimer = null;
 let cleanupTimer = null;
+const jobInFlight = new Set();
+
+async function runWithoutOverlap(name, task) {
+  if (jobInFlight.has(name)) {
+    console.warn("[customer-portal-api] operational job overlap prevented", { job: name });
+    return;
+  }
+  jobInFlight.add(name);
+  try {
+    await task();
+  } finally {
+    jobInFlight.delete(name);
+  }
+}
 
 async function insertCheck({ checkName, status, durationMs, details = {} }) {
   await query(
@@ -287,19 +301,24 @@ export function startOperationalMonitoring() {
   if (!enabled) return;
   if (healthTimer || publicProbeTimer || recoveryTimer || cleanupTimer) return;
 
-  healthTimer = setInterval(() => void runOperationalHealthCheck(), 5 * 60_000);
-  publicProbeTimer = setInterval(() => void runPublicProductionProbe(), 15 * 60_000);
-  recoveryTimer = setInterval(() => void runRecoveryDrillIfDue(), 6 * 60 * 60_000);
-  cleanupTimer = setInterval(() => void cleanupOperationalHistory(), 24 * 60 * 60_000);
+  const runHealth = () => runWithoutOverlap("runtime_health", runOperationalHealthCheck);
+  const runProbe = () => runWithoutOverlap("public_production_probe", runPublicProductionProbe);
+  const runRecovery = () => runWithoutOverlap("recovery_drill", runRecoveryDrillIfDue);
+  const runCleanup = () => runWithoutOverlap("operational_cleanup", cleanupOperationalHistory);
+
+  healthTimer = setInterval(() => void runHealth(), 5 * 60_000);
+  publicProbeTimer = setInterval(() => void runProbe(), 15 * 60_000);
+  recoveryTimer = setInterval(() => void runRecovery(), 6 * 60 * 60_000);
+  cleanupTimer = setInterval(() => void runCleanup(), 24 * 60 * 60_000);
 
   healthTimer.unref?.();
   publicProbeTimer.unref?.();
   recoveryTimer.unref?.();
   cleanupTimer.unref?.();
 
-  setTimeout(() => void runOperationalHealthCheck(), 20_000).unref?.();
-  setTimeout(() => void runPublicProductionProbe(), 45_000).unref?.();
-  setTimeout(() => void runRecoveryDrillIfDue(), 120_000).unref?.();
+  setTimeout(() => void runHealth(), 20_000).unref?.();
+  setTimeout(() => void runProbe(), 45_000).unref?.();
+  setTimeout(() => void runRecovery(), 120_000).unref?.();
 }
 
 export function stopOperationalMonitoring() {

@@ -29,6 +29,8 @@ describe("commercial operations hardening", () => {
     expect(ops).toContain("runRecoveryDrillIfDue");
     expect(ops).toContain("7 * 24 * 60 * 60_000");
     expect(ops).toContain("created_at < now() - interval '30 days'");
+    expect(ops).toContain("runWithoutOverlap");
+    expect(ops).toContain("operational job overlap prevented");
   });
 
   it("protects operational controls behind admin authentication", () => {
@@ -41,6 +43,8 @@ describe("commercial operations hardening", () => {
     expect(server).toContain('action === "recovery-drill"');
     expect(server).toContain("startOperationalMonitoring()");
     expect(server).toContain("stopOperationalMonitoring()");
+    expect(server).toContain("startBackgroundLeadership");
+    expect(server).toContain("stopBackgroundLeadership");
   });
 
   it("keeps operational audit tables private from client roles", () => {

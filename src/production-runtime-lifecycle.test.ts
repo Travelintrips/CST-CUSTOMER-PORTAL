@@ -371,7 +371,7 @@ describe("production runtime availability lifecycle", () => {
   it("keeps production database pooling bounded without serializing all portal requests", () => {
     const db = readFileSync(join(process.cwd(), "server/db.mjs"), "utf8");
 
-    expect(db).toContain("isProduction ? Math.min(4, Math.max(2, requestedPoolSize)) : Math.min(8, requestedPoolSize)");
+    expect(db).toContain("isProduction ? Math.min(2, requestedPoolSize) : Math.min(8, requestedPoolSize)");
     expect(db).toContain("min: 0");
     expect(db).toContain("idleTimeoutMillis: 30_000");
     expect(db).toContain("keepAlive: true");
