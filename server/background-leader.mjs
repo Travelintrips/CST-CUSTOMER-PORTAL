@@ -56,11 +56,26 @@ async function attemptLeadership() {
 
   try {
     await client.connect();
+    if (stopped || activeClient !== client) {
+      if (activeClient === client) activeClient = null;
+      await disposeClient(client);
+      return;
+    }
     const result = await client.query(
       "select pg_try_advisory_lock($1::int,$2::int) as acquired",
       [LOCK_NAMESPACE, LOCK_KEY],
     );
     const acquired = result.rows[0]?.acquired === true;
+    if (stopped || activeClient !== client) {
+      if (acquired) {
+        try {
+          await client.query("select pg_advisory_unlock($1::int,$2::int)", [LOCK_NAMESPACE, LOCK_KEY]);
+        } catch {}
+      }
+      if (activeClient === client) activeClient = null;
+      await disposeClient(client);
+      return;
+    }
 
     if (!acquired) {
       activeClient = null;
