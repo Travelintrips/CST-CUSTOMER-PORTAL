@@ -6,6 +6,7 @@ import {
   notifyRfqCustomer,
 } from "./notification-service.mjs";
 import { handleAdminOperations, handlePortalOperations } from "./marketplace-operations.mjs";
+import { assertDevCorporatePoAffiliation } from "./corporate-po-affiliation-gate.mjs";
 import { uploadMarketplacePod, signedMarketplacePodUrl } from "./storage.mjs";
 
 const RFQ_TERMINAL = new Set(["awarded", "cancelled", "expired"]);
@@ -482,6 +483,9 @@ async function poDetail(db, poId, { customerView = false } = {}) {
 async function createPo(db, rfq, quote, user) {
   const existing = await db("select id from public.mkt_purchase_orders where rfq_id = $1 for update", [rfq.id]);
   if (existing.rows[0]) return Number(existing.rows[0].id);
+  // Additive DEV-only preflight: verified company affiliation before new PO.
+  // Existing PO idempotent read and individual RFQ behavior stay unchanged.
+  await assertDevCorporatePoAffiliation(db, rfq);
   const details = await quoteDetail(db, quote.id);
   if (!details || !details.lines.length) fail(409, "Quotation belum memiliki line yang valid.");
   const vendor = (await db("select id, name, address from public.suppliers where id = $1", [quote.vendor_id])).rows[0];

@@ -188,8 +188,10 @@ describe("production runtime availability lifecycle", () => {
     );
 
     expect(adminPortal).toContain("on conflict (portal_customer_id, company_id)");
-    expect(adminPortal).toContain("on conflict (portal_customer_id)");
-    expect(adminPortal).toContain("where status in ('pending', 'submitted', 'in_review')");
+    // CST-DEV has pcr_customer_pending_name_unique, whereas historical
+    // migrations record a broader index. Require the active compatible form.
+    expect(adminPortal).toContain("on conflict (portal_customer_id, lower(requested_company_name))");
+    expect(adminPortal).toContain("where status = 'pending'");
     expect(adminPortal).toContain("on conflict (customer_id) where customer_id is not null");
     expect(migration).toContain("portal_company_requests_one_active_per_customer_idx");
   });
