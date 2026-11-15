@@ -7,6 +7,7 @@ import {
   uploadDocument,
 } from "./storage.mjs";
 import { createFreightActionToken } from "./freight-operations.mjs";
+import { corporatePoApprovalGateDevEnabled, stageDevExistingCompanyApproval } from "./corporate-po-affiliation-gate.mjs";
 
 const TERMINAL_STATUSES = new Set(["completed", "cancelled", "rejected", "expired", "done"]);
 const SERVICE_LABELS = {
@@ -644,6 +645,9 @@ async function handleAdminCompanyRequests(ctx) {
   const matchedCompanyId = body.matchedCompanyId == null ? null : numberOrNull(body.matchedCompanyId);
   if (!["pending", "in_review", "approved", "rejected"].includes(status)) return adminError(ctx, 400, "Status company request tidak valid.");
   if (body.matchedCompanyId != null && matchedCompanyId == null) return adminError(ctx, 400, "Company tidak valid.");
+  if (corporatePoApprovalGateDevEnabled() && status === "approved" && matchedCompanyId == null) {
+    return adminError(ctx, 400, "Pilih perusahaan canonical sebelum menyetujui afiliasi.");
+  }
   const requestResult = await query("select * from public.portal_company_requests where id = $1", [id]);
   const current = requestResult.rows[0];
   if (!current) return adminError(ctx, 404, "Company request tidak ditemukan.");
@@ -1106,7 +1110,12 @@ async function applyOrganizationSelection(user, body, dbQuery = query, options =
     }
   }
 
-  const profileStatus = customerType === "company" && requestedCompanyName ? "pending" : "active";
+  const selectedCompanyApproval = companyId != null
+    ? await stageDevExistingCompanyApproval(dbQuery, user.id, company)
+    : null;
+  const selectedCompanyPending = selectedCompanyApproval?.status === "company_pending";
+  const profileStatus = (customerType === "company" && requestedCompanyName) || selectedCompanyPending
+    ? "pending" : "active";
   // The selected canonical company is an organization membership/affiliation,
   // not the customer's own company identity. Only a newly requested company
   // may set the customer company name. Existing-company membership must leave
@@ -1132,17 +1141,19 @@ async function applyOrganizationSelection(user, body, dbQuery = query, options =
   );
 
   if (companyId != null) {
-    await dbQuery(
-      `insert into public.portal_company_members
-        (portal_customer_id, company_id, buyer_role, is_active, invited_by, invited_at, joined_at, created_at, updated_at)
-       values ($1, $2, 'requester', true, $1, now(), now(), now(), now())
-       on conflict (portal_customer_id, company_id)
-       do update set
-         is_active = true,
-         joined_at = coalesce(portal_company_members.joined_at, now()),
-         updated_at = now()`,
-      [user.id, companyId],
-    );
+    if (!selectedCompanyPending) {
+      await dbQuery(
+        `insert into public.portal_company_members
+          (portal_customer_id, company_id, buyer_role, is_active, invited_by, invited_at, joined_at, created_at, updated_at)
+         values ($1, $2, 'requester', true, $1, now(), now(), now(), now())
+         on conflict (portal_customer_id, company_id)
+         do update set
+           is_active = true,
+           joined_at = coalesce(portal_company_members.joined_at, now()),
+           updated_at = now()`,
+        [user.id, companyId],
+      );
+    }
   } else {
     await dbQuery(
       `update public.portal_company_members
@@ -1157,8 +1168,8 @@ async function applyOrganizationSelection(user, body, dbQuery = query, options =
       `insert into public.portal_company_requests
         (portal_customer_id, requested_company_name, requested_registration_number, status, created_at, updated_at)
        values ($1, $2, $3, 'pending', now(), now())
-       on conflict (portal_customer_id)
-         where status in ('pending', 'submitted', 'in_review')
+       on conflict (portal_customer_id, lower(requested_company_name))
+         where status = 'pending'
        do update set
          requested_company_name = excluded.requested_company_name,
          requested_registration_number = excluded.requested_registration_number,
@@ -1735,36 +1746,56 @@ async function handleOnboardingComplete(ctx) {
           throw error;
         }
 
-        await dbQuery(
-          `insert into public.portal_company_members
-            (portal_customer_id, company_id, buyer_role, is_active, invited_by, invited_at, joined_at, created_at, updated_at)
-           values ($1, $2, 'requester', true, $1, now(), now(), now(), now())
-           on conflict (portal_customer_id, company_id)
-           do update set
-             is_active = true,
-             joined_at = coalesce(portal_company_members.joined_at, now()),
-             updated_at = now()`,
-          [ctx.user.id, membershipCompanyId],
+        const devCompanyApproval = await stageDevExistingCompanyApproval(
+          dbQuery, ctx.user.id, selectedMembership,
         );
-        await dbQuery(
-          `update public.portal_company_members
-              set is_active = false, updated_at = now()
-            where portal_customer_id = $1
-              and company_id <> $2
-              and is_active = true`,
-          [ctx.user.id, membershipCompanyId],
-        );
+        if (devCompanyApproval?.status === "company_pending") {
+          await dbQuery(
+            `update public.portal_customer_profiles
+                set profile_status='pending', updated_at=now()
+              where customer_id=$1`,
+            [ctx.user.id],
+          );
+          organization = {
+            status: "company_pending",
+            customerType: "company",
+            companyId: null,
+            company: null,
+          };
+        } else {
+          // Existing verified memberships and the previously-PASS behavior
+          // remain unchanged when the DEV-only gate is disabled.
+          await dbQuery(
+            `insert into public.portal_company_members
+              (portal_customer_id, company_id, buyer_role, is_active, invited_by, invited_at, joined_at, created_at, updated_at)
+             values ($1, $2, 'requester', true, $1, now(), now(), now(), now())
+             on conflict (portal_customer_id, company_id)
+             do update set
+               is_active = true,
+               joined_at = coalesce(portal_company_members.joined_at, now()),
+               updated_at = now()`,
+            [ctx.user.id, membershipCompanyId],
+          );
+          await dbQuery(
+            `update public.portal_company_members
+                set is_active = false, updated_at = now()
+              where portal_customer_id = $1
+                and company_id <> $2
+                and is_active = true`,
+            [ctx.user.id, membershipCompanyId],
+          );
 
-        organization = {
-          status: "company_mapped",
-          customerType: "company",
-          companyId: Number(selectedMembership.id),
-          company: {
-            id: Number(selectedMembership.id),
-            name: selectedMembership.name,
-            code: selectedMembership.code ?? null,
-          },
-        };
+          organization = {
+            status: "company_mapped",
+            customerType: "company",
+            companyId: Number(selectedMembership.id),
+            company: {
+              id: Number(selectedMembership.id),
+              name: selectedMembership.name,
+              code: selectedMembership.code ?? null,
+            },
+          };
+        }
       } else {
         organization = await applyOrganizationSelection(
           ctx.user,
