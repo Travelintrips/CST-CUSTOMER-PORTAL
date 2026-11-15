@@ -644,76 +644,120 @@ async function handleAdminCompanyRequests(ctx) {
   const status = text(body.status);
   const matchedCompanyId = body.matchedCompanyId == null ? null : numberOrNull(body.matchedCompanyId);
   if (!["pending", "in_review", "approved", "rejected"].includes(status)) return adminError(ctx, 400, "Status company request tidak valid.");
-  if (body.matchedCompanyId != null && matchedCompanyId == null) return adminError(ctx, 400, "Company tidak valid.");
+  if (body.matchedCompanyId != null && (!matchedCompanyId || matchedCompanyId <= 0)) return adminError(ctx, 400, "Company tidak valid.");
   if (corporatePoApprovalGateDevEnabled() && status === "approved" && matchedCompanyId == null) {
     return adminError(ctx, 400, "Pilih perusahaan canonical sebelum menyetujui afiliasi.");
   }
-  const requestResult = await query("select * from public.portal_company_requests where id = $1", [id]);
-  const current = requestResult.rows[0];
-  if (!current) return adminError(ctx, 404, "Company request tidak ditemukan.");
-  if (matchedCompanyId != null) {
-    const company = await query("select id from public.companies where id = $1 and coalesce(is_active, true) = true", [matchedCompanyId]);
-    if (!company.rows[0]) return adminError(ctx, 404, "Company tidak ditemukan.");
-  }
-  await query(
-    `update public.portal_company_requests
-        set status = $1, matched_company_id = $2, review_note = $3,
-            reviewed_by = $4, reviewed_at = now(), updated_at = now()
-      where id = $5`,
-    [status, matchedCompanyId, text(body.reviewNote) || null, ctx.user.id, id],
-  );
-  if (status === "approved" && matchedCompanyId != null) {
-    const member = await query(
-      "select id from public.portal_company_members where portal_customer_id = $1 and company_id = $2 limit 1",
-      [current.portal_customer_id, matchedCompanyId],
+  // The request decision, membership, and profile are one unit. A successful
+  // Admin response must never leave a company request approved without its
+  // corresponding membership and customer profile changes.
+  const client = await pool.connect();
+  try {
+    await client.query("begin");
+    const requestResult = await client.query(
+      `select id, portal_customer_id, status
+         from public.portal_company_requests
+        where id = $1
+        for update`,
+      [id],
     );
-    if (member.rows[0]) {
-      await query(
-        `update public.portal_company_members
-            set is_active = true, buyer_role = coalesce($1, buyer_role), updated_at = now()
-          where id = $2`,
-        [text(body.buyerRole) || null, member.rows[0].id],
+    const current = requestResult.rows[0];
+    if (!current) {
+      await client.query("rollback");
+      return adminError(ctx, 404, "Company request tidak ditemukan.");
+    }
+    if (!["pending", "in_review"].includes(current.status)) {
+      await client.query("rollback");
+      return adminError(ctx, 409, "Permohonan perusahaan ini sudah diputuskan. Muat ulang daftar.");
+    }
+
+    let canonicalCompanyName = null;
+    if (matchedCompanyId != null) {
+      const company = await client.query(
+        `select id, coalesce(company_name, legal_name, name) as name
+           from public.companies
+          where id = $1 and coalesce(is_active, true) = true
+          limit 1`,
+        [matchedCompanyId],
       );
-    } else {
-      await query(
+      if (!company.rows[0]) {
+        await client.query("rollback");
+        return adminError(ctx, 404, "Company tidak ditemukan atau tidak aktif.");
+      }
+      canonicalCompanyName = company.rows[0].name ?? null;
+    }
+
+    const updated = await client.query(
+      `update public.portal_company_requests
+          set status = $1, matched_company_id = $2, review_note = $3,
+              reviewed_by = $4, reviewed_at = now(), updated_at = now()
+        where id = $5 and status in ('pending', 'in_review')
+        returning id`,
+      [status, matchedCompanyId, text(body.reviewNote) || null, ctx.user.id, id],
+    );
+    if (updated.rowCount !== 1) {
+      const error = new Error("Permohonan perusahaan berubah. Muat ulang daftar.");
+      error.statusCode = 409;
+      throw error;
+    }
+    if (status === "approved" && matchedCompanyId != null) {
+      // Existing unique (portal_customer_id,company_id) means reactivation
+      // cannot create a duplicate membership, even across separate requests.
+      await client.query(
         `insert into public.portal_company_members
-          (portal_customer_id, company_id, buyer_role, is_active, invited_by, invited_at, joined_at, created_at, updated_at)
-         values ($1, $2, $3, true, $4, now(), now(), now(), now())`,
-        [current.portal_customer_id, matchedCompanyId, text(body.buyerRole, "member"), ctx.user.id],
+          (portal_customer_id, company_id, buyer_role, is_active,
+           invited_by, invited_at, joined_at, created_at, updated_at)
+         values ($1, $2, coalesce($3, 'member'), true, $4, now(), now(), now(), now())
+         on conflict (portal_customer_id, company_id)
+         do update set
+           is_active = true,
+           buyer_role = coalesce($3, public.portal_company_members.buyer_role),
+           updated_at = now()`,
+        [current.portal_customer_id, matchedCompanyId, text(body.buyerRole) || null, ctx.user.id],
+      );
+      await client.query(
+        `update public.portal_customers
+            set customer_type = 'company', company = coalesce($1, company)
+          where id = $2`,
+        [canonicalCompanyName, current.portal_customer_id],
+      );
+      const profile = await client.query(
+        `update public.portal_customer_profiles
+            set profile_status = 'active',
+                company_name = coalesce($1, company_name),
+                updated_at = now()
+          where customer_id = $2`,
+        [canonicalCompanyName, current.portal_customer_id],
+      );
+      // The corporate-PO gate relies on a verified customer profile.
+      // On DEV where that gate is opted in, missing profile fails closed.
+      if (corporatePoApprovalGateDevEnabled() && !profile.rowCount) {
+        const error = new Error("Profil customer belum tersedia untuk persetujuan perusahaan.");
+        error.statusCode = 409;
+        throw error;
+      }
+    } else if (status === "rejected") {
+      await client.query(
+        `update public.portal_customer_profiles
+            set profile_status = 'rejected',
+                verification_notes = coalesce($1, verification_notes),
+                updated_at = now()
+          where customer_id = $2`,
+        [text(body.reviewNote) || "Permintaan perusahaan ditolak.", current.portal_customer_id],
       );
     }
-    const canonicalCompany = await query(
-      `select coalesce(company_name, legal_name, name) as name
-         from public.companies
-        where id = $1`,
-      [matchedCompanyId],
-    );
-    await query(
-      `update public.portal_customers
-          set customer_type = 'company',
-              company = coalesce($1, company)
-        where id = $2`,
-      [canonicalCompany.rows[0]?.name ?? null, current.portal_customer_id],
-    );
-    await query(
-      `update public.portal_customer_profiles
-          set profile_status = 'active',
-              company_name = coalesce($1, company_name),
-              updated_at = now()
-        where customer_id = $2`,
-      [canonicalCompany.rows[0]?.name ?? null, current.portal_customer_id],
-    );
-  } else if (status === "rejected") {
-    await query(
-      `update public.portal_customer_profiles
-          set profile_status = 'rejected',
-              verification_notes = coalesce($1, verification_notes),
-              updated_at = now()
-        where customer_id = $2`,
-      [text(body.reviewNote) || "Permintaan perusahaan ditolak.", current.portal_customer_id],
-    );
+
+    await client.query("commit");
+    ctx.sendJson(response, 200, { id, status, matchedCompanyId });
+  } catch (error) {
+    await client.query("rollback").catch(() => {});
+    if (Number.isInteger(error?.statusCode)) {
+      return adminError(ctx, error.statusCode, error.message);
+    }
+    throw error;
+  } finally {
+    client.release();
   }
-  ctx.sendJson(response, 200, { id, status, matchedCompanyId });
 }
 
 async function getVerificationState(user) {
