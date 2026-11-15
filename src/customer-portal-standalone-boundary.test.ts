@@ -473,7 +473,7 @@ describe("standalone Customer Portal API boundary", () => {
     const adminPortal = readFileSync(join(process.cwd(), "server/admin-portal.mjs"), "utf8");
     expect(adminPortal).toContain("set name = $1, phone = $2, role = $3");
     expect(adminPortal).toContain("case when $3 = 'customer' then $4 else null end");
-    expect(adminPortal).toContain("[fullName, phone, accountType, customerType, profileCompanyName, ctx.user.id]");
+    expect(adminPortal).toContain("[fullName, portalLoginPhone, accountType, customerType, profileCompanyName, ctx.user.id]");
   });
 
   it("keeps uploaded payment proofs private and returns token-scoped signed URLs", () => {
