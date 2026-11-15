@@ -13,7 +13,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Sheet, SheetContent, SheetClose } from "@/components/ui/sheet";
 import {
   Shield, FileText, Box, Settings, Tag, Truck, Loader2, Wrench,
-  Store, Package, Users,
+  Store, Package, Users, Building2,
   UserCheck, MessageCircle, UserPlus, Layers, Link2, ShoppingCart,
   CreditCard, DollarSign, Inbox,
   PackageCheck, Image as ImageIcon, X, Menu, Bot, History, Wifi,
@@ -26,6 +26,7 @@ import { ServicesTab, ProductsTab }                      from "@/pages/admin/Cat
 import { VehicleImagesTab }                              from "@/pages/admin/VehicleFleet";
 import { PayLabsSettingTab, ClaimAdminTab }              from "@/pages/admin/PaymentsSettings";
 import { ApprovalsTab, CustomersTab, WaLogsTab }         from "@/pages/admin/UserOperations";
+import { CompanyRequestsTab }                              from "@/pages/admin/CompanyRequestsTab";
 import { DeliveryVendorsTab, PricingTab }                from "@/pages/admin/LogisticsSettings";
 import { PortalProductTemplateEngine }                   from "@/pages/admin/ProductTemplates";
 import { MiniFormTab }                                   from "@/pages/admin/MiniFormSystem";
@@ -241,6 +242,7 @@ export default function AdminPage() {
                 </button>
                 {[
                   { value: "approvals", icon: UserCheck,     label: t("adminPage.nav.approvals", "Approvals") },
+                  { value: "company-requests", icon: Building2, label: "Persetujuan Perusahaan" },
                   { value: "customers", icon: Users,         label: t("adminPage.nav.customers", "Pelanggan") },
                   { value: "wa-logs",   icon: MessageCircle, label: t("adminPage.nav.whatsapp", "WhatsApp") },
                   { value: "chatbot-admin", icon: Bot, label: "Kelola Chatbot" },
@@ -335,6 +337,7 @@ export default function AdminPage() {
                       <span className="ml-auto bg-amber-500 text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full min-w-5 text-center">{pendingVendorApprovals}</span>
                     )}
                   </TabsTrigger>
+                  <TabsTrigger value="company-requests" className={TABS_TRIGGER_CLS}><Building2 className="h-4 w-4 shrink-0" strokeWidth={2} />Persetujuan Perusahaan</TabsTrigger>
                   <TabsTrigger value="customers" className={TABS_TRIGGER_CLS}><Users         className="h-4 w-4 shrink-0" strokeWidth={2} />{t("adminPage.nav.customers", "Pelanggan")}</TabsTrigger>
                   <TabsTrigger value="wa-logs" className={TABS_TRIGGER_CLS}><MessageCircle className="h-4 w-4 shrink-0" strokeWidth={2} />{t("adminPage.nav.whatsapp", "WhatsApp")}</TabsTrigger>
                   <TabsTrigger value="fonnte-status" className={TABS_TRIGGER_CLS}><Wifi className="h-4 w-4 shrink-0" strokeWidth={2} />Status Koneksi Fonnte</TabsTrigger>
@@ -534,6 +537,16 @@ export default function AdminPage() {
                         <CardDescription>{t("adminPage.tab.approvals.desc", "Tinjau dan setujui atau tolak permohonan akun vendor, driver, dan employee yang mendaftar melalui portal.")}</CardDescription>
                       </CardHeader>
                       <CardContent><ApprovalsTab /></CardContent>
+                    </Card>
+                  </TabsContent>
+
+                  <TabsContent value="company-requests">
+                    <Card>
+                      <CardHeader>
+                        <CardTitle className="flex items-center gap-2"><Building2 className="h-5 w-5 text-indigo-500" />Persetujuan Perusahaan Customer</CardTitle>
+                        <CardDescription>Verifikasi afiliasi customer sebelum mengizinkan PO perusahaan. Hanya Admin yang dapat meninjau.</CardDescription>
+                      </CardHeader>
+                      <CardContent><CompanyRequestsTab /></CardContent>
                     </Card>
                   </TabsContent>
 
