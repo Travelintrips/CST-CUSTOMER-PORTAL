@@ -1173,7 +1173,7 @@ async function applyOrganizationSelection(user, body, dbQuery = query, options =
         set customer_type = $1,
             company = case
               when $1 = 'individual' then null
-              when $2 is not null then $2
+              when $2::text is not null then $2::text
               else company
             end
       where id = $3`,
@@ -1252,11 +1252,31 @@ async function applyOrganizationSelection(user, body, dbQuery = query, options =
 
 async function handleOrganizationMutation(ctx) {
   if (!["PUT", "PATCH"].includes(ctx.request.method)) return adminError(ctx, 405, "Method tidak didukung.");
+  // Keep company selection, pending review and profile updates atomic.
+  // Share the established onboarding lock to prevent concurrent self-selection.
+  const client = await pool.connect();
   try {
-    const context = await applyOrganizationSelection(ctx.user, ctx.body ?? {});
+    await client.query("begin");
+    await client.query("select pg_advisory_xact_lock($1)", [Number(ctx.user.id)]);
+    const customer = await client.query(
+      "select id from public.portal_customers where id=$1 for update",
+      [ctx.user.id],
+    );
+    if (!customer.rowCount) {
+      const error = new Error("Akun portal tidak ditemukan.");
+      error.statusCode = 404;
+      throw error;
+    }
+    const context = await applyOrganizationSelection(
+      ctx.user, ctx.body ?? {}, client.query.bind(client),
+    );
+    await client.query("commit");
     ctx.sendJson(ctx.response, 200, { context });
   } catch (error) {
+    await client.query("rollback").catch(() => {});
     return adminError(ctx, error.statusCode ?? 500, error.message ?? "Gagal menyimpan konteks organisasi.");
+  } finally {
+    client.release();
   }
 }
 

@@ -239,7 +239,7 @@ export function RfqCustomerContextCompletion({
                 )}
               </div>
               {selectedCompanyId && (
-                <p className="text-[11px] text-emerald-700">Membership akan dibuat untuk perusahaan yang dipilih.</p>
+                <p className="text-[11px] text-emerald-700">Afiliasi perusahaan akan diajukan ke Admin. RFQ/PO perusahaan menunggu persetujuan.</p>
               )}
               <button
                 type="button"
