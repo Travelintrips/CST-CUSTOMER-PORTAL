@@ -27,6 +27,11 @@ function isProduction() {
   );
 }
 
+function publicDevSingleLogin() {
+  return process.env.APP_ENV === "development"
+    && process.env.CUSTOMER_PORTAL_DEV_SINGLE_LOGIN === "true";
+}
+
 function devSecret() {
   return process.env.DEV_PORTAL_SECRET ?? (isProduction() ? "" : DEV_TOKEN_FALLBACK_SECRET);
 }
@@ -87,7 +92,8 @@ export function createSession(user) {
 export function verifySession(token) {
   if (!token) return null;
   if (token.startsWith("devportal.")) {
-    if (isProduction() || !devSecret()) return null;
+    // Reject legacy developer tokens when DEV is accessible without Nginx Basic Auth.
+    if (isProduction() || publicDevSingleLogin() || !devSecret()) return null;
     const [, payload, signature] = token.split(".");
     if (!payload || !signature || !safeEqual(signature, hmacHex(payload, devSecret()))) return null;
     try {
@@ -151,7 +157,7 @@ function cookieAttributes(maxAge) {
     "Path=/",
     "HttpOnly",
     "SameSite=Lax",
-    ...(isProduction() ? ["Secure"] : []),
+    ...(isProduction() || publicDevSingleLogin() ? ["Secure"] : []),
     `Max-Age=${maxAge}`,
   ].join("; ");
 }
@@ -160,7 +166,7 @@ export function sessionCookies(token) {
   const hintAttributes = [
     "Path=/",
     "SameSite=Lax",
-    ...(isProduction() ? ["Secure"] : []),
+    ...(isProduction() || publicDevSingleLogin() ? ["Secure"] : []),
     `Max-Age=${SESSION_TTL_SECONDS}`,
   ].join("; ");
   return [
@@ -173,7 +179,7 @@ export function clearSessionCookies() {
   const hintAttributes = [
     "Path=/",
     "SameSite=Lax",
-    ...(isProduction() ? ["Secure"] : []),
+    ...(isProduction() || publicDevSingleLogin() ? ["Secure"] : []),
     "Max-Age=0",
   ].join("; ");
   return [

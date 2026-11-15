@@ -10,7 +10,12 @@ const IS_PRODUCTION =
   APP_ENV === "production" ||
   process.env.NODE_ENV === "production" ||
   process.env.REPLIT_DEPLOYMENT === "1";
-const SAFE_DEV_AUTH = !IS_PRODUCTION && process.env.REPLIT_DEPLOYMENT !== "1";
+// The public DEV portal uses the existing Google/session auth, never test-only
+// OTP disclosure or synthetic login. The flag is scoped to DEV; PROD is unchanged.
+const DEV_PUBLIC_SINGLE_LOGIN =
+  APP_ENV === "development" && process.env.CUSTOMER_PORTAL_DEV_SINGLE_LOGIN === "true";
+const SAFE_DEV_AUTH =
+  !IS_PRODUCTION && process.env.REPLIT_DEPLOYMENT !== "1" && !DEV_PUBLIC_SINGLE_LOGIN;
 const OTP_TTL_MS = 10 * 60 * 1000;
 const WA_OTP_TTL_MS = 5 * 60 * 1000;
 const OAUTH_STATE_TTL_MS = 10 * 60 * 1000;
@@ -1043,7 +1048,7 @@ export async function authCapabilities() {
       email: SAFE_DEV_AUTH ? "test" : emailReady ? "configured" : "unconfigured",
       whatsapp: whatsappStatus.status,
     },
-    devLogin: !IS_PRODUCTION,
+    devLogin: !IS_PRODUCTION && !DEV_PUBLIC_SINGLE_LOGIN,
   };
 }
 
@@ -1740,7 +1745,7 @@ function oauthStateCookie(state, returnTo, issuedAt, registration = null, google
     JSON.stringify({ state, returnTo, issuedAt, registration, googleSource }),
   ).toString("base64url");
   const signature = signedOAuthState(state, returnTo, issuedAt, registration, googleSource);
-  const secure = IS_PRODUCTION ? "; Secure" : "";
+  const secure = IS_PRODUCTION || DEV_PUBLIC_SINGLE_LOGIN ? "; Secure" : "";
   return `portal_oauth_state=${payload}.${signature}; Path=/; HttpOnly; SameSite=Lax${secure}; Max-Age=600`;
 }
 
@@ -1753,7 +1758,7 @@ function readCookie(request, name) {
 }
 
 function clearOAuthStateCookie() {
-  return `portal_oauth_state=; Path=/; HttpOnly; SameSite=Lax${IS_PRODUCTION ? "; Secure" : ""}; Max-Age=0`;
+  return `portal_oauth_state=; Path=/; HttpOnly; SameSite=Lax${IS_PRODUCTION || DEV_PUBLIC_SINGLE_LOGIN ? "; Secure" : ""}; Max-Age=0`;
 }
 
 function redirect(response, location, cookies = []) {
