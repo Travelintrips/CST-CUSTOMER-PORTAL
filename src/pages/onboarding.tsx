@@ -1206,7 +1206,7 @@ export default function OnboardingPage() {
                        </div>
                        {selectedCompanyId && (
                          <p className="text-sm text-emerald-700 flex items-center gap-2">
-                           <CheckCircle2 className="h-4 w-4" /> {t("onboarding.registration.existingSelected", "Membership dipilih. Identitas perusahaan customer tetap tidak berubah.")}
+                           <CheckCircle2 className="h-4 w-4" /> {t("onboarding.registration.existingSelected", "Perusahaan dipilih. Afiliasi perlu persetujuan Admin sebelum digunakan; identitas customer tetap tidak berubah.")}
                          </p>
                        )}
                      </>
@@ -1432,7 +1432,7 @@ export default function OnboardingPage() {
                        </div>
                      ) : selectedCompanyId ? (
                        <div className="px-4 py-3 text-sm text-emerald-700 bg-emerald-50">
-                         {t("onboarding.registration.reviewExisting", "Membership / afiliasi dipilih — identitas perusahaan customer tetap sesuai pendaftaran.")}
+                         {t("onboarding.registration.reviewExisting", "Afiliasi perusahaan dipilih — menunggu persetujuan Admin. Identitas customer tetap sesuai pendaftaran.")}
                        </div>
                      ) : (
                        <div className="px-4 py-3 text-sm text-amber-800 bg-amber-50">
@@ -1723,7 +1723,7 @@ function LegacyOrganizationCompletion({
                   </div>
                   {selectedCompanyId && (
                     <p className="text-sm text-emerald-700 flex items-center gap-2">
-                      <CheckCircle2 className="h-4 w-4" /> {t("onboarding.registration.legacyMembershipSelected", "Membership akan dibuat atau diaktifkan untuk perusahaan ini.")}
+                      <CheckCircle2 className="h-4 w-4" /> {t("onboarding.registration.legacyMembershipSelected", "Pilihan perusahaan akan diajukan ke Admin untuk persetujuan afiliasi.")}
                     </p>
                   )}
                   <button
@@ -1786,7 +1786,7 @@ function LegacyOrganizationCompletion({
           {customerType === "company" && (selectedCompanyId || (companyRequestMode && requestedCompanyName.trim())) && (
             <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
               {selectedCompanyId
-                ? t("onboarding.registration.legacyReady", "Setelah disimpan, Anda dapat membuat RFQ dengan konteks perusahaan yang dipilih.")
+                ? t("onboarding.registration.legacyReady", "Setelah disimpan, afiliasi menunggu persetujuan Admin sebelum RFQ/PO perusahaan dapat digunakan.")
                 : t("onboarding.registration.legacyPending", "Perusahaan akan berstatus menunggu verifikasi admin. RFQ perusahaan baru tersedia setelah pemetaan selesai.")}
             </div>
           )}
