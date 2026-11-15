@@ -107,6 +107,10 @@ import {
 
 const APP_ENV = process.env.APP_ENV ?? process.env.NODE_ENV ?? "development";
 const IS_PRODUCTION = APP_ENV === "production" || process.env.NODE_ENV === "production";
+// The public DEV website preserves its own DEV identity and data isolation
+// while requiring normal browser authentication (no synthetic developer login).
+const DEV_PUBLIC_SINGLE_LOGIN =
+  APP_ENV === "development" && process.env.CUSTOMER_PORTAL_DEV_SINGLE_LOGIN === "true";
 const PORT = Number(
   process.env.PORT
     ?? (IS_PRODUCTION ? "3000" : process.env.CUSTOMER_PORTAL_API_PORT ?? "18444"),
@@ -254,7 +258,7 @@ function enforceRequestPolicy(request) {
     throw error;
   }
 
-  if (!IS_PRODUCTION || !MUTATION_METHODS.has(request.method ?? "")) return;
+  if ((!IS_PRODUCTION && !DEV_PUBLIC_SINGLE_LOGIN) || !MUTATION_METHODS.has(request.method ?? "")) return;
 
   const fetchSite = request.headers["sec-fetch-site"];
   if (fetchSite && !["same-origin", "none"].includes(fetchSite)) {
@@ -773,8 +777,8 @@ async function handleReadiness(response) {
 }
 
 async function handleDevLogin(request, response) {
-  if (IS_PRODUCTION) {
-    sendError(response, 404, "Development login is disabled in production.");
+  if (IS_PRODUCTION || DEV_PUBLIC_SINGLE_LOGIN) {
+    sendError(response, 404, "Development login is not available on this portal.");
     return;
   }
 
