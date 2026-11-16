@@ -142,7 +142,7 @@ describe("production runtime availability lifecycle", () => {
   it("makes onboarding approval atomic and locks the approval row", () => {
     const adminPortal = readFileSync(join(process.cwd(), "server/admin-portal.mjs"), "utf8");
 
-    expect(adminPortal).toContain('import { pool, query } from "./db.mjs"');
+    expect(adminPortal).toContain('import { pool, query, databaseEnvironment, databaseConnectionSource } from "./db.mjs"');
     expect(adminPortal).toContain('await client.query("begin")');
     expect(adminPortal).toContain("for update");
     expect(adminPortal).toContain('await client.query("commit")');
