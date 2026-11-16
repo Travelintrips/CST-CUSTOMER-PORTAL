@@ -41,6 +41,7 @@ interface AuthCapabilities {
   googleClientId?: string | null;
   whatsapp: boolean;
   password: boolean;
+  devLogin?: boolean;
 }
 
 const CUSTOMER_RETURN_PREFIXES = [
@@ -86,7 +87,7 @@ export default function Login() {
     : "otp";
   const [mode, setMode] = useState<LoginMode>(initialMode);
   const [capabilities, setCapabilities] = useState<AuthCapabilities>({
-    emailOtp: true, google: true, whatsapp: true, password: true,
+    emailOtp: false, google: false, whatsapp: false, password: true, devLogin: false,
   });
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [googleSdkReady, setGoogleSdkReady] = useState(false);
@@ -168,10 +169,22 @@ export default function Login() {
   useEffect(() => {
     fetch(`${BASE}/api/portal/auth/capabilities`, { credentials: "include" })
       .then((res) => res.ok ? res.json() : Promise.reject(new Error("capabilities unavailable")))
-      .then((data: AuthCapabilities) => setCapabilities(data))
-      .catch(() => setCapabilities((current) => ({
-        ...current, emailOtp: false, google: false, whatsapp: false,
-      })));
+      .then((data: AuthCapabilities) => {
+        setCapabilities(data);
+        // Do not leave the operator on an OTP/WA form the server disabled.
+        setMode((current) => current === "otp" && !data.emailOtp
+          ? "password"
+          : current === "wa" && !data.whatsapp
+            ? data.emailOtp ? "otp" : "password"
+            : current);
+      })
+      .catch(() => {
+        // Capability lookup is fail-closed, including legacy DEV quick login.
+        setCapabilities((current) => ({
+          ...current, emailOtp: false, google: false, whatsapp: false, devLogin: false,
+        }));
+        setMode("password");
+      });
   }, []);
 
   useEffect(() => {
@@ -716,7 +729,8 @@ export default function Login() {
                 <AlertDescription className="text-sm">
                   <strong>Pendaftaran Customer Perusahaan: {requestedCompanyName}</strong>.
                   Tekan tombol Google di bawah lalu pilih akun customer yang sah.
-                  Setelah login berhasil, lanjutkan onboarding perusahaan.
+                  Jika Google menampilkan akun Admin, buka pilihan akun pada tombol Google
+                  dan gunakan akun customer lain. Setelah login berhasil, lanjutkan onboarding perusahaan.
                 </AlertDescription>
               </Alert>
             )}
@@ -955,7 +969,7 @@ export default function Login() {
               </Link>
             </div>
 
-            {IS_DEV && (
+            {IS_DEV && capabilities.devLogin === true && !isCompanyRegistration && (
               <div className="mt-8 rounded-lg border border-dashed border-amber-400 bg-amber-50 p-4">
                 <p className="mb-3 text-xs font-semibold uppercase tracking-wide text-amber-700">
                   {t("login.devLoginBanner")}
