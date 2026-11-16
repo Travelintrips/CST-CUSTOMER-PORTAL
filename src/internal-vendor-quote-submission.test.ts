@@ -101,6 +101,9 @@ describe("audited Admin-as-internal-vendor quote submit uses canonical quote wri
     expect(f.calls.some(x => x.sql.startsWith("insert into public.mkt_vendor_quote_lines"))).toBe(true);
     expect(f.calls.some(x => x.sql.startsWith("update public.mkt_vendor_quotes"))).toBe(true);
     expect(f.calls.some(x => x.sql.startsWith("update public.mkt_rfqs"))).toBe(true);
+    const updateLocks = f.calls.filter(x => /for update/i.test(x.sql));
+    expect(updateLocks[0]?.sql).toContain("mkt_vendor_quotes");
+    expect(updateLocks[1]?.sql).toContain("mkt_rfqs");
     expect(writeEvent).toHaveBeenCalledOnce();
     expect(writeEvent.mock.calls[0][0]).toMatchObject({
       actorType: "admin", actorId: "19", actorName: "QA Admin",
@@ -134,6 +137,7 @@ describe("audited Admin-as-internal-vendor quote submit uses canonical quote wri
       now: new Date("2026-11-24T00:00:00Z"),
     });
     expect(result).toMatchObject({ status: "submitted", alreadySubmitted: true });
+    expect(f.calls.some(x => /for update/i.test(x.sql))).toBe(false);
     expect(f.calls.some(x => /insert into|update public\.mkt_vendor_quote_lines|update public\.mkt_vendor_quotes|update public\.mkt_rfqs/.test(x.sql))).toBe(false);
     expect(writeEvent).not.toHaveBeenCalled();
   });
