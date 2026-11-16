@@ -161,7 +161,10 @@ export default function Register() {
     });
     if (role === "customer") query.set("customerType", customerType);
     if (company.trim()) query.set("company", company.trim());
-    window.location.assign(`${BASE}/api/login/google?${query.toString()}`);
+    // Use the already-configured Google Identity Services login page.
+    // It reads the same registration context and sends the verified ID token
+    // through /api/portal/auth/google/id-token (not the disabled legacy OAuth).
+    window.location.assign(`${BASE}/login?${query.toString()}`);
   };
 
   const sendEmailOtp = async () => {
