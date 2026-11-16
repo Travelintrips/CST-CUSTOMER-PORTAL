@@ -94,7 +94,18 @@ describe("DEV customer-company Google registration login boundary", () => {
     render(<Login />);
     expect(await screen.findByText("GOOGLE_READY")).toBeTruthy();
     expect(screen.getByText(/Pendaftaran Customer Perusahaan: OT SKY/)).toBeTruthy();
+    expect(screen.getByText(/Jika Google menampilkan akun Admin/)).toBeTruthy();
     expect(gis.renderButton).toHaveBeenCalledOnce();
+    expect(nav.go).not.toHaveBeenCalled();
+  });
+
+  it("hides disabled DEV quick-login buttons and unavailable OTP in company registration", async () => {
+    auth.bootstrap.mockResolvedValue(null);
+    render(<Login />);
+    expect(await screen.findByText("GOOGLE_READY")).toBeTruthy();
+    await waitFor(() => expect(screen.queryByText("registerPage.sendOtp")).toBeNull());
+    expect(screen.queryByText("login.devLoginBanner")).toBeNull();
+    expect(screen.getByRole("button", { name: "Password" })).toBeTruthy();
     expect(nav.go).not.toHaveBeenCalled();
   });
 
