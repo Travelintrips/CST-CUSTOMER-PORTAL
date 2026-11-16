@@ -1,4 +1,4 @@
-import { authorizeInternalVendorQuotation } from "./internal-vendor-quote-authority.mjs";
+import { authorizeInternalVendorQuotation, internalVendorQuoteDevEnabled } from "./internal-vendor-quote-authority.mjs";
 
 function fail(statusCode, message) {
   throw Object.assign(new Error(message), { statusCode });
@@ -265,6 +265,7 @@ export async function persistVendorQuoteSubmission(db, {
 export async function submitInternalVendorQuote({
   db, admin, rfqId, quoteId, body, env = process.env, now = new Date(), writeEvent,
 }) {
+  if (!internalVendorQuoteDevEnabled(env)) fail(404, "Aksi quotation internal DEV tidak tersedia.");
   if (typeof db !== "function") fail(503, "Koneksi database tidak tersedia.");
   const normalizedRfqId = integer(rfqId, "RFQ");
   const normalizedQuoteId = integer(quoteId, "Quotation");
@@ -284,10 +285,12 @@ export async function submitInternalVendorQuote({
   if (!rfq) fail(404, "RFQ tidak ditemukan.");
 
   const adminRow = (await db(
-    "select id,role,account_status from public.portal_customers where id=$1 for share",
+    "select id,email,role,account_status,auth_version from public.portal_customers where id=$1 for share",
     [admin?.id],
   )).rows[0];
   if (!adminRow || Number(adminRow.id) !== Number(admin.id) ||
+      String(adminRow.email ?? "").trim().toLowerCase() !== String(admin?.email ?? "").trim().toLowerCase() ||
+      Number(adminRow.auth_version ?? 0) !== Number(admin?.auth_version ?? 0) ||
       adminRow.role !== "admin" || adminRow.account_status !== "active") {
     fail(403, "Sesi Admin tidak aktif atau tidak berwenang.");
   }
