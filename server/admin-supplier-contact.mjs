@@ -72,7 +72,8 @@ export async function updateExistingSupplierContacts({
     "set phone = $1, contact_email = $2, contact_person = $3, updated_at = now()",
     "where id = $4 and is_active = true",
     "and updated_at is not distinct from $5::timestamptz",
-    "returning id, name, company_id, phone, contact_email as email, contact_person, updated_at",
+    "returning id, name, company_id, phone, contact_email as email, contact_person,",
+    `to_char(updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') as updated_at`,
   ].join(" ");
   const result = await db(sql,
     [data.phone, data.email, data.contactPerson, supplierId, data.expectedUpdatedAt]);
