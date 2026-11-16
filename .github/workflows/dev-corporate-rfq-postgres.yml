@@ -47,6 +47,6 @@ jobs:
           NODE_ENV: test
           TZ: Asia/Jakarta
           CST_RFQ_DISPOSABLE_TEST: 'true'
-        run: pnpm exec vitest run src/dev-corporate-marketplace-rfq-postgres.test.ts --maxWorkers=1 --minWorkers=1
+        run: pnpm exec vitest run src/dev-corporate-marketplace-rfq-postgres.test.ts
       - name: Confirm source TypeScript compilation
         run: pnpm typecheck
