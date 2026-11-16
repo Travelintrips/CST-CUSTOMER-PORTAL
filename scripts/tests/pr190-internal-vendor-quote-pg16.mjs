@@ -180,13 +180,13 @@ async function run() {
     });
     const persisted = (await client.query(
       `select q.status::text as quote_status,q.payment_term_code,q.payment_terms,
-              q.quotation_date,r.status::text as rfq_status,r.quote_count,
+              to_char(q.quotation_date,'YYYY-MM-DD') as quotation_date,r.status::text as rfq_status,r.quote_count,
               (select count(*) from mkt_vendor_quote_lines l where l.quote_id=q.id) as line_count
          from mkt_vendor_quotes q join mkt_rfqs r on r.id=q.rfq_id where q.id=18`,
     )).rows[0];
     assert.deepEqual({
       quote_status:persisted.quote_status,payment_term_code:persisted.payment_term_code,
-      payment_terms:persisted.payment_terms,quotation_date:persisted.quotation_date.toISOString().slice(0,10),
+      payment_terms:persisted.payment_terms,quotation_date:persisted.quotation_date,
       rfq_status:persisted.rfq_status,quote_count:persisted.quote_count,line_count:Number(persisted.line_count),
     },{
       quote_status:"submitted",payment_term_code:"net_30",
