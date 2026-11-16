@@ -127,20 +127,21 @@ describe("marketplace audit hardening contract", () => {
     expect(vendorUi).toContain("quotationDate: vqd.quote.quotationDate");
   });
 
-  it("does not lock the parent RFQ when replaying a submitted vendor quotation", () => {
+  it("checks completed vendor replays without locks and locks RFQ first on new writes", () => {
     const service = read("server/marketplace-service.mjs");
     const route = service.slice(
       service.indexOf("async function handleVendorQuote"),
       service.indexOf("async function inviteVendorsToExistingRfq"),
     );
+    const preview = route.indexOf("const preview = await loadQuote(db)");
+    const replayCheck = route.indexOf('["submitted", "selected"].includes(preview.status)');
+    const rfqLock = route.indexOf("const lockedRfq = await loadAdminRfq(preview.rfq_id");
     const quoteLock = route.indexOf("const lockedQuote = await loadQuote(db, true)");
-    const replayCheck = route.indexOf('["submitted", "selected"].includes(lockedQuote.status)');
-    const rfqLock = route.indexOf("const lockedRfq = await loadAdminRfq(lockedQuote.rfq_id");
-    expect(quoteLock).toBeGreaterThan(-1);
-    expect(replayCheck).toBeGreaterThan(quoteLock);
+    expect(preview).toBeGreaterThan(-1);
+    expect(replayCheck).toBeGreaterThan(preview);
     expect(rfqLock).toBeGreaterThan(replayCheck);
-    const replayBranch = route.slice(replayCheck, rfqLock);
-    expect(replayBranch).toContain("return;");
+    expect(quoteLock).toBeGreaterThan(rfqLock);
+    expect(route.slice(replayCheck, rfqLock)).toContain("return;");
   });
 
   it("keeps admin DP messaging aligned with the handover threshold", () => {
