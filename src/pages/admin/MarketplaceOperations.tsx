@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { getAuthHeaders } from "@/lib/auth";
+import { InternalVendorQuoteDevForm } from "@/components/admin/InternalVendorQuoteDevForm";
 import { useToast } from "@/hooks/use-toast";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -32,6 +33,7 @@ type Rfq = {
 type Quote = {
   id: number;
   vendorName?: string | null;
+  isInternalVendor?: boolean;
   status: string;
   quoteId?: number;
   vendorId?: number;
@@ -705,6 +707,17 @@ export function MarketplaceOperationsTab() {
                     <div className="flex items-center justify-between"><p className="font-semibold">Deal price · {selectedQuote.vendorName}</p><StatusBadge value={selectedQuote.status} /></div>
                     {selectedQuote.lines.map((line) => <div key={line.rfqLineId} className="grid grid-cols-[1fr_130px] items-center gap-2"><div><p className="text-sm">{line.itemName}</p><p className="text-xs text-slate-500">Qty {line.offeredQty} {line.unit || ""} · vendor {line.vendorUnitPrice ?? "—"}</p></div><Input type="number" min="0.01" value={line.dealUnitPrice ?? ""} onChange={(e) => updateDealLine(line.rfqLineId, e.target.value)} /></div>)}
                     <Textarea placeholder="Catatan deal / quotation" value={dealNotes} onChange={(e) => setDealNotes(e.target.value)} />
+                    {quotes.some(quote => quote.id === selectedQuote.id &&
+                      quote.isInternalVendor === true &&
+                      ["invited", "opened", "requote_requested"].includes(quote.status)) && selectedRfq && (
+                      <InternalVendorQuoteDevForm
+                        key={selectedQuote.id}
+                        rfqId={selectedRfq.rfqId}
+                        quoteId={selectedQuote.id}
+                        onSubmitted={() => { void selectRfq(selectedRfq); }}
+                      />
+                    )}
+
                     <div className="flex flex-wrap gap-2"><button className="rounded-md bg-slate-800 px-3 py-2 text-sm text-white disabled:opacity-50" disabled={working} onClick={() => void saveDealPrice()}><Wallet className="mr-1 inline h-4 w-4" />Simpan deal price</button><button className="rounded-md bg-indigo-600 px-3 py-2 text-sm text-white disabled:opacity-50" disabled={working} onClick={() => void sendToCustomer()}><Send className="mr-1 inline h-4 w-4" />Kirim ke customer</button></div>
                   </div>
                 )}

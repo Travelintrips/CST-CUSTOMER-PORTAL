@@ -9,6 +9,7 @@ import { handleAdminOperations, handlePortalOperations } from "./marketplace-ope
 import { assertDevCorporatePoAffiliation } from "./corporate-po-affiliation-gate.mjs";
 import { uploadMarketplacePod, signedMarketplacePodUrl } from "./storage.mjs";
 import { normalizeVendorQuoteSubmission, persistVendorQuoteSubmission, submitInternalVendorQuote } from "./vendor-quote-submission.mjs";
+import { loadInternalVendorQuoteDraft } from "./internal-vendor-quote-draft.mjs";
 
 const RFQ_TERMINAL = new Set(["awarded", "cancelled", "expired"]);
 const QUOTE_TERMINAL = new Set(["selected", "rejected", "expired", "withdrawn"]);
@@ -973,6 +974,20 @@ async function inviteVendorsToExistingRfq(db, rfqId, vendorIds) {
 }
 
 async function handleAdminMarketplace(request, response, pathname, body, user) {
+  const internalQuoteDraft = pathname.match(
+    /^\/api\/mkt\/admin\/rfqs\/(\d+)\/vendor-quotes\/(\d+)\/internal-draft$/,
+  );
+  if (request.method === "GET" && internalQuoteDraft) {
+    const data = await loadInternalVendorQuoteDraft({
+      db: query, admin: user,
+      rfqId: integer(internalQuoteDraft[1], "RFQ"),
+      quoteId: integer(internalQuoteDraft[2], "Quotation"),
+      env: process.env,
+    });
+    response._sendJson(200, { ok: true, data });
+    return true;
+  }
+
   const internalQuoteSubmit = pathname.match(
     /^\/api\/mkt\/admin\/rfqs\/(\d+)\/vendor-quotes\/(\d+)\/submit-internal$/,
   );
@@ -1065,8 +1080,8 @@ async function handleAdminMarketplace(request, response, pathname, body, user) {
   }
   const quotes = pathname.match(/^\/api\/mkt\/admin\/rfqs\/(\d+)\/vendor-quotes$/);
   if (request.method === "GET" && quotes) {
-    const result = await query(`select q.id, q.vendor_id, q.status, q.updated_at, s.name as vendor_name, coalesce(sum(ql.negotiated_subtotal),sum(ql.subtotal),0) as deal_total from public.mkt_vendor_quotes q left join public.suppliers s on s.id=q.vendor_id left join public.mkt_vendor_quote_lines ql on ql.quote_id=q.id where q.rfq_id=$1 group by q.id,s.name order by q.created_at desc`, [integer(quotes[1], "RFQ")]);
-    response._sendJson(200, { ok: true, data: result.rows.map((r) => ({ id: Number(r.id), quoteId: Number(r.id), vendorId: Number(r.vendor_id), vendorName: r.vendor_name, status: r.status, updatedAt: r.updated_at, dealTotal: Number(r.deal_total) })) });
+    const result = await query(`select q.id, q.vendor_id, q.status, q.updated_at, s.name as vendor_name, coalesce(s.is_internal_vendor,false) as is_internal_vendor, coalesce(sum(ql.negotiated_subtotal),sum(ql.subtotal),0) as deal_total from public.mkt_vendor_quotes q left join public.suppliers s on s.id=q.vendor_id left join public.mkt_vendor_quote_lines ql on ql.quote_id=q.id where q.rfq_id=$1 group by q.id,s.name,s.is_internal_vendor order by q.created_at desc`, [integer(quotes[1], "RFQ")]);
+    response._sendJson(200, { ok: true, data: result.rows.map((r) => ({ id: Number(r.id), quoteId: Number(r.id), vendorId: Number(r.vendor_id), vendorName: r.vendor_name, isInternalVendor: r.is_internal_vendor === true, status: r.status, updatedAt: r.updated_at, dealTotal: Number(r.deal_total) })) });
     return true;
   }
   const deal = pathname.match(/^\/api\/mkt\/admin\/rfqs\/(\d+)\/quotes\/(\d+)\/deal-price$/);
