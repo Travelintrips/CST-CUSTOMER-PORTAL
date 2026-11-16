@@ -55,13 +55,16 @@ function dbState({ customerType = "company", memberships = [{ company_id: 1, com
         return rfq && line
           ? { rows: [{ id: rfq.id, portal_customer_id: rfq.customerId,
             company_id: rfq.companyId, vendor_catalog_item_id: line.itemId,
-            requested_qty: line.qty }], rowCount: 1 }
+            requested_qty: line.qty, buyer_phone: rfq.buyerPhone,
+            delivery_address: rfq.destination ?? "",
+            notes: rfq.notes ?? "", required_date_iso: rfq.requiredDate ?? "" }], rowCount: 1 }
           : { rows: [], rowCount: 0 };
       }
       if (sql.startsWith("insert into public.mkt_rfqs")) {
         rfq = { id: 501, number: args[0], companyId: args[1], vendorId: args[2],
           buyerName: args[3], buyerEmail: args[4], buyerPhone: args[5],
-          buyerCompany: args[6], customerId: args[10], buyerRole: args[11] };
+          buyerCompany: args[6], customerId: args[10], buyerRole: args[11],
+          requiredDate: args[7], destination: args[8], notes: args[9] };
         return { rows: [{ id: 501 }], rowCount: 1 };
       }
       if (sql.startsWith("insert into public.mkt_rfq_lines")) {
@@ -118,6 +121,37 @@ describe("DEV canonical marketplace RFQ bridge from existing product page", () =
     const modified = params({ ...options, input: { ...body, qty: 3 } });
     await expect(handleDevCustomerMarketplaceQuote(modified)).rejects.toMatchObject({ statusCode: 409 });
     expect(db.calls.at(-1).sql).toBe("rollback");
+  });
+
+  it("rejects edited contact, destination, date and notes with the same idempotency key", async () => {
+    const db = dbState();
+    const opts = { databasePool: db.databasePool, corporateGuard: guardOk };
+    await handleDevCustomerMarketplaceQuote(params(opts));
+    for (const change of [
+      { phone: "081234567891" },
+      { destination: "Bandung, Indonesia" },
+      { notes: "Corrected delivery instructions" },
+      { required_date: "2099-01-01" },
+    ]) {
+      const edited = params({ ...opts, input: { ...body, ...change } });
+      await expect(handleDevCustomerMarketplaceQuote(edited))
+        .rejects.toMatchObject({ statusCode: 409 });
+      expect(edited.sendJson).not.toHaveBeenCalled();
+      expect(db.calls.at(-1).sql).toBe("rollback");
+    }
+    expect(db.calls.filter(c => c.sql.startsWith("insert into public.mkt_rfqs"))).toHaveLength(1);
+  });
+
+  it("keeps public is_published catalog items eligible even if denormalized status is stale", async () => {
+    const db = dbState();
+    await handleDevCustomerMarketplaceQuote(params({
+      databasePool: db.databasePool, corporateGuard: guardOk,
+    }));
+    const select = db.calls.find(c => c.sql.includes("from public.vendor_catalog_items"));
+    expect(select).toBeDefined();
+    expect(select!.sql).toContain("item.is_active=true");
+    expect(select!.sql).toContain("item.is_published=true");
+    expect(select!.sql).not.toContain("item.status='published'");
   });
 
   it("denies an individual without company as a corporate PO bypass", async () => {
