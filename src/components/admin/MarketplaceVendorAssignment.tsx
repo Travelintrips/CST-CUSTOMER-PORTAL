@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { CheckCircle2, Loader2, Send, Store } from "lucide-react";
+import { CheckCircle2, Copy, Loader2, Send, Store } from "lucide-react";
 import { getAuthHeaders } from "@/lib/auth";
 import { Button } from "@/components/ui/button";
 
@@ -21,9 +21,14 @@ export function MarketplaceVendorAssignment({ rfqId }: { rfqId: number }) {
   const [sending, setSending] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+  const [copying, setCopying] = useState(false);
+  const [shareText, setShareText] = useState("");
+  const [recipientLast4, setRecipientLast4] = useState("");
 
   async function loadRouting() {
     setLoading(true);
+    setShareText("");
+    setRecipientLast4("");
     setError("");
     try {
       const response = await fetch(`/api/portal/admin/service-operations/marketplace/${rfqId}/vendor-routing`, {
@@ -65,6 +70,57 @@ export function MarketplaceVendorAssignment({ rfqId }: { rfqId: number }) {
       setError(cause instanceof Error ? cause.message : "Gagal mengirim RFQ ke vendor");
     } finally {
       setSending(false);
+    }
+  }
+
+  async function prepareManualVendorInvitation() {
+    if (!routing?.quoteId || copying) return;
+    setCopying(true);
+    setError("");
+    setNotice("");
+    try {
+      const response = await fetch(
+        `/api/portal/admin/service-operations/marketplace/${rfqId}/vendor-routing/invite-link?quoteId=${routing.quoteId}`,
+        {
+          method: "GET",
+          headers: getAuthHeaders(),
+          credentials: "include",
+          cache: "no-store",
+        },
+      );
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.error ?? "Gagal mengambil tautan quotation vendor.");
+      const share = payload.data as {
+        rfqNumber?: string;
+        quoteId: number;
+        quotePath: string;
+        recipientPhoneLast4: string;
+      };
+      if (Number(share.quoteId) !== Number(routing.quoteId)
+        || typeof share.quotePath !== "string"
+        || !share.quotePath.startsWith("/mkt-vendor-quote/")
+        || share.quotePath.length < 45) {
+        throw new Error("Tautan undangan vendor tidak valid.");
+      }
+      const message = [
+        "CST Customer Portal — Undangan Quotation",
+        `RFQ: ${share.rfqNumber ?? rfqId}`,
+        `Quote #${share.quoteId}`,
+        "Mohon isi penawaran melalui tautan khusus berikut:",
+        window.location.origin + share.quotePath,
+      ].join("\n");
+      setShareText(message);
+      setRecipientLast4(share.recipientPhoneLast4 ?? "");
+      try {
+        await navigator.clipboard.writeText(message);
+        setNotice("Undangan sudah disalin. Tempel hanya ke WhatsApp PIC vendor yang benar; belum terkirim otomatis.");
+      } catch {
+        setNotice("Salin teks undangan di bawah secara manual. Pastikan nomor WhatsApp PIC sebelum mengirim.");
+      }
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Gagal mempersiapkan undangan vendor.");
+    } finally {
+      setCopying(false);
     }
   }
 
@@ -120,6 +176,37 @@ export function MarketplaceVendorAssignment({ rfqId }: { rfqId: number }) {
         </p>
       ) : null}
 
+      {routing?.quoteId && ["invited", "opened", "requote_requested"].includes(routing.quoteStatus ?? "") && (
+        <div className="mt-2 space-y-1.5">
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            className="h-8 text-xs"
+            disabled={copying || routing.vendorActive === false}
+            onClick={() => void prepareManualVendorInvitation()}
+          >
+            {copying ? <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" /> : <Copy className="mr-1 h-3.5 w-3.5" />}
+            Salin Undangan Vendor
+          </Button>
+          <p className="text-[11px] text-amber-800">
+            Undangan berisi tautan khusus. Admin harus memastikan kontak penerima
+            sebelum mengirim melalui WhatsApp sendiri. Tombol ini tidak mengirim pesan otomatis.
+          </p>
+          {shareText && (
+            <div className="space-y-1">
+              {recipientLast4 && <p className="text-[11px]">Pastikan nomor PIC berakhiran {recipientLast4}.</p>}
+              <textarea
+                aria-label="Undangan vendor untuk disalin"
+                readOnly
+                value={shareText}
+                className="min-h-24 w-full rounded border bg-white p-2 text-xs"
+                onFocus={(event) => event.target.select()}
+              />
+            </div>
+          )}
+        </div>
+      )}
       {error && <p className="mt-2 text-xs text-rose-700">{error}</p>}
       {notice && <p className="mt-2 text-xs text-emerald-700">{notice}</p>}
     </div>

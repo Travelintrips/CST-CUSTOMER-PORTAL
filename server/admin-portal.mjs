@@ -1,4 +1,5 @@
 import { pool, query } from "./db.mjs";
+import { buildDevVendorQuoteShare } from "./vendor-quote-share.mjs";
 import {
   deleteDocumentObject,
   documentType,
@@ -2388,6 +2389,45 @@ async function loadMarketplaceVendorRouting(rfqId) {
 async function handleServiceOperations(ctx) {
   const { request, response, url } = ctx;
   const vendorRoutingMatch = url.pathname.match(/^\/api\/portal\/admin\/service-operations\/marketplace\/(\d+)\/vendor-routing$/);
+  const vendorShareMatch = url.pathname.match(/^\/api\/portal\/admin\/service-operations\/marketplace\/(\d+)\/vendor-routing\/invite-link$/);
+  if (request.method === "GET" && vendorShareMatch) {
+    if (process.env.APP_ENV !== "development") {
+      return adminError(ctx, 404, "Tautan undangan vendor hanya tersedia di DEV.");
+    }
+    const rfqId = Number(vendorShareMatch[1]);
+    const quoteId = Number(url.searchParams.get("quoteId"));
+    if (!Number.isSafeInteger(quoteId) || quoteId <= 0) {
+      return adminError(ctx, 400, "Quote ID wajib dipilih.");
+    }
+    const quoteResult = await query(
+      `select q.id, q.rfq_id, q.vendor_id, q.status, q.token, q.valid_until,
+              (q.valid_until > now()) as invite_not_expired,
+              r.rfq_number, s.name as supplier_name,
+              s.is_active as supplier_active, s.phone as supplier_phone,
+              s.contact_person
+         from public.mkt_vendor_quotes q
+         join public.mkt_rfqs r on r.id=q.rfq_id
+         join public.suppliers s on s.id=q.vendor_id
+        where q.id=$1 and q.rfq_id=$2
+        limit 1`,
+      [quoteId, rfqId],
+    );
+    try {
+      const share = buildDevVendorQuoteShare({
+        row: quoteResult.rows[0], rfqId, quoteId,
+      });
+      // A vendor quotation link is a bearer credential. Return it only
+      // upon explicit Admin request; never cache or log the token.
+      response.setHeader("Cache-Control", "no-store");
+      ctx.sendJson(response, 200, { data: share });
+    } catch (error) {
+      if (Number.isInteger(error?.statusCode)) {
+        return adminError(ctx, error.statusCode, error.message);
+      }
+      throw error;
+    }
+    return;
+  }
   const detailMatch = url.pathname.match(/^\/api\/portal\/admin\/service-operations\/([^/]+)\/(\d+)$/);
   const actionMatch = url.pathname.match(/^\/api\/portal\/admin\/service-operations\/([^/]+)\/(\d+)\/actions$/);
   if (request.method === "GET" && vendorRoutingMatch) {
