@@ -209,6 +209,32 @@ async function run() {
     assert.equal((await client.query("select count(*) from mkt_vendor_quote_lines where quote_id=18")).rows[0].count,"1");
     assert.equal((await client.query("select count(*) from activity_logs where mkt_vendor_quote_id=18")).rows[0].count,"1");
 
+    // Reproduce the competing Admin path: it locks RFQ first and then advances
+    // the already-submitted quote. An identical internal replay must stay
+    // read-only and complete while this RFQ lock is held.
+    const blocker = await pool.connect();
+    await blocker.query("BEGIN");
+    await blocker.query("select id from mkt_rfqs where id=23 for update");
+    const concurrentReplay = transaction((tx) => submitInternalVendorQuote({
+      db:tx,admin,rfqId:23,quoteId:18,body,env,now,writeEvent:auditWriter(tx),
+    }));
+    const outcome = await Promise.race([
+      concurrentReplay.then(value => ({ type:"done", value }), error => ({ type:"error", error })),
+      new Promise(resolve => setTimeout(() => resolve({ type:"timeout" }), 1500)),
+    ]);
+    if (outcome.type !== "done") {
+      await blocker.query("ROLLBACK");
+      blocker.release();
+      await concurrentReplay.catch(() => {});
+      if (outcome.type === "error") throw outcome.error;
+      throw new Error("Read-only replay blocked behind an RFQ-first Admin transition.");
+    }
+    assert.equal(outcome.value.alreadySubmitted,true);
+    await blocker.query("update mkt_vendor_quotes set status='selected',valid_until=now()-interval '1 day' where id=18");
+    await blocker.query("update mkt_rfqs set status='customer_review',approval_status='pending' where id=23");
+    await blocker.query("COMMIT");
+    blocker.release();
+
     await client.query("update mkt_rfqs set status='customer_review',approval_status='pending' where id=23");
     await client.query("update mkt_vendor_quotes set status='selected',valid_until=now()-interval '1 day' where id=18");
     const selectedReplay = await transaction((tx) => submitInternalVendorQuote({
