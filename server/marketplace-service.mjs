@@ -965,7 +965,7 @@ async function inviteVendorsToExistingRfq(db, rfqId, vendorIds) {
 
 async function handleAdminMarketplace(request, response, pathname, body, user) {
   const internalQuoteSubmit = pathname.match(
-    /^\\/api\\/mkt\\/admin\\/rfqs\\/(\\d+)\\/vendor-quotes\\/(\\d+)\\/submit-internal$/,
+    /^\/api\/mkt\/admin\/rfqs\/(\d+)\/vendor-quotes\/(\d+)\/submit-internal$/,
   );
   if (request.method === "POST" && internalQuoteSubmit) {
     const rfqId = integer(internalQuoteSubmit[1], "RFQ");
