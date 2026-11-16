@@ -2477,7 +2477,11 @@ async function handleServiceOperations(ctx) {
   if (request.method === "GET" && vendorRoutingMatch) {
     const routing = await loadMarketplaceVendorRouting(Number(vendorRoutingMatch[1]));
     if (!routing) return adminError(ctx, 404, "RFQ canonical tidak ditemukan.");
-    ctx.sendJson(response, 200, { data: { ...routing, vendorShareSupported: process.env.APP_ENV === "development" } });
+    const vendorShareSupported = process.env.APP_ENV === "development"
+      && process.env.NODE_ENV !== "production"
+      && databaseEnvironment === "development"
+      && databaseConnectionSource === "SUPABASE_DATABASE_URL_DEV";
+    ctx.sendJson(response, 200, { data: { ...routing, vendorShareSupported } });
     return;
   }
   if (request.method === "GET" && detailMatch) {

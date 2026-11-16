@@ -3,6 +3,7 @@
 import { query, databaseEnvironment, databaseConnectionSource } from "./db.mjs";
 import { buildDevVendorQuoteShare } from "./vendor-quote-share.mjs";
 import { customerPortalFonnteConfigured } from "./fonnte-config.mjs";
+import { verifyDevVendorWaSender } from "./dev-vendor-wa-sender.mjs";
 import { normalizeWhatsAppPhone, sendFonnteMessage } from "./whatsapp-service.mjs";
 
 const DEV_ORIGIN = "https://portaldev.72.61.210.205.sslip.io";
@@ -70,6 +71,7 @@ async function loadInvite({ queueId, rfqId, quoteId, db = query }) {
 export async function getDevVendorWhatsAppReadiness({
   queueId, rfqId, quoteId, env = process.env, db = query,
   isConfigured = customerPortalFonnteConfigured,
+  verifySender = verifyDevVendorWaSender,
 } = {}) {
   assertDevEnvironment(env);
   if (![queueId, rfqId, quoteId].every(positiveId)) fail(400, "ID undangan harus valid.");
@@ -79,17 +81,23 @@ export async function getDevVendorWhatsAppReadiness({
   const enabled = env.CUSTOMER_PORTAL_DEV_VENDOR_WA_ENABLED === "true";
   const pending = row.queue_status === "pending"
     && Number(row.attempt_count ?? 0) === 0 && row.sent_at == null;
+  // Never trust token presence alone: Fonnte must report the expected DEV device.
+  const sender = configured && enabled && pending
+    ? await verifySender({ expectedPhone: env.CUSTOMER_PORTAL_DEV_WA_SENDER_PHONE })
+    : { matched: false, reason: null };
   return {
     queueId: Number(row.queue_id),
     quoteId: Number(share.quoteId),
     recipientLast4: share.recipientPhoneLast4,
     queueStatus: row.queue_status,
     senderConfigured: configured,
+    senderIdentityVerified: sender.matched === true,
     enabled,
-    ready: configured && enabled && pending,
+    ready: configured && enabled && pending && sender.matched === true,
     reason: !configured ? "Pengirim WhatsApp khusus Customer Portal DEV belum dikonfigurasi."
       : !enabled ? "Pengiriman WA vendor DEV masih dinonaktifkan."
       : !pending ? "Antrean sudah pernah diproses; tidak boleh mengirim ulang."
+      : sender.matched !== true ? sender.reason ?? "Identitas pengirim WA DEV belum terverifikasi."
       : null,
   };
 }
@@ -120,6 +128,7 @@ export async function sendOneDevVendorWhatsAppInvite({
   queueId, rfqId, quoteId, recipientLast4, confirmedRecipient,
   env = process.env, db = query,
   isConfigured = customerPortalFonnteConfigured,
+  verifySender = verifyDevVendorWaSender,
   send = sendFonnteMessage,
 } = {}) {
   assertDevEnvironment(env);
@@ -127,7 +136,7 @@ export async function sendOneDevVendorWhatsAppInvite({
     fail(409, "Konfirmasi PIC vendor diperlukan sebelum mengirim.");
   }
   const readiness = await getDevVendorWhatsAppReadiness({
-    queueId, rfqId, quoteId, env, db, isConfigured,
+    queueId, rfqId, quoteId, env, db, isConfigured, verifySender,
   });
   if (!readiness.ready) fail(409, readiness.reason ?? "Antrean belum siap dikirim.");
   if (recipientLast4 !== readiness.recipientLast4) {

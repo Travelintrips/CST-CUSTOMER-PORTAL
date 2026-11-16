@@ -6,8 +6,9 @@ import {
   sendOneDevVendorWhatsAppInvite,
 } from "../server/dev-vendor-wa-invite.mjs";
 
-const dev = { APP_ENV: "development", CUSTOMER_PORTAL_DEV_VENDOR_WA_ENABLED: "true" };
-const off = { APP_ENV: "development", CUSTOMER_PORTAL_DEV_VENDOR_WA_ENABLED: "false" };
+const dev = { APP_ENV: "development", CUSTOMER_PORTAL_DEV_VENDOR_WA_ENABLED: "true", CUSTOMER_PORTAL_DEV_WA_SENDER_PHONE: "6281111111111" };
+const off = { ...dev, CUSTOMER_PORTAL_DEV_VENDOR_WA_ENABLED: "false" };
+const verifiedDevSender = async () => ({ matched: true, reason: null });
 const ids = { queueId: 93, rfqId: 23, quoteId: 18 };
 const contact = { ...ids, recipientLast4: "7890", confirmedRecipient: true };
 function row(overrides: Record<string, unknown> = {}) {
@@ -69,12 +70,12 @@ describe("DEV WhatsApp single existing vendor invite (fake sender / fake databas
   it("requires a separate DEV-only opt-in even when provider configured", async () => {
     const h = harness();
     const readiness = await getDevVendorWhatsAppReadiness({
-      ...ids, env: off, db: h.db, isConfigured: async () => true,
+      ...ids, env: off, db: h.db, isConfigured: async () => true, verifySender: verifiedDevSender,
     });
     expect(readiness.enabled).toBe(false);
     expect(readiness.ready).toBe(false);
     await expect(sendOneDevVendorWhatsAppInvite({
-      ...contact, env: off, db: h.db, isConfigured: async () => true,
+      ...contact, env: off, db: h.db, isConfigured: async () => true, verifySender: verifiedDevSender,
       send: vi.fn(),
     })).rejects.toThrow(/dinonaktifkan/);
     expect(h.sqlCalls.every((sql) => sql.startsWith("select"))).toBe(true);
@@ -82,15 +83,15 @@ describe("DEV WhatsApp single existing vendor invite (fake sender / fake databas
 
   it("refuses PROD, wrong queue, missing PIC, mismatched company and wrong confirmation", async () => {
     const h = harness();
-    const opts = { ...contact, env: dev, db: h.db, isConfigured: async () => true, send: vi.fn() };
+    const opts = { ...contact, env: dev, db: h.db, isConfigured: async () => true, verifySender: verifiedDevSender, send: vi.fn() };
     await expect(sendOneDevVendorWhatsAppInvite({ ...opts, env: { APP_ENV: "production" } })).rejects.toThrow(/DEV/);
     await expect(sendOneDevVendorWhatsAppInvite({ ...opts, queueId: 94 })).rejects.toThrow(/tidak ditemukan/);
     await expect(sendOneDevVendorWhatsAppInvite({ ...opts, recipientLast4: "9999" })).rejects.toThrow(/tidak cocok/);
     await expect(sendOneDevVendorWhatsAppInvite({ ...opts, confirmedRecipient: false })).rejects.toThrow(/Konfirmasi/);
     const noPic = harness({ contact_person: "" });
-    await expect(getDevVendorWhatsAppReadiness({ ...ids, env: dev, db: noPic.db, isConfigured: async () => true })).rejects.toThrow(/PIC/);
+    await expect(getDevVendorWhatsAppReadiness({ ...ids, env: dev, db: noPic.db, isConfigured: async () => true, verifySender: verifiedDevSender })).rejects.toThrow(/PIC/);
     const wrongCompany = harness({ supplier_company_id: 2 });
-    await expect(getDevVendorWhatsAppReadiness({ ...ids, env: dev, db: wrongCompany.db, isConfigured: async () => true })).rejects.toThrow(/perusahaan/);
+    await expect(getDevVendorWhatsAppReadiness({ ...ids, env: dev, db: wrongCompany.db, isConfigured: async () => true, verifySender: verifiedDevSender })).rejects.toThrow(/perusahaan/);
     expect(h.sqlCalls.every((sql) => sql.startsWith("select"))).toBe(true);
   });
 
@@ -98,7 +99,7 @@ describe("DEV WhatsApp single existing vendor invite (fake sender / fake databas
     const h = harness();
     const send = vi.fn(async () => ({ status: true }));
     const result = await sendOneDevVendorWhatsAppInvite({
-      ...contact, env: dev, db: h.db, isConfigured: async () => true, send,
+      ...contact, env: dev, db: h.db, isConfigured: async () => true, verifySender: verifiedDevSender, send,
     });
     expect(result).toEqual({ queueId: 93, quoteId: 18, status: "provider_accepted" });
     expect(send).toHaveBeenCalledTimes(1);
@@ -115,7 +116,7 @@ describe("DEV WhatsApp single existing vendor invite (fake sender / fake databas
     const h = harness();
     const send = vi.fn(async () => ({ status: true }));
     const attempt = () => sendOneDevVendorWhatsAppInvite({
-      ...contact, env: dev, db: h.db, isConfigured: async () => true, send,
+      ...contact, env: dev, db: h.db, isConfigured: async () => true, verifySender: verifiedDevSender, send,
     });
     const outcomes = await Promise.allSettled([attempt(), attempt()]);
     expect(outcomes.filter((entry) => entry.status === "fulfilled")).toHaveLength(1);
@@ -127,12 +128,12 @@ describe("DEV WhatsApp single existing vendor invite (fake sender / fake databas
     const h = harness();
     const send = vi.fn(async () => { throw Error("simulated timeout"); });
     await expect(sendOneDevVendorWhatsAppInvite({
-      ...contact, env: dev, db: h.db, isConfigured: async () => true, send,
+      ...contact, env: dev, db: h.db, isConfigured: async () => true, verifySender: verifiedDevSender, send,
     })).rejects.toThrow(/tidak terkonfirmasi/);
     expect(h.data.queue_status).toBe("exhausted");
     expect(send).toHaveBeenCalledTimes(1);
     await expect(sendOneDevVendorWhatsAppInvite({
-      ...contact, env: dev, db: h.db, isConfigured: async () => true, send,
+      ...contact, env: dev, db: h.db, isConfigured: async () => true, verifySender: verifiedDevSender, send,
     })).rejects.toThrow(/sudah pernah diproses/);
     expect(send).toHaveBeenCalledTimes(1);
   });
@@ -142,10 +143,10 @@ describe("DEV WhatsApp single existing vendor invite (fake sender / fake databas
     const send = vi.fn();
     const mixed = { ...dev, NODE_ENV: "production" };
     await expect(getDevVendorWhatsAppReadiness({
-      ...ids, env: mixed, db: h.db, isConfigured: async () => true,
+      ...ids, env: mixed, db: h.db, isConfigured: async () => true, verifySender: verifiedDevSender,
     })).rejects.toThrow(/database DEV khusus/);
     await expect(sendOneDevVendorWhatsAppInvite({
-      ...contact, env: mixed, db: h.db, isConfigured: async () => true, send,
+      ...contact, env: mixed, db: h.db, isConfigured: async () => true, verifySender: verifiedDevSender, send,
     })).rejects.toThrow(/database DEV khusus/);
     expect(h.db).not.toHaveBeenCalled();
     expect(send).not.toHaveBeenCalled();
@@ -165,7 +166,7 @@ describe("DEV WhatsApp single existing vendor invite (fake sender / fake databas
       return h.db(sql, params);
     };
     await expect(sendOneDevVendorWhatsAppInvite({
-      ...contact, env: dev, db: changingDb, isConfigured: async () => true, send,
+      ...contact, env: dev, db: changingDb, isConfigured: async () => true, verifySender: verifiedDevSender, send,
     })).rejects.toThrow(/Nomor PIC vendor berubah/);
     expect(reads).toBe(2);
     expect(send).not.toHaveBeenCalled();
@@ -176,8 +177,32 @@ describe("DEV WhatsApp single existing vendor invite (fake sender / fake databas
   it("rejects missing supplier company instead of treating null as company zero", async () => {
     const h = harness({ supplier_company_id: null, rfq_company_id: null });
     await expect(getDevVendorWhatsAppReadiness({
-      ...ids, env: dev, db: h.db, isConfigured: async () => true,
+      ...ids, env: dev, db: h.db, isConfigured: async () => true, verifySender: verifiedDevSender,
     })).rejects.toThrow(/perusahaan/);
+  });
+
+  it("rejects an unknown or mismatching sender without claiming the queue", async () => {
+    const h = harness();
+    const send = vi.fn();
+    const untrustedSender = vi.fn(async () => ({
+      matched: false,
+      reason: "Nomor pengirim Fonnte tidak cocok dengan akun Customer Portal DEV.",
+    }));
+    const readiness = await getDevVendorWhatsAppReadiness({
+      ...ids, env: dev, db: h.db,
+      isConfigured: async () => true, verifySender: untrustedSender,
+    });
+    expect(readiness.senderConfigured).toBe(true);
+    expect(readiness.senderIdentityVerified).toBe(false);
+    expect(readiness.ready).toBe(false);
+    expect(readiness.reason).toMatch(/tidak cocok/);
+    await expect(sendOneDevVendorWhatsAppInvite({
+      ...contact, env: dev, db: h.db, isConfigured: async () => true,
+      verifySender: untrustedSender, send,
+    })).rejects.toThrow(/tidak cocok/);
+    expect(send).not.toHaveBeenCalled();
+    expect(h.sqlCalls.every((sql) => sql.startsWith("select"))).toBe(true);
+    expect(h.data.queue_status).toBe("pending");
   });
 
   it("restricts route to Admin, POST, exact IDs and an existing queue", () => {
@@ -189,6 +214,7 @@ describe("DEV WhatsApp single existing vendor invite (fake sender / fake databas
     expect(admin).toContain('ctx.body?.confirmedRecipient === true');
     expect(admin).toContain("limit 2");
     expect(admin).toContain("process.env.APP_ENV !== \"development\"");
-    expect(admin).toContain("vendorShareSupported: process.env.APP_ENV === \"development\"");
+    expect(admin).toContain('const vendorShareSupported = process.env.APP_ENV === "development"');
+    expect(admin).toContain('databaseConnectionSource === "SUPABASE_DATABASE_URL_DEV"');
   });
 });
