@@ -274,7 +274,7 @@ export async function submitInternalVendorQuote({
   // Lock quote first, matching the existing vendor-token submitter; then lock
   // its parent RFQ. This prevents a new quote writer lock-order inversion.
   const quote = (await db(
-    "select * from public.mkt_vendor_quotes where id=$1 and rfq_id=$2 for update",
+    "select id,rfq_id,vendor_id,status,valid_until,requote_round,notes,payment_terms,payment_term_code,payment_dp_percent,quotation_date,submitted_at,updated_at from public.mkt_vendor_quotes where id=$1 and rfq_id=$2 for update",
     [normalizedQuoteId, normalizedRfqId],
   )).rows[0];
   if (!quote) fail(404, "Quotation tidak ditemukan.");
