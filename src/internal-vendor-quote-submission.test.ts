@@ -59,6 +59,7 @@ function fixture(overrides = {}) {
     quote,
     rfqLines: [{ id: 231 }],
     existingQuoteLines: [],
+    catalogItem: null,
     ...overrides,
   };
   const calls = [];
@@ -72,6 +73,7 @@ function fixture(overrides = {}) {
     if (q.startsWith("select id,role,customer_type,account_status")) return { rows: state.buyer ? [state.buyer] : [], rowCount: state.buyer ? 1 : 0 };
     if (q.startsWith("select m.company_id")) return { rows: state.membership, rowCount: state.membership.length };
     if (q.startsWith("select id from public.mkt_rfq_lines")) return { rows: state.rfqLines, rowCount: state.rfqLines.length };
+    if (q.startsWith("select id from public.vendor_catalog_items")) return { rows: state.catalogItem ? [state.catalogItem] : [], rowCount: state.catalogItem ? 1 : 0 };
     if (q.startsWith("select id from public.mkt_vendor_quote_lines where quote_id")) return { rows: [], rowCount: 0 };
     if (q.startsWith("select rfq_line_id")) return { rows: state.existingQuoteLines, rowCount: state.existingQuoteLines.length };
     if (q.startsWith("insert into public.mkt_vendor_quote_lines")) return { rows: [{ id: 801 }], rowCount: 1 };
@@ -198,6 +200,18 @@ describe("audited Admin-as-internal-vendor quote submit uses canonical quote wri
     await expect(run(expired)).rejects.toMatchObject({ statusCode: 410 });
     const lineMismatch = fixture({ rfqLines: [{ id: 232 }] });
     await expect(run(lineMismatch)).rejects.toMatchObject({ statusCode: 403 });
+  });
+
+  it("rejects vendor catalog products that are not owned by the quote supplier", async () => {
+    const f = fixture({ catalogItem: null });
+    const productBody = {
+      ...body,
+      lines: [{ ...body.lines[0], vendorCatalogItemId: 999 }],
+    };
+    await expect(submitInternalVendorQuote({
+      db: f.db, admin, rfqId: 23, quoteId: 18, body: productBody, env, writeEvent: vi.fn(),
+    })).rejects.toMatchObject({ statusCode: 403 });
+    expect(f.calls.some(x => x.sql.startsWith("insert into public.mkt_vendor_quote_lines"))).toBe(false);
   });
 
   it("rejects invalid payment terms, duplicate lines, and non-IDR offers", () => {
