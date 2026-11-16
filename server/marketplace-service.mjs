@@ -892,10 +892,20 @@ async function handleVendorQuote(request, response, pathname, body) {
   const submission = normalizeVendorQuoteSubmission(body, { requirePaymentTerms: submit });
   let resultingStatus = quote.status;
   await withTransaction(async (db) => {
-    // Lock quote first, then parent RFQ. The internal Admin route uses the
-    // same order so both submitters serialize without a lock-order inversion.
+    // Submitted/selected replay is read-only and never acquires a parent RFQ
+    // lock. For new vendor submissions, lock RFQ before quote, matching
+    // send-to-customer/customerDecision (including bulk quote rejection).
+    const preview = await loadQuote(db);
+    if (!preview) fail(404, "Link quotation tidak ditemukan.");
+    if (["submitted", "selected"].includes(preview.status)) {
+      resultingStatus = preview.status;
+      return;
+    }
+    const lockedRfq = await loadAdminRfq(preview.rfq_id, { client: db, forUpdate: true });
     const lockedQuote = await loadQuote(db, true);
-    if (!lockedQuote) fail(404, "Link quotation tidak ditemukan.");
+    if (!lockedQuote || Number(lockedQuote.rfq_id) !== Number(lockedRfq.id)) {
+      fail(409, "Quotation telah berubah; muat ulang lalu coba lagi.");
+    }
     const lockedExpired = lockedQuote.valid_until && new Date(lockedQuote.valid_until) < new Date();
     if (lockedExpired && !["submitted", "selected"].includes(lockedQuote.status)) {
       fail(410, "Link quotation sudah kedaluwarsa.");
@@ -907,9 +917,6 @@ async function handleVendorQuote(request, response, pathname, body) {
     if (!["invited", "opened", "requote_requested"].includes(lockedQuote.status)) {
       fail(409, "Quotation tidak dapat diedit pada status ini.");
     }
-    // Only new vendor writes lock the parent RFQ. Completed replays remain
-    // free of RFQ locks, preventing deadlocks with RFQ-first customer decisions.
-    const lockedRfq = await loadAdminRfq(lockedQuote.rfq_id, { client: db, forUpdate: true });
     const saved = await persistVendorQuoteSubmission(db, {
       quote: lockedQuote,
       rfq: lockedRfq,
