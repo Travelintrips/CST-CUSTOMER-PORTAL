@@ -14,7 +14,7 @@ const env = {
 const base = {
   env,
   admin: { id: 19, role: "admin", account_status: "active" },
-  rfq: { id: 23, company_id: 1, portal_customer_id: 31, status: "quoting" },
+  rfq: { id: 23, company_id: 1, portal_customer_id: 31, status: "quoting", approval_status: "approved" },
   quote: { id: 18, rfq_id: 23, vendor_id: 24, status: "invited", valid_until: "2099-11-23T00:00:00Z" },
   supplier: { id: 24, company_id: 1, is_internal_vendor: true, is_active: true },
   approvedBuyerCompany: true,
@@ -77,6 +77,25 @@ describe("DEV-only internal vendor quotation authorization; no writer installed"
     reject({ quote: { ...base.quote, vendor_id: 25 } }, 404);
     reject({ supplier: { ...base.supplier, id: 25 } }, 404);
   });
+  it("requires explicit Admin approval before a new internal quote", () => {
+    reject({ rfq: { ...base.rfq, approval_status: "pending" } }, 409);
+    reject({ rfq: { ...base.rfq, approval_status: "rejected" } }, 409);
+  });
+  it("allows an identical submitted replay after customer review without reopening the quote", () => {
+    const result = call({
+      allowSubmittedReplay: true,
+      rfq: { ...base.rfq, status: "customer_review", approval_status: "pending" },
+      quote: { ...base.quote, status: "submitted", valid_until: "2026-11-16T00:00:00Z" },
+    });
+    expect(result.auditAction).toBe("admin_internal_vendor_quote_submitted");
+  });
+  it("does not allow submitted replay unless the server explicitly marks a replay", () => {
+    reject({
+      rfq: { ...base.rfq, status: "customer_review", approval_status: "pending" },
+      quote: { ...base.quote, status: "submitted" },
+    }, 409);
+  });
+
   it("requires the RFQ to be quoting / quoted, not terminal or unsubmitted", () => {
     for (const status of ["draft", "submitted", "customer_review", "awarded", "cancelled"]) {
       reject({ rfq: { ...base.rfq, status } }, 409);
