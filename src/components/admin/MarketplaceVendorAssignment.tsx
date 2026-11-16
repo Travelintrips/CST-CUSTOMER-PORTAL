@@ -13,6 +13,18 @@ type VendorRouting = {
   catalogItemId: number | null;
   catalogItemName: string | null;
   source: string | null;
+  vendorShareSupported?: boolean;
+};
+
+type WaReadiness = {
+  queueId: number;
+  quoteId: number;
+  recipientLast4: string;
+  queueStatus: string;
+  senderConfigured: boolean;
+  enabled: boolean;
+  ready: boolean;
+  reason: string | null;
 };
 
 export function MarketplaceVendorAssignment({ rfqId }: { rfqId: number }) {
@@ -24,11 +36,16 @@ export function MarketplaceVendorAssignment({ rfqId }: { rfqId: number }) {
   const [copying, setCopying] = useState(false);
   const [shareText, setShareText] = useState("");
   const [recipientLast4, setRecipientLast4] = useState("");
+  const [waReadiness, setWaReadiness] = useState<WaReadiness | null>(null);
+  const [waConfirmed, setWaConfirmed] = useState(false);
+  const [waSending, setWaSending] = useState(false);
 
   async function loadRouting() {
     setLoading(true);
     setShareText("");
     setRecipientLast4("");
+    setWaReadiness(null);
+    setWaConfirmed(false);
     setError("");
     try {
       const response = await fetch(`/api/portal/admin/service-operations/marketplace/${rfqId}/vendor-routing`, {
@@ -38,7 +55,21 @@ export function MarketplaceVendorAssignment({ rfqId }: { rfqId: number }) {
       });
       const payload = await response.json();
       if (!response.ok) throw new Error(payload.error ?? "Gagal memuat vendor produk");
-      setRouting(payload.data as VendorRouting);
+      const routed = payload.data as VendorRouting;
+      setRouting(routed);
+      if (routed.vendorShareSupported && routed.quoteId
+        && ["invited", "opened", "requote_requested"].includes(routed.quoteStatus ?? "")) {
+        try {
+          const waResponse = await fetch(
+            `/api/portal/admin/service-operations/marketplace/${rfqId}/vendor-routing/whatsapp-readiness?quoteId=${routed.quoteId}`,
+            { headers: getAuthHeaders(), credentials: "include", cache: "no-store" },
+          );
+          const waPayload = await waResponse.json();
+          if (waResponse.ok) setWaReadiness(waPayload.data as WaReadiness);
+        } catch {
+          // WhatsApp readiness is advisory; never break the existing Admin RFQ card.
+        }
+      }
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Gagal memuat vendor produk");
     } finally {
@@ -124,6 +155,35 @@ export function MarketplaceVendorAssignment({ rfqId }: { rfqId: number }) {
     }
   }
 
+  async function sendVendorWhatsapp() {
+    if (!routing?.quoteId || !waReadiness?.ready || !waConfirmed || waSending) return;
+    setWaSending(true);
+    setError("");
+    setNotice("");
+    try {
+      const response = await fetch(
+        `/api/portal/admin/service-operations/marketplace/${rfqId}/vendor-routing/send-whatsapp`,
+        {
+          method: "POST",
+          headers: { ...getAuthHeaders(), "Content-Type": "application/json" },
+          credentials: "include",
+          body: JSON.stringify({
+            queueId: waReadiness.queueId, quoteId: routing.quoteId,
+            recipientLast4: waReadiness.recipientLast4, confirmedRecipient: true,
+          }),
+        },
+      );
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.error ?? payload.message ?? "Gagal mengirim WA.");
+      setNotice("Pengirim WhatsApp menerima undangan. Status dibuka vendor akan diperiksa terpisah.");
+      await loadRouting();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Gagal mengirim WA.");
+    } finally {
+      setWaSending(false);
+    }
+  }
+
   if (loading) {
     return (
       <div className="flex items-center gap-2 rounded-lg border bg-slate-50 px-3 py-2 text-xs text-slate-500">
@@ -176,8 +236,34 @@ export function MarketplaceVendorAssignment({ rfqId }: { rfqId: number }) {
         </p>
       ) : null}
 
-      {routing?.quoteId && ["invited", "opened", "requote_requested"].includes(routing.quoteStatus ?? "") && (
+      {routing?.vendorShareSupported && routing?.quoteId && ["invited", "opened", "requote_requested"].includes(routing.quoteStatus ?? "") && (
         <div className="mt-2 space-y-1.5">
+          <p className="text-[11px] text-sky-800">
+            WhatsApp langsung: {waReadiness?.ready ? "Pengirim DEV siap untuk satu antrean."
+              : waReadiness?.reason ?? "Belum tersedia untuk undangan ini."}
+          </p>
+          {waReadiness?.ready && (
+            <div className="rounded border border-sky-200 bg-white p-2 space-y-2">
+              <label className="flex items-start gap-2 text-xs">
+                <input
+                  aria-label="Konfirmasi nomor PIC vendor"
+                  type="checkbox"
+                  checked={waConfirmed}
+                  onChange={(event) => setWaConfirmed(event.target.checked)}
+                />
+                Saya telah memastikan nomor berakhiran {waReadiness.recipientLast4} milik PIC vendor yang berwenang.
+              </label>
+              <Button
+                type="button"
+                size="sm"
+                disabled={!waConfirmed || waSending}
+                onClick={() => void sendVendorWhatsapp()}
+              >
+                {waSending ? <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" /> : <Send className="mr-1 h-3.5 w-3.5" />}
+                Kirim WhatsApp dari Sistem (1 Antrean)
+              </Button>
+            </div>
+          )}
           <Button
             type="button"
             size="sm"
