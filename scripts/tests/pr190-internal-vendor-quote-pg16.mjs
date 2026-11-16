@@ -212,7 +212,7 @@ async function run() {
     await client.query("update mkt_rfqs set status='customer_review',approval_status='pending' where id=23");
     await client.query("update mkt_vendor_quotes set status='selected',valid_until=now()-interval '1 day' where id=18");
     const selectedReplay = await transaction((tx) => submitInternalVendorQuote({
-      db:tx,admin,rfqId:23,quoteId:18,body,env,now:new Date("2026-12-01T00:00:00Z"),writeEvent,
+      db:tx,admin,rfqId:23,quoteId:18,body,env,now:new Date("2026-12-01T00:00:00Z"),writeEvent:auditWriter(tx),
     }));
     assert.equal(selectedReplay.alreadySubmitted,true);
     assert.equal(selectedReplay.status,"selected");
