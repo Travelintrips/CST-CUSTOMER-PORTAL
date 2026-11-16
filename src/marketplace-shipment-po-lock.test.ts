@@ -40,6 +40,31 @@ describe("cross-service Customer Portal PO -> Shipment lock order", () => {
     expect(p.lockShipment).not.toHaveBeenCalled();
   });
 
+  it("stages POD outside the row-lock transaction and cleans failed or redundant uploads", () => {
+    const source = readFileSync(resolve(process.cwd(), "server/marketplace-operations.mjs"), "utf8");
+    const body = source.slice(
+      source.indexOf("async function submitPod("),
+      source.indexOf("function mapPod(", source.indexOf("async function submitPod(")),
+    );
+    expect(body.indexOf("await uploadMarketplacePod(")).toBeLessThan(body.indexOf("await withTransaction("));
+    expect(body).toContain("await lockPoThenShipment(db, shipmentId, user, isAdmin)");
+    expect(body).toContain("await discardUnusedUpload()");
+    expect(body).toContain("if (result.alreadyProcessed) await discardUnusedUpload()");
+    expect(body).toContain("Number(shipment.po_id) !== Number(preflight.po_id)");
+  });
+
+  it("scopes unused POD deletion to its PO and Shipment path", () => {
+    const source = readFileSync(resolve(process.cwd(), "server/storage.mjs"), "utf8");
+    const start = source.indexOf("export async function deleteMarketplacePod(");
+    const end = source.indexOf("export async function signedMarketplacePodUrl(", start);
+    expect(start).toBeGreaterThan(-1);
+    const body = source.slice(start, end);
+    expect(body).toContain("marketplace-pod/po-");
+    expect(body).toContain("shipment-");
+    expect(body).toContain("path.startsWith(prefix)");
+    expect(body).toContain(".remove([path])");
+  });
+
   it("wires the common lock helper into event, POD and Goods Receipt canonical writers", () => {
     const source = readFileSync(resolve(process.cwd(), "server/marketplace-operations.mjs"), "utf8");
     for (const [name, next] of [

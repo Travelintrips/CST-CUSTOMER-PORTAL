@@ -9,6 +9,7 @@ import {
 } from "./notification-service.mjs";
 import {
   uploadMarketplacePod,
+  deleteMarketplacePod,
   signedMarketplacePodUrl,
   uploadMarketplacePaymentProof,
   signedMarketplacePaymentProofUrl,
@@ -936,70 +937,115 @@ async function submitPod({ shipmentId, body, request, user, isAdmin }) {
   const key = idempotencyKey(request, body);
   if (!key) fail(400, "Idempotency-Key wajib diisi untuk POD.");
   const file = body?.file;
+
+  // Authenticate and check the target shipment without holding DB row locks
+  // while an external object-storage upload is running.
+  const preflight = await loadShipment(shipmentId, user, { isAdmin });
+  const existingBeforeUpload = (await query(
+    `select * from public.mkt_po_shipment_events
+       where shipment_id=$1 and event_type='pod_submitted' and idempotency_key=$2
+       limit 1`,
+    [preflight.id, key],
+  )).rows[0];
+  if (existingBeforeUpload) {
+    return { alreadyProcessed: true, pod: mapPod(existingBeforeUpload) };
+  }
+  if (!["arrived", "delivered", "partially_delivered"].includes(preflight.shipment_status)) {
+    fail(409, "POD hanya dapat disubmit setelah shipment tiba.");
+  }
+
+  // Stage only after the signed/authorized preflight; re-authorize inside the
+  // transaction after acquiring PO -> Shipment locks before persisting the POD.
+  let uploaded = null;
   let url = text(body.photoUrl ?? body.podUrl ?? body.url);
-  return withTransaction(async (db) => {
-    const { shipment } = await lockPoThenShipment(db, shipmentId, user, isAdmin);
-    if (file && typeof file.arrayBuffer === "function") {
-      const uploaded = await uploadMarketplacePod({ poId: shipment.po_id, shipmentId: shipment.id, file });
-      url = uploaded.path;
+  if (file && typeof file.arrayBuffer === "function") {
+    uploaded = await uploadMarketplacePod({ poId: preflight.po_id, shipmentId: preflight.id, file });
+    url = uploaded.path;
+  }
+  if (!url) fail(400, "POD wajib berupa file JPG/PNG/PDF atau URL/object path yang valid.");
+
+  const discardUnusedUpload = async () => {
+    if (!uploaded?.path) return;
+    try {
+      await deleteMarketplacePod({ poId: preflight.po_id, shipmentId: preflight.id, path: uploaded.path });
+    } catch {
+      // Do not hide the original DB failure or completed idempotent replay.
+      // Only the nonsecret IDs are logged for storage cleanup investigation.
+      console.warn("[marketplace] unused POD cleanup failed", {
+        poId: Number(preflight.po_id), shipmentId: Number(preflight.id),
+      });
     }
-    if (!url) {
-      fail(400, "POD wajib berupa file JPG/PNG/PDF atau URL/object path yang valid.");
-    }
-    const existing = (await db(
-      `select * from public.mkt_po_shipment_events
-        where shipment_id=$1 and event_type='pod_submitted' and idempotency_key=$2
-        limit 1`,
-      [shipment.id, key],
-    )).rows[0];
-    if (existing) return { alreadyProcessed: true, pod: mapPod(existing) };
-    if (!["arrived", "delivered", "partially_delivered"].includes(shipment.shipment_status)) {
-      fail(409, "POD hanya dapat disubmit setelah shipment tiba.");
-    }
-    const sequence = Number((await db(
-      `select coalesce(max(event_sequence),0)+1 as next
-         from public.mkt_po_shipment_events where shipment_id=$1`,
-      [shipment.id],
-    )).rows[0].next);
-    const inserted = await db(
-      `insert into public.mkt_po_shipment_events
-         (shipment_id,event_sequence,event_type,note,attachment_object_path,
-          actor_type,actor_id,idempotency_key)
-       values ($1,$2,'pod_submitted',$3,$4,$5,$6,$7)
-       returning *`,
-      [
-        shipment.id,
-        sequence,
-        text(body.note ?? body.remarks),
-        url,
-        isAdmin ? "admin" : "customer",
-        String(user?.id ?? "system"),
-        key,
-      ],
-    );
-    await writeActivity(db, {
-      poId: shipment.po_id,
-      user: actor(user, isAdmin ? "admin" : "customer"),
-      action: "shipment_pod_submitted",
-      newValue: { shipmentId: Number(shipment.id), url },
-      description: "POD shipment disubmit.",
-      key: `shipment-pod:${shipment.id}:${key}`,
-    });
-    await queueNotification(db, {
-      eventType: "shipment_pod_submitted",
-      po: { ...shipment, id: shipment.po_id },
-      payload: { shipmentId: Number(shipment.id) },
-      key: `shipment-pod:${shipment.id}:${key}`,
-    });
-    await notifyMarketplaceEvent(db, {
-      eventType: "shipment_pod_submitted",
-      po: { ...shipment, id: shipment.po_id },
-      payload: { shipmentId: Number(shipment.id) },
-      key: `shipment-pod:${shipment.id}:${key}`,
-    });
-    await maybeCompletePo(db, shipment.po_id, user, isAdmin);
-    return { alreadyProcessed: false, pod: mapPod(inserted.rows[0]) };
+  };
+
+  let result;
+  try {
+    result = await withTransaction(async (db) => {
+      const { shipment } = await lockPoThenShipment(db, shipmentId, user, isAdmin);
+      if (Number(shipment.po_id) !== Number(preflight.po_id)) {
+        fail(409, "Relasi Shipment/PO berubah selama upload POD. Muat ulang lalu coba lagi.");
+      }
+      const existing = (await db(
+        `select * from public.mkt_po_shipment_events
+          where shipment_id=$1 and event_type='pod_submitted' and idempotency_key=$2
+          limit 1`,
+        [shipment.id, key],
+      )).rows[0];
+      if (existing) return { alreadyProcessed: true, pod: mapPod(existing) };
+      if (!["arrived", "delivered", "partially_delivered"].includes(shipment.shipment_status)) {
+        fail(409, "POD hanya dapat disubmit setelah shipment tiba.");
+      }
+      const sequence = Number((await db(
+        `select coalesce(max(event_sequence),0)+1 as next
+           from public.mkt_po_shipment_events where shipment_id=$1`,
+        [shipment.id],
+      )).rows[0].next);
+      const inserted = await db(
+        `insert into public.mkt_po_shipment_events
+           (shipment_id,event_sequence,event_type,note,attachment_object_path,
+            actor_type,actor_id,idempotency_key)
+         values ($1,$2,'pod_submitted',$3,$4,$5,$6,$7)
+         returning *`,
+        [
+          shipment.id,
+          sequence,
+          text(body.note ?? body.remarks),
+          url,
+          isAdmin ? "admin" : "customer",
+          String(user?.id ?? "system"),
+          key,
+        ],
+      );
+      await writeActivity(db, {
+        poId: shipment.po_id,
+        user: actor(user, isAdmin ? "admin" : "customer"),
+        action: "shipment_pod_submitted",
+        newValue: { shipmentId: Number(shipment.id), url },
+        description: "POD shipment disubmit.",
+        key: `shipment-pod:${shipment.id}:${key}`,
+      });
+      await queueNotification(db, {
+        eventType: "shipment_pod_submitted",
+        po: { ...shipment, id: shipment.po_id },
+        payload: { shipmentId: Number(shipment.id) },
+        key: `shipment-pod:${shipment.id}:${key}`,
+      });
+      await notifyMarketplaceEvent(db, {
+        eventType: "shipment_pod_submitted",
+        po: { ...shipment, id: shipment.po_id },
+        payload: { shipmentId: Number(shipment.id) },
+        key: `shipment-pod:${shipment.id}:${key}`,
+      });
+      await maybeCompletePo(db, shipment.po_id, user, isAdmin);
+      return { alreadyProcessed: false, pod: mapPod(inserted.rows[0]) };
   });
+  } catch (error) {
+    await discardUnusedUpload();
+    throw error;
+  }
+  // Another concurrent request may have committed the same key while the
+  // file was staging. Do not leave its extra object in private storage.
+  if (result.alreadyProcessed) await discardUnusedUpload();
+  return result;
 }
 
 function mapPod(row) {
