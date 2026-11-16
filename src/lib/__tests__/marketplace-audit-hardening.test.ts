@@ -106,11 +106,12 @@ describe("marketplace audit hardening contract", () => {
 
 
   it("persists structured payment terms on vendor quotations and consumes them when creating PO", () => {
-    const source = read("server/marketplace-service.mjs");
+    const source = read("server/vendor-quote-submission.mjs");
     expect(source).toContain("payment_term_code=$3");
     expect(source).toContain("payment_dp_percent=$4");
-    expect(source).toContain("quote.payment_term_code ?? normalizePaymentTerm(quote.payment_terms)");
-    expect(source).toContain("normalizeDpPercent(quote.payment_dp_percent) ?? dpPercentFromTerm(quote.payment_terms)");
+    const readPath = read("server/marketplace-service.mjs");
+    expect(readPath).toContain("quote.payment_term_code ?? normalizePaymentTerm(quote.payment_terms)");
+    expect(readPath).toContain("normalizeDpPercent(quote.payment_dp_percent) ?? dpPercentFromTerm(quote.payment_terms)");
   });
 
   it("keeps admin DP messaging aligned with the handover threshold", () => {
