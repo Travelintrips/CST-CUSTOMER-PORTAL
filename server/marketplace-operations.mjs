@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { pool, query } from "./db.mjs";
+import { lockShipmentWithPoFirst } from "./marketplace-shipment-po-lock.mjs";
 import {
   bestEffortNotificationWrite,
   marketplaceNotificationDetails,
@@ -411,6 +412,18 @@ async function loadShipment(shipmentId, user, { client = query, forUpdate = fals
   return result.rows[0];
 }
 
+// Canonical finance Vendor Invoice locks PO -> GR -> Shipment.
+ // Shipment/receipt/POD writes also acquire PO before locking Shipment,
+ // including events that previously locked Shipment first and later updated PO.
+async function lockPoThenShipment(db, shipmentId, user, isAdmin) {
+  return lockShipmentWithPoFirst({
+    shipmentId,
+    readShipment: () => loadShipment(shipmentId, user, { client: db, isAdmin }),
+    lockPo: (poId) => loadPo(poId, user, { client: db, forUpdate: true, isAdmin }),
+    lockShipment: () => loadShipment(shipmentId, user, { client: db, forUpdate: true, isAdmin }),
+  });
+}
+
 function mapShipment(row) {
   return {
     id: Number(row.id),
@@ -815,12 +828,11 @@ async function appendShipmentEvent({ shipmentId, body, request, user, isAdmin })
   if (!targetStatus) fail(400, "Tipe event shipment tidak valid.");
 
   return withTransaction(async (db) => {
-    const preflight = await loadShipment(shipmentId, user, { client: db, isAdmin });
+    const locked = await lockPoThenShipment(db, shipmentId, user, isAdmin);
     if (["departed", "handed_over"].includes(eventType)) {
-      const po = await loadPo(preflight.po_id, user, { client: db, forUpdate: true, isAdmin });
-      await assertHandoverPaymentSatisfied(po, db);
+      await assertHandoverPaymentSatisfied(locked.po, db);
     }
-    let shipment = await loadShipment(shipmentId, user, { client: db, forUpdate: true, isAdmin });
+    let shipment = locked.shipment;
     const existing = (await db(
       `select * from public.mkt_po_shipment_events where shipment_id=$1 and idempotency_key=$2 limit 1`,
       [shipment.id, key],
@@ -926,7 +938,7 @@ async function submitPod({ shipmentId, body, request, user, isAdmin }) {
   const file = body?.file;
   let url = text(body.photoUrl ?? body.podUrl ?? body.url);
   return withTransaction(async (db) => {
-    const shipment = await loadShipment(shipmentId, user, { client: db, forUpdate: true, isAdmin });
+    const { shipment } = await lockPoThenShipment(db, shipmentId, user, isAdmin);
     if (file && typeof file.arrayBuffer === "function") {
       const uploaded = await uploadMarketplacePod({ poId: shipment.po_id, shipmentId: shipment.id, file });
       url = uploaded.path;
@@ -1125,7 +1137,7 @@ async function createGoodsReceipt({ shipmentId, body, request, user, isAdmin }) 
   if (!items.length) fail(400, "Goods receipt harus memiliki item.");
 
   return withTransaction(async (db) => {
-    const shipment = await loadShipment(shipmentId, user, { client: db, forUpdate: true, isAdmin });
+    const { shipment } = await lockPoThenShipment(db, shipmentId, user, isAdmin);
     const existing = (await db(
       `select * from public.mkt_po_goods_receipts where shipment_id=$1 and idempotency_key=$2 limit 1`,
       [shipment.id, key],
