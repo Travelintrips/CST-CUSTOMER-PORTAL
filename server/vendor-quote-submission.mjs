@@ -279,11 +279,10 @@ export async function submitInternalVendorQuote({
   const normalizedQuoteId = integer(quoteId, "Quotation");
   const submission = normalizeVendorQuoteSubmission(body, { requirePaymentTerms: true });
 
-  // Inspect status without locks first. A completed submission replay is
-  // read-only so it cannot deadlock with Admin's RFQ-first send-to-customer
-  // transition. New writes lock quote first, then RFQ, matching vendor-token
-  // submission; if another writer won the race, return 409 and let a retry
-  // take the read-only replay path.
+  // Completed quote replay stays read-only. A new mutation locks its parent
+  // RFQ first, then its quote, matching Admin send-to-customer and customer
+  // approval. The initial preview has no locks; if another writer already
+  // submitted the quote when the locks are acquired, return 409 for retry.
   const quoteColumns = "id,rfq_id,vendor_id,status,valid_until,requote_round,notes,payment_terms,payment_term_code,payment_dp_percent,quotation_date,submitted_at,updated_at";
   const quotePreview = (await db(
     "select " + quoteColumns + " from public.mkt_vendor_quotes where id=$1 and rfq_id=$2",
@@ -299,6 +298,11 @@ export async function submitInternalVendorQuote({
       [normalizedRfqId],
     )).rows[0];
   } else {
+    rfq = (await db(
+      "select * from public.mkt_rfqs where id=$1 for update",
+      [normalizedRfqId],
+    )).rows[0];
+    if (!rfq) fail(404, "RFQ tidak ditemukan.");
     quote = (await db(
       "select " + quoteColumns + " from public.mkt_vendor_quotes where id=$1 and rfq_id=$2 for update",
       [normalizedQuoteId, normalizedRfqId],
@@ -307,10 +311,6 @@ export async function submitInternalVendorQuote({
     if (["submitted", "selected"].includes(quote.status)) {
       fail(409, "Quotation baru saja diproses; ulangi permintaan untuk membaca hasilnya.");
     }
-    rfq = (await db(
-      "select * from public.mkt_rfqs where id=$1 for update",
-      [normalizedRfqId],
-    )).rows[0];
   }
   if (!rfq) fail(404, "RFQ tidak ditemukan.");
 
