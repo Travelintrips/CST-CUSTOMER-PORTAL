@@ -53,9 +53,9 @@ async function transaction(work) {
   }
 }
 
-async function auditWriter(client) {
+function auditWriter(db) {
   return async (data, key) => {
-    const result = await client.query(
+    const result = await db(
       `insert into public.activity_logs
          (rfq_id,actor_type,actor_id,actor_name,action,old_value,new_value,
           description,mkt_rfq_id,mkt_vendor_quote_id,mkt_purchase_order_id,deduplication_key)
@@ -67,7 +67,7 @@ async function auditWriter(client) {
        data.description??data.action,data.quoteId??null,data.poId??null,key],
     );
     if (result.rowCount && data.rfqId) {
-      await client.query(
+      await db(
         `insert into public.rfq_activity_logs
            (rfq_id,actor_type,actor_id,actor_name,action,description)
          values ($1,$2,$3,$4,$5,$6)`,
@@ -171,9 +171,8 @@ async function run() {
   const client = await pool.connect();
   try {
     await seedBase(client);
-    const writeEvent = await auditWriter(client);
     const first = await transaction((tx) => submitInternalVendorQuote({
-      db: tx, admin, rfqId: 23, quoteId: 18, body, env, now, writeEvent,
+      db: tx, admin, rfqId: 23, quoteId: 18, body, env, now, writeEvent: auditWriter(tx),
     }));
     assert.deepEqual(first, {
       rfqId: 23, quoteId: 18, status: "submitted",
@@ -204,7 +203,7 @@ async function run() {
     assert.equal((await client.query("select count(*) from rfq_activity_logs where rfq_id=23")).rows[0].count,"1");
 
     const replay = await transaction((tx) => submitInternalVendorQuote({
-      db:tx,admin,rfqId:23,quoteId:18,body,env,now,writeEvent,
+      db:tx,admin,rfqId:23,quoteId:18,body,env,now,writeEvent:auditWriter(tx),
     }));
     assert.equal(replay.alreadySubmitted,true);
     assert.equal((await client.query("select count(*) from mkt_vendor_quote_lines where quote_id=18")).rows[0].count,"1");
@@ -222,7 +221,7 @@ async function run() {
       transaction((tx) => submitInternalVendorQuote({
         db:tx,admin,rfqId:23,quoteId:18,
         body:{...body,lines:[{...body.lines[0],offeredUnitPrice:101}]},
-        env,now,writeEvent,
+        env,now,writeEvent:auditWriter(tx),
       })),
       (error) => error.statusCode === 409,
     );
@@ -230,25 +229,26 @@ async function run() {
     await client.query("update mkt_vendor_quotes set status='invited',valid_until=now()+interval '6 days' where id=18");
 
     const denyCases = [
-      [19,24,24,23,body,env,403,"external vendor"],
-      [20,26,26,25,body,env,403,"cross-company vendor"],
-      [21,24,24,26,body,env,409,"buyer without approved membership"],
-      [22,24,24,27,body,env,410,"expired invitation"],
-      [23,24,24,28,body,env,403,"RFQ line mismatch"],
+      { quoteId:19, rfqId:24, expected:403, label:"external vendor" },
+      { quoteId:20, rfqId:25, expected:403, label:"cross-company vendor" },
+      { quoteId:21, rfqId:26, expected:409, label:"buyer without approved membership" },
+      { quoteId:22, rfqId:27, expected:410, label:"expired invitation" },
+      { quoteId:23, rfqId:28, expected:403, label:"RFQ line mismatch" },
     ];
-    for (const [quoteId,vendorId,_supplierId,rfqId,payload,config,expected,label] of denyCases) {
+    for (const item of denyCases) {
       try {
         await transaction((tx) => submitInternalVendorQuote({
-          db:tx,admin,rfqId,quoteId,body:payload,env:config,now,writeEvent,
+          db:tx,admin,rfqId:item.rfqId,quoteId:item.quoteId,body,env,now,
+          writeEvent:auditWriter(tx),
         }));
-        throw new Error("Expected denial: " + label);
+        throw new Error("Expected denial: " + item.label);
       } catch (error) {
-        assert.equal(error.statusCode,expected,label);
+        assert.equal(error.statusCode,item.expected,item.label);
       }
     }
     await assert.rejects(
       transaction((tx) => submitInternalVendorQuote({
-        db:tx,admin:{...admin,id:20},rfqId:23,quoteId:18,body,env,now,writeEvent,
+        db:tx,admin:{...admin,id:20},rfqId:23,quoteId:18,body,env,now,writeEvent:auditWriter(tx),
       })),
       (error) => error.statusCode === 403,
     );
