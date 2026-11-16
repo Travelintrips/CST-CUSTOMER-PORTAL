@@ -8,6 +8,7 @@ import {
 import { handleAdminOperations, handlePortalOperations } from "./marketplace-operations.mjs";
 import { assertDevCorporatePoAffiliation } from "./corporate-po-affiliation-gate.mjs";
 import { uploadMarketplacePod, signedMarketplacePodUrl } from "./storage.mjs";
+import { normalizeVendorQuoteSubmission, persistVendorQuoteSubmission, submitInternalVendorQuote } from "./vendor-quote-submission.mjs";
 
 const RFQ_TERMINAL = new Set(["awarded", "cancelled", "expired"]);
 const QUOTE_TERMINAL = new Set(["selected", "rejected", "expired", "withdrawn"]);
@@ -195,11 +196,14 @@ function mapRfq(row) {
 }
 
 async function writeEvent(db, data, key = null) {
+  const baseActor = actor(data.user, data.actorType ?? "admin");
   const event = {
     rfqId: data.rfqId ?? null,
     quoteId: data.quoteId ?? null,
     poId: data.poId ?? null,
-    ...actor(data.user, data.actorType ?? "admin"),
+    actorType: data.actorType ?? baseActor.actorType,
+    actorId: data.actorId ?? baseActor.actorId,
+    actorName: data.actorName ?? baseActor.actorName,
   };
   const activity = await db(
     `insert into public.activity_logs
@@ -884,31 +888,18 @@ async function handleVendorQuote(request, response, pathname, body) {
     return true;
   }
   if (request.method !== "POST" || !match[2]) return false;
-  const lines = Array.isArray(body.lines) ? body.lines : [];
-  if (!lines.length) fail(400, "Line quotation wajib diisi.");
-  const requestedPaymentTerm = normalizePaymentTerm(body.paymentTerms);
-  const requestedDpPercent = requestedPaymentTerm === "dp_after_receipt"
-    ? (normalizeDpPercent(body.paymentDpPercent) ?? dpPercentFromTerm(body.paymentTerms))
-    : null;
-  if (match[2] === "submit" && !requestedPaymentTerm) {
-    fail(400, "Syarat pembayaran wajib dipilih sebelum quotation dikirim.");
-  }
-  if (match[2] === "submit" && requestedPaymentTerm === "dp_after_receipt" && !requestedDpPercent) {
-    fail(400, "Persentase DP wajib diisi antara 0 dan 100 persen.");
-  }
+  const submit = match[2] === "submit";
+  const submission = normalizeVendorQuoteSubmission(body, { requirePaymentTerms: submit });
   let resultingStatus = quote.status;
   await withTransaction(async (db) => {
+    // Lock quote first, then parent RFQ. The internal Admin route uses the
+    // same order so both submitters serialize without a lock-order inversion.
     const lockedQuote = await loadQuote(db, true);
     if (!lockedQuote) fail(404, "Link quotation tidak ditemukan.");
+    const lockedRfq = await loadAdminRfq(lockedQuote.rfq_id, { client: db, forUpdate: true });
     const lockedExpired = lockedQuote.valid_until && new Date(lockedQuote.valid_until) < new Date();
-    if (lockedExpired && !["submitted", "selected"].includes(lockedQuote.status)) fail(410, "Link quotation sudah kedaluwarsa.");
-    const rfqLineIds = new Set((await db(
-      `select id from public.mkt_rfq_lines where rfq_id=$1`,
-      [lockedQuote.rfq_id],
-    )).rows.map((row) => Number(row.id)));
-    for (const line of lines) {
-      const rfqLineId = integer(line.rfqLineId, "RFQ line");
-      if (!rfqLineIds.has(rfqLineId)) fail(403, "RFQ line bukan bagian dari quotation ini.");
+    if (lockedExpired && !["submitted", "selected"].includes(lockedQuote.status)) {
+      fail(410, "Link quotation sudah kedaluwarsa.");
     }
     if (["submitted", "selected"].includes(lockedQuote.status)) {
       resultingStatus = lockedQuote.status;
@@ -917,80 +908,30 @@ async function handleVendorQuote(request, response, pathname, body) {
     if (!["invited", "opened", "requote_requested"].includes(lockedQuote.status)) {
       fail(409, "Quotation tidak dapat diedit pada status ini.");
     }
-    for (const line of lines) {
-      const rfqLineId = integer(line.rfqLineId, "RFQ line");
-      const price = decimal(line.offeredUnitPrice, "Harga", { positive: true });
-      const qty = decimal(line.offeredQty, "Qty", { positive: true });
-      const validUntil = text(line.validUntil);
-      const existingLine = (await db(
-        "select id from public.mkt_vendor_quote_lines where quote_id=$1 and rfq_line_id=$2 limit 1",
-         [lockedQuote.id, rfqLineId],
-      )).rows[0];
-      const lineValues = [
-        price,
-        qty,
-        line.leadTimeDays == null ? null : integer(line.leadTimeDays, "Lead time"),
-        text(line.stockStatus, "available"),
-        text(line.notes),
-        text(line.currency, "IDR"),
-        line.minimumOrderQty == null ? null : decimal(line.minimumOrderQty, "MOQ"),
-        validUntil,
-      ];
-      if (existingLine) {
-        await db(
-          `update public.mkt_vendor_quote_lines
-              set offered_unit_price=$1, offered_qty=$2, subtotal=$1*$2, lead_time_days=$3,
-                  stock_status=$4::mkt_stock_status, notes=$5, currency=$6,
-                  minimum_order_qty=$7, valid_until=$8, updated_at=now()
-            where id=$9`,
-           [...lineValues, existingLine.id],
-        );
-      } else {
-        await db(
-          `insert into public.mkt_vendor_quote_lines
-             (quote_id, rfq_line_id, vendor_catalog_item_id, offered_unit_price, offered_qty,
-              subtotal, lead_time_days, stock_status, notes, currency, minimum_order_qty, valid_until)
-            values ($1,$2,$3,$4,$5,($4::numeric)*($5::numeric),$6,$7::mkt_stock_status,$8,$9,$10,$11)`,
-           [lockedQuote.id, rfqLineId, line.vendorCatalogItemId ?? null, ...lineValues],
-        );
-      }
-    }
-    await db(
-      `update public.mkt_vendor_quotes
-          set notes=$1,
-              payment_terms=$2,
-              payment_term_code=$3,
-              payment_dp_percent=$4,
-              quotation_date=$5,
-              quotation_number=coalesce(quotation_number,'QT-'||rfq_id::text||'-'||vendor_id::text),
-              status=case when $6 then 'submitted'::mkt_quote_status else status end,
-              submitted_at=case when $6 then now() else submitted_at end,
-              updated_at=now()
-        where id=$7`,
-       [
-         text(body.notes),
-         requestedPaymentTerm ? paymentTermLabel(requestedPaymentTerm, requestedDpPercent) : text(body.paymentTerms),
-         requestedPaymentTerm,
-         requestedDpPercent,
-         text(body.quotationDate),
-         match[2] === "submit",
-         lockedQuote.id,
-       ],
-    );
-    resultingStatus = match[2] === "submit" ? "submitted" : lockedQuote.status;
-    if (match[2] === "submit") {
-      const updatedRfq = await db(
-        `update public.mkt_rfqs
-            set status=case when status in ('submitted','quoting') then 'quoted'::mkt_rfq_status else status end,
-                quote_count=(select count(*) from public.mkt_vendor_quotes where rfq_id=$1 and status='submitted'),
-                updated_at=now()
-          where id=$1 and status not in ('awarded','cancelled','expired')
-          returning id`,
-        [lockedQuote.rfq_id],
-      );
-      if (!updatedRfq.rowCount) fail(409, "RFQ sudah tidak menerima quotation.");
-      await writeEvent(db, { rfqId: lockedQuote.rfq_id, quoteId: lockedQuote.id, actorType: "vendor", actorId: String(lockedQuote.vendor_id), actorName: lockedQuote.supplier_name, action: "vendor_quote_submitted", description: "Vendor mengirim quotation" }, `quote-submitted:${lockedQuote.id}:${lockedQuote.requote_round ?? 0}`);
-      await queueEvent(db, { eventType: "vendor_quote_submitted", recipientType: "admin", rfqId: lockedQuote.rfq_id, quoteId: lockedQuote.id, payload: { rfqId: lockedQuote.rfq_id, quoteId: lockedQuote.id }, key: `quote-submitted:${lockedQuote.id}:${lockedQuote.requote_round ?? 0}` });
+    const saved = await persistVendorQuoteSubmission(db, {
+      quote: lockedQuote,
+      rfq: lockedRfq,
+      submission,
+      submit,
+      actor: {
+        actorType: "vendor",
+        actorId: String(lockedQuote.vendor_id),
+        actorName: lockedQuote.supplier_name,
+        action: "vendor_quote_submitted",
+        description: "Vendor mengirim quotation",
+      },
+      writeEvent: (data, key) => writeEvent(db, data, key),
+    });
+    resultingStatus = saved.status;
+    if (submit) {
+      await queueEvent(db, {
+        eventType: "vendor_quote_submitted",
+        recipientType: "admin",
+        rfqId: lockedQuote.rfq_id,
+        quoteId: lockedQuote.id,
+        payload: { rfqId: lockedQuote.rfq_id, quoteId: lockedQuote.id },
+        key: `quote-submitted:${lockedQuote.id}:${lockedQuote.requote_round ?? 0}`,
+      });
       await notifyAdmins(db, {
         eventKey: `quote-submitted:${lockedQuote.id}:${lockedQuote.requote_round ?? 0}`,
         type: "vendor_quote_submitted",
@@ -998,7 +939,7 @@ async function handleVendorQuote(request, response, pathname, body) {
         message: `Vendor mengirim quotation untuk RFQ ${lockedQuote.rfq_number ?? lockedQuote.rfq_id}.`,
         resourceType: "rfq",
         resourceId: lockedQuote.rfq_id,
-        link: `/admin?tab=service-operations`,
+        link: "/admin?tab=service-operations",
         payload: { rfqId: Number(lockedQuote.rfq_id), quoteId: Number(lockedQuote.id) },
       });
     }
@@ -1023,6 +964,24 @@ async function inviteVendorsToExistingRfq(db, rfqId, vendorIds) {
 }
 
 async function handleAdminMarketplace(request, response, pathname, body, user) {
+  const internalQuoteSubmit = pathname.match(
+    /^\\/api\\/mkt\\/admin\\/rfqs\\/(\\d+)\\/vendor-quotes\\/(\\d+)\\/submit-internal$/,
+  );
+  if (request.method === "POST" && internalQuoteSubmit) {
+    const rfqId = integer(internalQuoteSubmit[1], "RFQ");
+    const quoteId = integer(internalQuoteSubmit[2], "Quotation");
+    const result = await withTransaction((db) => submitInternalVendorQuote({
+      db,
+      admin: user,
+      rfqId,
+      quoteId,
+      body,
+      env: process.env,
+      writeEvent: (data, key) => writeEvent(db, data, key),
+    }));
+    response._sendJson(200, { ok: true, data: result });
+    return true;
+  }
   const rfqList = pathname === "/api/mkt/admin/rfqs";
   if (request.method === "GET" && rfqList) {
     const rows = await query(`
