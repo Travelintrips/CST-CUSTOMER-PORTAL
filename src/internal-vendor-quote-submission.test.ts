@@ -223,6 +223,12 @@ describe("audited Admin-as-internal-vendor quote submit uses canonical quote wri
     expect(() => normalizeVendorQuoteSubmission({
       ...body, lines: [{ ...body.lines[0], currency: "USD" }],
     })).toThrow(expect.objectContaining({ statusCode: 400 }));
+    expect(() => normalizeVendorQuoteSubmission({
+      ...body, quotationDate: "2026-11-17garbage",
+    })).toThrow(expect.objectContaining({ statusCode: 400 }));
+    expect(() => normalizeVendorQuoteSubmission({
+      ...body, lines: [{ ...body.lines[0], validUntil: "2099-11-23garbage" }],
+    })).toThrow(expect.objectContaining({ statusCode: 400 }));
   });
 
   it("keeps vendor-token and Admin submissions on the same canonical persistence function", () => {
