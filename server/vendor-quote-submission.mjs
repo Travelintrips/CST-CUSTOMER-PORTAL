@@ -21,7 +21,7 @@ function text(value, fallback = null, max = 2000) {
     : fallback;
 }
 function dateOnly(value, label) {
-  const valueText = text(value, null, 10);
+  const valueText = typeof value === "string" ? value.trim() : "";
   if (!valueText) return null;
   if (!/^\d{4}-\d{2}-\d{2}$/.test(valueText)) fail(400, label + " tidak valid.");
   const date = new Date(valueText + "T00:00:00.000Z");
@@ -231,7 +231,7 @@ export async function persistVendorQuoteSubmission(db, {
             quotation_date=$5,
             quotation_number=coalesce(quotation_number,'QT-'||rfq_id::text||'-'||vendor_id::text),
             status=case when $6 then 'submitted'::mkt_quote_status else status end,
-            submitted_at=case when $6 then coalesce(submitted_at,now()) else submitted_at end,
+            submitted_at=case when $6 then now() else submitted_at end,
             updated_at=now()
       where id=$7 and status in ('invited','opened','requote_requested')
       returning id`,
