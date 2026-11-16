@@ -28,11 +28,22 @@ docker run --pull never -d --rm --name "$name" --network "$network" \
   --memory 400m --cpus 1 \
   --tmpfs /var/lib/postgresql/data:rw,size=128m,mode=1777 \
   -e POSTGRES_PASSWORD=synthetic-only "$image" >/dev/null
-for i in $(seq 1 60); do
-  docker exec "$name" pg_isready -U postgres -q >/dev/null 2>&1 && break
+# The Postgres image briefly runs an init-only socket server before the
+# final TCP listener starts. Probing the socket can report a false ready
+# immediately before the restart. Require the final TCP listener instead.
+ready=0
+for i in $(seq 1 80); do
+  if docker exec "$name" pg_isready -h 127.0.0.1 -U postgres -q >/dev/null 2>&1; then
+    ready=1
+    break
+  fi
   sleep 0.25
 done
-docker exec "$name" pg_isready -U postgres -q
+if [ "$ready" -ne 1 ]; then
+  docker logs "$name" >&2
+  echo "FINAL_POSTGRES_TCP_LISTENER_NOT_READY" >&2
+  exit 1
+fi
 
 docker run --pull never --rm --network "$network" \
   --memory 400m --cpus 1 \
