@@ -861,7 +861,7 @@ async function handleVendorQuote(request, response, pathname, body) {
   if (!match || match[1].length > 200) return false;
   const tokenValue = match[1];
   const loadQuote = async (db, forUpdate = false) => (await db(
-    `select q.*, r.rfq_number, r.status as rfq_status, r.buyer_name, r.buyer_company,
+    `select q.*, to_char(q.quotation_date,'YYYY-MM-DD') as quotation_date_text, r.rfq_number, r.status as rfq_status, r.buyer_name, r.buyer_company,
             r.notes as rfq_notes, r.delivery_address, r.required_delivery_date,
             r.destination_place_id, r.destination_lat, r.destination_lng,
             s.id as supplier_id, s.name as supplier_name, s.phone as supplier_phone, s.contact_email as supplier_email
@@ -880,7 +880,7 @@ async function handleVendorQuote(request, response, pathname, body) {
     const lines = await rfqLines(query, quote.rfq_id);
     const details = await quoteDetail(query, quote.id);
     response._sendJson(200, { ok: true, data: {
-      quote: { ...details, id: Number(quote.id), rfqId: Number(quote.rfq_id), vendorId: Number(quote.vendor_id), status: quote.status === "invited" ? "opened" : quote.status, validUntil: quote.valid_until, openedAt: quote.opened_at, submittedAt: quote.submitted_at, quotationNumber: quote.quotation_number, quotationDate: quote.quotation_date, paymentTerms: quote.payment_terms, paymentTermCode: quote.payment_term_code ?? normalizePaymentTerm(quote.payment_terms), paymentDpPercent: quote.payment_dp_percent == null ? null : Number(quote.payment_dp_percent), incoterm: quote.incoterm, deliveryLocation: quote.delivery_location, notes: quote.notes, requoteNotes: quote.requote_notes, requoteDeadline: quote.requote_deadline, requoteRound: quote.requote_round },
+      quote: { ...details, id: Number(quote.id), rfqId: Number(quote.rfq_id), vendorId: Number(quote.vendor_id), status: quote.status === "invited" ? "opened" : quote.status, validUntil: quote.valid_until, openedAt: quote.opened_at, submittedAt: quote.submitted_at, quotationNumber: quote.quotation_number, quotationDate: quote.quotation_date_text ?? null, paymentTerms: quote.payment_terms, paymentTermCode: quote.payment_term_code ?? normalizePaymentTerm(quote.payment_terms), paymentDpPercent: quote.payment_dp_percent == null ? null : Number(quote.payment_dp_percent), incoterm: quote.incoterm, deliveryLocation: quote.delivery_location, notes: quote.notes, requoteNotes: quote.requote_notes, requoteDeadline: quote.requote_deadline, requoteRound: quote.requote_round },
       vendor: { id: Number(quote.supplier_id), name: quote.supplier_name, phone: quote.supplier_phone, email: quote.supplier_email },
       rfq: { id: Number(quote.rfq_id), rfqNumber: quote.rfq_number, status: quote.rfq_status, buyerName: quote.buyer_name, buyerCompany: quote.buyer_company, notes: quote.rfq_notes, deliveryAddress: quote.delivery_address, destinationPlaceId: quote.destination_place_id, destinationLat: quote.destination_lat, destinationLng: quote.destination_lng, requiredDeliveryDate: quote.required_delivery_date, createdAt: quote.created_at },
       rfqLines: lines, quoteLines: details?.lines ?? [], meta: { canEdit: ["invited", "opened", "requote_requested"].includes(quote.status), canSubmit: ["invited", "opened", "requote_requested"].includes(quote.status), allowedCurrencies: ["IDR"] },
@@ -896,7 +896,6 @@ async function handleVendorQuote(request, response, pathname, body) {
     // same order so both submitters serialize without a lock-order inversion.
     const lockedQuote = await loadQuote(db, true);
     if (!lockedQuote) fail(404, "Link quotation tidak ditemukan.");
-    const lockedRfq = await loadAdminRfq(lockedQuote.rfq_id, { client: db, forUpdate: true });
     const lockedExpired = lockedQuote.valid_until && new Date(lockedQuote.valid_until) < new Date();
     if (lockedExpired && !["submitted", "selected"].includes(lockedQuote.status)) {
       fail(410, "Link quotation sudah kedaluwarsa.");
@@ -908,6 +907,9 @@ async function handleVendorQuote(request, response, pathname, body) {
     if (!["invited", "opened", "requote_requested"].includes(lockedQuote.status)) {
       fail(409, "Quotation tidak dapat diedit pada status ini.");
     }
+    // Only new vendor writes lock the parent RFQ. Completed replays remain
+    // free of RFQ locks, preventing deadlocks with RFQ-first customer decisions.
+    const lockedRfq = await loadAdminRfq(lockedQuote.rfq_id, { client: db, forUpdate: true });
     const saved = await persistVendorQuoteSubmission(db, {
       quote: lockedQuote,
       rfq: lockedRfq,
