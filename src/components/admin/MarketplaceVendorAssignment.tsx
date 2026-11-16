@@ -239,7 +239,7 @@ export function MarketplaceVendorAssignment({ rfqId }: { rfqId: number }) {
       {routing?.vendorShareSupported && routing?.quoteId && ["invited", "opened", "requote_requested"].includes(routing.quoteStatus ?? "") && (
         <div className="mt-2 space-y-1.5">
           <p className="text-[11px] text-sky-800">
-            WhatsApp langsung: {waReadiness?.ready ? "Pengirim DEV siap untuk satu antrean."
+            WhatsApp langsung: {waReadiness?.ready ? "Kredensial WA DEV tersedia untuk satu antrean (belum menjamin pesan diterima)."
               : waReadiness?.reason ?? "Belum tersedia untuk undangan ini."}
           </p>
           {waReadiness?.ready && (

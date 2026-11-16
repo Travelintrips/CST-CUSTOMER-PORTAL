@@ -1,6 +1,6 @@
 // DEV-only, Admin-authorized dispatch for one pre-existing vendor invitation.
 // No scheduler entrypoint, no Fleet/Tenant token fallback, and no automatic retry.
-import { query } from "./db.mjs";
+import { query, databaseEnvironment, databaseConnectionSource } from "./db.mjs";
 import { buildDevVendorQuoteShare } from "./vendor-quote-share.mjs";
 import { customerPortalFonnteConfigured } from "./fonnte-config.mjs";
 import { normalizeWhatsAppPhone, sendFonnteMessage } from "./whatsapp-service.mjs";
@@ -9,6 +9,15 @@ const DEV_ORIGIN = "https://portaldev.72.61.210.205.sslip.io";
 const error = (statusCode, message) => Object.assign(new Error(message), { statusCode });
 const fail = (statusCode, message) => { throw error(statusCode, message); };
 const positiveId = (value) => Number.isSafeInteger(Number(value)) && Number(value) > 0;
+// Match the database selector exactly. "development" with NODE_ENV=production
+// or a fallback PROD connection must never enable external WA delivery.
+function assertDevEnvironment(env) {
+  if (env.APP_ENV !== "development" || env.NODE_ENV === "production"
+    || databaseEnvironment !== "development"
+    || databaseConnectionSource !== "SUPABASE_DATABASE_URL_DEV") {
+    fail(404, "Kirim WA vendor hanya tersedia untuk database DEV khusus.");
+  }
+}
 
 export const DEV_VENDOR_INVITE_SELECT_SQL = [
   "select n.id as queue_id, n.status as queue_status, n.event_type, n.channel,",
@@ -31,7 +40,7 @@ export const DEV_VENDOR_INVITE_SELECT_SQL = [
 ].join(" ");
 
 function validateInvite(row, { queueId, rfqId, quoteId, env }) {
-  if (env.APP_ENV !== "development") fail(404, "Kirim WA vendor hanya tersedia di DEV.");
+  assertDevEnvironment(env);
   if (![queueId, rfqId, quoteId].every(positiveId)) fail(400, "ID undangan harus valid.");
   if (!row || Number(row.queue_id) !== Number(queueId)) fail(404, "Antrean undangan tidak ditemukan.");
   if (row.channel !== "whatsapp" || row.event_type !== "rfq_vendor_invited"
@@ -39,6 +48,7 @@ function validateInvite(row, { queueId, rfqId, quoteId, env }) {
     fail(409, "Antrean bukan undangan WhatsApp vendor yang tepat.");
   }
   if (row.supplier_verified !== true
+    || !positiveId(row.supplier_company_id) || !positiveId(row.rfq_company_id)
     || Number(row.supplier_company_id) !== Number(row.rfq_company_id)) {
     fail(409, "Identitas dan perusahaan supplier belum cocok.");
   }
@@ -61,7 +71,7 @@ export async function getDevVendorWhatsAppReadiness({
   queueId, rfqId, quoteId, env = process.env, db = query,
   isConfigured = customerPortalFonnteConfigured,
 } = {}) {
-  if (env.APP_ENV !== "development") fail(404, "Kirim WA vendor hanya tersedia di DEV.");
+  assertDevEnvironment(env);
   if (![queueId, rfqId, quoteId].every(positiveId)) fail(400, "ID undangan harus valid.");
   const row = await loadInvite({ queueId, rfqId, quoteId, db });
   const { share } = validateInvite(row, { queueId, rfqId, quoteId, env });
@@ -112,7 +122,7 @@ export async function sendOneDevVendorWhatsAppInvite({
   isConfigured = customerPortalFonnteConfigured,
   send = sendFonnteMessage,
 } = {}) {
-  if (env.APP_ENV !== "development") fail(404, "Kirim WA vendor hanya tersedia di DEV.");
+  assertDevEnvironment(env);
   if (!confirmedRecipient || typeof recipientLast4 !== "string") {
     fail(409, "Konfirmasi PIC vendor diperlukan sebelum mengirim.");
   }
@@ -125,6 +135,11 @@ export async function sendOneDevVendorWhatsAppInvite({
   }
   const row = await loadInvite({ queueId, rfqId, quoteId, db });
   const { share, phone } = validateInvite(row, { queueId, rfqId, quoteId, env });
+  // The recipient could change after the readiness GET. Confirm again against
+  // the exact snapshot used in the SQL claim and in the provider request.
+  if (recipientLast4 !== share.recipientPhoneLast4) {
+    fail(409, "Nomor PIC vendor berubah setelah konfirmasi. Muat ulang sebelum mengirim.");
+  }
   const claim = await db(DEV_VENDOR_INVITE_CLAIM_SQL, [
     Number(queueId), Number(rfqId), Number(quoteId), Number(row.vendor_id),
     row.token, row.supplier_phone, row.contact_person,

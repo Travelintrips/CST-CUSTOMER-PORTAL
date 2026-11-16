@@ -1,4 +1,4 @@
-import { pool, query } from "./db.mjs";
+import { pool, query, databaseEnvironment, databaseConnectionSource } from "./db.mjs";
 import { buildDevVendorQuoteShare } from "./vendor-quote-share.mjs";
 import { getDevVendorWhatsAppReadiness, sendOneDevVendorWhatsAppInvite } from "./dev-vendor-wa-invite.mjs";
 import {
@@ -2395,7 +2395,8 @@ async function handleServiceOperations(ctx) {
   const vendorWaSendMatch = url.pathname.match(/^\/api\/portal\/admin\/service-operations\/marketplace\/(\d+)\/vendor-routing\/send-whatsapp$/);
   if ((request.method === "GET" && vendorWaReadinessMatch)
     || (request.method === "POST" && vendorWaSendMatch)) {
-    if (process.env.APP_ENV !== "development") {
+    if (process.env.APP_ENV !== "development" || process.env.NODE_ENV === "production"
+      || databaseEnvironment !== "development" || databaseConnectionSource !== "SUPABASE_DATABASE_URL_DEV") {
       return adminError(ctx, 404, "Kirim WA vendor hanya tersedia di DEV.");
     }
     const rfqId = Number((vendorWaReadinessMatch ?? vendorWaSendMatch)[1]);
@@ -2433,7 +2434,8 @@ async function handleServiceOperations(ctx) {
     return;
   }
   if (request.method === "GET" && vendorShareMatch) {
-    if (process.env.APP_ENV !== "development") {
+    if (process.env.APP_ENV !== "development" || process.env.NODE_ENV === "production"
+      || databaseEnvironment !== "development" || databaseConnectionSource !== "SUPABASE_DATABASE_URL_DEV") {
       return adminError(ctx, 404, "Tautan undangan vendor hanya tersedia di DEV.");
     }
     const rfqId = Number(vendorShareMatch[1]);

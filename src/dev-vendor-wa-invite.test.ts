@@ -137,6 +137,49 @@ describe("DEV WhatsApp single existing vendor invite (fake sender / fake databas
     expect(send).toHaveBeenCalledTimes(1);
   });
 
+  it("rejects APP_ENV=development combined with NODE_ENV=production (PROD DB selector)", async () => {
+    const h = harness();
+    const send = vi.fn();
+    const mixed = { ...dev, NODE_ENV: "production" };
+    await expect(getDevVendorWhatsAppReadiness({
+      ...ids, env: mixed, db: h.db, isConfigured: async () => true,
+    })).rejects.toThrow(/database DEV khusus/);
+    await expect(sendOneDevVendorWhatsAppInvite({
+      ...contact, env: mixed, db: h.db, isConfigured: async () => true, send,
+    })).rejects.toThrow(/database DEV khusus/);
+    expect(h.db).not.toHaveBeenCalled();
+    expect(send).not.toHaveBeenCalled();
+  });
+
+  it("blocks a changed supplier number after Admin confirmed the previous snapshot", async () => {
+    const h = harness();
+    const send = vi.fn();
+    let reads = 0;
+    const changingDb = async (sql: string, params: unknown[]) => {
+      if (sql.startsWith("select")) {
+        reads += 1;
+        if (reads === 2) {
+          return { rows: [{ ...h.data, supplier_phone: "081234561111" }] };
+        }
+      }
+      return h.db(sql, params);
+    };
+    await expect(sendOneDevVendorWhatsAppInvite({
+      ...contact, env: dev, db: changingDb, isConfigured: async () => true, send,
+    })).rejects.toThrow(/Nomor PIC vendor berubah/);
+    expect(reads).toBe(2);
+    expect(send).not.toHaveBeenCalled();
+    expect(h.sqlCalls.every((sql) => sql.startsWith("select"))).toBe(true);
+    expect(h.data.queue_status).toBe("pending");
+  });
+
+  it("rejects missing supplier company instead of treating null as company zero", async () => {
+    const h = harness({ supplier_company_id: null, rfq_company_id: null });
+    await expect(getDevVendorWhatsAppReadiness({
+      ...ids, env: dev, db: h.db, isConfigured: async () => true,
+    })).rejects.toThrow(/perusahaan/);
+  });
+
   it("restricts route to Admin, POST, exact IDs and an existing queue", () => {
     const index = readFileSync(resolve(process.cwd(), "server/index.mjs"), "utf8");
     const admin = readFileSync(resolve(process.cwd(), "server/admin-portal.mjs"), "utf8");

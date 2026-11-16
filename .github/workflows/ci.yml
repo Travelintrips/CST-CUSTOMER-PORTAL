@@ -41,6 +41,8 @@ jobs:
           SESSION_SECRET: customer-portal-ci-session-secret
       - name: Internal vendor quotation PostgreSQL 16 transaction regression (network isolated)
         run: bash scripts/tests/pr190-internal-vendor-quote-pg16.sh
+      - name: DEV vendor WA single-queue PostgreSQL 16 race regression (network isolated)
+        run: bash scripts/tests/dev-vendor-wa-single-queue-pg16.sh
       - run: pnpm typecheck
       - run: pnpm build
       - name: Hostinger bundle contract

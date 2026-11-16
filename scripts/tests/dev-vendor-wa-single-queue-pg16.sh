@@ -15,10 +15,12 @@ trap cleanup EXIT
 
 docker run --rm -d --name "$NAME" --network none \
   -e POSTGRES_PASSWORD=synthetic-contract-only postgres:16-alpine >/dev/null
-for i in $(seq 1 50); do
-  if docker exec "$NAME" pg_isready -U postgres >/dev/null 2>&1; then break; fi
-  sleep 0.2
+READY=0
+for i in $(seq 1 100); do
+  if docker exec "$NAME" pg_isready -U postgres >/dev/null 2>&1; then READY=1; break; fi
+  sleep 0.25
 done
+if test "$READY" -ne 1; then echo "Isolated PostgreSQL 16 did not become ready"; exit 1; fi
 
 cat > "$SQL_FILE" <<'SQL'
 CREATE TABLE public.mkt_rfqs (id integer primary key, rfq_number text, company_id integer);
