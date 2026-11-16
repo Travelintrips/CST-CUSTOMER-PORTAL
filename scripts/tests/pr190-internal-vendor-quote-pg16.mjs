@@ -293,6 +293,69 @@ async function run() {
     assert.equal((await client.query("select count(*) from mkt_vendor_quote_lines where quote_id=24")).rows[0].count,"0");
     assert.equal((await client.query("select count(*) from activity_logs where mkt_vendor_quote_id=24")).rows[0].count,"0");
 
+    // A different, already-submitted quote for the SAME RFQ may be selected
+    // by Admin while the internal quote is still invited. In the old
+    // quote-first implementation, internal submission and Admin bulk reject
+    // could deadlock (Admin holds RFQ -> waits for invited quote; internal
+    // holds invited quote -> waits for RFQ). Test the real PostgreSQL locks.
+    await client.query(`
+      insert into mkt_vendor_quotes
+        (id,rfq_id,vendor_id,token,token_hash,status,valid_until,requote_round)
+      values (30,23,25,'second-disposable-quote','second-hash','submitted',
+              now()+interval '6 days',1)
+    `);
+    await client.query(`
+      insert into mkt_vendor_quote_lines
+        (quote_id,rfq_line_id,offered_unit_price,offered_qty,subtotal)
+      values (30,231,150,1,150)
+    `);
+    const selectingAdmin = await pool.connect();
+    let internalAttempt = null;
+    let selectingOpen = false;
+    try {
+      await selectingAdmin.query("BEGIN");
+      selectingOpen = true;
+      await selectingAdmin.query("SET LOCAL lock_timeout='2000ms'");
+      await selectingAdmin.query("SELECT id FROM mkt_rfqs WHERE id=23 FOR UPDATE");
+      internalAttempt = transaction((tx) => submitInternalVendorQuote({
+        db:tx,admin,rfqId:23,quoteId:18,body,env,now,writeEvent:auditWriter(tx),
+      })).then(
+        value => ({ kind:"completed", value }),
+        error => ({ kind:"rejected", error }),
+      );
+      // Give the competing writer time to reach the locked RFQ, but do not
+      // let it acquire a lock on the invited quote before the Admin can
+      // reject it as part of selecting the other submitted quote.
+      await new Promise(resolve => setTimeout(resolve, 250));
+      await selectingAdmin.query(
+        "SELECT id FROM mkt_vendor_quotes WHERE id=30 AND rfq_id=23 AND status='submitted' FOR UPDATE",
+      );
+      await selectingAdmin.query(
+        "UPDATE mkt_vendor_quotes SET status='selected' WHERE id=30",
+      );
+      await selectingAdmin.query(
+        "UPDATE mkt_vendor_quotes SET status='rejected' WHERE rfq_id=23 AND id<>30 AND status NOT IN ('rejected','expired','withdrawn')",
+      );
+      await selectingAdmin.query(
+        "UPDATE mkt_rfqs SET status='customer_review',approval_status='pending' WHERE id=23",
+      );
+      await selectingAdmin.query("COMMIT");
+      selectingOpen = false;
+      const result = await Promise.race([
+        internalAttempt,
+        new Promise(resolve => setTimeout(() => resolve({kind:"timeout"}), 2500)),
+      ]);
+      assert.equal(result.kind,"rejected","Internal submission must lose cleanly to the Admin quote selection");
+      assert.equal(result.error?.statusCode,409,"Internal submission must reject after the other quote is selected");
+    } finally {
+      if (selectingOpen) await selectingAdmin.query("ROLLBACK").catch(()=>{});
+      selectingAdmin.release();
+      if (internalAttempt) await internalAttempt.catch(()=>{});
+    }
+    assert.equal((await client.query("select status::text from mkt_vendor_quotes where id=18")).rows[0].status,"rejected");
+    assert.equal((await client.query("select status::text from mkt_vendor_quotes where id=30")).rows[0].status,"selected");
+    assert.equal((await client.query("select count(*) from mkt_vendor_quote_lines where quote_id=18")).rows[0].count,"1");
+
     assert.equal((await client.query("select count(*) from mkt_vendor_quotes where token='DO_NOT_READ_VENDOR_TOKEN'")).rows[0].count,"1");
     console.log("PR190_PG16_INTERNAL_QUOTE_SUBMIT_PASS");
     console.log("create + audit + replay + customer-review replay + cross-company denials + expiry + line-scope + rollback: PASS");
