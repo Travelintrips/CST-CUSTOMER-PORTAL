@@ -60,6 +60,23 @@ describe("customer company onboarding contract", () => {
   });
 
 
+  it("routes Google corporate registration through the configured GIS login, preserving onboarding intent", () => {
+    const register = readFileSync(join(process.cwd(), "src/pages/register.tsx"), "utf8");
+    const login = readFileSync(join(process.cwd(), "src/pages/login.tsx"), "utf8");
+    const provider = readFileSync(join(process.cwd(), "server/auth-providers.mjs"), "utf8");
+
+    expect(register).toContain('returnTo: "/onboarding"');
+    expect(register).toContain('if (role === "customer") query.set("customerType", customerType)');
+    expect(register).toContain('query.set("company", company.trim())');
+    expect(register).toContain('window.location.assign(`${BASE}/login?${query.toString()}`)');
+    expect(register).not.toContain('window.location.assign(`${BASE}/api/login/google?');
+    expect(login).toContain('params.get("role")');
+    expect(login).toContain('params.get("customerType")');
+    expect(login).toContain('params.get("company")');
+    expect(login).toContain('/api/portal/auth/google/id-token');
+    expect(provider).toContain('googleResolveUser(profile, dbQuery, registration)');
+  });
+
   it("resolves the OAuth cookie session before redirecting onboarding to login", () => {
     expect(onboarding).not.toContain("const authed = isAuthenticated()");
     expect(onboarding).not.toContain('if (!authed) { setLocation("/login"); return; }');
