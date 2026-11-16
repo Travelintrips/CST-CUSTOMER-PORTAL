@@ -39,6 +39,8 @@ jobs:
         env:
           SUPABASE_DATABASE_URL_DEV: postgresql://ci:ci@127.0.0.1:5432/ci
           SESSION_SECRET: customer-portal-ci-session-secret
+      - name: Internal vendor quotation PostgreSQL 16 transaction regression (network isolated)
+        run: bash scripts/tests/pr190-internal-vendor-quote-pg16.sh
       - run: pnpm typecheck
       - run: pnpm build
       - name: Hostinger bundle contract

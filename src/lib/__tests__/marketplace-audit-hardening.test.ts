@@ -106,11 +106,42 @@ describe("marketplace audit hardening contract", () => {
 
 
   it("persists structured payment terms on vendor quotations and consumes them when creating PO", () => {
-    const source = read("server/marketplace-service.mjs");
+    const source = read("server/vendor-quote-submission.mjs");
     expect(source).toContain("payment_term_code=$3");
     expect(source).toContain("payment_dp_percent=$4");
-    expect(source).toContain("quote.payment_term_code ?? normalizePaymentTerm(quote.payment_terms)");
-    expect(source).toContain("normalizeDpPercent(quote.payment_dp_percent) ?? dpPercentFromTerm(quote.payment_terms)");
+    const readPath = read("server/marketplace-service.mjs");
+    expect(readPath).toContain("quote.payment_term_code ?? normalizePaymentTerm(quote.payment_terms)");
+    expect(readPath).toContain("normalizeDpPercent(quote.payment_dp_percent) ?? dpPercentFromTerm(quote.payment_terms)");
+  });
+
+  it("returns vendor quotation dates as calendar strings, preserving save/submit round trips", () => {
+    const service = read("server/marketplace-service.mjs");
+    const route = service.slice(
+      service.indexOf("async function handleVendorQuote"),
+      service.indexOf("async function inviteVendorsToExistingRfq"),
+    );
+    expect(route).toContain("to_char(q.quotation_date,'YYYY-MM-DD') as quotation_date_text");
+    expect(route).toContain("quotationDate: quote.quotation_date_text ?? null");
+    expect(route).not.toContain("quotationDate: quote.quotation_date, paymentTerms:");
+    const vendorUi = read("src/pages/mkt-vendor-quote.tsx");
+    expect(vendorUi).toContain("quotationDate: vqd.quote.quotationDate");
+  });
+
+  it("checks completed vendor replays without locks and locks RFQ first on new writes", () => {
+    const service = read("server/marketplace-service.mjs");
+    const route = service.slice(
+      service.indexOf("async function handleVendorQuote"),
+      service.indexOf("async function inviteVendorsToExistingRfq"),
+    );
+    const preview = route.indexOf("const preview = await loadQuote(db)");
+    const replayCheck = route.indexOf('["submitted", "selected"].includes(preview.status)');
+    const rfqLock = route.indexOf("const lockedRfq = await loadAdminRfq(preview.rfq_id");
+    const quoteLock = route.indexOf("const lockedQuote = await loadQuote(db, true)");
+    expect(preview).toBeGreaterThan(-1);
+    expect(replayCheck).toBeGreaterThan(preview);
+    expect(rfqLock).toBeGreaterThan(replayCheck);
+    expect(quoteLock).toBeGreaterThan(rfqLock);
+    expect(route.slice(replayCheck, rfqLock)).toContain("return;");
   });
 
   it("keeps admin DP messaging aligned with the handover threshold", () => {
