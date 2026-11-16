@@ -240,7 +240,7 @@ export async function persistVendorQuoteSubmission(db, {
         set status=case when status in ('submitted','quoting') then 'quoted'::mkt_rfq_status else status end,
             quote_count=(select count(*) from public.mkt_vendor_quotes where rfq_id=$1 and status='submitted'),
             updated_at=now()
-      where id=$1 and status in ('submitted','quoting','quoted')
+      where id=$1 and status not in ('awarded','cancelled','expired')
       returning id`,
     [rfq.id],
   );
@@ -267,6 +267,7 @@ export async function submitInternalVendorQuote({
 }) {
   if (!internalVendorQuoteDevEnabled(env)) fail(404, "Aksi quotation internal DEV tidak tersedia.");
   if (typeof db !== "function") fail(503, "Koneksi database tidak tersedia.");
+  if (typeof writeEvent !== "function") fail(503, "Audit quotation internal tidak tersedia.");
   const normalizedRfqId = integer(rfqId, "RFQ");
   const normalizedQuoteId = integer(quoteId, "Quotation");
   const submission = normalizeVendorQuoteSubmission(body, { requirePaymentTerms: true });
