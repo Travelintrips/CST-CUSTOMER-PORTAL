@@ -43,7 +43,8 @@ export function allowedInternalVendorCompanies(env = process.env) {
  */
 export function authorizeInternalVendorQuotation({
   admin, rfq, quote, supplier, approvedBuyerCompany,
-  intent, confirmed, reason, env = process.env, now = new Date(),
+  intent, confirmed, reason, allowSubmittedReplay = false,
+  env = process.env, now = new Date(),
 }) {
   if (!internalVendorQuoteDevEnabled(env)) deny(404, "Aksi quotation internal DEV tidak tersedia.");
   const adminId = integerId(admin?.id);
@@ -69,14 +70,21 @@ export function authorizeInternalVendorQuotation({
   if (approvedBuyerCompany !== true || integerId(rfq?.portal_customer_id) === null) {
     deny(409, "Afiliasi perusahaan buyer belum disetujui Admin.");
   }
-  if (!["quoting", "quoted"].includes(rfq?.status)) {
+  const replay = allowSubmittedReplay === true &&
+    ["submitted", "selected"].includes(quote?.status);
+  if (!replay && rfq?.approval_status !== "approved") {
+    deny(409, "Persetujuan RFQ perusahaan belum lengkap.");
+  }
+  if (!["quoting", "quoted"].includes(rfq?.status) &&
+      !(replay && rfq?.status === "customer_review")) {
     deny(409, "RFQ belum berada pada tahap quotation yang sah.");
   }
-  if (!["invited", "opened", "requote_requested"].includes(quote?.status)) {
+  if (!["invited", "opened", "requote_requested"].includes(quote?.status) && !replay) {
     deny(409, "Quotation tidak berada pada tahap yang bisa diajukan.");
   }
   const expiry = quote?.valid_until ? new Date(quote.valid_until) : null;
-  if (expiry && (!Number.isFinite(expiry.getTime()) || expiry.getTime() <= new Date(now).getTime())) {
+  if (!replay && expiry &&
+      (!Number.isFinite(expiry.getTime()) || expiry.getTime() <= new Date(now).getTime())) {
     deny(410, "Undangan vendor telah kedaluwarsa.");
   }
   const auditReason = typeof reason === "string" ? reason.trim() : "";
