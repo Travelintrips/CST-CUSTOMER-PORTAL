@@ -27,7 +27,8 @@ function params({ key = testKey, user = buyer, input = body, environment = env,
 }
 
 function dbState({ customerType = "company", memberships = [{ company_id: 1, company_name: "PT Cahaya Sejati Teknologi" }],
-  status = "active", isPublished = true, moq = null, failAt = null } = {}) {
+  status = "active", isPublished = true, moq = null, failAt = null,
+  driverDateValue = false } = {}) {
   let rfq = null;
   let line = null;
   const calls = [];
@@ -56,7 +57,9 @@ function dbState({ customerType = "company", memberships = [{ company_id: 1, com
           ? { rows: [{ id: rfq.id, portal_customer_id: rfq.customerId,
             company_id: rfq.companyId, vendor_catalog_item_id: line.itemId,
             requested_qty: line.qty, buyer_phone: rfq.buyerPhone,
-            delivery_address: rfq.destination, required_delivery_date: rfq.requiredDate,
+            delivery_address: rfq.destination,
+            required_delivery_date: driverDateValue && rfq.requiredDate
+              ? new Date(rfq.requiredDate + "T00:00:00") : rfq.requiredDate,
             notes: rfq.notes }], rowCount: 1 }
           : { rows: [], rowCount: 0 };
       }
@@ -139,6 +142,37 @@ describe("DEV canonical marketplace RFQ bridge from existing product page", () =
       expect(db.calls.at(-1).sql).toBe("rollback");
     }
     expect(db.calls.filter(c => c.sql.startsWith("insert into public.mkt_rfqs"))).toHaveLength(1);
+  });
+
+  it("replays an identical nonempty delivery date under Asia/Jakarta without a false HTTP 409", async () => {
+    const originalTz = process.env.TZ;
+    process.env.TZ = "Asia/Jakarta";
+    try {
+      const input = { ...body, required_date: "2099-01-02" };
+      // The real query casts DATE to text. The second fixture deliberately
+      // mimics older node-postgres DATE parsing to a local-midnight Date.
+      for (const driverDateValue of [false, true]) {
+        const db = dbState({ driverDateValue });
+        const opts = { databasePool: db.databasePool, corporateGuard: guardOk, input };
+        const first = params(opts);
+        await handleDevCustomerMarketplaceQuote(first);
+        expect(first.sendJson).toHaveBeenCalledWith(first.response, 201,
+          expect.objectContaining({ alreadyProcessed: false }));
+        const retry = params(opts);
+        await handleDevCustomerMarketplaceQuote(retry);
+        expect(retry.sendJson).toHaveBeenCalledWith(retry.response, 200,
+          expect.objectContaining({ rfqId: 501, alreadyProcessed: true }));
+        const select = db.calls.find(c => c.sql.startsWith("select r.id,r.portal_customer_id"));
+        expect(select?.sql).toContain("r.required_delivery_date::text as required_delivery_date");
+        expect(db.calls.filter(c => c.sql.startsWith("insert into public.mkt_rfqs"))).toHaveLength(1);
+        const changed = params({ ...opts, input: { ...input, required_date: "2099-01-03" } });
+        await expect(handleDevCustomerMarketplaceQuote(changed)).rejects.toMatchObject({ statusCode: 409 });
+        expect(changed.sendJson).not.toHaveBeenCalled();
+      }
+    } finally {
+      if (originalTz === undefined) delete process.env.TZ;
+      else process.env.TZ = originalTz;
+    }
   });
 
   it("matches public catalog visibility for published flags even if status is stale", async () => {
