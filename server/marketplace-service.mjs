@@ -1817,4 +1817,4 @@ async function handleMarketplaceRoute({ request, response, url, body, user, isAd
   return false;
 }
 
-export { handleMarketplaceRoute };
+export { handleMarketplaceRoute, withTransaction, writeEvent };
