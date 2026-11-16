@@ -31,7 +31,8 @@ import {
 } from "./admin-portal.mjs";
 import { checkStorageReadiness, signedDocumentUrl, signedPaymentProofUrl, uploadPaymentProof, uploadPublicAsset, uploadOrderDocument } from "./storage.mjs";
 import { resolveCustomerPortalFonnteToken } from "./fonnte-config.mjs";
-import { handleMarketplaceRoute } from "./marketplace-service.mjs";
+import { handleMarketplaceRoute, withTransaction as withMarketplaceTransaction, writeEvent as writeMarketplaceEvent } from "./marketplace-service.mjs";
+import { submitMarketplaceCatalogQuote, marketplaceQuoteDevEnabled } from "./marketplace-rfq-quote.mjs";
 import { handleBizPortalActionBridge } from "./bizportal-action-bridge.mjs";
 import { createLogisticPaylabsLink, getLogisticPaylabsState, handlePaylabsAdminRoute, handlePaylabsWebhook } from "./paylabs-service.mjs";
 import { processMarketplaceWhatsAppQueue } from "./whatsapp-service.mjs";
@@ -4954,6 +4955,35 @@ async function route(request, response) {
       marketplaceRecommendationMatch[1],
       marketplaceRecommendationMatch[2],
     );
+    return;
+  }
+  // DEV opt-in restoration of the original product-detail quote endpoint.
+  // A company is always derived from an approved server-side membership.
+  const marketplaceQuoteMatch = pathname.match(/^\/api\/portal\/marketplace\/(\d+)\/quote$/);
+  if (request.method === "POST" && marketplaceQuoteMatch) {
+    if (!marketplaceQuoteDevEnabled({ APP_ENV, CST_MARKETPLACE_RFQ_QUOTE_DEV: process.env.CST_MARKETPLACE_RFQ_QUOTE_DEV })) {
+      sendJson(response, 404, { message: "Marketplace RFQ DEV belum diaktifkan." });
+      return;
+    }
+    const user = await requireUser(request, response);
+    if (!user) return;
+    const body = await readJson(request);
+    try {
+      const result = await submitMarketplaceCatalogQuote({
+        catalogItemId: Number(marketplaceQuoteMatch[1]),
+        user, body,
+        idempotencyKey: request.headers["idempotency-key"],
+        env: { APP_ENV, CST_MARKETPLACE_RFQ_QUOTE_DEV: process.env.CST_MARKETPLACE_RFQ_QUOTE_DEV },
+      }, {
+        withTransaction: withMarketplaceTransaction,
+        writeEvent: writeMarketplaceEvent,
+      });
+      sendJson(response, result.alreadyProcessed ? 200 : 201, result);
+    } catch (error) {
+      const status = Number(error?.statusCode);
+      if (status >= 400 && status < 500) sendError(response, status, error.message);
+      else throw error;
+    }
     return;
   }
   const marketplaceItemMatch = pathname.match(/^\/api\/portal\/marketplace\/(\d+)$/);
