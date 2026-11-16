@@ -16,6 +16,34 @@ const patch = {
 };
 
 describe("DEV edit contact for existing supplier", () => {
+  it("returns a full-precision supplier revision from GET and PATCH; never rounds microseconds", () => {
+    const listHandler = readFileSync(join(process.cwd(), "server/vendor-portal.mjs"), "utf8");
+    const patchHandler = readFileSync(join(process.cwd(), "server/admin-supplier-contact.mjs"), "utf8");
+    const revisionSql = `to_char(s.updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') as updated_at`;
+    expect(listHandler).toContain(revisionSql);
+    expect(patchHandler).toContain(`to_char(updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') as updated_at`);
+    expect(patchHandler).toContain("updated_at is not distinct from $5::timestamptz");
+    const exactRevision = "2026-07-13T16:06:44.680098Z";
+    expect(Date.parse(exactRevision)).not.toBeNaN();
+    expect(exactRevision).not.toBe(new Date(exactRevision).toISOString());
+    expect(validateDevSupplierContactPatch({ ...patch, expectedUpdatedAt: exactRevision }).expectedUpdatedAt).toBe(exactRevision);
+  });
+
+  it("passes six-digit revisions through untouched on contact save", async () => {
+    const exactRevision = "2026-07-13T16:06:44.680098Z";
+    const db = vi.fn().mockResolvedValue({ rows: [{
+      id: 24, name: "PT Cahaya Sejati Teknologi", company_id: 1,
+      phone: "6281234567890", email: "supplier@example.com",
+      contact_person: "Official PIC", updated_at: "2026-11-17T00:00:00.123456Z",
+    }] });
+    const out = await updateExistingSupplierContacts({
+      supplierId: 24, body: { ...patch, expectedUpdatedAt: exactRevision }, user: admin, db, env,
+    });
+    expect(db.mock.calls[0][1][4]).toBe(exactRevision);
+    expect(out.updated_at).toBe("2026-11-17T00:00:00.123456Z");
+    expect(db).toHaveBeenCalledTimes(1);
+  });
+
   it("normalizes Indonesian WhatsApp and email without accepting financial fields", () => {
     expect(validateDevSupplierContactPatch(patch)).toEqual({
       phone: "6281234567890",
