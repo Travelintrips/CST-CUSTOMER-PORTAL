@@ -102,8 +102,8 @@ describe("audited Admin-as-internal-vendor quote submit uses canonical quote wri
     expect(f.calls.some(x => x.sql.startsWith("update public.mkt_vendor_quotes"))).toBe(true);
     expect(f.calls.some(x => x.sql.startsWith("update public.mkt_rfqs"))).toBe(true);
     const updateLocks = f.calls.filter(x => /for update/i.test(x.sql));
-    expect(updateLocks[0]?.sql).toContain("mkt_vendor_quotes");
-    expect(updateLocks[1]?.sql).toContain("mkt_rfqs");
+    expect(updateLocks[0]?.sql).toContain("mkt_rfqs");
+    expect(updateLocks[1]?.sql).toContain("mkt_vendor_quotes");
     expect(writeEvent).toHaveBeenCalledOnce();
     expect(writeEvent.mock.calls[0][0]).toMatchObject({
       actorType: "admin", actorId: "19", actorName: "QA Admin",
