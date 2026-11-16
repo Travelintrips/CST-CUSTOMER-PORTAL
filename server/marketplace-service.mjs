@@ -1097,8 +1097,22 @@ async function handleAdminMarketplace(request, response, pathname, body, user) {
   }
   const quotes = pathname.match(/^\/api\/mkt\/admin\/rfqs\/(\d+)\/vendor-quotes$/);
   if (request.method === "GET" && quotes) {
-    const result = await query(`select q.id, q.vendor_id, q.status, q.updated_at, s.name as vendor_name, coalesce(sum(ql.negotiated_subtotal),sum(ql.subtotal),0) as deal_total from public.mkt_vendor_quotes q left join public.suppliers s on s.id=q.vendor_id left join public.mkt_vendor_quote_lines ql on ql.quote_id=q.id where q.rfq_id=$1 group by q.id,s.name order by q.created_at desc`, [integer(quotes[1], "RFQ")]);
-    response._sendJson(200, { ok: true, data: result.rows.map((r) => ({ id: Number(r.id), quoteId: Number(r.id), vendorId: Number(r.vendor_id), vendorName: r.vendor_name, status: r.status, updatedAt: r.updated_at, dealTotal: Number(r.deal_total) })) });
+    // Read-only readiness metadata for internal vendor quotations. No contact
+    // details, opaque tokens or third-party credentials are returned.
+    const result = await query(`select q.id, q.vendor_id, q.status, q.updated_at,
+        s.name as vendor_name, coalesce(s.is_internal_vendor,false) as is_internal_vendor,
+        (nullif(btrim(s.phone),'') is not null) as has_vendor_phone,
+        exists (select 1 from public.portal_customers pc
+                  where pc.role='vendor' and pc.account_status='active'
+                    and lower(pc.email)=lower(s.contact_email)) as has_active_vendor_account,
+        coalesce(sum(ql.negotiated_subtotal),sum(ql.subtotal),0) as deal_total
+      from public.mkt_vendor_quotes q
+      left join public.suppliers s on s.id=q.vendor_id
+      left join public.mkt_vendor_quote_lines ql on ql.quote_id=q.id
+      where q.rfq_id=$1
+      group by q.id,s.id,s.name,s.is_internal_vendor,s.phone,s.contact_email
+      order by q.created_at desc`, [integer(quotes[1], "RFQ")]);
+    response._sendJson(200, { ok: true, data: result.rows.map((r) => ({ id: Number(r.id), quoteId: Number(r.id), vendorId: Number(r.vendor_id), vendorName: r.vendor_name, status: r.status, updatedAt: r.updated_at, dealTotal: Number(r.deal_total), isInternalVendor: Boolean(r.is_internal_vendor), hasVendorPhone: Boolean(r.has_vendor_phone), hasActiveVendorAccount: Boolean(r.has_active_vendor_account) })) });
     return true;
   }
   const deal = pathname.match(/^\/api\/mkt\/admin\/rfqs\/(\d+)\/quotes\/(\d+)\/deal-price$/);

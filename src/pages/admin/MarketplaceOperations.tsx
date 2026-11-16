@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { requiresInternalVendorAssignment } from "@/lib/internal-vendor-quote-readiness";
 import { getAuthHeaders } from "@/lib/auth";
 import { useToast } from "@/hooks/use-toast";
 import { Badge } from "@/components/ui/badge";
@@ -35,6 +36,9 @@ type Quote = {
   status: string;
   quoteId?: number;
   vendorId?: number;
+  isInternalVendor?: boolean;
+  hasVendorPhone?: boolean;
+  hasActiveVendorAccount?: boolean;
   vendorPhone?: string | null;
   vendorEmail?: string | null;
   updatedAt?: string | null;
@@ -696,7 +700,17 @@ export function MarketplaceOperationsTab() {
                   <p className="text-sm font-semibold">Vendor quotes</p>
                   {quotes.length === 0 ? <p className="text-sm text-slate-500">Belum ada quote vendor.</p> : quotes.map((quote) => (
                     <button key={quote.id} onClick={() => void selectQuote(quote)} className={`flex w-full items-center justify-between rounded-md border p-2 text-left ${selectedQuote?.id === quote.id ? "border-indigo-500 bg-indigo-50" : ""}`}>
-                      <span><span className="font-medium">{quote.vendorName || `Quote #${quote.id}`}</span><span className="ml-2 text-xs text-slate-500">#{quote.id}</span></span><StatusBadge value={quote.status} />
+                      <span>
+                        <span className="font-medium">{quote.vendorName || `Quote #${quote.id}`}</span>
+                        <span className="ml-2 text-xs text-slate-500">#{quote.id}</span>
+                        {requiresInternalVendorAssignment(quote) && (
+                          <span className="mt-1 block max-w-md text-left text-xs text-amber-700">
+                            Vendor internal belum memiliki nomor WhatsApp atau akun Vendor Portal aktif.
+                            Penanggung jawab quotation perlu ditetapkan; undangan belum dapat dianggap terkirim.
+                          </span>
+                        )}
+                      </span>
+                      <StatusBadge value={quote.status} />
                     </button>
                   ))}
                 </div>
