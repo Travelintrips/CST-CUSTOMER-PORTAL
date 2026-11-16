@@ -219,6 +219,7 @@ describe("audited Admin-as-internal-vendor quote submit uses canonical quote wri
     const adminRoute = source.slice(source.indexOf("async function handleAdminMarketplace"), source.indexOf("async function handlePortalPurchaseOrders"));
     expect(vendorRoute).toContain("persistVendorQuoteSubmission");
     expect(adminRoute).toContain("submitInternalVendorQuote");
-    expect(source).toContain("authorizeInternalVendorQuotation");
+    const submissionSource = readFileSync(join(process.cwd(), "server/vendor-quote-submission.mjs"), "utf8");
+    expect(submissionSource).toContain("authorizeInternalVendorQuotation");
   });
 });
