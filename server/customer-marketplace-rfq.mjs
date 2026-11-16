@@ -95,7 +95,7 @@ export async function handleDevCustomerMarketplaceQuote({
          join public.suppliers supplier on supplier.id=item.vendor_id
         where item.id=$1
           and item.is_active=true and item.is_published=true
-          and item.status='published' and supplier.is_active=true
+          and supplier.is_active=true
         for share of item`,
       [catalogItemId],
     );
@@ -135,6 +135,7 @@ export async function handleDevCustomerMarketplaceQuote({
     async function existingByNumber() {
       const result = await client.query(
         `select r.id,r.portal_customer_id,r.company_id,
+                r.buyer_phone,r.delivery_address,r.required_delivery_date,r.notes,
                 l.vendor_catalog_item_id,l.requested_qty
            from public.mkt_rfqs r
            join public.mkt_rfq_lines l on l.rfq_id=r.id
@@ -145,10 +146,20 @@ export async function handleDevCustomerMarketplaceQuote({
       return result.rows[0] ?? null;
     }
     async function replay(row) {
+      const storedDate = row.required_delivery_date instanceof Date
+        ? row.required_delivery_date.toISOString().slice(0, 10)
+        : String(row.required_delivery_date ?? "").slice(0, 10);
+      // A retry can only replay the same logical business request. Returning
+      // HTTP 200 after edited phone, address, date or notes silently hides
+      // unsaved customer corrections while downstream workflows use old data.
       if (Number(row.portal_customer_id) !== customerId
         || Number(row.company_id ?? 0) !== Number(companyId ?? 0)
         || Number(row.vendor_catalog_item_id) !== catalogItemId
-        || Number(row.requested_qty) !== qty) {
+        || Number(row.requested_qty) !== qty
+        || String(row.buyer_phone ?? "") !== contact
+        || String(row.delivery_address ?? "") !== destination
+        || storedDate !== rawDate
+        || String(row.notes ?? "") !== notes) {
         refuse(409, "Kunci RFQ sudah dipakai untuk permintaan berbeda.");
       }
       await client.query("commit");
