@@ -1,5 +1,6 @@
 import crypto from "node:crypto";
 import { pool, query } from "./db.mjs";
+import { updateExistingSupplierContacts } from "./admin-supplier-contact.mjs";
 import { createSession, sessionCookies } from "./session.mjs";
 import { normalizePhone, normalizedEmail } from "./auth-providers.mjs";
 import { sendGatewayMessage } from "./whatsapp-service.mjs";
@@ -996,7 +997,7 @@ export async function handleAdminVendorRoutes({ request, response, url, body, us
   }
   if (url.pathname === "/api/portal/admin/suppliers" && request.method === "GET") {
     const result = await query(
-      `select s.id, s.name, s.contact_email as email, s.phone,
+      `select s.id, s.name, s.contact_email as email, s.phone, s.contact_person, s.updated_at,
               s.status, s.is_active, s.is_verified, coalesce(s.marketplace_status, 'draft') as marketplace_status,
               coalesce(s.is_premium, false) as is_premium, s.created_at,
               count(v.id) filter (where v.status = 'published' and v.is_published) as published_items,
@@ -1015,7 +1016,27 @@ export async function handleAdminVendorRoutes({ request, response, url, body, us
       is_active: Boolean(row.is_active),
       is_verified: Boolean(row.is_verified),
       is_premium: Boolean(row.is_premium),
+      can_edit_contact: process.env.APP_ENV === "development",
     })));
+    return true;
+  }
+  const contactMatch = url.pathname.match(/^\/api\/portal\/admin\/suppliers\/(\d+)\/contacts$/);
+  if (contactMatch && request.method === "PATCH") {
+    try {
+      const updated = await updateExistingSupplierContacts({
+        supplierId: Number(contactMatch[1]),
+        body,
+        user,
+        db: query,
+      });
+      sendJson(response, 200, { ok: true, supplier: updated });
+    } catch (error) {
+      if (Number.isInteger(error?.statusCode)) {
+        sendError(response, error.statusCode, error.message);
+      } else {
+        throw error;
+      }
+    }
     return true;
   }
   const supplierMatch = url.pathname.match(/^\/api\/portal\/admin\/suppliers\/(\d+)\/marketplace$/);

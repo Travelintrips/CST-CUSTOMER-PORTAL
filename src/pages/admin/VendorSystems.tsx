@@ -31,6 +31,9 @@ type SupplierRow = {
   name: string;
   phone: string | null;
   email?: string | null;
+  contact_person?: string | null;
+  updated_at?: string | null;
+  can_edit_contact?: boolean;
   status: string;
   is_active: boolean;
   is_verified: boolean;
@@ -131,6 +134,64 @@ export function VendorMarketplaceTab() {
   const [search, setSearch] = useState("");
   const [filterStatus, setFilterStatus] = useState<"all" | "published" | "draft" | "unpublished">("all");
   const [saving, setSaving] = useState<number | null>(null);
+  const [editingContact, setEditingContact] = useState<SupplierRow | null>(null);
+  const [contactPhone, setContactPhone] = useState("");
+  const [contactEmail, setContactEmail] = useState("");
+  const [contactPerson, setContactPerson] = useState("");
+  const [savingContact, setSavingContact] = useState(false);
+
+  const openContactEditor = (supplier: SupplierRow) => {
+    if (!supplier.can_edit_contact) return;
+    setEditingContact(supplier);
+    setContactPhone(supplier.phone ?? "");
+    setContactEmail(supplier.email ?? "");
+    setContactPerson(supplier.contact_person ?? "");
+  };
+
+  const saveContact = async () => {
+    if (!editingContact || savingContact) return;
+    setSavingContact(true);
+    try {
+      const response = await fetch(
+        "/api/portal/admin/suppliers/" + editingContact.id + "/contacts",
+        {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json", ...getAuthHeaders() },
+          credentials: "include",
+          body: JSON.stringify({
+            phone: contactPhone,
+            email: contactEmail,
+            contactPerson,
+            expectedUpdatedAt: editingContact.updated_at ?? null,
+          }),
+        },
+      );
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok || !data.supplier) {
+        throw new Error(data.message || data.error || "Gagal menyimpan kontak supplier.");
+      }
+      const updated = data.supplier;
+      setSuppliers((old) => old.map((supplier) => supplier.id === editingContact.id
+        ? {
+          ...supplier,
+          phone: updated.phone,
+          email: updated.email,
+          contact_person: updated.contact_person,
+          updated_at: updated.updated_at,
+        }
+        : supplier));
+      toast({ title: "Kontak supplier diperbarui", description: "Supplier existing tetap digunakan; tidak dibuat vendor baru." });
+      setEditingContact(null);
+    } catch (error) {
+      toast({
+        title: "Gagal menyimpan kontak supplier",
+        description: error instanceof Error ? error.message : "Periksa data atau muat ulang.",
+        variant: "destructive",
+      });
+    } finally {
+      setSavingContact(false);
+    }
+  };
 
   const fetchSuppliers = async () => {
     setLoading(true);
@@ -282,8 +343,9 @@ export function VendorMarketplaceTab() {
                 {filtered.map(s => (
                   <tr key={s.id} className="hover:bg-slate-50/60 transition-colors">
                     <td className="px-4 py-3">
-                      <p className="font-medium text-slate-900">{s.name}</p>
+                      <p className="font-medium text-slate-900">{s.name} <span className="text-xs font-normal text-slate-500">#{s.id}</span></p>
                       {s.email && <p className="text-xs text-slate-400 mt-0.5">{s.email}</p>}
+                      {s.phone && <p className="text-xs text-slate-400 mt-0.5">{s.phone}</p>}
                       <span className={`text-xs px-1.5 py-0.5 rounded-md font-medium ${
                         s.is_active ? "text-emerald-700 bg-emerald-50" : "text-slate-500 bg-slate-100"
                       }`}>
@@ -318,6 +380,17 @@ export function VendorMarketplaceTab() {
                     </td>
                     <td className="px-4 py-3 text-right">
                       <div className="flex items-center justify-end gap-2">
+                        {s.can_edit_contact && (
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            className="text-xs h-7 px-2"
+                            onClick={() => openContactEditor(s)}
+                            title={"Edit kontak supplier #" + s.id}
+                          >
+                            <Pencil className="h-3 w-3 mr-1" /> Edit Kontak
+                          </Button>
+                        )}
                         {s.marketplace_status !== "published" ? (
                           <Button
                             size="sm"
@@ -349,6 +422,49 @@ export function VendorMarketplaceTab() {
           </div>
         )}
       </CardContent>
+      <Dialog
+        open={editingContact !== null}
+        onOpenChange={(open) => { if (!open && !savingContact) setEditingContact(null); }}
+      >
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Edit Kontak Supplier #{editingContact?.id}</DialogTitle>
+          </DialogHeader>
+          <p className="text-sm text-slate-600">{editingContact?.name}</p>
+          <p className="text-xs text-slate-500">
+            Kontak ini berlaku untuk supplier existing. Tidak membuat vendor baru,
+            tidak mengubah afiliasi perusahaan, status publikasi, RFQ, atau PO.
+          </p>
+          <div className="space-y-3">
+            <div className="space-y-1">
+              <Label htmlFor="supplier-contact-phone">WhatsApp resmi vendor</Label>
+              <Input id="supplier-contact-phone" value={contactPhone}
+                onChange={(event) => setContactPhone(event.target.value)}
+                placeholder="628xxxxxxxxxx" maxLength={32} />
+            </div>
+            <div className="space-y-1">
+              <Label htmlFor="supplier-contact-person">PIC vendor</Label>
+              <Input id="supplier-contact-person" value={contactPerson}
+                onChange={(event) => setContactPerson(event.target.value)}
+                placeholder="Nama PIC resmi" maxLength={120} />
+            </div>
+            <div className="space-y-1">
+              <Label htmlFor="supplier-contact-email">Email resmi vendor</Label>
+              <Input id="supplier-contact-email" type="email" value={contactEmail}
+                onChange={(event) => setContactEmail(event.target.value)}
+                placeholder="vendor@perusahaan.com" maxLength={254} />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" disabled={savingContact}
+              onClick={() => setEditingContact(null)}>Batal</Button>
+            <Button disabled={savingContact} onClick={() => void saveContact()}>
+              {savingContact ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+              Simpan Kontak
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </Card>
   );
 }
