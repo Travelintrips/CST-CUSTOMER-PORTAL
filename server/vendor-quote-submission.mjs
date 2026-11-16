@@ -183,12 +183,19 @@ export async function persistVendorQuoteSubmission(db, {
   quote, rfq, submission, submit = true, actor, writeEvent,
 }) {
   const rfqLineRows = await db(
-    "select id from public.mkt_rfq_lines where rfq_id=$1 order by id",
+    "select id from public.mkt_rfq_lines where rfq_id=$1 order by id for share",
     [rfq.id],
   );
   const allowedLineIds = new Set(rfqLineRows.rows.map((row) => Number(row.id)));
   for (const line of submission.lines) {
     if (!allowedLineIds.has(line.rfqLineId)) fail(403, "RFQ line bukan bagian dari quotation ini.");
+    if (line.vendorCatalogItemId != null) {
+      const catalogItem = (await db(
+        "select id from public.vendor_catalog_items where id=$1 and vendor_id=$2 and is_active=true for share",
+        [line.vendorCatalogItemId, quote.vendor_id],
+      )).rows[0];
+      if (!catalogItem) fail(403, "Produk quotation bukan milik vendor terkait.");
+    }
   }
   for (const line of submission.lines) {
     const existing = (await db(
