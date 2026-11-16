@@ -32,6 +32,7 @@ import {
 import { checkStorageReadiness, signedDocumentUrl, signedPaymentProofUrl, uploadPaymentProof, uploadPublicAsset, uploadOrderDocument } from "./storage.mjs";
 import { resolveCustomerPortalFonnteToken } from "./fonnte-config.mjs";
 import { handleMarketplaceRoute } from "./marketplace-service.mjs";
+import { handleDevCustomerMarketplaceQuote } from "./customer-marketplace-rfq.mjs";
 import { handleBizPortalActionBridge } from "./bizportal-action-bridge.mjs";
 import { createLogisticPaylabsLink, getLogisticPaylabsState, handlePaylabsAdminRoute, handlePaylabsWebhook } from "./paylabs-service.mjs";
 import { processMarketplaceWhatsAppQueue } from "./whatsapp-service.mjs";
@@ -4954,6 +4955,18 @@ async function route(request, response) {
       marketplaceRecommendationMatch[1],
       marketplaceRecommendationMatch[2],
     );
+    return;
+  }
+  // The existing product-detail RFQ form uses this DEV-only canonical bridge.
+  // Customer identity and company approval come from the signed session / DB.
+  const marketplaceQuoteMatch = pathname.match(/^\/api\/portal\/marketplace\/(\d+)\/quote$/);
+  if (request.method === "POST" && marketplaceQuoteMatch) {
+    const user = await requireUser(request, response);
+    if (!user) return;
+    await handleDevCustomerMarketplaceQuote({
+      request, response, itemId: marketplaceQuoteMatch[1],
+      body: await readJson(request), user, sendJson,
+    });
     return;
   }
   const marketplaceItemMatch = pathname.match(/^\/api\/portal\/marketplace\/(\d+)$/);
