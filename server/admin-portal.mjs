@@ -1267,6 +1267,121 @@ async function handleOrganizationMutation(ctx) {
       error.statusCode = 404;
       throw error;
     }
+    if (ctx.body?.existingCustomerCompanyApplication === true) {
+      // Reuse the existing canonical company-request writer for an authorized
+      // already-onboarded individual. No direct membership or approval.
+      if (process.env.APP_ENV !== "development"
+          || process.env.CST_CORPORATE_PO_APPROVAL_GATE_DEV !== "true") {
+        const error = new Error("Pengajuan perusahaan dari akun customer lama hanya tersedia di DEV yang terlindungi.");
+        error.statusCode = 404;
+        throw error;
+      }
+      const locked = await client.query(
+        `select id, role, account_status, customer_type
+           from public.portal_customers where id=$1 for update`,
+        [ctx.user.id],
+      );
+      const previous = locked.rows[0];
+      if (!previous || ctx.user.role !== "customer" || previous.role !== "customer"
+          || previous.account_status !== "active") {
+        const error = new Error("Hanya Customer aktif yang dapat mengajukan perusahaan.");
+        error.statusCode = 403;
+        throw error;
+      }
+      if (previous.customer_type !== "individual") {
+        const error = new Error("Akun sudah memiliki tipe perusahaan; periksa status persetujuan.");
+        error.statusCode = 409;
+        throw error;
+      }
+      if (ctx.body.companyId != null) {
+        const error = new Error("Pengajuan ini hanya untuk perusahaan baru. Keanggotaan existing memerlukan pemeriksaan Admin.");
+        error.statusCode = 400;
+        throw error;
+      }
+      const requestedCompanyName = text(ctx.body.requestedCompanyName);
+      const requestedRegistrationNumber = text(ctx.body.requestedRegistrationNumber);
+      const companyAddress = text(ctx.body.companyAddress);
+      if (requestedCompanyName.length < 3 || requestedCompanyName.length > 200
+          || requestedRegistrationNumber.length < 8 || requestedRegistrationNumber.length > 64
+          || companyAddress.length < 10 || companyAddress.length > 1000) {
+        const error = new Error("Lengkapi nama perusahaan, NIB/NPWP dan alamat perusahaan yang sah.");
+        error.statusCode = 400;
+        throw error;
+      }
+      const profile = await client.query(
+        `select id, ktp_address, ktp_pic_url
+           from public.portal_customer_profiles
+          where customer_id=$1
+          order by updated_at desc nulls last, id desc limit 1
+          for update`,
+        [ctx.user.id],
+      );
+      const saved = profile.rows[0];
+      if (!saved || text(saved.ktp_address).length < 10 || !text(saved.ktp_pic_url)) {
+        const error = new Error("KTP dan alamat sesuai KTP harus tersimpan sebelum mengajukan perusahaan.");
+        error.statusCode = 409;
+        throw error;
+      }
+      // Never trust a file path from request JSON. The signed-in customer must
+      // have uploaded their own company legal document using the existing
+      // authenticated private-document handler.
+      const legalDocs = await client.query(
+        `select d.file_url
+           from public.customer_verification_documents d
+          where d.profile_id=$1 and d.document_type='legalitas'
+            and d.file_url like ('customers/' || $2::text || '/%')
+            and upper(coalesce(d.verification_status, 'PENDING')) <> 'REJECTED'
+          order by d.uploaded_version desc nulls last, d.id desc limit 1
+          for update`,
+        [saved.id, ctx.user.id],
+      );
+      const legalDocumentPath = text(legalDocs.rows[0]?.file_url);
+      if (!legalDocumentPath) {
+        const error = new Error("Unggah dokumen legalitas perusahaan yang sah sebelum mengajukan.");
+        error.statusCode = 409;
+        throw error;
+      }
+      const pending = await client.query(
+        `select id from public.portal_company_requests
+          where portal_customer_id=$1 and status in ('pending','submitted','in_review')
+          order by created_at desc limit 1 for update`,
+        [ctx.user.id],
+      );
+      const memberships = await client.query(
+        `select id from public.portal_company_members
+          where portal_customer_id=$1 and is_active=true limit 1 for update`,
+        [ctx.user.id],
+      );
+      if (pending.rowCount || memberships.rowCount) {
+        const error = new Error("Sudah ada permohonan atau keanggotaan aktif. Periksa statusnya dahulu.");
+        error.statusCode = 409;
+        throw error;
+      }
+      const context = await applyOrganizationSelection(
+        previous,
+        {
+          customerType: "company",
+          companyId: null,
+          requestedCompanyName,
+          requestedRegistrationNumber,
+        },
+        client.query.bind(client),
+      );
+      const addressWritten = await client.query(
+        `update public.portal_customer_profiles
+            set company_address=$1, legal_doc_url=$2, updated_at=now()
+          where id=$3 and customer_id=$4`,
+        [companyAddress, legalDocumentPath, saved.id, ctx.user.id],
+      );
+      if (addressWritten.rowCount !== 1) {
+        const error = new Error("Profil perusahaan berubah saat pengajuan; transaksi dibatalkan.");
+        error.statusCode = 409;
+        throw error;
+      }
+      await client.query("commit");
+      ctx.sendJson(ctx.response, 200, { context });
+      return;
+    }
     const context = await applyOrganizationSelection(
       ctx.user, ctx.body ?? {}, client.query.bind(client),
     );

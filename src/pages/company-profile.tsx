@@ -13,6 +13,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { useToast } from "@/hooks/use-toast";
+import { ExistingCustomerCompanyApplication } from "@/components/ExistingCustomerCompanyApplication";
 
 export default function CompanyProfile() {
   const { t } = useLanguage();
@@ -337,6 +338,12 @@ export default function CompanyProfile() {
                 </div>
               </CardContent>
             </Card>
+
+            {/* Existing customer -> company request: reuse KTP and Admin queue. */}
+            <ExistingCustomerCompanyApplication
+              role={(profile as unknown as { role?: string | null } | undefined)?.role}
+              customerType={(profile as unknown as { customerType?: string | null } | undefined)?.customerType}
+            />
 
             {/* Security */}
             <Card className="border-none shadow-sm">
