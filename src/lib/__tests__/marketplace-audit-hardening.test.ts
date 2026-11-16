@@ -114,6 +114,35 @@ describe("marketplace audit hardening contract", () => {
     expect(readPath).toContain("normalizeDpPercent(quote.payment_dp_percent) ?? dpPercentFromTerm(quote.payment_terms)");
   });
 
+  it("returns vendor quotation dates as calendar strings, preserving save/submit round trips", () => {
+    const service = read("server/marketplace-service.mjs");
+    const route = service.slice(
+      service.indexOf("async function handleVendorQuote"),
+      service.indexOf("async function inviteVendorsToExistingRfq"),
+    );
+    expect(route).toContain("to_char(q.quotation_date,'YYYY-MM-DD') as quotation_date_text");
+    expect(route).toContain("quotationDate: quote.quotation_date_text ?? null");
+    expect(route).not.toContain("quotationDate: quote.quotation_date, paymentTerms:");
+    const vendorUi = read("src/pages/mkt-vendor-quote.tsx");
+    expect(vendorUi).toContain("quotationDate: vqd.quote.quotationDate");
+  });
+
+  it("does not lock the parent RFQ when replaying a submitted vendor quotation", () => {
+    const service = read("server/marketplace-service.mjs");
+    const route = service.slice(
+      service.indexOf("async function handleVendorQuote"),
+      service.indexOf("async function inviteVendorsToExistingRfq"),
+    );
+    const quoteLock = route.indexOf("const lockedQuote = await loadQuote(db, true)");
+    const replayCheck = route.indexOf('["submitted", "selected"].includes(lockedQuote.status)');
+    const rfqLock = route.indexOf("const lockedRfq = await loadAdminRfq(lockedQuote.rfq_id");
+    expect(quoteLock).toBeGreaterThan(-1);
+    expect(replayCheck).toBeGreaterThan(quoteLock);
+    expect(rfqLock).toBeGreaterThan(replayCheck);
+    const replayBranch = route.slice(replayCheck, rfqLock);
+    expect(replayBranch).toContain("return;");
+  });
+
   it("keeps admin DP messaging aligned with the handover threshold", () => {
     const source = read("src/pages/admin/MarketplaceOperations.tsx");
     expect(source).toContain("!payment.handoverPaymentSatisfied");
