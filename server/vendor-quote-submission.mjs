@@ -279,17 +279,39 @@ export async function submitInternalVendorQuote({
   const normalizedQuoteId = integer(quoteId, "Quotation");
   const submission = normalizeVendorQuoteSubmission(body, { requirePaymentTerms: true });
 
-  // Lock quote first, matching the existing vendor-token submitter; then lock
-  // its parent RFQ. This prevents a new quote writer lock-order inversion.
-  const quote = (await db(
-    "select id,rfq_id,vendor_id,status,valid_until,requote_round,notes,payment_terms,payment_term_code,payment_dp_percent,quotation_date,submitted_at,updated_at from public.mkt_vendor_quotes where id=$1 and rfq_id=$2 for update",
+  // Inspect status without locks first. A completed submission replay is
+  // read-only so it cannot deadlock with Admin's RFQ-first send-to-customer
+  // transition. New writes lock quote first, then RFQ, matching vendor-token
+  // submission; if another writer won the race, return 409 and let a retry
+  // take the read-only replay path.
+  const quoteColumns = "id,rfq_id,vendor_id,status,valid_until,requote_round,notes,payment_terms,payment_term_code,payment_dp_percent,quotation_date,submitted_at,updated_at";
+  const quotePreview = (await db(
+    "select " + quoteColumns + " from public.mkt_vendor_quotes where id=$1 and rfq_id=$2",
     [normalizedQuoteId, normalizedRfqId],
   )).rows[0];
-  if (!quote) fail(404, "Quotation tidak ditemukan.");
-  const rfq = (await db(
-    "select * from public.mkt_rfqs where id=$1 for update",
-    [normalizedRfqId],
-  )).rows[0];
+  if (!quotePreview) fail(404, "Quotation tidak ditemukan.");
+  const isReplay = ["submitted", "selected"].includes(quotePreview.status);
+  let quote = quotePreview;
+  let rfq;
+  if (isReplay) {
+    rfq = (await db(
+      "select * from public.mkt_rfqs where id=$1",
+      [normalizedRfqId],
+    )).rows[0];
+  } else {
+    quote = (await db(
+      "select " + quoteColumns + " from public.mkt_vendor_quotes where id=$1 and rfq_id=$2 for update",
+      [normalizedQuoteId, normalizedRfqId],
+    )).rows[0];
+    if (!quote) fail(404, "Quotation tidak ditemukan.");
+    if (["submitted", "selected"].includes(quote.status)) {
+      fail(409, "Quotation baru saja diproses; ulangi permintaan untuk membaca hasilnya.");
+    }
+    rfq = (await db(
+      "select * from public.mkt_rfqs where id=$1 for update",
+      [normalizedRfqId],
+    )).rows[0];
+  }
   if (!rfq) fail(404, "RFQ tidak ditemukan.");
 
   const adminRow = (await db(
@@ -327,7 +349,6 @@ export async function submitInternalVendorQuote({
     )
     : { rows: [] };
 
-  const isReplay = ["submitted", "selected"].includes(quote.status);
   const authorization = authorizeInternalVendorQuotation({
     admin: { ...admin, role: adminRow.role, account_status: adminRow.account_status },
     rfq,
