@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { pool, query } from "./db.mjs";
 import { lockShipmentWithPoFirst } from "./marketplace-shipment-po-lock.mjs";
+import { persistPodWithCommitReconciliation } from "./marketplace-pod-commit-safety.mjs";
 import {
   bestEffortNotificationWrite,
   marketplaceNotificationDetails,
@@ -334,12 +335,15 @@ function ownerSql(alias = "r", start = 1) {
   )`;
 }
 
-async function withTransaction(work) {
+async function withTransaction(work, { beforeCommit } = {}) {
   const client = await pool.connect();
   const db = (sql, values) => client.query(sql, values);
   try {
     await client.query("begin read write");
     const result = await work(db);
+    // Signals uncertainty only if COMMIT is about to be sent. The caller
+    // must reconcile persistent references before deleting a staged object.
+    beforeCommit?.();
     await client.query("commit");
     return result;
   } catch (error) {
@@ -977,9 +981,24 @@ async function submitPod({ shipmentId, body, request, user, isAdmin }) {
     }
   };
 
-  let result;
-  try {
-    result = await withTransaction(async (db) => {
+  // Only delete the staged private object when a pre-commit failure is known,
+  // or a different committed object won the unique idempotency key. Lost
+  // COMMIT acknowledgements must not leave persisted POD rows pointing to
+  // deleted attachments.
+  return persistPodWithCommitReconciliation({
+    path: uploaded?.path ?? null,
+    discard: discardUnusedUpload,
+    readStoredReference: async () => (await query(
+      `select attachment_object_path
+         from public.mkt_po_shipment_events
+        where shipment_id=$1 and event_type='pod_submitted'
+          and idempotency_key=$2 limit 1`,
+      [preflight.id, key],
+    )).rows[0] ?? null,
+    reportUncertain: (reason) => console.warn("[marketplace] POD staging requires reconciliation", {
+      reason, poId: Number(preflight.po_id), shipmentId: Number(preflight.id),
+    }),
+    persist: (beforeCommit) => withTransaction(async (db) => {
       const { shipment } = await lockPoThenShipment(db, shipmentId, user, isAdmin);
       if (Number(shipment.po_id) !== Number(preflight.po_id)) {
         fail(409, "Relasi Shipment/PO berubah selama upload POD. Muat ulang lalu coba lagi.");
@@ -1037,15 +1056,8 @@ async function submitPod({ shipmentId, body, request, user, isAdmin }) {
       });
       await maybeCompletePo(db, shipment.po_id, user, isAdmin);
       return { alreadyProcessed: false, pod: mapPod(inserted.rows[0]) };
+    }, { beforeCommit }),
   });
-  } catch (error) {
-    await discardUnusedUpload();
-    throw error;
-  }
-  // Another concurrent request may have committed the same key while the
-  // file was staging. Do not leave its extra object in private storage.
-  if (result.alreadyProcessed) await discardUnusedUpload();
-  return result;
 }
 
 function mapPod(row) {

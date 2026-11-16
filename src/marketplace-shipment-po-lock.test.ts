@@ -46,10 +46,12 @@ describe("cross-service Customer Portal PO -> Shipment lock order", () => {
       source.indexOf("async function submitPod("),
       source.indexOf("function mapPod(", source.indexOf("async function submitPod(")),
     );
-    expect(body.indexOf("await uploadMarketplacePod(")).toBeLessThan(body.indexOf("await withTransaction("));
+    expect(body.indexOf("await uploadMarketplacePod(")).toBeLessThan(body.indexOf("persist: (beforeCommit) => withTransaction("));
     expect(body).toContain("await lockPoThenShipment(db, shipmentId, user, isAdmin)");
-    expect(body).toContain("await discardUnusedUpload()");
-    expect(body).toContain("if (result.alreadyProcessed) await discardUnusedUpload()");
+    expect(body).toContain("persistPodWithCommitReconciliation");
+    expect(body).toContain("discard: discardUnusedUpload");
+    expect(body).toContain("readStoredReference: async () =>");
+    expect(body).toContain("persist: (beforeCommit) => withTransaction(");
     expect(body).toContain("Number(shipment.po_id) !== Number(preflight.po_id)");
   });
 
