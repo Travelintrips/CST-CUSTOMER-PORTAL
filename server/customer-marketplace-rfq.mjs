@@ -135,7 +135,7 @@ export async function handleDevCustomerMarketplaceQuote({
     async function existingByNumber() {
       const result = await client.query(
         `select r.id,r.portal_customer_id,r.company_id,
-                r.buyer_phone,r.delivery_address,r.required_delivery_date,r.notes,
+                r.buyer_phone,r.delivery_address,r.required_delivery_date::text as required_delivery_date,r.notes,
                 l.vendor_catalog_item_id,l.requested_qty
            from public.mkt_rfqs r
            join public.mkt_rfq_lines l on l.rfq_id=r.id
@@ -146,9 +146,15 @@ export async function handleDevCustomerMarketplaceQuote({
       return result.rows[0] ?? null;
     }
     async function replay(row) {
-      const storedDate = row.required_delivery_date instanceof Date
-        ? row.required_delivery_date.toISOString().slice(0, 10)
-        : String(row.required_delivery_date ?? "").slice(0, 10);
+      // PostgreSQL DATE is selected as text to preserve the calendar date,
+      // regardless of the Node process timezone. Keep local Date decoding
+      // as a defensive fallback for legacy driver-shaped results.
+      const persistedDate = row.required_delivery_date;
+      const storedDate = persistedDate instanceof Date
+        ? [String(persistedDate.getFullYear()).padStart(4, "0"),
+           String(persistedDate.getMonth() + 1).padStart(2, "0"),
+           String(persistedDate.getDate()).padStart(2, "0")].join("-")
+        : String(persistedDate ?? "").slice(0, 10);
       // A retry can only replay the same logical business request. Returning
       // HTTP 200 after edited phone, address, date or notes silently hides
       // unsaved customer corrections while downstream workflows use old data.
