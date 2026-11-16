@@ -95,7 +95,7 @@ async function seedBase(client) {
       id integer PRIMARY KEY,portal_customer_id integer NOT NULL,company_id integer NOT NULL,is_active boolean NOT NULL
     );
     CREATE TABLE public.portal_company_requests(
-      id integer PRIMARY KEY,portal_customer_id integer NOT NULL,matched_company_id integer,
+      id integer PRIMARY KEY,portal_customer_id integer NOT NULL,requested_company_name text NOT NULL,matched_company_id integer,
       status text NOT NULL,reviewed_by integer,reviewed_at timestamptz
     );
     CREATE TABLE public.suppliers(
