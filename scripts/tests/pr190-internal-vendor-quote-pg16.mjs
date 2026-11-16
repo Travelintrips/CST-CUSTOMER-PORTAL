@@ -104,7 +104,7 @@ async function seedBase(client) {
     );
     CREATE TABLE public.mkt_rfqs(
       id integer PRIMARY KEY,rfq_number text NOT NULL,company_id integer,portal_customer_id integer,
-      status public.mkt_rfq_status NOT NULL,approval_status text NOT NULL,quote_count integer NOT NULL DEFAULT 0
+      status public.mkt_rfq_status NOT NULL,approval_status text NOT NULL,quote_count integer NOT NULL DEFAULT 0,updated_at timestamp NOT NULL DEFAULT now()
     );
     CREATE TABLE public.mkt_vendor_quotes(
       id integer PRIMARY KEY,rfq_id integer NOT NULL,vendor_id integer NOT NULL,
