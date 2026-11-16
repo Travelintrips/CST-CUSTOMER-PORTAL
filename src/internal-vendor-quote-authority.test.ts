@@ -96,6 +96,25 @@ describe("DEV-only internal vendor quotation authorization; no writer installed"
     }, 409);
   });
 
+  it("requires explicit Admin approval before a new internal quote", () => {
+    reject({ rfq: { ...base.rfq, approval_status: "pending" } }, 409);
+    reject({ rfq: { ...base.rfq, approval_status: "rejected" } }, 409);
+  });
+  it("allows an identical submitted replay after customer review without reopening the quote", () => {
+    const result = call({
+      allowSubmittedReplay: true,
+      rfq: { ...base.rfq, status: "customer_review", approval_status: "pending" },
+      quote: { ...base.quote, status: "submitted", valid_until: "2026-11-16T00:00:00Z" },
+    });
+    expect(result.auditAction).toBe("admin_internal_vendor_quote_submitted");
+  });
+  it("does not allow submitted replay unless the server explicitly marks a replay", () => {
+    reject({
+      rfq: { ...base.rfq, status: "customer_review", approval_status: "pending" },
+      quote: { ...base.quote, status: "submitted" },
+    }, 409);
+  });
+
   it("requires the RFQ to be quoting / quoted, not terminal or unsubmitted", () => {
     for (const status of ["draft", "submitted", "customer_review", "awarded", "cancelled"]) {
       reject({ rfq: { ...base.rfq, status } }, 409);
