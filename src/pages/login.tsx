@@ -8,6 +8,7 @@ import {
   persistAuthCookie,
   saveTrustedDevice, loadTrustedDevice, clearTrustedDevice, REMEMBER_DAYS,
   fetchPortalAuthBootstrap,
+  logout as portalLogout,
 } from "@/lib/auth";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -66,7 +67,15 @@ function safeCustomerReturnTo(value: string | null): string {
 export default function Login() {
   const [, setLocation] = useLocation();
   const [errorMsg, setErrorMsg] = useState("");
-  const returnTo = new URLSearchParams(window.location.search).get("returnTo");
+  const registrationQuery = new URLSearchParams(window.location.search);
+  const returnTo = registrationQuery.get("returnTo");
+  // A corporate registration is a separate journey from an existing Admin
+  // or personal login; never silently redirect that journey to a dashboard.
+  const requestedCompanyName = registrationQuery.get("role") === "customer"
+    && registrationQuery.get("customerType") === "company"
+    ? registrationQuery.get("company")?.trim() ?? ""
+    : "";
+  const isCompanyRegistration = requestedCompanyName.length > 0;
   const { t } = useLanguage();
   const oauthError = new URLSearchParams(window.location.search).get("oauth_error");
   const oauthCode = new URLSearchParams(window.location.search).get("oauth_code");
@@ -100,6 +109,12 @@ export default function Login() {
   const [forgotMsg, setForgotMsg] = useState<{ type: "ok" | "err"; text: string } | null>(null);
   const [devLoading, setDevLoading] = useState<string | null>(null);
   const [authResolved, setAuthResolved] = useState(false);
+  const [registrationSession, setRegistrationSession] = useState<{
+    role: string;
+    customerType: string | null;
+    allowedDestination: string;
+  } | null>(null);
+  const [switchingRegistrationAccount, setSwitchingRegistrationAccount] = useState(false);
 
   useEffect(() => {
     if (oauthError === "google_callback_failed") {
@@ -127,6 +142,17 @@ export default function Login() {
       .then((bootstrap) => {
         if (disposed) return;
         if (bootstrap) {
+          if (isCompanyRegistration) {
+            // The browser still has an existing account. Registration must
+            // not silently reuse or convert its role/company identity.
+            setRegistrationSession({
+              role: bootstrap.role,
+              customerType: bootstrap.customerType,
+              allowedDestination: bootstrap.allowedDestination,
+            });
+            setAuthResolved(true);
+            return;
+          }
           setLocation(bootstrap.allowedDestination);
           return;
         }
@@ -137,7 +163,7 @@ export default function Login() {
       });
 
     return () => { disposed = true; };
-  }, [returnTo, setLocation]);
+  }, [returnTo, setLocation, isCompanyRegistration]);
 
   useEffect(() => {
     fetch(`${BASE}/api/portal/auth/capabilities`, { credentials: "include" })
@@ -149,6 +175,12 @@ export default function Login() {
   }, []);
 
   useEffect(() => {
+    // The login form is not mounted while the session bootstrap spinner
+    // renders. Initialize GIS only AFTER its button container is in the DOM.
+    if (!authResolved || registrationSession) {
+      setGoogleSdkReady(false);
+      return;
+    }
     const clientId = capabilities.googleClientId;
     if (!capabilities.google || !clientId) {
       setGoogleSdkReady(false);
@@ -198,6 +230,23 @@ export default function Login() {
               name: json.user.name,
               email: json.user.email,
             });
+            if (isCompanyRegistration) {
+              const companyBootstrap = await fetchPortalAuthBootstrap("/onboarding", { force: true });
+              if (companyBootstrap && (companyBootstrap.role !== "customer" || companyBootstrap.customerType !== "company")) {
+                // An existing personal/Admin Google account must not be
+                // silently promoted to corporate access or sent back to home.
+                setRegistrationSession({
+                  role: companyBootstrap.role,
+                  customerType: companyBootstrap.customerType,
+                  allowedDestination: companyBootstrap.allowedDestination,
+                });
+                return;
+              }
+              if (companyBootstrap) {
+                window.location.assign(companyBootstrap.allowedDestination);
+                return;
+              }
+            }
             await redirectAfterLogin(json.user.role);
           } catch {
             setErrorMsg("Tidak dapat menyelesaikan login Google.");
@@ -238,7 +287,10 @@ export default function Login() {
     script.defer = true;
     script.onload = initializeGoogle;
     script.onerror = () => {
-      if (!cancelled) setGoogleSdkReady(false);
+      if (!cancelled) {
+        setGoogleSdkReady(false);
+        setErrorMsg("Tombol Google tidak berhasil dimuat. Periksa koneksi ke Google lalu muat ulang.");
+      }
     };
     document.head.appendChild(script);
 
@@ -247,7 +299,7 @@ export default function Login() {
       script.onload = null;
       script.onerror = null;
     };
-  }, [capabilities.google, capabilities.googleClientId]);
+  }, [authResolved, registrationSession, capabilities.google, capabilities.googleClientId]);
 
   const loginSchema = z.object({
     email: z.string().email({ message: t("login.email") }),
@@ -553,10 +605,62 @@ export default function Login() {
     setForgotLoading(false);
   }
 
+  async function switchToCorporateGoogleAccount() {
+    setSwitchingRegistrationAccount(true);
+    setErrorMsg("");
+    try {
+      await portalLogout();
+      const remaining = await fetchPortalAuthBootstrap(null, { force: true });
+      if (remaining) {
+        setErrorMsg("Sesi lama belum berhasil keluar. Silakan gunakan profil browser terpisah.");
+        return;
+      }
+      setRegistrationSession(null);
+      setGoogleSdkReady(false);
+    } finally {
+      setSwitchingRegistrationAccount(false);
+    }
+  }
+
   if (!authResolved) {
     return (
       <div className="min-h-[calc(100vh-80px)] flex items-center justify-center bg-background">
         <div className="h-8 w-8 animate-spin rounded-full border-4 border-sky-500 border-t-transparent" aria-label="Memeriksa sesi" />
+      </div>
+    );
+  }
+
+  if (registrationSession) {
+    return (
+      <div className="min-h-[calc(100vh-80px)] flex items-center justify-center p-6 bg-background">
+        <Card className="w-full max-w-lg">
+          <CardHeader>
+            <CardTitle>Pendaftaran Customer Perusahaan</CardTitle>
+            <CardDescription>Perusahaan: {requestedCompanyName}</CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <p className="text-sm">
+              Browser masih masuk sebagai akun {registrationSession.role === "admin"
+                ? "Admin" : registrationSession.role === "customer"
+                  ? registrationSession.customerType === "individual" ? "Customer Perorangan" : "Customer"
+                  : "lain"}.
+              Akun ini tidak akan otomatis diubah menjadi Customer Perusahaan.
+            </p>
+            {errorMsg && <Alert variant="destructive"><AlertCircle className="h-4 w-4" />
+              <AlertDescription>{errorMsg}</AlertDescription></Alert>}
+            <Button
+              className="w-full"
+              disabled={switchingRegistrationAccount}
+              onClick={() => void switchToCorporateGoogleAccount()}
+            >
+              {switchingRegistrationAccount ? "Mengakhiri sesi lama..." : "Keluar dan pilih akun Google customer"}
+            </Button>
+            <Button variant="outline" className="w-full"
+              onClick={() => setLocation(registrationSession.allowedDestination)}>
+              Kembali ke akun yang sedang login
+            </Button>
+          </CardContent>
+        </Card>
       </div>
     );
   }
@@ -606,7 +710,17 @@ export default function Login() {
             <CardDescription>{t("login.subtitle")}</CardDescription>
           </CardHeader>
           <CardContent>
-            {returnTo && (
+            {isCompanyRegistration && (
+              <Alert className="mb-4 border-emerald-300 bg-emerald-50 text-emerald-900">
+                <AlertCircle className="h-4 w-4" />
+                <AlertDescription className="text-sm">
+                  <strong>Pendaftaran Customer Perusahaan: {requestedCompanyName}</strong>.
+                  Tekan tombol Google di bawah lalu pilih akun customer yang sah.
+                  Setelah login berhasil, lanjutkan onboarding perusahaan.
+                </AlertDescription>
+              </Alert>
+            )}
+            {returnTo && !isCompanyRegistration && (
               <Alert className="mb-4 border-accent/40 bg-accent/5">
                 <AlertCircle className="h-4 w-4 text-accent" />
                 <AlertDescription className="text-sm">{t("login.loginRequired")}</AlertDescription>
