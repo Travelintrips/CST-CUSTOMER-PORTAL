@@ -13,12 +13,10 @@ import { createHash } from "node:crypto";
 import { lstat, readFile } from "node:fs/promises";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
-const DEFAULT_OWNER_PATH = fileURLToPath(
-  new URL("../.dev-accounting-owner/owner.mjs", import.meta.url),
-);
+const DEFAULT_OWNER_URL = new URL("../.dev-accounting-owner/owner.mjs", import.meta.url);
 
 export async function loadTrustedDevAccountingOwner({
-  bundlePath = DEFAULT_OWNER_PATH,
+  bundlePath = null,
   expectedSha256 = process.env.CUSTOMER_PORTAL_ACCOUNTING_OWNER_SHA256_DEV,
 } = {}) {
   if (process.env.CUSTOMER_PORTAL_ATOMIC_ACCOUNTING_POST_DEV !== "true") return null;
@@ -31,15 +29,18 @@ export async function loadTrustedDevAccountingOwner({
     throw new Error("DEV_ACCOUNTING_OWNER_HASH_NOT_PINNED");
   }
 
+  // Delay fileURLToPath until the feature is enabled. Test runners may
+  // transform import.meta.url to a virtual module URL; production Node does not.
+  const verifiedPath = bundlePath ?? fileURLToPath(DEFAULT_OWNER_URL);
   let bytes;
   try {
-    const info = await lstat(bundlePath);
+    const info = await lstat(verifiedPath);
     // Reject symlinks, directories and unusual/oversized files.
     if (!info.isFile() || info.isSymbolicLink() ||
         info.size < 1 || info.size > 8 * 1024 * 1024) {
       throw new Error("invalid trusted bundle");
     }
-    bytes = await readFile(bundlePath);
+    bytes = await readFile(verifiedPath);
   } catch {
     throw new Error("DEV_ACCOUNTING_OWNER_PACKAGE_UNAVAILABLE");
   }
@@ -51,7 +52,7 @@ export async function loadTrustedDevAccountingOwner({
 
   let loaded;
   try {
-    loaded = await import(pathToFileURL(bundlePath).href);
+    loaded = await import(pathToFileURL(verifiedPath).href);
   } catch {
     throw new Error("DEV_ACCOUNTING_OWNER_IMPORT_FAILED");
   }
