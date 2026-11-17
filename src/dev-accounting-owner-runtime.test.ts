@@ -1,6 +1,8 @@
 // @ts-nocheck — runtime JS contract tested without a real financial writer.
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { createHash } from "node:crypto";
+import { spawnSync } from "node:child_process";
+import { pathToFileURL } from "node:url";
 import { mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -37,6 +39,25 @@ afterEach(async () => {
 async function fixture(text = "export async function postCustomerPortalSalesInvoiceWithExistingOwner() { return {posted:false}; }") {
   await writeFile(bundlePath, text);
   process.env.CUSTOMER_PORTAL_ACCOUNTING_OWNER_SHA256_DEV = sha(text);
+}
+
+// Vitest uses a virtual ESM loader. Verify the actual dynamic file import
+// in a fresh Node 22 process, which matches the DEV server runtime.
+function realNodeOwnerProbe() {
+  const moduleUrl = pathToFileURL(join(process.cwd(), "server/dev-accounting-owner-runtime.mjs")).href;
+  const script = [
+    "import {loadTrustedDevAccountingOwner} from " + JSON.stringify(moduleUrl) + ";",
+    "try {",
+    "  const callback = await loadTrustedDevAccountingOwner({bundlePath:process.env.TEST_OWNER_BUNDLE_PATH});",
+    "  console.log(JSON.stringify({ok:true, result:await callback()}));",
+    "} catch(error) { console.log(JSON.stringify({ok:false,error:error.message})); }",
+  ].join("\n");
+  const result = spawnSync(process.execPath, ["--input-type=module", "--eval", script], {
+    encoding: "utf8",
+    env: { ...process.env, TEST_OWNER_BUNDLE_PATH: bundlePath },
+  });
+  if (result.status !== 0) throw Error("Node owner smoke failed: " + result.stderr);
+  return JSON.parse(result.stdout.trim().split("\n").at(-1));
 }
 
 describe("DEV original Accounting owner runtime package integrity", () => {
@@ -94,9 +115,7 @@ describe("DEV original Accounting owner runtime package integrity", () => {
 
   it("loads only a pinned export, without executing financial postings", async () => {
     await fixture();
-    const callback = await loadTrustedDevAccountingOwner({ bundlePath });
-    expect(typeof callback).toBe("function");
-    await expect(callback()).resolves.toEqual({ posted: false });
+    expect(realNodeOwnerProbe()).toEqual({ok:true,result:{posted:false}});
     // Even after initial import, a tampered release cannot pass the next hash check.
     await writeFile(bundlePath, "export const different = true;");
     await expect(loadTrustedDevAccountingOwner({ bundlePath }))
@@ -105,8 +124,7 @@ describe("DEV original Accounting owner runtime package integrity", () => {
 
   it("rejects a pinned module with the wrong export", async () => {
     await fixture("export const unrelated = true;");
-    await expect(loadTrustedDevAccountingOwner({ bundlePath }))
-      .rejects.toThrow("DEV_ACCOUNTING_OWNER_EXPORT_INVALID");
+    expect(realNodeOwnerProbe()).toEqual({ok:false,error:"DEV_ACCOUNTING_OWNER_EXPORT_INVALID"});
   });
 
   it("wires the trusted callback only after the existing admin gate", async () => {
