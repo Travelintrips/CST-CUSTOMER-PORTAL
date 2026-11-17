@@ -112,7 +112,7 @@ beforeAll(async()=>{
   process.env.CUSTOMER_PORTAL_ATOMIC_ACCOUNTING_POST_DEV="true";
   process.env.CUSTOMER_PORTAL_REQUIRE_POSTED_AR_EVIDENCE_DEV="true";
   // Prevent the harness accidentally masking a changed production route/role.
-  const index=readFileSync(new URL("../server/index.mjs",import.meta.url),"utf8");
+  const index=readFileSync("server/index.mjs","utf8");
   expect(index).toContain('user.role !== "admin"');
   expect(index).toContain('await handleAdminInvoices({');
   expect(index).toContain('Number(adminInvoiceActionMatch[1])');
@@ -121,7 +121,7 @@ beforeAll(async()=>{
   origin="http://127.0.0.1:"+server.address().port;
 });
 afterAll(async()=>{
-  await new Promise((resolve)=>server?.close(resolve));
+  if(server?.listening) await new Promise((resolve)=>server.close(resolve));
   for(const [k,v] of Object.entries(original)){if(v===undefined)delete process.env[k];else process.env[k]=v;}
   if(sessionSecret===undefined)delete process.env.SESSION_SECRET;else process.env.SESSION_SECRET=sessionSecret;
 });
