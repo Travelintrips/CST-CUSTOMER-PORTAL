@@ -108,7 +108,9 @@ export async function getDevVendorWhatsAppReadiness({
     reason: !configured ? "Token WA Gateway Customer Portal DEV belum tersedia."
       : !enabled ? "Pengiriman WA vendor DEV masih dinonaktifkan."
       : !pending && row.queue_status === "queued"
-        ? "WA Gateway sudah menerima antrean; tunggu status kirim, jangan kirim ulang."
+        ? "WA Gateway sudah menerima antrean; sinkronkan bukti kirim, jangan kirim ulang."
+      : !pending && row.queue_status === "sent"
+        ? "Bukti kirim WA Gateway sudah tercatat; jangan kirim ulang."
       : !pending ? "Antrean sudah pernah diproses; tidak boleh mengirim ulang."
       : sender.matched !== true ? sender.reason ?? "Perangkat WA Gateway DEV belum terverifikasi."
       : null,

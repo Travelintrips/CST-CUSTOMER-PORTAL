@@ -110,7 +110,11 @@ fi
 
 # Apply the exact migration to the isolated database, not CST-DEV or PROD.
 docker exec -i "$NAME" psql -U postgres -d postgres -q -v ON_ERROR_STOP=1 \
-  < supabase/migrations/20261117093000_accept_cst_gateway_queued_status.sql \
+  < supabase/migrations/20261117094450_allow_gateway_queued_status_in_vendor_notification_queue_20261117.sql \
+  >/dev/null
+# Migration must also be a no-op on databases where queued is already allowed.
+docker exec -i "$NAME" psql -U postgres -d postgres -q -v ON_ERROR_STOP=1 \
+  < supabase/migrations/20261117094450_allow_gateway_queued_status_in_vendor_notification_queue_20261117.sql \
   >/dev/null
 
 # Gateway acceptance must persist QUEUED and the provider receipt ID, without
@@ -127,4 +131,33 @@ FINAL="$(docker exec "$NAME" psql -U postgres -d postgres -At -v ON_ERROR_STOP=1
   (select coalesce(sent_at is null,false) from public.mkt_notification_queue where id=93)||'/'||
   (select status from public.mkt_notification_queue where id=94)")"
 test "$FINAL" = "queued/1/$GATEWAY_ID/true/pending" || { echo "FAIL: queued semantics=$FINAL"; exit 1; }
-echo "PASS: PostgreSQL 16 isolated, 3 invalid claims rejected, 2 concurrent claims -> exactly 1; provider queued receipt persisted, sent_at NULL, unrelated queue untouched"
+
+# Real receipt-sync SQL: only a matching Gateway SENT receipt may turn a
+# previously QUEUED record into SENT. It must never increase attempts or
+# change another queue. Replay must modify zero rows.
+APP_ENV=development NODE_ENV=test SUPABASE_DATABASE_URL_DEV=postgresql://ci:ci@127.0.0.1:5432/ci \
+  node --input-type=module <<'NODE' > "$OUT1"
+const { DEV_VENDOR_GATEWAY_RECEIPT_UPDATE_SQL } =
+  await import("./server/dev-vendor-wa-receipt.mjs");
+console.log("CREATE FUNCTION public.try_receipt(integer,text,timestamptz,text,timestamptz,timestamptz)");
+console.log("RETURNS integer LANGUAGE sql VOLATILE AS $$");
+console.log("WITH changed AS (" + DEV_VENDOR_GATEWAY_RECEIPT_UPDATE_SQL + ")");
+console.log("SELECT count(*)::integer FROM changed;");
+console.log("$$;");
+NODE
+docker exec -i "$NAME" psql -U postgres -d postgres -q -v ON_ERROR_STOP=1 < "$OUT1" >/dev/null
+RECEIPT="$(docker exec "$NAME" psql -U postgres -d postgres -At -v ON_ERROR_STOP=1 -c \
+  "select public.try_receipt(93,'$GATEWAY_ID','2026-11-17T09:49:45.769Z','sent',null,null)")"
+test "$RECEIPT" = "1" || { echo "FAIL: verified sent receipt did not update queue"; exit 1; }
+RECEIPT_REPLAY="$(docker exec "$NAME" psql -U postgres -d postgres -At -v ON_ERROR_STOP=1 -c \
+  "select public.try_receipt(93,'$GATEWAY_ID','2026-11-17T09:49:45.769Z','sent',null,null)")"
+test "$RECEIPT_REPLAY" = "0" || { echo "FAIL: receipt replay changed queue"; exit 1; }
+AFTER_RECEIPT="$(docker exec "$NAME" psql -U postgres -d postgres -At -v ON_ERROR_STOP=1 -c "select
+  (select status from public.mkt_notification_queue where id=93)||'/'||
+  (select attempt_count from public.mkt_notification_queue where id=93)||'/'||
+  (select (sent_at is not null) from public.mkt_notification_queue where id=93)||'/'||
+  (select payload_json->'gateway_delivery'->>'provider_status' from public.mkt_notification_queue where id=93)||'/'||
+  (select status from public.mkt_notification_queue where id=94)")"
+test "$AFTER_RECEIPT" = "sent/1/t/sent/pending" || test "$AFTER_RECEIPT" = "sent/1/true/sent/pending" || { echo "FAIL: receipt status=$AFTER_RECEIPT"; exit 1; }
+
+echo "PASS: PostgreSQL 16 isolated; one atomic claim; queued ACK before receipt; provider-proven sent persisted once; no duplicate or unrelated queue changes"

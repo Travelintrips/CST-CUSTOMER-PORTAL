@@ -1,6 +1,7 @@
 import { pool, query, databaseEnvironment, databaseConnectionSource } from "./db.mjs";
 import { buildDevVendorQuoteShare } from "./vendor-quote-share.mjs";
 import { getDevVendorWhatsAppReadiness, sendOneDevVendorWhatsAppInvite } from "./dev-vendor-wa-invite.mjs";
+import { reconcileOneDevVendorWaGatewayReceipt } from "./dev-vendor-wa-receipt.mjs";
 import {
   deleteDocumentObject,
   documentType,
@@ -2393,13 +2394,15 @@ async function handleServiceOperations(ctx) {
   const vendorShareMatch = url.pathname.match(/^\/api\/portal\/admin\/service-operations\/marketplace\/(\d+)\/vendor-routing\/invite-link$/);
   const vendorWaReadinessMatch = url.pathname.match(/^\/api\/portal\/admin\/service-operations\/marketplace\/(\d+)\/vendor-routing\/whatsapp-readiness$/);
   const vendorWaSendMatch = url.pathname.match(/^\/api\/portal\/admin\/service-operations\/marketplace\/(\d+)\/vendor-routing\/send-whatsapp$/);
+  const vendorWaSyncMatch = url.pathname.match(/^\/api\/portal\/admin\/service-operations\/marketplace\/(\d+)\/vendor-routing\/sync-whatsapp-status$/);
   if ((request.method === "GET" && vendorWaReadinessMatch)
-    || (request.method === "POST" && vendorWaSendMatch)) {
+    || (request.method === "POST" && vendorWaSendMatch)
+    || (request.method === "POST" && vendorWaSyncMatch)) {
     if (process.env.APP_ENV !== "development" || process.env.NODE_ENV === "production"
       || databaseEnvironment !== "development" || databaseConnectionSource !== "SUPABASE_DATABASE_URL_DEV") {
       return adminError(ctx, 404, "Kirim WA vendor hanya tersedia di DEV.");
     }
-    const rfqId = Number((vendorWaReadinessMatch ?? vendorWaSendMatch)[1]);
+    const rfqId = Number((vendorWaReadinessMatch ?? vendorWaSendMatch ?? vendorWaSyncMatch)[1]);
     const quoteId = Number(request.method === "GET" ? url.searchParams.get("quoteId") : ctx.body?.quoteId);
     if (!Number.isSafeInteger(quoteId) || quoteId <= 0) {
       return adminError(ctx, 400, "Quote ID tidak valid.");
@@ -2417,11 +2420,17 @@ async function handleServiceOperations(ctx) {
           queueId: Number(queueRows.rows[0].id), rfqId, quoteId,
         });
         ctx.sendJson(response, 200, { data: readiness });
-      } else {
+      } else if (vendorWaSendMatch) {
         const result = await sendOneDevVendorWhatsAppInvite({
           queueId: ctx.body?.queueId, rfqId, quoteId,
           recipientLast4: ctx.body?.recipientLast4,
           confirmedRecipient: ctx.body?.confirmedRecipient === true,
+        });
+        ctx.sendJson(response, 200, { data: result });
+      } else {
+        // No send here: only read the Gateway receipt and record a proven SENT.
+        const result = await reconcileOneDevVendorWaGatewayReceipt({
+          queueId: ctx.body?.queueId, rfqId, quoteId,
         });
         ctx.sendJson(response, 200, { data: result });
       }

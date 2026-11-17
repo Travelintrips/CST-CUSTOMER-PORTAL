@@ -229,7 +229,7 @@ describe("DEV quote #18 -> CST WA Gateway, exact queue #93 only", () => {
     const index = readFileSync(resolve(process.cwd(), "server/index.mjs"), "utf8");
     const admin = readFileSync(resolve(process.cwd(), "server/admin-portal.mjs"), "utf8");
     const service = readFileSync(resolve(process.cwd(), "server/dev-vendor-wa-invite.mjs"), "utf8");
-    expect(index).toContain("vendor-routing(?:\\/(?:invite-link|whatsapp-readiness|send-whatsapp))?");
+    expect(index).toContain("vendor-routing(?:\\/(?:invite-link|whatsapp-readiness|send-whatsapp|sync-whatsapp-status))?");
     expect(index).toContain("await requireAdmin(request, response)");
     expect(admin).toContain('request.method === "POST" && vendorWaSendMatch');
     expect(admin).toContain('ctx.body?.confirmedRecipient === true');

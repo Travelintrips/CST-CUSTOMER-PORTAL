@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { CheckCircle2, Copy, Loader2, Send, Store } from "lucide-react";
+import { CheckCircle2, Copy, Loader2, RefreshCw, Send, Store } from "lucide-react";
 import { getAuthHeaders } from "@/lib/auth";
 import { Button } from "@/components/ui/button";
 
@@ -39,6 +39,7 @@ export function MarketplaceVendorAssignment({ rfqId }: { rfqId: number }) {
   const [waReadiness, setWaReadiness] = useState<WaReadiness | null>(null);
   const [waConfirmed, setWaConfirmed] = useState(false);
   const [waSending, setWaSending] = useState(false);
+  const [waSyncing, setWaSyncing] = useState(false);
 
   async function loadRouting() {
     setLoading(true);
@@ -184,6 +185,35 @@ export function MarketplaceVendorAssignment({ rfqId }: { rfqId: number }) {
     }
   }
 
+  async function syncVendorWhatsAppReceipt() {
+    if (!routing?.quoteId || waReadiness?.queueStatus !== "queued" || waSyncing) return;
+    setWaSyncing(true);
+    setError("");
+    setNotice("");
+    try {
+      const response = await fetch(
+        `/api/portal/admin/service-operations/marketplace/${rfqId}/vendor-routing/sync-whatsapp-status`,
+        {
+          method: "POST",
+          headers: { ...getAuthHeaders(), "Content-Type": "application/json" },
+          credentials: "include",
+          body: JSON.stringify({ queueId: waReadiness.queueId, quoteId: routing.quoteId }),
+        },
+      );
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.error ?? "Gagal memeriksa bukti kirim Gateway.");
+      const result = payload.data as { status: string; providerStatus?: string };
+      setNotice(result.status === "sent" || result.status === "already_sent"
+        ? "Bukti kirim WA Gateway telah tercatat di DEV. Tidak ada pesan tambahan."
+        : "Gateway belum memastikan pesan terkirim. Periksa lagi nanti, tanpa kirim ulang.");
+      await loadRouting();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Gagal memeriksa status Gateway.");
+    } finally {
+      setWaSyncing(false);
+    }
+  }
+
   if (loading) {
     return (
       <div className="flex items-center gap-2 rounded-lg border bg-slate-50 px-3 py-2 text-xs text-slate-500">
@@ -263,6 +293,19 @@ export function MarketplaceVendorAssignment({ rfqId }: { rfqId: number }) {
                 Kirim WhatsApp dari Sistem (1 Antrean)
               </Button>
             </div>
+          )}
+          {waReadiness?.queueStatus === "queued" && (
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              className="h-8 text-xs"
+              disabled={waSyncing}
+              onClick={() => void syncVendorWhatsAppReceipt()}
+            >
+              {waSyncing ? <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="mr-1 h-3.5 w-3.5" />}
+              Sinkronkan Status WA (Tanpa Kirim Ulang)
+            </Button>
           )}
           <Button
             type="button"
