@@ -465,7 +465,86 @@ async function requirePostedCustomerArEvidence(db, invoice) {
   }
 }
 
-export async function handleAdminInvoices({ request, response, user, sendJson, sendError, invoiceId = null }) {
+// This is a transaction-bound integration seam to the EXISTING Accounting owner,
+// not a journal writer. OFF by default. The owner must be passed by trusted
+// server code, never taken from the HTTP request, and must use the exact same
+// query transaction for all posting statements (no independent connection,
+// background task, outbox, or uncommitted success response).
+async function requireAtomicSalesInvoicePosting(db, invoice, user, postWithClient) {
+  if (process.env.CUSTOMER_PORTAL_ATOMIC_ACCOUNTING_POST_DEV !== "true") return;
+  if (process.env.APP_ENV?.trim().toLowerCase() !== "development" ||
+      process.env.CUSTOMER_PORTAL_REQUIRE_POSTED_AR_EVIDENCE_DEV !== "true") {
+    fail(503, "Jalur posting Invoice atomik belum diaktifkan secara aman.");
+  }
+  const companyId = Number(invoice?.company_id);
+  const sourceId = Number(invoice?.id);
+  const total = Number(invoice?.grand_total);
+  if (![1, 3].includes(companyId) || !Number.isSafeInteger(sourceId) || sourceId <= 0 ||
+      !Number.isFinite(total) || total <= 0 ||
+      !invoice?.invoice_number?.trim() || !invoice?.invoice_date || !invoice?.due_date) {
+    fail(422, "Identitas Invoice atau perusahaan untuk posting tidak valid.");
+  }
+  if (typeof postWithClient !== "function") {
+    fail(503, "Pemilik posting jurnal Accounting DEV belum tersambung.");
+  }
+  // Reuse one legitimate company-scoped posting owner; never implement
+  // journal INSERT/UPDATE SQL here. It must post inside this db transaction.
+  const receipt = await postWithClient({
+    query: db,
+    companyId,
+    source: "sales_invoice",
+    sourceId,
+    invoice,
+    actorId: user?.id ?? null,
+  });
+  const entryId = Number(receipt?.entryId);
+  if (receipt?.posted !== true || !Number.isSafeInteger(entryId) || entryId <= 0) {
+    fail(422, "Jurnal penjualan belum berhasil di-posting.");
+  }
+  // Treat a returned success from the owner as a claim until verified against
+  // the SAME database transaction, with exactly one posted, balanced
+  // same-company journal and the configured Sales journal.
+  const check = await db(
+    `select e.id,e.company_id,e.source::text as source,e.source_id,
+            e.status::text as status,e.total_debit,e.total_credit,
+            e.is_voided,e.is_reversed,
+            j.company_id as journal_company,
+            (select count(*)::int from public.accounting_entries x
+              where x.source='sales_invoice' and x.source_id=$2 and x.company_id=$3
+                and not x.is_voided and not x.is_reversed) as source_count,
+            (select count(*)::int from public.accounting_entry_lines l
+              where l.entry_id=e.id) as line_count,
+            (select coalesce(sum(l.debit),0) from public.accounting_entry_lines l
+              where l.entry_id=e.id) as lines_debit,
+            (select coalesce(sum(l.credit),0) from public.accounting_entry_lines l
+              where l.entry_id=e.id) as lines_credit
+       from public.accounting_entries e
+       join public.accounting_journals j on j.id=e.journal_id
+         and j.company_id=e.company_id and j.is_active
+       join public.accounting_settings cfg on cfg.company_id=e.company_id
+         and cfg.sales_journal_id=e.journal_id
+      where e.id=$1 and e.company_id=$3 and e.source='sales_invoice'
+        and e.source_id=$2
+      limit 2`,
+    [entryId, sourceId, companyId],
+  );
+  if (check.rows.length !== 1) {
+    fail(422, "Jurnal penjualan tidak sesuai dengan Invoice yang diterbitkan.");
+  }
+  const e = check.rows[0];
+  const close = (a,b) => Math.abs(Number(a) - Number(b)) < 0.005;
+  if (e.status !== "posted" || e.is_voided || e.is_reversed ||
+      Number(e.company_id) !== companyId || Number(e.source_id) !== sourceId ||
+      Number(e.journal_company) !== companyId ||
+      Number(e.source_count) !== 1 || Number(e.line_count) < 2 ||
+      !close(e.total_debit, total) || !close(e.total_credit, total) ||
+      !close(e.total_debit, e.lines_debit) ||
+      !close(e.total_credit, e.lines_credit)) {
+    fail(422, "Jurnal penjualan belum seimbang atau tidak memiliki bukti perusahaan yang sah.");
+  }
+}
+
+export async function handleAdminInvoices({ request, response, user, sendJson, sendError, invoiceId = null, postSalesInvoiceWithClient = null }) {
   if (request.method === "GET" && invoiceId == null) {
     sendJson(response, 200, { items: await listInvoices(user, { admin: true }) });
     return;
@@ -508,6 +587,13 @@ export async function handleAdminInvoices({ request, response, user, sendJson, s
         where id = $1
         returning ${INVOICE_COLUMNS}`,
       [row.id],
+    );
+    // DEV atomic bridge: only a trusted, company-scoped EXISTING posting owner
+    // may write the journal. Then independently verify the returned journal
+    // against persisted source/lines/GL and the existing AR evidence view.
+    // All of this occurs BEFORE COMMIT/audit/notifications.
+    await requireAtomicSalesInvoicePosting(
+      db, updated.rows[0], user, postSalesInvoiceWithClient,
     );
     // Gate before COMMIT, audit or any outward notification. If the source
     // journal does not qualify, withTransaction rolls back the status/date
