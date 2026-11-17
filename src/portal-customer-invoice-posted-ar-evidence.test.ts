@@ -17,6 +17,7 @@ const m=vi.hoisted(()=>({
   sendJson:vi.fn(),
   poster:vi.fn(),
   glRow:null,
+  bizOwner:[],
 }));
 vi.mock("../server/db.mjs",()=>({
   pool:{connect:m.connect},
@@ -58,6 +59,7 @@ async function sqlMock(statement){
   if(q==="begin"||q==="commit"||q==="rollback")return {rows:[]};
   if(q.includes("from public.sales_documents"))return {rows:[base()]};
   if(q.startsWith("update public.sales_documents"))return {rows:[issued()]};
+  if(q.includes("from public.users"))return {rows:m.bizOwner};
   if(q.includes("from public.accounting_entries e")){
     return {rows: m.glRow ? [m.glRow] : []};
   }
@@ -69,10 +71,10 @@ async function sqlMock(statement){
   if(q.includes("into public.activity_logs"))return {rows:[]};
   throw Error("UNEXPECTED_SQL_IN_TEST");
 }
-const perform=(posting=null)=>handleAdminInvoices({
+const perform=(posting=null,portalUser=null)=>handleAdminInvoices({
   request:{method:"POST",body:{action:"mark_invoiced"}},
   response:{},
-  user:{id:1,role:"admin",name:"DEV QA"},
+  user:portalUser ?? {id:1,role:"admin",name:"DEV QA",email:"qa.owner@example.invalid"},
   sendJson:m.sendJson,
   sendError:vi.fn(),
   invoiceId:101,
@@ -95,6 +97,10 @@ beforeEach(()=>{
   m.currentInvoiceNumber=null;
   m.viewUnavailable=false;
   m.glRow=null;
+  m.bizOwner=[{
+    id:"qa-existing-bizportal-owner",role:"super_admin",
+    system_role:"super_admin",status:"active",is_active:true,company_id:null,
+  }];
   delete process.env[bridge];
   m.query.mockImplementation(sqlMock);
   m.connect.mockResolvedValue({query:m.query,release:m.release});
@@ -193,6 +199,50 @@ describe("DEV-only atomic Accounting owner integration seam",()=>{
     m.glRow=validGl();
     m.proof=[101];
   });
+  it("records canonical BizPortal actor, not the unrelated Portal user ID",async()=>{
+    await perform(m.poster);
+    expect(m.poster).toHaveBeenCalledTimes(1);
+    expect(m.poster.mock.calls[0][0].actorId).toBe("qa-existing-bizportal-owner");
+    expect(sqlIndex("from public.users")).toBeGreaterThan(sqlIndex("from public.sales_documents"));
+    expect(sqlIndex("from public.users")).toBeLessThan(sqlIndex("from public.accounting_entries e"));
+    expect(m.sql).toContain("commit");
+  });
+  it.each([
+    ["no matching canonical owner", []],
+    ["multiple matched identities", [
+      {id:"a",role:"super_admin",system_role:"super_admin",status:"active",is_active:true,company_id:null},
+      {id:"b",role:"super_admin",system_role:"super_admin",status:"active",is_active:true,company_id:null},
+    ]],
+    ["ordinary BizPortal admin", [{id:"other",role:"admin",system_role:"admin",status:"active",is_active:true,company_id:null}]],
+    ["system role not Super Admin", [{id:"other",role:"super_admin",system_role:null,status:"active",is_active:true,company_id:null}]],
+    ["suspended canonical owner", [{id:"other",role:"super_admin",system_role:"super_admin",status:"inactive",is_active:false,company_id:null}]],
+    ["wrong company", [{id:"other",role:"super_admin",system_role:"super_admin",status:"active",is_active:true,company_id:3}]],
+  ])("rejects %s before Accounting and rolls back",async(_label,matched)=>{
+    m.bizOwner=matched;
+    await expect(perform(m.poster)).rejects.toMatchObject({statusCode:403});
+    expect(m.poster).not.toHaveBeenCalled();
+    expect(m.sql).toContain("rollback");
+    expect(m.sql).not.toContain("commit");
+    noOutbound();
+  });
+  it("requires a database-verified Portal email for canonical owner lookup",async()=>{
+    await expect(perform(m.poster,{id:1,role:"admin",name:"QA no-email"}))
+      .rejects.toMatchObject({statusCode:403});
+    expect(sqlIndex("from public.users")).toBe(-1);
+    expect(m.poster).not.toHaveBeenCalled();
+    expect(m.sql).toContain("rollback");
+    noOutbound();
+  });
+  it("does not let an unauthorized Portal admin replay a posted Invoice",async()=>{
+    m.invoiceStatus="invoiced";
+    m.currentInvoiceNumber="INV-SO-QA-101";
+    m.bizOwner=[];
+    await expect(perform(m.poster)).rejects.toMatchObject({statusCode:403});
+    expect(sqlIndex("from public.bizportal_customer_ar_source_evidence_dev")).toBe(-1);
+    expect(m.poster).not.toHaveBeenCalled();
+    expect(m.sql).toContain("rollback");
+    noOutbound();
+  });
   it("never posts using a missing/unwired owner; rolls back issuance",async()=>{
     await expect(perform()).rejects.toMatchObject({statusCode:503});
     expect(m.sql).toContain("rollback");
@@ -276,6 +326,7 @@ describe("DEV-only atomic Accounting owner integration seam",()=>{
     await perform(m.poster);
     expect(m.poster).not.toHaveBeenCalled();
     expect(sqlIndex("from public.accounting_entries e")).toBe(-1);
+    expect(sqlIndex("from public.users")).toBe(-1);
     expect(m.sql).toContain("commit");
   });
   it("refuses production even with a mock owner attached",async()=>{
