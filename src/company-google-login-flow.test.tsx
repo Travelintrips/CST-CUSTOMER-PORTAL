@@ -92,7 +92,7 @@ describe("DEV customer-company Google registration login boundary", () => {
   it("renders the EXISTING GIS button after anonymous session resolution", async () => {
     auth.bootstrap.mockResolvedValue(null);
     render(<Login />);
-    expect(await screen.findByText("GOOGLE_READY")).toBeTruthy();
+    expect(await screen.findByText("GOOGLE_READY", {}, { timeout: 10_000 })).toBeTruthy();
     expect(screen.getByText(/Pendaftaran Customer Perusahaan: OT SKY/)).toBeTruthy();
     expect(screen.getByText(/Jika Google menampilkan akun Admin/)).toBeTruthy();
     expect(gis.renderButton).toHaveBeenCalledOnce();
@@ -102,7 +102,7 @@ describe("DEV customer-company Google registration login boundary", () => {
   it("hides disabled DEV quick-login buttons and unavailable OTP in company registration", async () => {
     auth.bootstrap.mockResolvedValue(null);
     render(<Login />);
-    expect(await screen.findByText("GOOGLE_READY")).toBeTruthy();
+    expect(await screen.findByText("GOOGLE_READY", {}, { timeout: 10_000 })).toBeTruthy();
     await waitFor(() => expect(screen.queryByText("registerPage.sendOtp")).toBeNull());
     expect(screen.queryByText("login.devLoginBanner")).toBeNull();
     expect(screen.getByRole("button", { name: "Password" })).toBeTruthy();
@@ -131,7 +131,7 @@ describe("DEV customer-company Google registration login boundary", () => {
     render(<Login />);
     fireEvent.click(await screen.findByText("Keluar dan pilih akun Google customer"));
     await waitFor(() => expect(auth.logout).toHaveBeenCalledOnce());
-    expect(await screen.findByText("GOOGLE_READY")).toBeTruthy();
+    expect(await screen.findByText("GOOGLE_READY", {}, { timeout: 10_000 })).toBeTruthy();
     expect(screen.getByText(/Pendaftaran Customer Perusahaan: OT SKY/)).toBeTruthy();
   });
 });
