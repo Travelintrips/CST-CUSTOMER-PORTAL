@@ -1,5 +1,6 @@
 import { pool, query } from "./db.mjs";
 import { signedPaymentProofUrl } from "./storage.mjs";
+import { loadDevOriginalAccountingOwner } from "./dev-original-accounting-owner-loader.mjs";
 import {
   bestEffortNotificationWrite,
   notifyAdmins,
@@ -487,13 +488,14 @@ async function requireAtomicSalesInvoicePosting(db, invoice, user, postWithClien
       !invoice?.invoice_number?.trim() || !invoice?.invoice_date || !invoice?.due_date) {
     fail(422, "Identitas Invoice atau perusahaan untuk posting tidak valid.");
   }
-  if (typeof postWithClient !== "function" ||
+  const trustedPostingOwner = postWithClient ?? await loadDevOriginalAccountingOwner();
+  if (typeof trustedPostingOwner !== "function" ||
       !transactionClient || typeof transactionClient.query !== "function") {
     fail(503, "Pemilik posting jurnal Accounting DEV belum tersambung.");
   }
   // Reuse one legitimate company-scoped posting owner; never implement
   // journal INSERT/UPDATE SQL here. It must post inside this db transaction.
-  const receipt = await postWithClient({
+  const receipt = await trustedPostingOwner({
     query: db,
     transactionClient,
     companyId,
