@@ -1,3 +1,4 @@
+// @ts-nocheck — runtime JS contract tested without a real financial writer.
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { createHash } from "node:crypto";
 import { mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
