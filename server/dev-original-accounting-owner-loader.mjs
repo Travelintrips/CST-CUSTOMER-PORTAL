@@ -10,6 +10,7 @@
 import { createHash } from "node:crypto";
 import { readFile, realpath } from "node:fs/promises";
 import { pathToFileURL } from "node:url";
+import { databaseEnvironment, databaseConnectionSource } from "./db.mjs";
 
 export const DEV_ACCOUNTING_OWNER_FILE =
   "/opt/cst-customer-invoice-owner-bundle-dev/portalInvoiceOwner.mjs";
@@ -18,7 +19,7 @@ export const DEV_ACCOUNTING_OWNER_SHA256 =
 
 export function originalOwnerGateEnabled(env = process.env) {
   return env.APP_ENV?.trim().toLowerCase() === "development"
-    && env.NODE_ENV === "production"
+    && env.NODE_ENV === "development"
     && env.CUSTOMER_PORTAL_ATOMIC_ACCOUNTING_POST_DEV === "true"
     && env.CUSTOMER_PORTAL_REQUIRE_POSTED_AR_EVIDENCE_DEV === "true";
 }
@@ -29,6 +30,10 @@ export function isReviewedOriginalOwnerBundle(bytes) {
 
 export async function loadDevOriginalAccountingOwner() {
   if (!originalOwnerGateEnabled()) return null;
+  // db.mjs can fall back to a PROD connection in DEV when its named DEV URL
+  // is absent. Refuse all implicit or generic database sources.
+  if (databaseEnvironment !== "development"
+      || databaseConnectionSource !== "SUPABASE_DATABASE_URL_DEV") return null;
   try {
     const actualPath = await realpath(DEV_ACCOUNTING_OWNER_FILE);
     // No symlink, remote import, or env/HTTP-controlled path.

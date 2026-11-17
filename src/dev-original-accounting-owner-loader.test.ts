@@ -21,11 +21,12 @@ afterEach(() => {
 });
 describe("DEV Customer Invoice original owner release loader", () => {
   it("refuses PROD and partial flags without trying to import a bundle", () => {
-    const good = { APP_ENV:"development", NODE_ENV:"production",
+    const good = { APP_ENV:"development", NODE_ENV:"development",
       CUSTOMER_PORTAL_ATOMIC_ACCOUNTING_POST_DEV:"true",
       CUSTOMER_PORTAL_REQUIRE_POSTED_AR_EVIDENCE_DEV:"true" };
     expect(originalOwnerGateEnabled(good)).toBe(true);
     expect(originalOwnerGateEnabled({...good, APP_ENV:"production"})).toBe(false);
+    expect(originalOwnerGateEnabled({...good, NODE_ENV:"production"})).toBe(false);
     expect(originalOwnerGateEnabled({...good, NODE_ENV:"test"})).toBe(false);
     expect(originalOwnerGateEnabled({...good, CUSTOMER_PORTAL_ATOMIC_ACCOUNTING_POST_DEV:"false"})).toBe(false);
     expect(originalOwnerGateEnabled({...good, CUSTOMER_PORTAL_REQUIRE_POSTED_AR_EVIDENCE_DEV:"false"})).toBe(false);
@@ -38,7 +39,7 @@ describe("DEV Customer Invoice original owner release loader", () => {
   });
   it("returns no callback when the approved flags are off", async () => {
     process.env.APP_ENV="development";
-    process.env.NODE_ENV="production";
+    process.env.NODE_ENV="development";
     process.env.CUSTOMER_PORTAL_ATOMIC_ACCOUNTING_POST_DEV="false";
     process.env.CUSTOMER_PORTAL_REQUIRE_POSTED_AR_EVIDENCE_DEV="false";
     await expect(loadDevOriginalAccountingOwner()).resolves.toBeNull();
