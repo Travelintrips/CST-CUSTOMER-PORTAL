@@ -41,6 +41,7 @@ jobs:
         env:
           APP_ENV: development
           NODE_ENV: test
+          SUPABASE_DATABASE_URL_DEV: postgresql://ci:ci@127.0.0.1:5432/ci
         run: pnpm exec vitest run src/dev-original-accounting-owner-loader.test.ts src/portal-customer-invoice-posted-ar-evidence.test.ts
       - name: Full Customer Portal build-safe tests
         env:
