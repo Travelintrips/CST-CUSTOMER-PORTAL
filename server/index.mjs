@@ -5137,7 +5137,7 @@ async function shutdown(signal) {
   shutdownPromise = (async () => {
     runtimeState = "draining";
     console.log(`[customer-portal-api] ${signal}, draining for ${DRAIN_DELAY_MS}ms before shutdown`);
-    stopDevVendorWaStatusPoller();
+    await stopDevVendorWaStatusPoller();
     stopBackgroundJobs();
     await stopBackgroundLeadership();
 

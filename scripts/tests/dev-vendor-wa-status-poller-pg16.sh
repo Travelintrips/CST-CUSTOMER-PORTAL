@@ -29,11 +29,13 @@ insert into public.mkt_notification_queue values
 SQL
 APP_ENV=development NODE_ENV=test SUPABASE_DATABASE_URL_DEV=postgresql://ci:ci@127.0.0.1:5432/ci node --input-type=module <<'NODE' >> "$SQL"
 import {DEV_VENDOR_QUEUED_STATUS_SELECT_SQL} from "./server/dev-vendor-wa-status-poller.mjs";
-console.log("create function public.candidates(integer) returns table(queue_id integer,rfq_id integer,vendor_quote_id integer) language sql stable as $$ "+ DEV_VENDOR_QUEUED_STATUS_SELECT_SQL +" $$;");
+console.log("create function public.candidates(integer,integer) returns table(queue_id integer,rfq_id integer,vendor_quote_id integer) language sql stable as $$ "+ DEV_VENDOR_QUEUED_STATUS_SELECT_SQL +" $$;");
 NODE
 docker exec -i "$NAME" psql -U postgres -d postgres -q -v ON_ERROR_STOP=1 < "$SQL" >/dev/null
-RESULT="$(docker exec "$NAME" psql -U postgres -d postgres -At -v ON_ERROR_STOP=1 -c 'select queue_id from public.candidates(8)' | tr '\n' ';')"
+RESULT="$(docker exec "$NAME" psql -U postgres -d postgres -At -v ON_ERROR_STOP=1 -c 'select queue_id from public.candidates(8,0)' | tr '\n' ';')"
 test "$RESULT" = '96;' || { echo "FAIL: unrelated queue eligible: $RESULT";exit 1; }
-LIMIT_ZERO="$(docker exec "$NAME" psql -U postgres -d postgres -At -v ON_ERROR_STOP=1 -c 'select count(*) from public.candidates(0)')"
+AFTER_LAST="$(docker exec "$NAME" psql -U postgres -d postgres -At -v ON_ERROR_STOP=1 -c 'select count(*) from public.candidates(8,96)')"
+test "$AFTER_LAST" = 0 || { echo "FAIL: cursor did not bound selection";exit 1; }
+LIMIT_ZERO="$(docker exec "$NAME" psql -U postgres -d postgres -At -v ON_ERROR_STOP=1 -c 'select count(*) from public.candidates(0,0)')"
 test "$LIMIT_ZERO" = 0
 echo "PASS: isolated status poll SELECT includes only queued company-1 receipt #96, excludes sent #95, pending #93, company-2 and retry/attempt-2; bounded by LIMIT"

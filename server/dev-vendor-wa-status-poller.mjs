@@ -1,5 +1,5 @@
-// Bounded DEV-only polling of Gateway receipts for already-queued vendor invites.
-// Reuses the existing PR #201 service; it cannot send a WhatsApp message.
+// Bounded DEV-only Gateway receipt polling; invokes existing PR #201 status service.
+// No WhatsApp send, no retry, no legacy worker or PROD database writes.
 import { query, databaseEnvironment, databaseConnectionSource } from "./db.mjs";
 import { syncDevVendorWhatsAppStatus } from "./dev-vendor-wa-status.mjs";
 import { resolveDevCustomerPortalGatewayToken } from "./dev-vendor-wa-gateway.mjs";
@@ -26,22 +26,36 @@ select n.id as queue_id, n.rfq_id, n.vendor_quote_id
    and r.company_id=1 and s.company_id=r.company_id
    and n.payload_json->'gateway_delivery'->>'provider'='cst-wa-gateway'
    and n.payload_json->'gateway_delivery'->>'message_id' is not null
+   and n.id > $2::integer
  order by n.id asc limit $1::integer`;
 
 export async function pollDevVendorWaStatus({
-  env = process.env, db = query, sync = syncDevVendorWhatsAppStatus, max = 8,
+  env = process.env, db = query, sync = syncDevVendorWhatsAppStatus,
+  max = 8, cursor = 0, shouldStop = () => false,
 } = {}) {
   if (!canPollDevVendorWaStatus(env)) return { skipped: "dev_only_guard" };
   const limit = Math.min(8, Math.max(1, Math.trunc(Number(max)) || 1));
-  const result = await db(DEV_VENDOR_QUEUED_STATUS_SELECT_SQL, [limit]);
-  const candidates = result.rows ?? [];
-  let updated = 0, deferred = 0, errors = 0;
-  for (const row of candidates) {
-    if (![row.queue_id, row.rfq_id, row.vendor_quote_id]
-      .every(n => Number.isSafeInteger(Number(n)) && Number(n) > 0)) {
+  const afterId = Number.isSafeInteger(Number(cursor)) && Number(cursor) > 0
+    ? Number(cursor) : 0;
+  let candidates = (await db(DEV_VENDOR_QUEUED_STATUS_SELECT_SQL, [limit, afterId])).rows ?? [];
+  if (!candidates.length && afterId > 0 && !shouldStop()) {
+    // Wrap to oldest queued ID, preventing stuck old candidates from starving newer ones.
+    candidates = (await db(DEV_VENDOR_QUEUED_STATUS_SELECT_SQL, [limit, 0])).rows ?? [];
+  }
+  let updated = 0, deferred = 0, errors = 0, nextCursor = candidates.length ? afterId : 0;
+  for (let i = 0; i < candidates.length; i += 1) {
+    if (shouldStop()) {
+      deferred += candidates.length - i;
+      break;
+    }
+    const row = candidates[i];
+    if (!Number.isSafeInteger(Number(row.queue_id)) || Number(row.queue_id) <= 0
+      || ![row.rfq_id, row.vendor_quote_id].every(
+        n => Number.isSafeInteger(Number(n)) && Number(n) > 0)) {
       deferred += 1;
       continue;
     }
+    nextCursor = Number(row.queue_id);
     try {
       const receipt = await sync({
         queueId: Number(row.queue_id),
@@ -50,40 +64,57 @@ export async function pollDevVendorWaStatus({
         env,
       });
       if (receipt?.updated === true) updated += 1;
-      else deferred += 1; // Gateway still queued; do not send again.
+      else deferred += 1;
     } catch {
-      errors += 1; // Gateway refused, CAS lost, or transient error; no WA retry.
+      errors += 1; // No WhatsApp retry; only a later GET receipt check.
     }
   }
-  return { checked: candidates.length, updated, deferred, errors };
+  return { checked: candidates.length, updated, deferred, errors, nextCursor };
 }
 
-let timer = null, startup = null, busy = false;
+let scheduled = null, active = null, stopping = false, cursor = 0;
 
-export function startDevVendorWaStatusPoller({ env = process.env, runner = pollDevVendorWaStatus } = {}) {
-  if (timer || !canPollDevVendorWaStatus(env)) return false;
-  const tick = async () => {
-    if (busy || !canPollDevVendorWaStatus(env)) return;
-    busy = true;
-    try {
-      const result = await runner({ env });
-      if (result.updated > 0 || result.errors > 0) {
-        console.info("[customer-portal-api] DEV vendor WA provider receipt", result);
-      }
-    } catch {
-      console.warn("[customer-portal-api] DEV vendor WA receipt check deferred");
-    } finally { busy = false; }
+export function startDevVendorWaStatusPoller({
+  env = process.env, runner = pollDevVendorWaStatus,
+} = {}) {
+  if (scheduled || active || !canPollDevVendorWaStatus(env)) return false;
+  stopping = false;
+  cursor = 0;
+  const schedule = (delayMs) => {
+    if (stopping) return;
+    scheduled = setTimeout(() => { scheduled = null; void tick(); }, delayMs);
+    scheduled.unref?.();
   };
-  timer = setInterval(() => void tick(), 120_000);
-  timer.unref?.();
-  startup = setTimeout(() => { startup = null; void tick(); }, 12_000);
-  startup.unref?.();
+  const tick = () => {
+    if (stopping || active || !canPollDevVendorWaStatus(env)) return;
+    const task = (async () => {
+      try {
+        const result = await runner({ env, cursor, shouldStop: () => stopping });
+        if (Number.isSafeInteger(result?.nextCursor)) cursor = result.nextCursor;
+        if (result?.updated > 0 || result?.errors > 0) {
+          console.info("[customer-portal-api] DEV vendor WA provider receipt", {
+            checked: result.checked, updated: result.updated, errors: result.errors,
+          });
+        }
+      } catch {
+        console.warn("[customer-portal-api] DEV vendor WA receipt check deferred");
+      }
+    })();
+    active = task;
+    void task.finally(() => {
+      if (active === task) active = null;
+      // Wait 120s AFTER completion, not from startup; max 8 receipts/120s.
+      schedule(120_000);
+    });
+  };
+  schedule(12_000);
   return true;
 }
 
-export function stopDevVendorWaStatusPoller() {
-  if (timer) clearInterval(timer);
-  if (startup) clearTimeout(startup);
-  timer = null;
-  startup = null;
+export async function stopDevVendorWaStatusPoller() {
+  stopping = true;
+  if (scheduled) clearTimeout(scheduled);
+  scheduled = null;
+  // Wait for current GET/DB operation before the pool is closed by shutdown.
+  if (active) await active;
 }
