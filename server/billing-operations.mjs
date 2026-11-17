@@ -473,7 +473,38 @@ async function requirePostedCustomerArEvidence(db, invoice) {
 // server code, never taken from the HTTP request, and must use the exact same
 // query transaction for all posting statements (no independent connection,
 // background task, outbox, or uncommitted success response).
-async function requireAtomicSalesInvoicePosting(db, invoice, user, postWithClient, transactionClient) {
+// The existing Portal admin login is not a BizPortal Super Admin login.
+// Before invoking the original Accounting owner, independently reread the
+// ACTIVE canonical BizPortal identity in the SAME PostgreSQL transaction.
+// Never trust a role/email supplied by an HTTP body or an unverified JWT claim.
+// A lock prevents role revocation or deactivation from racing this issuance.
+async function requireCanonicalSalesInvoiceOwner(db, portalUser, companyId) {
+  const email = typeof portalUser?.email === "string" ? portalUser.email.trim() : "";
+  if (portalUser?.role !== "admin" || !email || ![1, 3].includes(companyId)) {
+    fail(403, "Hak Super Admin BizPortal diperlukan untuk posting Invoice.");
+  }
+  const matches = await db(
+    `select id, role, system_role, status, is_active, company_id
+       from public.users
+      where lower(trim(email)) = lower(trim($1))
+      limit 2
+      for share`,
+    [email],
+  );
+  if (matches.rows.length !== 1) {
+    fail(403, "Identitas Super Admin BizPortal tidak ditemukan atau tidak unik.");
+  }
+  const owner = matches.rows[0];
+  if (!owner.id || owner.role !== "super_admin" ||
+      owner.system_role !== "super_admin" ||
+      owner.status !== "active" || owner.is_active !== true ||
+      (owner.company_id != null && Number(owner.company_id) !== companyId)) {
+    fail(403, "Identitas Super Admin BizPortal tidak berwenang untuk perusahaan Invoice.");
+  }
+  return String(owner.id);
+}
+
+async function requireAtomicSalesInvoicePosting(db, invoice, canonicalActorId, postWithClient, transactionClient) {
   if (process.env.CUSTOMER_PORTAL_ATOMIC_ACCOUNTING_POST_DEV !== "true") return;
   if (process.env.APP_ENV?.trim().toLowerCase() !== "development" ||
       process.env.CUSTOMER_PORTAL_REQUIRE_POSTED_AR_EVIDENCE_DEV !== "true") {
@@ -502,7 +533,7 @@ async function requireAtomicSalesInvoicePosting(db, invoice, user, postWithClien
       source: "sales_invoice",
       sourceId,
       invoice,
-      actorId: user?.id ?? null,
+      actorId: canonicalActorId,
     });
   } catch (error) {
     // Nonzero PPN is intentionally unsupported by the existing engine v1.
@@ -586,6 +617,18 @@ export async function handleAdminInvoices({ request, response, user, sendJson, s
   }
   const result = await withTransaction(async (db, transactionClient) => {
     const row = await loadInvoice(invoiceId, user, { db, admin: true, forUpdate: true });
+    let canonicalActorId = null;
+    if (process.env.CUSTOMER_PORTAL_ATOMIC_ACCOUNTING_POST_DEV === "true") {
+      // Protect both the first issuance and replay of an existing Invoice.
+      // The Portal account alone is insufficient to grant Accounting rights.
+      if (process.env.APP_ENV?.trim().toLowerCase() !== "development" ||
+          process.env.CUSTOMER_PORTAL_REQUIRE_POSTED_AR_EVIDENCE_DEV !== "true") {
+        fail(503, "Jalur posting Invoice atomik belum diaktifkan secara aman.");
+      }
+      canonicalActorId = await requireCanonicalSalesInvoiceOwner(
+        db, user, Number(row.company_id),
+      );
+    }
     if (row.invoice_status === "invoiced") {
       await requirePostedCustomerArEvidence(db, row);
       return mapInvoice(row);
@@ -609,7 +652,7 @@ export async function handleAdminInvoices({ request, response, user, sendJson, s
     // against persisted source/lines/GL and the existing AR evidence view.
     // All of this occurs BEFORE COMMIT/audit/notifications.
     await requireAtomicSalesInvoicePosting(
-      db, updated.rows[0], user, postSalesInvoiceWithClient, transactionClient,
+      db, updated.rows[0], canonicalActorId, postSalesInvoiceWithClient, transactionClient,
     );
     // Gate before COMMIT, audit or any outward notification. If the source
     // journal does not qualify, withTransaction rolls back the status/date
