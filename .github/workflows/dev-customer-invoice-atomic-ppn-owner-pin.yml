@@ -1,0 +1,61 @@
+name: DEV Customer Invoice — atomic PPN original-owner release pin
+
+on:
+  pull_request:
+    branches:
+      - test/dev-customer-invoice-original-owner-loader-20261118
+    paths:
+      - 'server/dev-original-accounting-owner-loader.mjs'
+      - 'src/dev-original-accounting-owner-loader.test.ts'
+      - '.github/workflows/dev-customer-invoice-atomic-ppn-owner-pin.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  original-owner-ppn-release-pin:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.33.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: pnpm
+      - name: Exact release dependency graph
+        run: pnpm install --frozen-lockfile
+      - name: Verify expected reviewed atomic PPN bundle pin
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -Fq '7f6568dd838b18698078ed87d4a2c64bc8014ff73f278df405d62fa35628d367' server/dev-original-accounting-owner-loader.mjs
+          grep -Fq 'CUSTOMER_PORTAL_ATOMIC_ACCOUNTING_POST_DEV === "true"' server/dev-original-accounting-owner-loader.mjs
+          grep -Fq 'CUSTOMER_PORTAL_REQUIRE_POSTED_AR_EVIDENCE_DEV === "true"' server/dev-original-accounting-owner-loader.mjs
+          grep -Fq '/opt/cst-customer-invoice-owner-bundle-dev' server/dev-original-accounting-owner-loader.mjs
+          echo ATOMIC_PPN_ORIGINAL_OWNER_RELEASE_HASH_AND_GATES_PASS
+      - name: Original owner loader and invoice receipt regressions
+        env:
+          APP_ENV: development
+          NODE_ENV: test
+        run: pnpm exec vitest run src/dev-original-accounting-owner-loader.test.ts src/portal-customer-invoice-posted-ar-evidence.test.ts
+      - name: Full Customer Portal build-safe tests
+        env:
+          APP_ENV: development
+          NODE_ENV: test
+          SESSION_SECRET: customer-portal-release-contract-secret-32
+          SUPABASE_DATABASE_URL_DEV: postgresql://ci:ci@127.0.0.1:5432/ci
+          SMTP_FROM: test@example.com
+          SMTP_USER: test@example.com
+          SMTP_PASS: test-smtp-secret
+          CUSTOMER_PORTAL_FONNTE_TOKEN: test-fonnte-token
+        run: pnpm exec vitest run --maxWorkers=2
+      - name: TypeScript and syntax
+        run: |
+          pnpm run typecheck
+          pnpm run verify:server-syntax
+      - name: No tracked runtime changes
+        run: git diff --exit-code -- server src pnpm-lock.yaml
