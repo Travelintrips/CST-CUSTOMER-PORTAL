@@ -1,16 +1,10 @@
 import crypto from "node:crypto";
 import { pool, query } from "./db.mjs";
 import { resolveCustomerPortalFonnteToken } from "./fonnte-config.mjs";
+import { normalizeWhatsAppPhone } from "./wa-phone.mjs";
+export { normalizeWhatsAppPhone } from "./wa-phone.mjs";
 
 const clean = (v) => typeof v === "string" ? v.trim() : "";
-export function normalizeWhatsAppPhone(value) {
-  const raw = clean(value).replace(/[^0-9]/g, "");
-  if (!raw) return null;
-  if (raw.startsWith("62")) return raw;
-  if (raw.startsWith("0")) return `62${raw.slice(1)}`;
-  if (raw.startsWith("8")) return `62${raw}`;
-  return raw;
-}
 
 async function resolveCustomerPortalGatewayToken() {
   const result = await query("select value from public.app_config where key='WATI_API_TOKEN' limit 1");
@@ -105,6 +99,7 @@ export async function getMarketplaceWhatsAppQueueStats() {
   const result = await query(
     `select
        count(*) filter (where channel='whatsapp' and status='pending')::int as pending,
+       count(*) filter (where channel='whatsapp' and status='queued')::int as queued,
        count(*) filter (where channel='whatsapp' and status='sending')::int as sending,
        count(*) filter (where channel='whatsapp' and status in ('failed','retrying'))::int as retrying,
        count(*) filter (where channel='whatsapp' and status='exhausted')::int as exhausted,
@@ -129,6 +124,7 @@ export async function getMarketplaceWhatsAppQueueStats() {
     configured,
     workerEnabled,
     pending: Number(row.pending ?? 0),
+    queued: Number(row.queued ?? 0),
     sending: Number(row.sending ?? 0),
     retrying: Number(row.retrying ?? 0),
     exhausted: Number(row.exhausted ?? 0),

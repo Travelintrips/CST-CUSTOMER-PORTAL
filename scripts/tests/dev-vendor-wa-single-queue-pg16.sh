@@ -17,7 +17,7 @@ docker run --rm -d --name "$NAME" --network none \
   -e POSTGRES_PASSWORD=synthetic-contract-only postgres:16-alpine >/dev/null
 READY=0
 for i in $(seq 1 100); do
-  if docker exec "$NAME" pg_isready -U postgres >/dev/null 2>&1; then READY=1; break; fi
+  if docker exec "$NAME" pg_isready -h 127.0.0.1 -U postgres >/dev/null 2>&1; then READY=1; break; fi
   sleep 0.25
 done
 if test "$READY" -ne 1; then echo "Isolated PostgreSQL 16 did not become ready"; exit 1; fi
@@ -36,7 +36,8 @@ CREATE TABLE public.mkt_notification_queue (
   id integer primary key, rfq_id integer, vendor_quote_id integer,
   recipient_id integer, recipient_phone text, recipient_type text,
   event_type text, channel text, status text, attempt_count integer,
-  sent_at timestamptz, updated_at timestamptz default now()
+  sent_at timestamptz, payload_json jsonb, last_error text,
+  next_retry_at timestamptz, updated_at timestamptz default now()
 );
 INSERT INTO public.mkt_rfqs VALUES (23,'RFQ-SYNTHETIC',1);
 INSERT INTO public.suppliers VALUES (24,'Supplier Test','081234567890','PIC Test',1,true,true);
@@ -52,7 +53,7 @@ SQL
 APP_ENV=development NODE_ENV=test SUPABASE_DATABASE_URL_DEV=postgresql://ci:ci@127.0.0.1:5432/ci node --input-type=module <<'NODE' >> "$SQL_FILE"
 import { pathToFileURL } from "node:url";
 import { join } from "node:path";
-const { DEV_VENDOR_INVITE_CLAIM_SQL, DEV_VENDOR_INVITE_SELECT_SQL } = await import(
+const { DEV_VENDOR_INVITE_CLAIM_SQL, DEV_VENDOR_INVITE_SELECT_SQL, DEV_VENDOR_GATEWAY_ACK_SQL } = await import(
   pathToFileURL(join(process.cwd(), "server/dev-vendor-wa-invite.mjs")).href
 );
 console.log("PREPARE invite_read (integer,integer,integer) AS " + DEV_VENDOR_INVITE_SELECT_SQL + ";");
@@ -60,6 +61,11 @@ console.log("EXECUTE invite_read(93,23,18);");
 console.log("CREATE FUNCTION public.try_claim_queue(integer,integer,integer,integer,text,text,text)");
 console.log("RETURNS integer LANGUAGE sql VOLATILE AS $$");
 console.log("WITH changed AS (" + DEV_VENDOR_INVITE_CLAIM_SQL + ")");
+console.log("SELECT count(*)::integer FROM changed;");
+console.log("$$;");
+console.log("CREATE FUNCTION public.try_gateway_ack(integer,text,text)");
+console.log("RETURNS integer LANGUAGE sql VOLATILE AS $$");
+console.log("WITH changed AS (" + DEV_VENDOR_GATEWAY_ACK_SQL + ")");
 console.log("SELECT count(*)::integer FROM changed;");
 console.log("$$;");
 NODE
@@ -89,4 +95,19 @@ test "$RESULTS" = "0 1 " || { echo "FAIL: concurrent claim result=$RESULTS"; exi
 STATUS="$(docker exec "$NAME" psql -U postgres -d postgres -At -v ON_ERROR_STOP=1 -c \
   "select (select status from public.mkt_notification_queue where id=93)||'/'||(select attempt_count from public.mkt_notification_queue where id=93)||'/'||(select status from public.mkt_notification_queue where id=94)")"
 test "$STATUS" = "sending/1/pending" || { echo "FAIL: status=$STATUS"; exit 1; }
-echo "PASS: PostgreSQL 16 isolated, 3 invalid claims rejected, 2 concurrent claims -> exactly 1, unrelated queue untouched"
+
+# Gateway acceptance must persist QUEUED and the provider receipt ID, without
+# pretending that WhatsApp has already been sent.
+GATEWAY_ID="123e4567-e89b-12d3-a456-426614174000"
+ACK="$(docker exec "$NAME" psql -U postgres -d postgres -At -v ON_ERROR_STOP=1 -c "select public.try_gateway_ack(93,'$GATEWAY_ID','queued')")"
+test "$ACK" = "1" || { echo "FAIL: gateway acknowledgement not persisted"; exit 1; }
+ACK_REPLAY="$(docker exec "$NAME" psql -U postgres -d postgres -At -v ON_ERROR_STOP=1 -c "select public.try_gateway_ack(93,'$GATEWAY_ID','queued')")"
+test "$ACK_REPLAY" = "0" || { echo "FAIL: gateway acknowledgement replay modified queue"; exit 1; }
+FINAL="$(docker exec "$NAME" psql -U postgres -d postgres -At -v ON_ERROR_STOP=1 -c "select
+  (select status from public.mkt_notification_queue where id=93)||'/'||
+  (select attempt_count from public.mkt_notification_queue where id=93)||'/'||
+  (select payload_json->'gateway_delivery'->>'message_id' from public.mkt_notification_queue where id=93)||'/'||
+  (select coalesce(sent_at is null,false) from public.mkt_notification_queue where id=93)||'/'||
+  (select status from public.mkt_notification_queue where id=94)")"
+test "$FINAL" = "queued/1/$GATEWAY_ID/true/pending" || { echo "FAIL: queued semantics=$FINAL"; exit 1; }
+echo "PASS: PostgreSQL 16 isolated, 3 invalid claims rejected, 2 concurrent claims -> exactly 1; provider queued receipt persisted, sent_at NULL, unrelated queue untouched"

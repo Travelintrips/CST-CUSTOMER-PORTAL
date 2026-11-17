@@ -2,9 +2,14 @@
 // No scheduler entrypoint, no Fleet/Tenant token fallback, and no automatic retry.
 import { query, databaseEnvironment, databaseConnectionSource } from "./db.mjs";
 import { buildDevVendorQuoteShare } from "./vendor-quote-share.mjs";
-import { customerPortalFonnteConfigured, resolveCustomerPortalFonnteToken } from "./fonnte-config.mjs";
-import { verifyDevVendorWaSender } from "./dev-vendor-wa-sender.mjs";
-import { normalizeWhatsAppPhone, sendFonnteMessageWithToken } from "./whatsapp-service.mjs";
+import { normalizeWhatsAppPhone } from "./wa-phone.mjs";
+import {
+  DEV_PORTAL_DEVICE_ID,
+  resolveDevCustomerPortalGatewayToken,
+  verifyDevCustomerPortalGatewaySender,
+  sendDevCustomerPortalGatewayMessage,
+  buildDevGatewayIdempotencyKey,
+} from "./dev-vendor-wa-gateway.mjs";
 
 const DEV_ORIGIN = "https://portaldev.72.61.210.205.sslip.io";
 const error = (statusCode, message) => Object.assign(new Error(message), { statusCode });
@@ -70,20 +75,26 @@ async function loadInvite({ queueId, rfqId, quoteId, db = query }) {
 
 export async function getDevVendorWhatsAppReadiness({
   queueId, rfqId, quoteId, env = process.env, db = query,
-  isConfigured = customerPortalFonnteConfigured,
-  verifySender = verifyDevVendorWaSender,
+  resolveSenderToken = resolveDevCustomerPortalGatewayToken,
+  verifySender = verifyDevCustomerPortalGatewaySender,
 } = {}) {
   assertDevEnvironment(env);
   if (![queueId, rfqId, quoteId].every(positiveId)) fail(400, "ID undangan harus valid.");
   const row = await loadInvite({ queueId, rfqId, quoteId, db });
   const { share } = validateInvite(row, { queueId, rfqId, quoteId, env });
-  const configured = Boolean(await isConfigured());
+  const senderToken = String(await resolveSenderToken(env) ?? "").trim();
+  const configured = Boolean(senderToken);
   const enabled = env.CUSTOMER_PORTAL_DEV_VENDOR_WA_ENABLED === "true";
   const pending = row.queue_status === "pending"
     && Number(row.attempt_count ?? 0) === 0 && row.sent_at == null;
-  // Never trust token presence alone: Fonnte must report the expected DEV device.
+  // Check the CST WA Gateway device registry using THIS client token, not
+  // Fleet/Tenant credentials, and require one dedicated ONLINE DEV device.
   const sender = configured && enabled && pending
-    ? await verifySender({ expectedPhone: env.CUSTOMER_PORTAL_DEV_WA_SENDER_PHONE })
+    ? await verifySender({
+      gatewayToken: senderToken,
+      expectedPhone: env.CUSTOMER_PORTAL_WA_GATEWAY_SENDER_PHONE_DEV,
+      deviceId: env.CUSTOMER_PORTAL_WA_GATEWAY_DEVICE_ID_DEV,
+    })
     : { matched: false, reason: null };
   return {
     queueId: Number(row.queue_id),
@@ -94,10 +105,13 @@ export async function getDevVendorWhatsAppReadiness({
     senderIdentityVerified: sender.matched === true,
     enabled,
     ready: configured && enabled && pending && sender.matched === true,
-    reason: !configured ? "Pengirim WhatsApp khusus Customer Portal DEV belum dikonfigurasi."
+    provider: "cst-wa-gateway",
+    reason: !configured ? "Token WA Gateway Customer Portal DEV belum tersedia."
       : !enabled ? "Pengiriman WA vendor DEV masih dinonaktifkan."
+      : !pending && row.queue_status === "queued"
+        ? "WA Gateway sudah menerima antrean; tunggu status kirim, jangan kirim ulang."
       : !pending ? "Antrean sudah pernah diproses; tidak boleh mengirim ulang."
-      : sender.matched !== true ? sender.reason ?? "Identitas pengirim WA DEV belum terverifikasi."
+      : sender.matched !== true ? sender.reason ?? "Perangkat WA Gateway DEV belum terverifikasi."
       : null,
   };
 }
@@ -124,24 +138,33 @@ export const DEV_VENDOR_INVITE_CLAIM_SQL = [
   ") returning n.id",
 ].join(" ");
 
+export const DEV_VENDOR_GATEWAY_ACK_SQL = `update public.mkt_notification_queue
+        set status='queued',
+            payload_json=jsonb_set(coalesce(payload_json,'{}'::jsonb),'{gateway_delivery}',
+              jsonb_build_object('provider','cst-wa-gateway',
+                'message_id',$2::text,'ack_status',$3::text,'accepted_at',now()),true),
+            last_error=null, next_retry_at=null, updated_at=now()
+      where id=$1 and status='sending' and attempt_count=1
+      returning id`;
+
 export async function sendOneDevVendorWhatsAppInvite({
   queueId, rfqId, quoteId, recipientLast4, confirmedRecipient,
   env = process.env, db = query,
-  resolveSenderToken = resolveCustomerPortalFonnteToken,
-  verifySender = verifyDevVendorWaSender,
-  send = sendFonnteMessageWithToken,
+  resolveSenderToken = resolveDevCustomerPortalGatewayToken,
+  verifySender = verifyDevCustomerPortalGatewaySender,
+  send = sendDevCustomerPortalGatewayMessage,
 } = {}) {
   assertDevEnvironment(env);
   if (!confirmedRecipient || typeof recipientLast4 !== "string") {
     fail(409, "Konfirmasi PIC vendor diperlukan sebelum mengirim.");
   }
-  // Resolve exactly once per dispatch. The same snapshot is used for both the
-  // Fonnte /device identity check and /send; no provider credential re-read.
-  const senderToken = String(await resolveSenderToken() ?? "").trim();
+  // Pin the same dedicated WA Gateway API token to device verification and
+  // message enqueue. Never look up a different token after verification.
+  const senderToken = String(await resolveSenderToken(env) ?? "").trim();
   const readiness = await getDevVendorWhatsAppReadiness({
     queueId, rfqId, quoteId, env, db,
-    isConfigured: async () => Boolean(senderToken),
-    verifySender: ({ expectedPhone }) => verifySender({ expectedPhone, senderToken }),
+    resolveSenderToken: async () => senderToken,
+    verifySender,
   });
   if (!readiness.ready) fail(409, readiness.reason ?? "Antrean belum siap dikirim.");
   if (recipientLast4 !== readiness.recipientLast4) {
@@ -167,22 +190,34 @@ export async function sendOneDevVendorWhatsAppInvite({
     "Mohon isi penawaran melalui tautan khusus berikut:",
     DEV_ORIGIN + share.quotePath,
   ].join("\n");
+  let gatewayAck;
   try {
-    // Provider acceptance is not the same as WhatsApp delivery/read receipt.
-    await send({ phone, message, token: senderToken });
+    gatewayAck = await send({
+      gatewayToken: senderToken,
+      deviceId: env.CUSTOMER_PORTAL_WA_GATEWAY_DEVICE_ID_DEV,
+      phone, message,
+      idempotencyKey: buildDevGatewayIdempotencyKey({ queueId, rfqId, quoteId }),
+    });
+    if (!["queued", "duplicate"].includes(gatewayAck?.status)
+      || !gatewayAck?.messageId) {
+      throw Error("WA Gateway tidak mengakui pesan.");
+    }
   } catch {
+    // An ambiguous provider outcome may already have queued the message.
+    // Never replay or pick a different sender until manually reconciled.
     await db(
       "update public.mkt_notification_queue set status='exhausted', last_error=$2, next_retry_at=null, updated_at=now() where id=$1 and status='sending' and attempt_count=1",
-      [Number(queueId), "Pengiriman tidak terkonfirmasi. Periksa pengirim; jangan retry otomatis."],
+      [Number(queueId), "WA Gateway belum memastikan antrean pesan. Periksa gateway; jangan retry otomatis."],
     );
-    fail(502, "Pengiriman tidak terkonfirmasi. Periksa pengirim sebelum mencoba tindakan lain.");
+    fail(502, "Status WA Gateway belum pasti. Periksa gateway sebelum mencoba tindakan lain.");
   }
   const marked = await db(
-    "update public.mkt_notification_queue set status='sent', sent_at=now(), last_error=null, next_retry_at=null, updated_at=now() where id=$1 and status='sending' and attempt_count=1 returning id",
-    [Number(queueId)],
+    DEV_VENDOR_GATEWAY_ACK_SQL,
+    [Number(queueId), gatewayAck.messageId, gatewayAck.status],
   );
   if (!marked.rows?.length) {
-    fail(409, "Provider menerima pesan tetapi status antrean belum tersimpan; jangan kirim ulang.");
+    fail(409, "Gateway sudah menerima antrean, tetapi status database belum tersimpan. Jangan kirim ulang.");
   }
-  return { queueId: Number(queueId), quoteId: Number(quoteId), status: "provider_accepted" };
+  // Gateway accepted/queued is not a WhatsApp sent or delivery receipt.
+  return { queueId: Number(queueId), quoteId: Number(quoteId), status: "gateway_queued", gatewayMessageId: gatewayAck.messageId };
 }
