@@ -17,6 +17,7 @@ const m=vi.hoisted(()=>({
   sendJson:vi.fn(),
   poster:vi.fn(),
   glRow:null,
+  independentApproval:true,
 }));
 vi.mock("../server/db.mjs",()=>({
   pool:{connect:m.connect},
@@ -57,6 +58,7 @@ async function sqlMock(statement){
   m.sql.push(q);
   if(q==="begin"||q==="commit"||q==="rollback")return {rows:[]};
   if(q.includes("from public.portal_company_members"))return {rows:[{company_id:1},{company_id:3}]};
+  if(q.includes("from public.portal_company_requests approval"))return {rows:m.independentApproval?[{approved:1}]:[]};
   if(q.includes("from public.sales_documents"))return {rows:[base()]};
   if(q.startsWith("update public.sales_documents"))return {rows:[issued()]};
   if(q.includes("from public.accounting_entries e")){
@@ -96,6 +98,7 @@ beforeEach(()=>{
   m.currentInvoiceNumber=null;
   m.viewUnavailable=false;
   m.glRow=null;
+  m.independentApproval=true;
   delete process.env[bridge];
   m.query.mockImplementation(sqlMock);
   m.connect.mockResolvedValue({query:m.query,release:m.release});
@@ -226,6 +229,24 @@ describe("DEV-only atomic Accounting owner integration seam",()=>{
     expect(sqlIndex("from public.bizportal_customer_ar_source_evidence_dev")).toBe(-1);
     expect(m.sql).toContain("rollback");
     expect(m.sql).not.toContain("commit");
+    noOutbound();
+  });
+  it("rejects a self-selected active membership without independent approval",async()=>{
+    m.independentApproval=false;
+    await expect(perform(m.poster)).rejects.toMatchObject({statusCode:403});
+    expect(m.poster).not.toHaveBeenCalled();
+    expect(m.sql).toContain("rollback");
+    expect(m.sql).not.toContain("commit");
+    noOutbound();
+  });
+  it("rejects already-invoiced replay without approved affiliation",async()=>{
+    m.independentApproval=false;
+    m.invoiceStatus="invoiced";
+    m.currentInvoiceNumber="INV-SO-QA-101";
+    await expect(perform(m.poster)).rejects.toMatchObject({statusCode:403});
+    expect(m.poster).not.toHaveBeenCalled();
+    expect(sqlIndex("from public.bizportal_customer_ar_source_evidence_dev")).toBe(-1);
+    expect(m.sql).toContain("rollback");
     noOutbound();
   });
   it("requires the existing posted-AR proof flag before invoking Accounting",async()=>{
