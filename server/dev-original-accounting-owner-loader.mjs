@@ -18,7 +18,7 @@ export const DEV_ACCOUNTING_OWNER_DIR =
 export const DEV_ACCOUNTING_OWNER_FILE =
   path.join(DEV_ACCOUNTING_OWNER_DIR, "portalInvoiceAdapter.mjs");
 export const DEV_ACCOUNTING_OWNER_SHA256 =
-  "44a1e2b840b41dd1c1f7b0c36e0554a70b4c47ee4e9cc90b95c7117362c78b95";
+  "7f6568dd838b18698078ed87d4a2c64bc8014ff73f278df405d62fa35628d367";
 // All Pino worker modules are part of the SAME reviewed release, not optional.
 export const DEV_ACCOUNTING_OWNER_HASHES = Object.freeze({
   "portalInvoiceAdapter.mjs": DEV_ACCOUNTING_OWNER_SHA256,
