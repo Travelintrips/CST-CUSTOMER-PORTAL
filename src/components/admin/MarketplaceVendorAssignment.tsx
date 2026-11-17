@@ -175,7 +175,7 @@ export function MarketplaceVendorAssignment({ rfqId }: { rfqId: number }) {
       );
       const payload = await response.json();
       if (!response.ok) throw new Error(payload.error ?? payload.message ?? "Gagal mengirim WA.");
-      setNotice("Pengirim WhatsApp menerima undangan. Status dibuka vendor akan diperiksa terpisah.");
+      setNotice("WA Gateway menerima antrean undangan. Pesan belum tentu terkirim; jangan kirim ulang.");
       await loadRouting();
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Gagal mengirim WA.");
@@ -239,7 +239,7 @@ export function MarketplaceVendorAssignment({ rfqId }: { rfqId: number }) {
       {routing?.vendorShareSupported && routing?.quoteId && ["invited", "opened", "requote_requested"].includes(routing.quoteStatus ?? "") && (
         <div className="mt-2 space-y-1.5">
           <p className="text-[11px] text-sky-800">
-            WhatsApp langsung: {waReadiness?.ready ? "Kredensial WA DEV tersedia untuk satu antrean (belum menjamin pesan diterima)."
+            WA Gateway CST: {waReadiness?.ready ? "Perangkat DEV terverifikasi untuk satu antrean (belum menjamin pesan diterima)."
               : waReadiness?.reason ?? "Belum tersedia untuk undangan ini."}
           </p>
           {waReadiness?.ready && (
@@ -269,7 +269,7 @@ export function MarketplaceVendorAssignment({ rfqId }: { rfqId: number }) {
             size="sm"
             variant="outline"
             className="h-8 text-xs"
-            disabled={copying || routing.vendorActive === false}
+            disabled={copying || routing.vendorActive === false || ["queued","sending","sent","exhausted","failed","retrying"].includes(waReadiness?.queueStatus ?? "")}
             onClick={() => void prepareManualVendorInvitation()}
           >
             {copying ? <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" /> : <Copy className="mr-1 h-3.5 w-3.5" />}
