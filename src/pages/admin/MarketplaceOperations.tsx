@@ -573,10 +573,10 @@ export function MarketplaceOperationsTab() {
               <p className="mt-1 text-sm font-semibold">
                 {!queueStats
                   ? "Memuat…"
-                  : !queueStats.configured
-                    ? "Fonnte belum dikonfigurasi"
-                    : !queueStats.workerEnabled
-                      ? "Worker dinonaktifkan"
+                  : !queueStats.workerEnabled
+                    ? "Worker antrean otomatis nonaktif"
+                    : !queueStats.configured
+                      ? "Kredensial worker otomatis belum siap"
                       : queueStats.stuckOver10m > 0
                         ? `${queueStats.stuckOver10m} antrean tertahan >10m`
                         : "Worker siap"}
@@ -590,10 +590,10 @@ export function MarketplaceOperationsTab() {
           </div>
           {queueStats && (queueStats.stuckOver10m > 0 || !queueStats.configured || !queueStats.workerEnabled) && (
             <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800">
-              {!queueStats.configured
-                ? "FONNTE_TOKEN belum tersedia pada runtime Customer Portal; notifikasi WhatsApp Marketplace tidak akan dikirim."
-                : !queueStats.workerEnabled
-                  ? "CUSTOMER_PORTAL_WA_WORKER_ENABLED sedang nonaktif."
+              {!queueStats.workerEnabled
+                ? "Worker WhatsApp otomatis tidak berjalan di DEV. Undangan vendor DEV memakai CST WA Gateway lewat jalur khusus; antrean lama tidak dikirim otomatis."
+                : !queueStats.configured
+                  ? "Kredensial worker WhatsApp otomatis belum tersedia, sehingga antrean ini tidak dikirim."
                   : `Ada ${queueStats.stuckOver10m} antrean WhatsApp aktif yang berumur lebih dari 10 menit. Periksa worker/runtime sebelum melanjutkan transaksi baru.`}
               {queueStats.oldestActionable ? ` Antrean aktif tertua: ${fmtDate(queueStats.oldestActionable)}.` : ""}
             </div>
