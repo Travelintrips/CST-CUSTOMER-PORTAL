@@ -319,6 +319,19 @@ export async function uploadMarketplacePod({ poId, shipmentId, file }) {
   return { path, fileName: safeFileName(file.name), mimeType, size };
 }
 
+/**
+ * Remove only a newly staged POD for the exact authorized PO/Shipment prefix.
+ * Used when DB persistence fails or a concurrent idempotent replay wins.
+ */
+export async function deleteMarketplacePod({ poId, shipmentId, path }) {
+  const prefix = `marketplace-pod/po-${Number(poId)}/shipment-${Number(shipmentId)}/`;
+  if (!path || typeof path !== "string" || !path.startsWith(prefix)) return;
+  const storage = client();
+  await ensurePrivateBucket(storage);
+  const { error } = await storage.supabase.storage.from(storage.bucket).remove([path]);
+  if (error) throw error;
+}
+
 export async function signedMarketplacePodUrl({ poId, shipmentId, path }) {
   const normalizedPath = String(path || "");
   const prefix = `marketplace-pod/po-${Number(poId)}/shipment-${Number(shipmentId)}/`;

@@ -1,5 +1,7 @@
 import { createHash } from "node:crypto";
 import { pool, query } from "./db.mjs";
+import { lockShipmentWithPoFirst } from "./marketplace-shipment-po-lock.mjs";
+import { persistPodWithCommitReconciliation } from "./marketplace-pod-commit-safety.mjs";
 import {
   bestEffortNotificationWrite,
   marketplaceNotificationDetails,
@@ -8,6 +10,7 @@ import {
 } from "./notification-service.mjs";
 import {
   uploadMarketplacePod,
+  deleteMarketplacePod,
   signedMarketplacePodUrl,
   uploadMarketplacePaymentProof,
   signedMarketplacePaymentProofUrl,
@@ -332,12 +335,15 @@ function ownerSql(alias = "r", start = 1) {
   )`;
 }
 
-async function withTransaction(work) {
+async function withTransaction(work, { beforeCommit } = {}) {
   const client = await pool.connect();
   const db = (sql, values) => client.query(sql, values);
   try {
     await client.query("begin read write");
     const result = await work(db);
+    // Signals uncertainty only if COMMIT is about to be sent. The caller
+    // must reconcile persistent references before deleting a staged object.
+    beforeCommit?.();
     await client.query("commit");
     return result;
   } catch (error) {
@@ -409,6 +415,18 @@ async function loadShipment(shipmentId, user, { client = query, forUpdate = fals
   );
   if (!result.rows[0]) fail(404, "Shipment tidak ditemukan.");
   return result.rows[0];
+}
+
+// Canonical finance Vendor Invoice locks PO -> GR -> Shipment.
+ // Shipment/receipt/POD writes also acquire PO before locking Shipment,
+ // including events that previously locked Shipment first and later updated PO.
+async function lockPoThenShipment(db, shipmentId, user, isAdmin) {
+  return lockShipmentWithPoFirst({
+    shipmentId,
+    readShipment: () => loadShipment(shipmentId, user, { client: db, isAdmin }),
+    lockPo: (poId) => loadPo(poId, user, { client: db, forUpdate: true, isAdmin }),
+    lockShipment: () => loadShipment(shipmentId, user, { client: db, forUpdate: true, isAdmin }),
+  });
 }
 
 function mapShipment(row) {
@@ -815,12 +833,11 @@ async function appendShipmentEvent({ shipmentId, body, request, user, isAdmin })
   if (!targetStatus) fail(400, "Tipe event shipment tidak valid.");
 
   return withTransaction(async (db) => {
-    const preflight = await loadShipment(shipmentId, user, { client: db, isAdmin });
+    const locked = await lockPoThenShipment(db, shipmentId, user, isAdmin);
     if (["departed", "handed_over"].includes(eventType)) {
-      const po = await loadPo(preflight.po_id, user, { client: db, forUpdate: true, isAdmin });
-      await assertHandoverPaymentSatisfied(po, db);
+      await assertHandoverPaymentSatisfied(locked.po, db);
     }
-    let shipment = await loadShipment(shipmentId, user, { client: db, forUpdate: true, isAdmin });
+    let shipment = locked.shipment;
     const existing = (await db(
       `select * from public.mkt_po_shipment_events where shipment_id=$1 and idempotency_key=$2 limit 1`,
       [shipment.id, key],
@@ -924,69 +941,122 @@ async function submitPod({ shipmentId, body, request, user, isAdmin }) {
   const key = idempotencyKey(request, body);
   if (!key) fail(400, "Idempotency-Key wajib diisi untuk POD.");
   const file = body?.file;
+
+  // Authenticate and check the target shipment without holding DB row locks
+  // while an external object-storage upload is running.
+  const preflight = await loadShipment(shipmentId, user, { isAdmin });
+  const existingBeforeUpload = (await query(
+    `select * from public.mkt_po_shipment_events
+       where shipment_id=$1 and event_type='pod_submitted' and idempotency_key=$2
+       limit 1`,
+    [preflight.id, key],
+  )).rows[0];
+  if (existingBeforeUpload) {
+    return { alreadyProcessed: true, pod: mapPod(existingBeforeUpload) };
+  }
+  if (!["arrived", "delivered", "partially_delivered"].includes(preflight.shipment_status)) {
+    fail(409, "POD hanya dapat disubmit setelah shipment tiba.");
+  }
+
+  // Stage only after the signed/authorized preflight; re-authorize inside the
+  // transaction after acquiring PO -> Shipment locks before persisting the POD.
+  let uploaded = null;
   let url = text(body.photoUrl ?? body.podUrl ?? body.url);
-  return withTransaction(async (db) => {
-    const shipment = await loadShipment(shipmentId, user, { client: db, forUpdate: true, isAdmin });
-    if (file && typeof file.arrayBuffer === "function") {
-      const uploaded = await uploadMarketplacePod({ poId: shipment.po_id, shipmentId: shipment.id, file });
-      url = uploaded.path;
+  if (file && typeof file.arrayBuffer === "function") {
+    uploaded = await uploadMarketplacePod({ poId: preflight.po_id, shipmentId: preflight.id, file });
+    url = uploaded.path;
+  }
+  if (!url) fail(400, "POD wajib berupa file JPG/PNG/PDF atau URL/object path yang valid.");
+
+  const discardUnusedUpload = async () => {
+    if (!uploaded?.path) return;
+    try {
+      await deleteMarketplacePod({ poId: preflight.po_id, shipmentId: preflight.id, path: uploaded.path });
+    } catch {
+      // Do not hide the original DB failure or completed idempotent replay.
+      // Only the nonsecret IDs are logged for storage cleanup investigation.
+      console.warn("[marketplace] unused POD cleanup failed", {
+        poId: Number(preflight.po_id), shipmentId: Number(preflight.id),
+      });
     }
-    if (!url) {
-      fail(400, "POD wajib berupa file JPG/PNG/PDF atau URL/object path yang valid.");
-    }
-    const existing = (await db(
-      `select * from public.mkt_po_shipment_events
-        where shipment_id=$1 and event_type='pod_submitted' and idempotency_key=$2
-        limit 1`,
-      [shipment.id, key],
-    )).rows[0];
-    if (existing) return { alreadyProcessed: true, pod: mapPod(existing) };
-    if (!["arrived", "delivered", "partially_delivered"].includes(shipment.shipment_status)) {
-      fail(409, "POD hanya dapat disubmit setelah shipment tiba.");
-    }
-    const sequence = Number((await db(
-      `select coalesce(max(event_sequence),0)+1 as next
-         from public.mkt_po_shipment_events where shipment_id=$1`,
-      [shipment.id],
-    )).rows[0].next);
-    const inserted = await db(
-      `insert into public.mkt_po_shipment_events
-         (shipment_id,event_sequence,event_type,note,attachment_object_path,
-          actor_type,actor_id,idempotency_key)
-       values ($1,$2,'pod_submitted',$3,$4,$5,$6,$7)
-       returning *`,
-      [
-        shipment.id,
-        sequence,
-        text(body.note ?? body.remarks),
-        url,
-        isAdmin ? "admin" : "customer",
-        String(user?.id ?? "system"),
-        key,
-      ],
-    );
-    await writeActivity(db, {
-      poId: shipment.po_id,
-      user: actor(user, isAdmin ? "admin" : "customer"),
-      action: "shipment_pod_submitted",
-      newValue: { shipmentId: Number(shipment.id), url },
-      description: "POD shipment disubmit.",
-      key: `shipment-pod:${shipment.id}:${key}`,
-    });
-    await queueNotification(db, {
-      eventType: "shipment_pod_submitted",
-      po: { ...shipment, id: shipment.po_id },
-      payload: { shipmentId: Number(shipment.id) },
-      key: `shipment-pod:${shipment.id}:${key}`,
-    });
-    await notifyMarketplaceEvent(db, {
-      eventType: "shipment_pod_submitted",
-      po: { ...shipment, id: shipment.po_id },
-      payload: { shipmentId: Number(shipment.id) },
-      key: `shipment-pod:${shipment.id}:${key}`,
-    });
-    await maybeCompletePo(db, shipment.po_id, user, isAdmin);
-    return { alreadyProcessed: false, pod: mapPod(inserted.rows[0]) };
+  };
+
+  // Only delete the staged private object when a pre-commit failure is known,
+  // or a different committed object won the unique idempotency key. Lost
+  // COMMIT acknowledgements must not leave persisted POD rows pointing to
+  // deleted attachments.
+  return persistPodWithCommitReconciliation({
+    path: uploaded?.path ?? null,
+    discard: discardUnusedUpload,
+    readStoredReference: async () => (await query(
+      `select attachment_object_path
+         from public.mkt_po_shipment_events
+        where shipment_id=$1 and event_type='pod_submitted'
+          and idempotency_key=$2 limit 1`,
+      [preflight.id, key],
+    )).rows[0] ?? null,
+    reportUncertain: (reason) => console.warn("[marketplace] POD staging requires reconciliation", {
+      reason, poId: Number(preflight.po_id), shipmentId: Number(preflight.id),
+    }),
+    persist: (beforeCommit) => withTransaction(async (db) => {
+      const { shipment } = await lockPoThenShipment(db, shipmentId, user, isAdmin);
+      if (Number(shipment.po_id) !== Number(preflight.po_id)) {
+        fail(409, "Relasi Shipment/PO berubah selama upload POD. Muat ulang lalu coba lagi.");
+      }
+      const existing = (await db(
+        `select * from public.mkt_po_shipment_events
+          where shipment_id=$1 and event_type='pod_submitted' and idempotency_key=$2
+          limit 1`,
+        [shipment.id, key],
+      )).rows[0];
+      if (existing) return { alreadyProcessed: true, pod: mapPod(existing) };
+      if (!["arrived", "delivered", "partially_delivered"].includes(shipment.shipment_status)) {
+        fail(409, "POD hanya dapat disubmit setelah shipment tiba.");
+      }
+      const sequence = Number((await db(
+        `select coalesce(max(event_sequence),0)+1 as next
+           from public.mkt_po_shipment_events where shipment_id=$1`,
+        [shipment.id],
+      )).rows[0].next);
+      const inserted = await db(
+        `insert into public.mkt_po_shipment_events
+           (shipment_id,event_sequence,event_type,note,attachment_object_path,
+            actor_type,actor_id,idempotency_key)
+         values ($1,$2,'pod_submitted',$3,$4,$5,$6,$7)
+         returning *`,
+        [
+          shipment.id,
+          sequence,
+          text(body.note ?? body.remarks),
+          url,
+          isAdmin ? "admin" : "customer",
+          String(user?.id ?? "system"),
+          key,
+        ],
+      );
+      await writeActivity(db, {
+        poId: shipment.po_id,
+        user: actor(user, isAdmin ? "admin" : "customer"),
+        action: "shipment_pod_submitted",
+        newValue: { shipmentId: Number(shipment.id), url },
+        description: "POD shipment disubmit.",
+        key: `shipment-pod:${shipment.id}:${key}`,
+      });
+      await queueNotification(db, {
+        eventType: "shipment_pod_submitted",
+        po: { ...shipment, id: shipment.po_id },
+        payload: { shipmentId: Number(shipment.id) },
+        key: `shipment-pod:${shipment.id}:${key}`,
+      });
+      await notifyMarketplaceEvent(db, {
+        eventType: "shipment_pod_submitted",
+        po: { ...shipment, id: shipment.po_id },
+        payload: { shipmentId: Number(shipment.id) },
+        key: `shipment-pod:${shipment.id}:${key}`,
+      });
+      await maybeCompletePo(db, shipment.po_id, user, isAdmin);
+      return { alreadyProcessed: false, pod: mapPod(inserted.rows[0]) };
+    }, { beforeCommit }),
   });
 }
 
@@ -1125,7 +1195,7 @@ async function createGoodsReceipt({ shipmentId, body, request, user, isAdmin }) 
   if (!items.length) fail(400, "Goods receipt harus memiliki item.");
 
   return withTransaction(async (db) => {
-    const shipment = await loadShipment(shipmentId, user, { client: db, forUpdate: true, isAdmin });
+    const { shipment } = await lockPoThenShipment(db, shipmentId, user, isAdmin);
     const existing = (await db(
       `select * from public.mkt_po_goods_receipts where shipment_id=$1 and idempotency_key=$2 limit 1`,
       [shipment.id, key],
