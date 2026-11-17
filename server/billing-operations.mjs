@@ -49,7 +49,10 @@ async function withTransaction(work) {
   const client = await pool.connect();
   try {
     await client.query("begin");
-    const result = await work((sql, values) => client.query(sql, values));
+    // The owner receives the same in-process PostgreSQL client. This is
+    // not an HTTP call or a separate pool connection, so commit/rollback
+    // of Sales Invoice, journal and AR remains one transaction boundary.
+    const result = await work((sql, values) => client.query(sql, values), client);
     await client.query("commit");
     return result;
   } catch (error) {
@@ -470,7 +473,7 @@ async function requirePostedCustomerArEvidence(db, invoice) {
 // server code, never taken from the HTTP request, and must use the exact same
 // query transaction for all posting statements (no independent connection,
 // background task, outbox, or uncommitted success response).
-async function requireAtomicSalesInvoicePosting(db, invoice, user, postWithClient) {
+async function requireAtomicSalesInvoicePosting(db, invoice, user, postWithClient, transactionClient) {
   if (process.env.CUSTOMER_PORTAL_ATOMIC_ACCOUNTING_POST_DEV !== "true") return;
   if (process.env.APP_ENV?.trim().toLowerCase() !== "development" ||
       process.env.CUSTOMER_PORTAL_REQUIRE_POSTED_AR_EVIDENCE_DEV !== "true") {
@@ -484,13 +487,15 @@ async function requireAtomicSalesInvoicePosting(db, invoice, user, postWithClien
       !invoice?.invoice_number?.trim() || !invoice?.invoice_date || !invoice?.due_date) {
     fail(422, "Identitas Invoice atau perusahaan untuk posting tidak valid.");
   }
-  if (typeof postWithClient !== "function") {
+  if (typeof postWithClient !== "function" ||
+      !transactionClient || typeof transactionClient.query !== "function") {
     fail(503, "Pemilik posting jurnal Accounting DEV belum tersambung.");
   }
   // Reuse one legitimate company-scoped posting owner; never implement
   // journal INSERT/UPDATE SQL here. It must post inside this db transaction.
   const receipt = await postWithClient({
     query: db,
+    transactionClient,
     companyId,
     source: "sales_invoice",
     sourceId,
@@ -568,7 +573,7 @@ export async function handleAdminInvoices({ request, response, user, sendJson, s
     sendError(response, 400, "Action invoice tidak didukung.");
     return;
   }
-  const result = await withTransaction(async (db) => {
+  const result = await withTransaction(async (db, transactionClient) => {
     const row = await loadInvoice(invoiceId, user, { db, admin: true, forUpdate: true });
     if (row.invoice_status === "invoiced") {
       await requirePostedCustomerArEvidence(db, row);
@@ -593,7 +598,7 @@ export async function handleAdminInvoices({ request, response, user, sendJson, s
     // against persisted source/lines/GL and the existing AR evidence view.
     // All of this occurs BEFORE COMMIT/audit/notifications.
     await requireAtomicSalesInvoicePosting(
-      db, updated.rows[0], user, postSalesInvoiceWithClient,
+      db, updated.rows[0], user, postSalesInvoiceWithClient, transactionClient,
     );
     // Gate before COMMIT, audit or any outward notification. If the source
     // journal does not qualify, withTransaction rolls back the status/date
