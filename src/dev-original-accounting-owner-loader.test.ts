@@ -4,6 +4,7 @@ import {
   DEV_ACCOUNTING_OWNER_HASHES,
   DEV_ACCOUNTING_OWNER_SHA256,
   originalOwnerGateEnabled,
+  isExpectedDevDatabaseUrl,
   isReviewedOriginalOwnerBundle,
   loadDevOriginalAccountingOwner,
 } from "../server/dev-original-accounting-owner-loader.mjs";
@@ -44,6 +45,13 @@ describe("DEV Customer Invoice original owner release loader", () => {
     }
     expect(isReviewedOriginalOwnerBundle(Buffer.from("fake owner"))).toBe(false);
     expect(isReviewedOriginalOwnerBundle(Buffer.alloc(0))).toBe(false);
+  });
+  it("accepts only the expected DEV Supabase host or pooler role, not PROD or generic URLs", () => {
+    expect(isExpectedDevDatabaseUrl("postgresql://postgres@db.xssrfshdrtdfupgqwfdw.supabase.co/postgres")).toBe(true);
+    expect(isExpectedDevDatabaseUrl("postgresql://postgres.xssrfshdrtdfupgqwfdw@pooler.supabase.com/postgres")).toBe(true);
+    expect(isExpectedDevDatabaseUrl("postgresql://postgres@db.nzdweipzckfszczzqtuw.supabase.co/postgres")).toBe(false);
+    expect(isExpectedDevDatabaseUrl("postgresql://postgres@127.0.0.1/postgres")).toBe(false);
+    expect(isExpectedDevDatabaseUrl("not-a-url")).toBe(false);
   });
   it("returns no callback when the approved flags are off", async () => {
     process.env.APP_ENV="development";

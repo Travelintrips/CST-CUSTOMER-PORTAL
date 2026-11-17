@@ -39,12 +39,29 @@ export function isReviewedOriginalOwnerBundle(bytes, expectedHash = DEV_ACCOUNTI
   return createHash("sha256").update(bytes).digest("hex") === expectedHash;
 }
 
+// DEV must never silently use a PROD Supabase project through an incorrect
+// value in the explicitly named DEV environment variable. Pooler usernames
+// contain the project ref; direct database hosts contain the same ref.
+export function isExpectedDevDatabaseUrl(raw = process.env.SUPABASE_DATABASE_URL_DEV) {
+  if (typeof raw !== "string" || !raw.trim()) return false;
+  try {
+    const url = new URL(raw);
+    if (!["postgres:", "postgresql:"].includes(url.protocol)) return false;
+    const ref = "xssrfshdrtdfupgqwfdw";
+    return url.hostname.includes(ref)
+      || decodeURIComponent(url.username).includes(ref);
+  } catch {
+    return false;
+  }
+}
+
 export async function loadDevOriginalAccountingOwner() {
   if (!originalOwnerGateEnabled()) return null;
   // db.mjs can fall back to a PROD connection in DEV when its named DEV URL
   // is absent. Refuse all implicit or generic database sources.
   if (databaseEnvironment !== "development"
       || databaseConnectionSource !== "SUPABASE_DATABASE_URL_DEV") return null;
+  if (!isExpectedDevDatabaseUrl()) return null;
   try {
     for (const [name, expectedHash] of Object.entries(DEV_ACCOUNTING_OWNER_HASHES)) {
       const intended = path.join(DEV_ACCOUNTING_OWNER_DIR, name);
