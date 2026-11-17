@@ -229,6 +229,9 @@ describe("DEV-only atomic Accounting owner integration seam",()=>{
       invoice:expect.objectContaining({invoice_number:"INV-SO-QA-101"}),
     });
     expect(typeof receipt.query).toBe("function");
+    expect(receipt.transactionClient).toBeDefined();
+    expect(receipt.transactionClient.query).toBe(m.query);
+    expect(receipt.transactionClient.release).toBe(m.release);
     const journalCheck=sqlIndex("from public.accounting_entries e");
     expect(journalCheck).toBeGreaterThan(sqlIndex("update public.sales_documents"));
     expect(journalCheck).toBeLessThan(sqlIndex("from public.bizportal_customer_ar_source_evidence_dev"));
