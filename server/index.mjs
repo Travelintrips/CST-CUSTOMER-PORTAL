@@ -52,6 +52,7 @@ import {
   handleCustomerInvoices,
   handleCustomerPayments,
 } from "./billing-operations.mjs";
+import { loadTrustedDevAccountingOwner } from "./dev-accounting-owner-runtime.mjs";
 import { handleFreightRoute } from "./freight-operations.mjs";
 import { handleGoogleMapsRoute } from "./google-maps-service.mjs";
 import {
@@ -4742,6 +4743,19 @@ async function route(request, response) {
     const user = await requireAdmin(request, response);
     if (user) {
       request.body = await readJson(request);
+      // The HTTP request cannot select the Accounting writer: only the
+      // server-side SHA-256-pinned owner is accepted after requireAdmin().
+      let postSalesInvoiceWithClient = null;
+      if (request.body?.action === "mark_invoiced") {
+        try {
+          postSalesInvoiceWithClient = await loadTrustedDevAccountingOwner();
+        } catch {
+          // Fail before entering the Invoice transaction if the trusted
+          // runtime package is missing, unpinned or otherwise invalid.
+          sendError(response, 503, "Paket Accounting DEV belum siap atau tidak terverifikasi.");
+          return;
+        }
+      }
       await handleAdminInvoices({
         request,
         response,
@@ -4749,6 +4763,7 @@ async function route(request, response) {
         sendJson,
         sendError,
         invoiceId: Number(adminInvoiceActionMatch[1]),
+        postSalesInvoiceWithClient,
       });
     }
     return;
