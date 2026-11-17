@@ -56,6 +56,7 @@ async function sqlMock(statement){
   const q=String(statement).toLowerCase().trim();
   m.sql.push(q);
   if(q==="begin"||q==="commit"||q==="rollback")return {rows:[]};
+  if(q.includes("from public.portal_company_members"))return {rows:[{company_id:1},{company_id:3}]};
   if(q.includes("from public.sales_documents"))return {rows:[base()]};
   if(q.startsWith("update public.sales_documents"))return {rows:[issued()]};
   if(q.includes("from public.accounting_entries e")){
@@ -198,6 +199,18 @@ describe("DEV-only atomic Accounting owner integration seam",()=>{
     expect(m.sql).toContain("rollback");
     expect(m.sql).not.toContain("commit");
     expect(sqlIndex("from public.accounting_entries e")).toBe(-1);
+    noOutbound();
+  });
+  it("refuses Admin invoice posting without assignment to source company",async()=>{
+    m.companyId=3;
+    m.query.mockImplementation(async (sql,params)=>{
+      if(String(sql).includes("from public.portal_company_members")) return {rows:[{company_id:1}]};
+      return sqlMock(sql,params);
+    });
+    await expect(perform(m.poster)).rejects.toMatchObject({statusCode:403});
+    expect(m.poster).not.toHaveBeenCalled();
+    expect(m.sql).toContain("rollback");
+    expect(m.sql).not.toContain("commit");
     noOutbound();
   });
   it("requires the existing posted-AR proof flag before invoking Accounting",async()=>{
