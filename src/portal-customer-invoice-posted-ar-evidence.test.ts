@@ -23,6 +23,7 @@ const m=vi.hoisted(()=>({
   failOutbox:false,
   failAudit:false,
   deferredConstraintFail:false,
+  arProjection:null,
 }));
 vi.mock("../server/db.mjs",()=>({
   pool:{connect:m.connect},
@@ -66,6 +67,7 @@ async function sqlMock(statement,params=[]){
     if(m.deferredConstraintFail)throw Error("QA_DEFERRED_AR_CONSTRAINT_VIOLATION");
     return {rows:[]};
   }
+  if(q.includes("from public.ar_subledger a"))return {rows:m.arProjection?[m.arProjection]:[]};
   if(q.includes("from public.sales_documents"))return {rows:[base()]};
   if(q.startsWith("update public.sales_documents"))return {rows:[issued()]};
   if(q.includes("from public.users"))return {rows:m.bizOwner};
@@ -124,6 +126,7 @@ beforeEach(()=>{
   m.failOutbox=false;
   m.failAudit=false;
   m.deferredConstraintFail=false;
+  m.arProjection={gl_entry_id:22,gross_amount:"100.00",paid_amount:"0",outstanding_amount:"100.00"};
   m.bizOwner=[{
     id:"qa-existing-bizportal-owner",role:"super_admin",
     system_role:"super_admin",status:"active",is_active:true,company_id:null,
@@ -226,6 +229,29 @@ describe("DEV-only atomic Accounting owner integration seam",()=>{
     m.glRow=validGl();
     m.proof=[101];
   });
+  it("requires real materialized AR matching the posted company journal before COMMIT",async()=>{
+    m.arProjection=null;
+    await expect(perform(m.poster)).rejects.toMatchObject({statusCode:422});
+    expect(sqlIndex("from public.ar_subledger a")).toBeGreaterThan(sqlIndex("set constraints customer_ar_journal_source_dev"));
+    expect(m.sql).toContain("rollback");
+    expect(m.sql).not.toContain("commit");
+    expect(m.sendJson).not.toHaveBeenCalled();
+  });
+  it("rejects materialized AR with mismatched amounts before COMMIT",async()=>{
+    m.arProjection={gl_entry_id:22,gross_amount:"99.00",paid_amount:"0",outstanding_amount:"99.00"};
+    await expect(perform(m.poster)).rejects.toMatchObject({statusCode:422});
+    expect(m.sql).toContain("rollback");
+    expect(m.sql).not.toContain("commit");
+  });
+  it("never flushes accounting constraints during legacy payment transactions",async()=>{
+    // This branch ensures the transaction helper itself is not globally gated;
+    // the actual payment HTTP regression is covered by the full Portal CI.
+    delete process.env[bridge];
+    await perform();
+    expect(sqlIndex("set constraints customer_ar_journal_source_dev")).toBe(-1);
+    expect(sqlIndex("from public.ar_subledger a")).toBe(-1);
+    expect(m.sql).toContain("commit");
+  });
   it("forces original deferred AR constraint triggers before COMMIT under atomic DEV flags",async()=>{
     await perform(m.poster);
     const constraint=sqlIndex("set constraints customer_ar_journal_source_dev");
@@ -233,6 +259,8 @@ describe("DEV-only atomic Accounting owner integration seam",()=>{
     expect(constraint).toBeGreaterThan(sqlIndex("into public.activity_logs"));
     expect(constraint).toBeGreaterThan(sqlIndex("from public.bizportal_customer_ar_source_evidence_dev"));
     expect(constraint).toBeLessThan(m.sql.indexOf("commit"));
+    expect(sqlIndex("from public.ar_subledger a")).toBeGreaterThan(constraint);
+    expect(sqlIndex("from public.ar_subledger a")).toBeLessThan(m.sql.indexOf("commit"));
     expect(m.sql).toContain("commit");
   });
   it("rolls back the entire Invoice if original deferred AR constraint fails",async()=>{
