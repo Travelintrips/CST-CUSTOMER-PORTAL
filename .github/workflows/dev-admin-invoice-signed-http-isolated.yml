@@ -1,0 +1,39 @@
+name: DEV Customer Invoice — signed Admin HTTP isolated contract
+
+on:
+  pull_request:
+    branches:
+      - test/dev-explicit-company-tax-owner-bundle-pin-20261118
+    paths:
+      - 'src/dev-admin-invoice-signed-http-isolated.test.ts'
+      - '.github/workflows/dev-admin-invoice-signed-http-isolated.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  signed-admin-invoice-http:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.33.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: pnpm
+      - name: Install locked dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Real signed session and invoice handler HTTP contract, synthetic only
+        env:
+          APP_ENV: development
+          NODE_ENV: test
+          SUPABASE_DATABASE_URL_DEV: postgresql://ci:ci@127.0.0.1:5432/ci
+        run: pnpm exec vitest run src/dev-admin-invoice-signed-http-isolated.test.ts src/dev-original-accounting-owner-loader.test.ts src/portal-customer-invoice-posted-ar-evidence.test.ts
+      - name: TypeScript and server syntax
+        run: |
+          pnpm run typecheck
+          pnpm run verify:server-syntax
