@@ -3,7 +3,7 @@ name: DEV Customer Invoice — atomic PPN original-owner release pin
 on:
   pull_request:
     branches:
-      - test/dev-customer-invoice-original-owner-loader-20261118
+      - test/dev-atomic-ppn-accounting-owner-pin-20261118
     paths:
       - 'server/dev-original-accounting-owner-loader.mjs'
       - 'src/dev-original-accounting-owner-loader.test.ts'
@@ -32,7 +32,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          grep -Fq '7f6568dd838b18698078ed87d4a2c64bc8014ff73f278df405d62fa35628d367' server/dev-original-accounting-owner-loader.mjs
+          grep -Fq '2299c63f802e964dd031f1b5f40005fe9ec6d14eff71761f56b0b4f43bbfeff3' server/dev-original-accounting-owner-loader.mjs
           grep -Fq 'CUSTOMER_PORTAL_ATOMIC_ACCOUNTING_POST_DEV === "true"' server/dev-original-accounting-owner-loader.mjs
           grep -Fq 'CUSTOMER_PORTAL_REQUIRE_POSTED_AR_EVIDENCE_DEV === "true"' server/dev-original-accounting-owner-loader.mjs
           grep -Fq '/opt/cst-customer-invoice-owner-bundle-dev' server/dev-original-accounting-owner-loader.mjs
