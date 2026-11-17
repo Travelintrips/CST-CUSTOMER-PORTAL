@@ -488,7 +488,9 @@ async function requireAtomicSalesInvoicePosting(db, invoice, user, postWithClien
       !invoice?.invoice_number?.trim() || !invoice?.invoice_date || !invoice?.due_date) {
     fail(422, "Identitas Invoice atau perusahaan untuk posting tidak valid.");
   }
-  const trustedPostingOwner = postWithClient ?? await loadDevOriginalAccountingOwner();
+  const trustedPostingOwner = typeof postWithClient !== "function"
+    ? await loadDevOriginalAccountingOwner()
+    : postWithClient;
   if (typeof trustedPostingOwner !== "function" ||
       !transactionClient || typeof transactionClient.query !== "function") {
     fail(503, "Pemilik posting jurnal Accounting DEV belum tersambung.");
