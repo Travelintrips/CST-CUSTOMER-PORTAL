@@ -1,0 +1,57 @@
+name: Customer Portal DEV — posted AR evidence issuance guard
+
+on:
+  pull_request:
+    branches:
+      - dev-vps-srv1792369
+    paths:
+      - 'server/billing-operations.mjs'
+      - 'src/portal-customer-invoice-posted-ar-evidence.test.ts'
+      - '.github/workflows/dev-customer-invoice-posted-ar-proof.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  fail-closed-customer-invoice-issuance:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.33.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: pnpm
+      - name: Exact release dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Require explicit DEV-only default-OFF posted AR source proof
+        shell: bash
+        run: |
+          set -euo pipefail
+          f=server/billing-operations.mjs
+          grep -Fq 'process.env.CUSTOMER_PORTAL_REQUIRE_POSTED_AR_EVIDENCE_DEV !== "true"' "$f"
+          grep -Fq 'process.env.APP_ENV?.trim().toLowerCase() !== "development"' "$f"
+          grep -Fq 'from public.bizportal_customer_ar_source_evidence_dev' "$f"
+          grep -Fq 'await requirePostedCustomerArEvidence(db, updated.rows[0]);' "$f"
+          ! grep -Eq 'postSalesInvoice\(|INSERT INTO public.accounting_entries|insert into public.accounting_entries' "$f"
+          echo POSTED_CUSTOMER_AR_DEV_FAIL_CLOSED_GUARD_PASS
+      - name: Real invoice handler in isolated mocked transaction — no database or notifications
+        env:
+          APP_ENV: development
+          NODE_ENV: test
+        run: pnpm exec vitest run src/portal-customer-invoice-posted-ar-evidence.test.ts
+      - name: Entire source test suite with bounded workers
+        env:
+          APP_ENV: development
+          NODE_ENV: test
+        run: pnpm exec vitest run --maxWorkers=2
+      - name: Typecheck and server syntax
+        run: |
+          pnpm run typecheck
+          pnpm run verify:server-syntax
+      - name: No tracked-source edits
+        run: git diff --exit-code -- server/billing-operations.mjs src pnpm-lock.yaml
