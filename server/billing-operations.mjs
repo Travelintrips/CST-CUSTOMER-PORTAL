@@ -593,20 +593,33 @@ export async function handleAdminInvoices({ request, response, user, sendJson, s
       // reviewed_by/reviewed_at proof; financial posting requires that proof,
       // not merely a self-selected member row. The reviewer must still be an
       // active Portal Admin and cannot be the invoice-issuing Admin.
+      // Lock the very same authorization evidence until COMMIT. A plain
+      // SELECT could verify an approval and then race a concurrent revocation,
+      // allowing a journal to post after the Admin loses company authority.
+      // Lock member, approval, reviewer and issuer; no separate pool/client.
       const authorization = await db(
         `select 1 as approved
            from public.portal_company_requests approval
+           join public.portal_company_members member
+             on member.portal_customer_id=approval.portal_customer_id
+            and member.company_id=approval.matched_company_id
+            and member.is_active=true
            join public.portal_customers reviewer
              on reviewer.id=approval.reviewed_by
             and reviewer.role='admin'
             and (reviewer.account_status='active' or reviewer.account_status is null)
+           join public.portal_customers issuer
+             on issuer.id=approval.portal_customer_id
+            and issuer.role='admin'
+            and (issuer.account_status='active' or issuer.account_status is null)
           where approval.portal_customer_id=$1
             and approval.matched_company_id=$2
             and approval.status='approved'
             and approval.reviewed_by is not null
             and approval.reviewed_by<>$1
             and approval.reviewed_at is not null
-          limit 1`,
+          limit 1
+          for share of member, approval, reviewer, issuer`,
         [user.id, companyId],
       );
       if (authorization.rows.length !== 1) {
