@@ -48,6 +48,14 @@ jobs:
         env:
           APP_ENV: development
           NODE_ENV: test
+          # Existing release-contract test-only values. No live database or
+          # external mail/WhatsApp connections may be used in this suite.
+          SESSION_SECRET: customer-portal-release-contract-secret-32
+          SUPABASE_DATABASE_URL_DEV: postgresql://ci:ci@127.0.0.1:5432/ci
+          SMTP_FROM: test@example.com
+          SMTP_USER: test@example.com
+          SMTP_PASS: test-smtp-secret
+          CUSTOMER_PORTAL_FONNTE_TOKEN: test-fonnte-token
         run: pnpm exec vitest run --maxWorkers=2
       - name: Typecheck and server syntax
         run: |
