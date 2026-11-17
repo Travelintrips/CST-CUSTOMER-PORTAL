@@ -1,5 +1,6 @@
-import { pool, query } from "./db.mjs";
+import { pool, query, databaseEnvironment, databaseConnectionSource } from "./db.mjs";
 import { buildDevVendorQuoteShare } from "./vendor-quote-share.mjs";
+import { getDevVendorWhatsAppReadiness, sendOneDevVendorWhatsAppInvite } from "./dev-vendor-wa-invite.mjs";
 import {
   deleteDocumentObject,
   documentType,
@@ -2390,8 +2391,51 @@ async function handleServiceOperations(ctx) {
   const { request, response, url } = ctx;
   const vendorRoutingMatch = url.pathname.match(/^\/api\/portal\/admin\/service-operations\/marketplace\/(\d+)\/vendor-routing$/);
   const vendorShareMatch = url.pathname.match(/^\/api\/portal\/admin\/service-operations\/marketplace\/(\d+)\/vendor-routing\/invite-link$/);
+  const vendorWaReadinessMatch = url.pathname.match(/^\/api\/portal\/admin\/service-operations\/marketplace\/(\d+)\/vendor-routing\/whatsapp-readiness$/);
+  const vendorWaSendMatch = url.pathname.match(/^\/api\/portal\/admin\/service-operations\/marketplace\/(\d+)\/vendor-routing\/send-whatsapp$/);
+  if ((request.method === "GET" && vendorWaReadinessMatch)
+    || (request.method === "POST" && vendorWaSendMatch)) {
+    if (process.env.APP_ENV !== "development" || process.env.NODE_ENV === "production"
+      || databaseEnvironment !== "development" || databaseConnectionSource !== "SUPABASE_DATABASE_URL_DEV") {
+      return adminError(ctx, 404, "Kirim WA vendor hanya tersedia di DEV.");
+    }
+    const rfqId = Number((vendorWaReadinessMatch ?? vendorWaSendMatch)[1]);
+    const quoteId = Number(request.method === "GET" ? url.searchParams.get("quoteId") : ctx.body?.quoteId);
+    if (!Number.isSafeInteger(quoteId) || quoteId <= 0) {
+      return adminError(ctx, 400, "Quote ID tidak valid.");
+    }
+    try {
+      if (request.method === "GET") {
+        const queueRows = await query(
+          "select id from public.mkt_notification_queue where rfq_id=$1 and vendor_quote_id=$2 and event_type='rfq_vendor_invited' and channel='whatsapp' order by id limit 2",
+          [rfqId, quoteId],
+        );
+        if (queueRows.rows.length !== 1) {
+          return adminError(ctx, 409, "Antrean undangan vendor tidak unik atau belum tersedia.");
+        }
+        const readiness = await getDevVendorWhatsAppReadiness({
+          queueId: Number(queueRows.rows[0].id), rfqId, quoteId,
+        });
+        ctx.sendJson(response, 200, { data: readiness });
+      } else {
+        const result = await sendOneDevVendorWhatsAppInvite({
+          queueId: ctx.body?.queueId, rfqId, quoteId,
+          recipientLast4: ctx.body?.recipientLast4,
+          confirmedRecipient: ctx.body?.confirmedRecipient === true,
+        });
+        ctx.sendJson(response, 200, { data: result });
+      }
+    } catch (problem) {
+      if (Number.isInteger(problem?.statusCode)) {
+        return adminError(ctx, problem.statusCode, problem.message);
+      }
+      throw problem;
+    }
+    return;
+  }
   if (request.method === "GET" && vendorShareMatch) {
-    if (process.env.APP_ENV !== "development") {
+    if (process.env.APP_ENV !== "development" || process.env.NODE_ENV === "production"
+      || databaseEnvironment !== "development" || databaseConnectionSource !== "SUPABASE_DATABASE_URL_DEV") {
       return adminError(ctx, 404, "Tautan undangan vendor hanya tersedia di DEV.");
     }
     const rfqId = Number(vendorShareMatch[1]);
@@ -2433,7 +2477,11 @@ async function handleServiceOperations(ctx) {
   if (request.method === "GET" && vendorRoutingMatch) {
     const routing = await loadMarketplaceVendorRouting(Number(vendorRoutingMatch[1]));
     if (!routing) return adminError(ctx, 404, "RFQ canonical tidak ditemukan.");
-    ctx.sendJson(response, 200, { data: routing });
+    const vendorShareSupported = process.env.APP_ENV === "development"
+      && process.env.NODE_ENV !== "production"
+      && databaseEnvironment === "development"
+      && databaseConnectionSource === "SUPABASE_DATABASE_URL_DEV";
+    ctx.sendJson(response, 200, { data: { ...routing, vendorShareSupported } });
     return;
   }
   if (request.method === "GET" && detailMatch) {
