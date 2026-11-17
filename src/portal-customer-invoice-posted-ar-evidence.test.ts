@@ -218,6 +218,13 @@ describe("DEV-only atomic Accounting owner integration seam",()=>{
     expect(m.sql).toContain("rollback");
     noOutbound();
   });
+  it("returns a controlled HTTP 422 on unsupported atomic PPN, with rollback and no outbound",async()=>{
+    m.poster.mockRejectedValueOnce(Error("DEV_SALES_POSTING_TAX_NOT_READY"));
+    await expect(perform(m.poster)).rejects.toMatchObject({statusCode:422});
+    expect(m.sql).toContain("rollback");
+    expect(m.sql).not.toContain("commit");
+    noOutbound();
+  });
   it.each([1,3])("accepts only a posted balanced company %i journal in the current transaction",async companyId=>{
     m.companyId=companyId;
     m.glRow=validGl();
