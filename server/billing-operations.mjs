@@ -431,6 +431,40 @@ export async function handleCustomerInvoices({ request, response, user, sendJson
   }
 }
 
+// Reuse the existing CST-DEV AR issuer's exact posted-journal evidence view.
+// This is not an accounting writer: it checks the source inside the same
+// transaction and refuses to commit an unproven newly issued invoice.
+// The opt-in is OFF by default and cannot be used outside development.
+async function requirePostedCustomerArEvidence(db, invoice) {
+  if (process.env.CUSTOMER_PORTAL_REQUIRE_POSTED_AR_EVIDENCE_DEV !== "true") return;
+  if (process.env.APP_ENV?.trim().toLowerCase() !== "development") {
+    fail(503, "Verifikasi jurnal Invoice hanya tersedia pada DEV.");
+  }
+  const companyId = Number(invoice?.company_id);
+  if (![1, 3].includes(companyId) ||
+      !Number.isSafeInteger(Number(invoice?.id)) ||
+      !invoice?.invoice_number?.trim() ||
+      !invoice?.invoice_date ||
+      !invoice?.due_date) {
+    fail(422, "Invoice belum memiliki identitas perusahaan, nomor, dan tanggal yang valid.");
+  }
+  // The SECURITY INVOKER/BARRIER view already proves exact company,
+  // unique invoice number, posted balanced sales journal and receivable,
+  // source identity, non-reversed source, and payment bounds.
+  // Do not duplicate its accounting logic in Customer Portal.
+  const evidence = await db(
+    `select invoice_id
+       from public.bizportal_customer_ar_source_evidence_dev
+      where company_id = $1 and invoice_id = $2
+      limit 2`,
+    [companyId, invoice.id],
+  );
+  if (evidence.rows.length !== 1 ||
+      Number(evidence.rows[0].invoice_id) !== Number(invoice.id)) {
+    fail(422, "Invoice belum dapat diterbitkan: bukti jurnal penjualan posted belum lengkap.");
+  }
+}
+
 export async function handleAdminInvoices({ request, response, user, sendJson, sendError, invoiceId = null }) {
   if (request.method === "GET" && invoiceId == null) {
     sendJson(response, 200, { items: await listInvoices(user, { admin: true }) });
@@ -457,7 +491,10 @@ export async function handleAdminInvoices({ request, response, user, sendJson, s
   }
   const result = await withTransaction(async (db) => {
     const row = await loadInvoice(invoiceId, user, { db, admin: true, forUpdate: true });
-    if (row.invoice_status === "invoiced") return mapInvoice(row);
+    if (row.invoice_status === "invoiced") {
+      await requirePostedCustomerArEvidence(db, row);
+      return mapInvoice(row);
+    }
     if (!INVOICEABLE_STATUSES.has(row.status)) {
       fail(409, "Hanya order confirmed/done yang dapat diterbitkan invoice.");
     }
@@ -472,6 +509,10 @@ export async function handleAdminInvoices({ request, response, user, sendJson, s
         returning ${INVOICE_COLUMNS}`,
       [row.id],
     );
+    // Gate before COMMIT, audit or any outward notification. If the source
+    // journal does not qualify, withTransaction rolls back the status/date
+    // update and no customer can receive an unposted Invoice announcement.
+    await requirePostedCustomerArEvidence(db, updated.rows[0]);
     const mapped = mapInvoice(updated.rows[0]);
     await writeBillingActivity(db, {
       user,
