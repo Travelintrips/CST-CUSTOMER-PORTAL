@@ -59,6 +59,7 @@ async function mockedSql(statement) {
   if(q==="begin") return {rows:[]};
   if(q==="commit"){m.commits++;return {rows:[]};}
   if(q==="rollback"){m.rollbacks++;return {rows:[]};}
+  if(q.includes("from public.portal_company_members")) return {rows:[{company_id:1}]};
   if(q.includes("from public.sales_documents")) return {rows:[invoice()]};
   if(q.startsWith("update public.sales_documents")) return {rows:[invoice(true)]};
   if(q.includes("from public.accounting_entries e")) return {rows:m.gl?[m.gl]:[]};
@@ -165,6 +166,17 @@ describe("isolated HTTP: existing signed Portal session → existing Invoice han
     m.poster.mockResolvedValue({posted:false});
     expect((await action(createSession(user("admin")))).status).toBe(422);
     expect(m.commits).toBe(0);expect(m.rollbacks).toBe(1);
+    expect(m.notifications).not.toHaveBeenCalled();
+  });
+  it("rejects an otherwise signed Admin without company membership",async()=>{
+    m.query.mockImplementation(async (sql,values)=>{
+      if(String(sql).includes("from public.portal_company_members")) return {rows:[]};
+      return mockedSql(sql,values);
+    });
+    expect((await action(createSession(user("admin")))).status).toBe(403);
+    expect(m.poster).not.toHaveBeenCalled();
+    expect(m.rollbacks).toBe(1);
+    expect(m.commits).toBe(0);
     expect(m.notifications).not.toHaveBeenCalled();
   });
   it("rejects missing AR evidence after returned posted GL, leaving no COMMIT",async()=>{
