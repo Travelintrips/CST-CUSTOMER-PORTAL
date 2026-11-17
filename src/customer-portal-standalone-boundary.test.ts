@@ -743,7 +743,7 @@ describe("standalone Customer Portal API boundary", () => {
   it("routes marketplace vendor-routing through the admin service-operations gateway", () => {
     const server = readFileSync(join(process.cwd(), "server/index.mjs"), "utf8");
     const adminPortal = readFileSync(join(process.cwd(), "server/admin-portal.mjs"), "utf8");
-    expect(server).toContain("(?:\\/actions|\\/vendor-routing(?:\\/(?:invite-link|whatsapp-readiness|send-whatsapp|whatsapp-sync))?)?$");
+    expect(server).toContain("(?:\\/actions|\\/vendor-routing(?:\\/(?:invite-link|whatsapp-readiness|send-whatsapp|whatsapp-sync|whatsapp-status))?)?$");
     expect(server).toContain("await requireAdmin(request, response)");
     expect(adminPortal).toContain("/vendor-routing$");
     expect(adminPortal).toContain("vendor-routing\\/invite-link$");

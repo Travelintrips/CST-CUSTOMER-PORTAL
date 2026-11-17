@@ -27,7 +27,10 @@ export const DEV_VENDOR_GATEWAY_SYNC_SENT_SQL = [
   "payload_json=jsonb_set(coalesce(payload_json,'{}'::jsonb),'{gateway_delivery}',",
   "coalesce(payload_json->'gateway_delivery','{}'::jsonb) ||",
   "jsonb_strip_nulls(jsonb_build_object(",
-  "'provider_status',$4::text,",
+  "'provider_status',case",
+  "when payload_json->'gateway_delivery'->>'provider_status'='read' or $4::text='read' then 'read'",
+  "when payload_json->'gateway_delivery'->>'provider_status'='delivered' or $4::text='delivered' then 'delivered'",
+  "else 'sent' end,",
   "'provider_sent_at',$3::timestamptz,",
   "'provider_delivered_at',$5::timestamptz,",
   "'provider_read_at',$6::timestamptz,",
@@ -56,6 +59,42 @@ const dateOrNull = (value) => {
   const d = new Date(value);
   return Number.isNaN(d.getTime()) ? null : d.toISOString();
 };
+
+// Read-only Admin state: remains available after quote OPENED, SUBMITTED or SELECTED.
+// Sender readiness is intentionally unrelated to an already-dispatched message.
+export async function getDevVendorWhatsAppSyncState({
+  queueId, rfqId, quoteId, env = process.env, db = query,
+} = {}) {
+  if (env.APP_ENV !== "development" || env.NODE_ENV === "production"
+    || databaseEnvironment !== "development"
+    || databaseConnectionSource !== "SUPABASE_DATABASE_URL_DEV") {
+    fail(404, "Status WA vendor hanya tersedia di Customer Portal DEV.");
+  }
+  if (![queueId, rfqId, quoteId].every(positive)) fail(400, "ID undangan tidak valid.");
+  const result = await db(DEV_VENDOR_GATEWAY_STATUS_SELECT_SQL,
+    [Number(queueId), Number(rfqId), Number(quoteId)]);
+  const row = result.rows?.[0];
+  if (!row) fail(404, "Antrean undangan vendor tidak ditemukan.");
+  if (row.channel !== "whatsapp" || row.event_type !== "rfq_vendor_invited"
+    || row.recipient_type !== "vendor"
+    || Number(row.recipient_id) !== Number(row.vendor_id)
+    || Number(row.rfq_id) !== Number(row.quote_rfq_id)
+    || Number(row.rfq_company_id) !== 1
+    || Number(row.supplier_company_id) !== 1) {
+    fail(409, "Identitas antrean undangan tidak cocok.");
+  }
+  const receipt = row.payload_json?.gateway_delivery;
+  const canSync = ["queued", "sent"].includes(row.queue_status)
+    && Number(row.attempt_count) === 1
+    && receipt?.provider === "cst-wa-gateway"
+    && uuid(receipt.message_id);
+  return {
+    queueId: Number(queueId), quoteId: Number(quoteId),
+    queueStatus: row.queue_status,
+    providerStatus: typeof receipt?.provider_status === "string" ? receipt.provider_status : null,
+    canSync: Boolean(canSync),
+  };
+}
 
 export async function syncDevVendorWhatsAppStatus({
   queueId, rfqId, quoteId, env = process.env, db = query,

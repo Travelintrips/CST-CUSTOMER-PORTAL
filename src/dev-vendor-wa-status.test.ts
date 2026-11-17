@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import {
   syncDevVendorWhatsAppStatus,
+  getDevVendorWhatsAppSyncState,
   DEV_VENDOR_GATEWAY_SYNC_SENT_SQL,
   DEV_VENDOR_GATEWAY_SYNC_FAILED_SQL,
 } from "../server/dev-vendor-wa-status.mjs";
@@ -54,6 +55,34 @@ function opts(h: ReturnType<typeof harness>) {
 }
 
 describe("DEV vendor WA queued->provider status reconciliation (never sends)", () => {
+  it("exposes read-only sync availability even after quote was opened or selected", async () => {
+    const h = harness({ quote_status: "selected" });
+    const result = await getDevVendorWhatsAppSyncState(opts(h));
+    expect(result).toEqual({
+      queueId: 95, quoteId: 19, queueStatus: "queued",
+      providerStatus: null, canSync: true,
+    });
+    expect(h.fetchFn).not.toHaveBeenCalled();
+    expect(h.writes).toHaveLength(0);
+  });
+
+  it("does not expose sync for pending pre-dispatch queue", async () => {
+    const h = harness({ queue_status: "pending", attempt_count: 0, payload_json: {} });
+    const result = await getDevVendorWhatsAppSyncState(opts(h));
+    expect(result.canSync).toBe(false);
+    expect(result.queueStatus).toBe("pending");
+    expect(h.fetchFn).not.toHaveBeenCalled();
+  });
+
+  it("keeps delivered/read provider receipt level monotonically in atomic SQL", async () => {
+    const h = harness();
+    await syncDevVendorWhatsAppStatus(opts(h));
+    expect(h.writes[0].sql).toContain("then 'read'");
+    expect(h.writes[0].sql).toContain("then 'delivered'");
+    expect(h.writes[0].sql).toContain("status in ('queued','sent')");
+    expect(h.writes[0].sql).toContain("jsonb_strip_nulls");
+  });
+
   it("marks SENT only after authenticated exact Gateway receipt", async () => {
     const h = harness();
     const result = await syncDevVendorWhatsAppStatus(opts(h));
@@ -138,8 +167,11 @@ describe("DEV vendor WA queued->provider status reconciliation (never sends)", (
     const ui = readFileSync(resolve(process.cwd(), "src/components/admin/MarketplaceVendorAssignment.tsx"), "utf8");
     expect(index).toContain("await requireAdmin(request, response)");
     expect(index).toContain("whatsapp-sync");
+    expect(index).toContain("whatsapp-status");
     expect(admin).toContain('request.method === "POST" && (vendorWaSendMatch || vendorWaSyncMatch)');
     expect(admin).toContain("syncDevVendorWhatsAppStatus");
     expect(ui).toContain("Periksa Status Pengiriman WA (Tanpa Kirim Ulang)");
+    expect(ui).toContain("waSyncState?.queueStatus");
+    expect(ui).toContain("shareAvailable || showGatewayStatus");
   });
 });
