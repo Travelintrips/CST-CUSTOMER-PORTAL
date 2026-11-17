@@ -37,7 +37,9 @@ CREATE TABLE public.mkt_notification_queue (
   recipient_id integer, recipient_phone text, recipient_type text,
   event_type text, channel text, status text, attempt_count integer,
   sent_at timestamptz, payload_json jsonb, last_error text,
-  next_retry_at timestamptz, updated_at timestamptz default now()
+  next_retry_at timestamptz, updated_at timestamptz default now(),
+  CONSTRAINT mkt_notification_queue_status_check
+    CHECK (status IN ('pending','sending','queued','sent','failed','retrying','exhausted'))
 );
 INSERT INTO public.mkt_rfqs VALUES (23,'RFQ-SYNTHETIC',1);
 INSERT INTO public.suppliers VALUES (24,'Supplier Test','081234567890','PIC Test',1,true,true);
@@ -66,6 +68,14 @@ console.log("$$;");
 console.log("CREATE FUNCTION public.try_gateway_ack(integer,text,text)");
 console.log("RETURNS integer LANGUAGE sql VOLATILE AS $$");
 console.log("WITH changed AS (" + DEV_VENDOR_GATEWAY_ACK_SQL + ")");
+console.log("SELECT count(*)::integer FROM changed;");
+console.log("$$;");
+const { DEV_VENDOR_GATEWAY_SYNC_SENT_SQL } = await import(
+  pathToFileURL(join(process.cwd(), "server/dev-vendor-wa-status.mjs")).href
+);
+console.log("CREATE FUNCTION public.try_sync_status(integer,text,timestamptz,text,timestamptz,timestamptz)");
+console.log("RETURNS integer LANGUAGE sql VOLATILE AS $$");
+console.log("WITH changed AS (" + DEV_VENDOR_GATEWAY_SYNC_SENT_SQL + ")");
 console.log("SELECT count(*)::integer FROM changed;");
 console.log("$$;");
 NODE
@@ -111,3 +121,15 @@ FINAL="$(docker exec "$NAME" psql -U postgres -d postgres -At -v ON_ERROR_STOP=1
   (select status from public.mkt_notification_queue where id=94)")"
 test "$FINAL" = "queued/1/$GATEWAY_ID/true/pending" || { echo "FAIL: queued semantics=$FINAL"; exit 1; }
 echo "PASS: PostgreSQL 16 isolated, 3 invalid claims rejected, 2 concurrent claims -> exactly 1; provider queued receipt persisted, sent_at NULL, unrelated queue untouched"
+
+# A high-grade READ receipt must never be overwritten by a late SENT poll.
+SENT_TIME="2026-11-17T09:48:07+00"
+DELIVERED_TIME="2026-11-17T09:48:20+00"
+READ_TIME="2026-11-17T09:48:30+00"
+READ_RECEIPT="$(docker exec "$NAME" psql -U postgres -d postgres -At -v ON_ERROR_STOP=1 -c "select public.try_sync_status(93,'$GATEWAY_ID','$SENT_TIME','read','$DELIVERED_TIME','$READ_TIME')")"
+test "$READ_RECEIPT" = "1" || { echo "FAIL: READ receipt not persisted"; exit 1; }
+STALE_SENT="$(docker exec "$NAME" psql -U postgres -d postgres -At -v ON_ERROR_STOP=1 -c "select public.try_sync_status(93,'$GATEWAY_ID','$SENT_TIME','sent',null,null)")"
+test "$STALE_SENT" = "1" || { echo "FAIL: stale status could not run"; exit 1; }
+FINAL_RECEIPT="$(docker exec "$NAME" psql -U postgres -d postgres -At -v ON_ERROR_STOP=1 -c "select status||'/'||(payload_json->'gateway_delivery'->>'provider_status')||'/'||coalesce((payload_json->'gateway_delivery'->>'provider_delivered_at') is not null,false)||'/'||coalesce((payload_json->'gateway_delivery'->>'provider_read_at') is not null,false) from public.mkt_notification_queue where id=93")"
+test "$FINAL_RECEIPT" = "sent/read/true/true" || { echo "FAIL: stale SENT overwrote READ evidence: $FINAL_RECEIPT"; exit 1; }
+echo "PASS: read/delivered receipts retained against stale sent status (monotonic provider receipt)"

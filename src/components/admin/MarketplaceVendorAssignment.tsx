@@ -16,6 +16,14 @@ type VendorRouting = {
   vendorShareSupported?: boolean;
 };
 
+type WaStatus = {
+  queueId: number;
+  quoteId: number;
+  queueStatus: string;
+  providerStatus: string | null;
+  canSync: boolean;
+};
+
 type WaReadiness = {
   queueId: number;
   quoteId: number;
@@ -37,14 +45,17 @@ export function MarketplaceVendorAssignment({ rfqId }: { rfqId: number }) {
   const [shareText, setShareText] = useState("");
   const [recipientLast4, setRecipientLast4] = useState("");
   const [waReadiness, setWaReadiness] = useState<WaReadiness | null>(null);
+  const [waSyncState, setWaSyncState] = useState<WaStatus | null>(null);
   const [waConfirmed, setWaConfirmed] = useState(false);
   const [waSending, setWaSending] = useState(false);
+  const [waSyncing, setWaSyncing] = useState(false);
 
   async function loadRouting() {
     setLoading(true);
     setShareText("");
     setRecipientLast4("");
     setWaReadiness(null);
+    setWaSyncState(null);
     setWaConfirmed(false);
     setError("");
     try {
@@ -57,6 +68,22 @@ export function MarketplaceVendorAssignment({ rfqId }: { rfqId: number }) {
       if (!response.ok) throw new Error(payload.error ?? "Gagal memuat vendor produk");
       const routed = payload.data as VendorRouting;
       setRouting(routed);
+      // The receipt can still be reconciled after vendor opens/submits the quote.
+      // This GET never sends WhatsApp or mutates the queue.
+      if (routed.quoteId) {
+        try {
+          const statusResponse = await fetch(
+            "/api/portal/admin/service-operations/marketplace/" + rfqId + "/vendor-routing/whatsapp-status?quoteId=" + routed.quoteId,
+            { headers: getAuthHeaders(), credentials: "include", cache: "no-store" },
+          );
+          if (statusResponse.ok) {
+            const statusPayload = await statusResponse.json();
+            setWaSyncState(statusPayload.data as WaStatus);
+          }
+        } catch {
+          // Status monitoring is advisory and cannot break existing RFQ cards.
+        }
+      }
       if (routed.vendorShareSupported && routed.quoteId
         && ["invited", "opened", "requote_requested"].includes(routed.quoteStatus ?? "")) {
         try {
@@ -184,6 +211,32 @@ export function MarketplaceVendorAssignment({ rfqId }: { rfqId: number }) {
     }
   }
 
+  async function syncVendorWhatsapp() {
+    if (!routing?.quoteId || waSyncState?.queueStatus !== "queued" || !waSyncState.canSync || waSyncing) return;
+    setWaSyncing(true);
+    setError("");
+    try {
+      const response = await fetch(
+        "/api/portal/admin/service-operations/marketplace/" + rfqId + "/vendor-routing/whatsapp-sync",
+        {
+          method: "POST",
+          headers: { ...getAuthHeaders(), "Content-Type": "application/json" },
+          credentials: "include",
+          body: JSON.stringify({ queueId: waSyncState.queueId, quoteId: routing.quoteId }),
+        },
+      );
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.error ?? "Gagal memeriksa status WhatsApp.");
+      const status = payload.data?.providerStatus ?? "belum tersedia";
+      setNotice("Status WhatsApp dari Gateway: " + status + ". Tidak mengirim pesan ulang.");
+      await loadRouting();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Gagal memeriksa status WA.");
+    } finally {
+      setWaSyncing(false);
+    }
+  }
+
   if (loading) {
     return (
       <div className="flex items-center gap-2 rounded-lg border bg-slate-50 px-3 py-2 text-xs text-slate-500">
@@ -191,6 +244,10 @@ export function MarketplaceVendorAssignment({ rfqId }: { rfqId: number }) {
       </div>
     );
   }
+
+  const shareAvailable = Boolean(routing?.vendorShareSupported && routing?.quoteId
+    && ["invited", "opened", "requote_requested"].includes(routing.quoteStatus ?? ""));
+  const showGatewayStatus = ["queued", "sent"].includes(waSyncState?.queueStatus ?? "");
 
   return (
     <div className="min-w-[260px] rounded-lg border border-sky-200 bg-sky-50/60 px-3 py-2.5">
@@ -236,10 +293,12 @@ export function MarketplaceVendorAssignment({ rfqId }: { rfqId: number }) {
         </p>
       ) : null}
 
-      {routing?.vendorShareSupported && routing?.quoteId && ["invited", "opened", "requote_requested"].includes(routing.quoteStatus ?? "") && (
+      {(shareAvailable || showGatewayStatus) && (
         <div className="mt-2 space-y-1.5">
           <p className="text-[11px] text-sky-800">
-            WA Gateway CST: {waReadiness?.ready ? "Perangkat DEV terverifikasi untuk satu antrean (belum menjamin pesan diterima)."
+            WA Gateway CST: {waSyncState?.queueStatus === "sent" ? "Undangan terkirim berdasarkan bukti Gateway."
+              : waSyncState?.queueStatus === "queued" ? "Undangan diterima Gateway; periksa status tanpa mengirim ulang."
+              : waReadiness?.ready ? "Perangkat DEV terverifikasi untuk satu antrean (belum menjamin pesan diterima)."
               : waReadiness?.reason ?? "Belum tersedia untuk undangan ini."}
           </p>
           {waReadiness?.ready && (
@@ -264,17 +323,24 @@ export function MarketplaceVendorAssignment({ rfqId }: { rfqId: number }) {
               </Button>
             </div>
           )}
-          <Button
+          {waSyncState?.queueStatus === "queued" && waSyncState.canSync && (
+            <Button type="button" size="sm" variant="outline" className="h-8 text-xs"
+              disabled={waSyncing} onClick={() => void syncVendorWhatsapp()}>
+              {waSyncing ? <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" /> : <CheckCircle2 className="mr-1 h-3.5 w-3.5" />}
+              Periksa Status Pengiriman WA (Tanpa Kirim Ulang)
+            </Button>
+          )}
+          {shareAvailable && <Button
             type="button"
             size="sm"
             variant="outline"
             className="h-8 text-xs"
-            disabled={copying || routing.vendorActive === false || ["queued","sending","sent","exhausted","failed","retrying"].includes(waReadiness?.queueStatus ?? "")}
+            disabled={copying || routing?.vendorActive === false || ["queued","sending","sent","exhausted","failed","retrying"].includes(waSyncState?.queueStatus ?? waReadiness?.queueStatus ?? "")}
             onClick={() => void prepareManualVendorInvitation()}
           >
             {copying ? <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" /> : <Copy className="mr-1 h-3.5 w-3.5" />}
             Salin Undangan Vendor
-          </Button>
+          </Button>}
           <p className="text-[11px] text-amber-800">
             Undangan berisi tautan khusus. Admin harus memastikan kontak penerima
             sebelum mengirim melalui WhatsApp sendiri. Tombol ini tidak mengirim pesan otomatis.
