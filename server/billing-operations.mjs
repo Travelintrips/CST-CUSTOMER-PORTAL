@@ -589,6 +589,93 @@ async function requireAtomicSalesInvoicePosting(db, invoice, canonicalActorId, p
       !close(e.total_credit, e.lines_credit)) {
     fail(422, "Jurnal penjualan belum seimbang atau tidak memiliki bukti perusahaan yang sah.");
   }
+  return { entryId };
+}
+
+// The existing original owner performs ALL GL journal writes. This helper
+// stores only audit + outbox evidence inside the caller's same PostgreSQL
+// transaction. Never fire-and-forget or use a separate connection before
+// the outer COMMIT. Outbox delivery happens separately after COMMIT.
+async function requireTransactionalSalesInvoiceEvidence(db, invoice, actorId, entryId) {
+  const companyId = Number(invoice?.company_id);
+  const sourceId = Number(invoice?.id);
+  const amount = Number(invoice?.grand_total);
+  if (![1, 3].includes(companyId) || !Number.isSafeInteger(sourceId) ||
+      sourceId <= 0 || !Number.isSafeInteger(entryId) || entryId <= 0 ||
+      typeof actorId !== "string" || !actorId ||
+      !Number.isFinite(amount) || amount <= 0 ||
+      !invoice?.invoice_number?.startsWith("INV-")) {
+    fail(422, "Bukti audit Invoice tidak memiliki identitas transaksi yang sah.");
+  }
+  // The Invoice source row is already FOR UPDATE-locked by this transaction,
+  // so two issuance requests cannot both enqueue for the same Invoice.
+  const key = `sales_invoice:${companyId}:${sourceId}:${entryId}`;
+  const priorOutbox = await db(
+    `select id, payload from public.financial_outbox_events
+      where entry_id=$1 and company_id=$2 and event_type='JOURNAL_CREATED'
+      order by id limit 2 for update`,
+    [entryId, companyId],
+  );
+  if (priorOutbox.rows.length > 1) {
+    fail(422, "Jurnal memiliki lebih dari satu event Accounting: penerbitan ditolak.");
+  }
+  if (priorOutbox.rows.length === 1) {
+    const previous = priorOutbox.rows[0].payload;
+    if (previous?.eventType !== "JOURNAL_CREATED" ||
+        previous?.sourceType !== "sales_invoice" ||
+        Number(previous?.companyId) !== companyId ||
+        Number(previous?.sourceId) !== sourceId ||
+        Number(previous?.entryId) !== entryId) {
+      fail(422, "Event Accounting tidak sesuai identitas Invoice/perusahaan.");
+    }
+  } else {
+    const payload = {
+      eventType: "JOURNAL_CREATED", sourceType: "sales_invoice",
+      sourceId, companyId, entryId, amount, actor: actorId,
+      ref: invoice.invoice_number, dedupeKey: key,
+    };
+    const saved = await db(
+      `insert into public.financial_outbox_events
+         (event_type,payload,status,entry_id,company_id)
+       values('JOURNAL_CREATED',$1::jsonb,'pending',$2,$3)
+       returning id`,
+      [JSON.stringify(payload), entryId, companyId],
+    );
+    if (saved.rows.length !== 1) {
+      fail(503, "Event Accounting belum dapat disimpan secara atomik.");
+    }
+  }
+
+  const audit = await db(
+    `select id from public.audit_accounting_events
+      where journal_id=$1 and company_id=$2
+        and action='SALES_INVOICE_ISSUED' and correlation_id=$3
+      order by id limit 2 for update`,
+    [entryId, companyId, key],
+  );
+  if (audit.rows.length !== 0) {
+    // A new Invoice must not acquire a second issuance audit.
+    fail(422, "Audit penerbitan Invoice sudah tercatat: duplikasi ditolak.");
+  }
+  const savedAudit = await db(
+    `insert into public.audit_accounting_events
+       (journal_id,action,company_id,amount,user_id,actor_type,
+        correlation_id,change_reason,after_state)
+     values($1,'SALES_INVOICE_ISSUED',$2,$3,$4,'SUPER_ADMIN',$5,
+            'ATOMIC_INVOICE_JOURNAL_AR',$6::jsonb)
+     returning id`,
+    [
+      entryId, companyId, amount, actorId, key,
+      JSON.stringify({
+        source: "sales_invoice", invoiceId: sourceId,
+        invoiceNumber: invoice.invoice_number, entryId, companyId,
+      }),
+    ],
+  );
+  if (savedAudit.rows.length !== 1) {
+    fail(503, "Audit Accounting belum dapat disimpan secara atomik.");
+  }
+  return { entryId, correlationKey: key };
 }
 
 export async function handleAdminInvoices({ request, response, user, sendJson, sendError, invoiceId = null, postSalesInvoiceWithClient = null }) {
@@ -651,13 +738,20 @@ export async function handleAdminInvoices({ request, response, user, sendJson, s
     // may write the journal. Then independently verify the returned journal
     // against persisted source/lines/GL and the existing AR evidence view.
     // All of this occurs BEFORE COMMIT/audit/notifications.
-    await requireAtomicSalesInvoicePosting(
+    const postingReceipt = await requireAtomicSalesInvoicePosting(
       db, updated.rows[0], canonicalActorId, postSalesInvoiceWithClient, transactionClient,
     );
     // Gate before COMMIT, audit or any outward notification. If the source
     // journal does not qualify, withTransaction rolls back the status/date
     // update and no customer can receive an unposted Invoice announcement.
     await requirePostedCustomerArEvidence(db, updated.rows[0]);
+    if (postingReceipt) {
+      // Journal+AR have already been verified in this SAME transaction.
+      // A missing/out-of-scope outbox or audit is an issuance failure: rollback.
+      await requireTransactionalSalesInvoiceEvidence(
+        db, updated.rows[0], canonicalActorId, postingReceipt.entryId,
+      );
+    }
     const mapped = mapInvoice(updated.rows[0]);
     await writeBillingActivity(db, {
       user,
