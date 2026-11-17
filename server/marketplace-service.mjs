@@ -10,6 +10,8 @@ import { assertDevCorporatePoAffiliation } from "./corporate-po-affiliation-gate
 import { uploadMarketplacePod, signedMarketplacePodUrl } from "./storage.mjs";
 import { normalizeVendorQuoteSubmission, persistVendorQuoteSubmission, submitInternalVendorQuote } from "./vendor-quote-submission.mjs";
 import { loadInternalVendorQuoteDraft } from "./internal-vendor-quote-draft.mjs";
+import { loadInternalVendorPoAcceptance } from "./internal-vendor-po-accept.mjs";
+import { acceptVendorPurchaseOrder } from "./vendor-po-acceptance.mjs";
 
 const RFQ_TERMINAL = new Set(["awarded", "cancelled", "expired"]);
 const QUOTE_TERMINAL = new Set(["selected", "rejected", "expired", "withdrawn"]);
@@ -974,6 +976,41 @@ async function inviteVendorsToExistingRfq(db, rfqId, vendorIds) {
 }
 
 async function handleAdminMarketplace(request, response, pathname, body, user) {
+  const internalVendorPo = pathname.match(
+    /^\/api\/mkt\/admin\/purchase-orders\/(\d+)\/internal-vendor-accept$/,
+  );
+  if (internalVendorPo && (request.method === "GET" || request.method === "POST")) {
+    const poId = integer(internalVendorPo[1], "PO");
+    if (request.method === "GET") {
+      const { data } = await loadInternalVendorPoAcceptance({
+        db: query, admin: user, poId, env: process.env,
+      });
+      response._sendJson(200, { ok: true, data });
+      return true;
+    }
+    const result = await withTransaction(async (db) => {
+      const { po, authorization } = await loadInternalVendorPoAcceptance({
+        db, admin: user, poId, env: process.env,
+        decision: body, forUpdate: true,
+      });
+      const accepted = await acceptVendorPurchaseOrder({
+        db, po: {
+          ...po,
+          vendor_name: po.supplier_name,
+        },
+        adminActor: {
+          id: authorization.adminId,
+          name: authorization.adminName,
+          reason: authorization.auditReason,
+        },
+        writeEvent, queueEvent, customerNotification,
+      });
+      return { poId, ...accepted };
+    });
+    response._sendJson(200, { ok: true, data: result });
+    return true;
+  }
+
   const internalQuoteDraft = pathname.match(
     /^\/api\/mkt\/admin\/rfqs\/(\d+)\/vendor-quotes\/(\d+)\/internal-draft$/,
   );
@@ -1662,80 +1699,9 @@ async function handlePublicVendorPo(request, response, pathname, body) {
     const locked = await vendorPoByToken(db, tokenValue, { forUpdate: true });
 
     if (action === "accept") {
-      if (locked.confirmed_at) {
-        return { status: locked.status, poNumber: locked.po_number, alreadyProcessed: true };
-      }
-      if (locked.status === "issued") {
-        await db(
-          `update public.mkt_purchase_orders
-              set status='vendor_accepted'::mkt_po_status, confirmed_at=now(), updated_at=now()
-            where id=$1 and status='issued'`,
-          [locked.id],
-        );
-        await writeEvent(
-          db,
-          {
-            rfqId: locked.rfq_id,
-            poId: locked.id,
-            actorType: "vendor",
-            actorId: String(locked.vendor_id),
-            actorName: locked.vendor_name,
-            action: "po_vendor_accepted",
-            oldValue: { status: "issued" },
-            newValue: { status: "vendor_accepted" },
-            description: "Vendor menerima Purchase Order.",
-          },
-          `po:${locked.id}:vendor_accepted`,
-        );
-        await queueEvent(db, {
-          eventType: "po_vendor_accepted",
-          recipientType: "admin",
-          rfqId: locked.rfq_id,
-          poId: locked.id,
-          payload: { poId: locked.id, status: "vendor_accepted" },
-          key: `po:${locked.id}:vendor_accepted`,
-        });
-        await customerNotification(
-          db,
-          {
-            id: locked.rfq_id,
-            rfq_number: locked.rfq_number,
-            portal_customer_id: locked.portal_customer_id,
-            buyer_email: locked.buyer_email,
-          },
-          `po:${locked.id}:vendor_accepted:customer`,
-          "po_vendor_accepted",
-          "PO diterima vendor",
-          `Vendor telah menerima ${locked.po_number}. Silakan pilih metode pengiriman.`,
-          { poId: Number(locked.id), status: "vendor_accepted" },
-        );
-        return { status: "vendor_accepted", poNumber: locked.po_number, alreadyProcessed: false };
-      }
-      if (["production", "ready_to_ship", "in_transit"].includes(locked.status)) {
-        await db(
-          `update public.mkt_purchase_orders
-              set confirmed_at=now(), updated_at=now()
-            where id=$1 and confirmed_at is null`,
-          [locked.id],
-        );
-        await writeEvent(
-          db,
-          {
-            rfqId: locked.rfq_id,
-            poId: locked.id,
-            actorType: "vendor",
-            actorId: String(locked.vendor_id),
-            actorName: locked.vendor_name,
-            action: "po_vendor_accepted_legacy",
-            oldValue: { status: locked.status, confirmedAt: null },
-            newValue: { status: locked.status, confirmedAt: "now" },
-            description: "Vendor mengonfirmasi PO yang sudah terlanjur masuk fulfillment.",
-          },
-          `po:${locked.id}:vendor_accepted_legacy`,
-        );
-        return { status: locked.status, poNumber: locked.po_number, alreadyProcessed: false };
-      }
-      fail(409, "PO tidak berada pada tahap yang dapat dikonfirmasi vendor.");
+      return acceptVendorPurchaseOrder({
+        db, po: locked, writeEvent, queueEvent, customerNotification,
+      });
     }
 
     if (locked.status !== "issued") fail(409, "PO tidak menunggu konfirmasi vendor.");

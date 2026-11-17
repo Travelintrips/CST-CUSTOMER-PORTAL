@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { getAuthHeaders } from "@/lib/auth";
 import { InternalVendorQuoteDevForm } from "@/components/admin/InternalVendorQuoteDevForm";
+import { InternalVendorPoAcceptDevForm } from "@/components/admin/InternalVendorPoAcceptDevForm";
 import { useToast } from "@/hooks/use-toast";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -832,6 +833,19 @@ export function MarketplaceOperationsTab() {
                     );
                   })()}
                 </div>
+
+                {selectedPo.status === "issued" && (
+                  <InternalVendorPoAcceptDevForm
+                    key={selectedPo.id}
+                    poId={selectedPo.id}
+                    onAccepted={() => {
+                      setSelectedPo(current => current
+                        ? { ...current, status: "vendor_accepted", confirmedAt: new Date().toISOString() }
+                        : current);
+                      void refresh();
+                    }}
+                  />
+                )}
 
                 <div id="marketplace-payment-panel" className="rounded-lg border-2 border-indigo-200 bg-indigo-50/30 p-4 space-y-4 scroll-mt-24">
                   <div className="flex items-center justify-between gap-3">
