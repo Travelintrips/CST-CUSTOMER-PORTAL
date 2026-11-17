@@ -1,6 +1,7 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
 import {
   DEV_ACCOUNTING_OWNER_FILE,
+  DEV_ACCOUNTING_OWNER_HASHES,
   DEV_ACCOUNTING_OWNER_SHA256,
   originalOwnerGateEnabled,
   isReviewedOriginalOwnerBundle,
@@ -33,7 +34,14 @@ describe("DEV Customer Invoice original owner release loader", () => {
   });
   it("pins an exact SHA-256 and rejects unreviewed or empty modules", () => {
     expect(DEV_ACCOUNTING_OWNER_SHA256).toMatch(/^[a-f0-9]{64}$/);
-    expect(DEV_ACCOUNTING_OWNER_FILE).toBe("/opt/cst-customer-invoice-owner-bundle-dev/portalInvoiceOwner.mjs");
+    expect(DEV_ACCOUNTING_OWNER_FILE).toBe("/opt/cst-customer-invoice-owner-bundle-dev/portalInvoiceAdapter.mjs");
+    expect(Object.keys(DEV_ACCOUNTING_OWNER_HASHES).sort()).toEqual([
+      "portalInvoiceAdapter.mjs", "pino-file.mjs", "pino-pretty.mjs",
+      "pino-worker.mjs", "thread-stream-worker.mjs",
+    ].sort());
+    for (const digest of Object.values(DEV_ACCOUNTING_OWNER_HASHES)) {
+      expect(digest).toMatch(/^[a-f0-9]{64}$/);
+    }
     expect(isReviewedOriginalOwnerBundle(Buffer.from("fake owner"))).toBe(false);
     expect(isReviewedOriginalOwnerBundle(Buffer.alloc(0))).toBe(false);
   });

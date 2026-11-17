@@ -10,12 +10,23 @@
 import { createHash } from "node:crypto";
 import { readFile, realpath } from "node:fs/promises";
 import { pathToFileURL } from "node:url";
+import path from "node:path";
 import { databaseEnvironment, databaseConnectionSource } from "./db.mjs";
 
+export const DEV_ACCOUNTING_OWNER_DIR =
+  "/opt/cst-customer-invoice-owner-bundle-dev";
 export const DEV_ACCOUNTING_OWNER_FILE =
-  "/opt/cst-customer-invoice-owner-bundle-dev/portalInvoiceOwner.mjs";
+  path.join(DEV_ACCOUNTING_OWNER_DIR, "portalInvoiceAdapter.mjs");
 export const DEV_ACCOUNTING_OWNER_SHA256 =
-  "6b98c9b5bd11908652b8bfa6f85b635282e709351a3ea01a24d4189873ed59f4";
+  "44a1e2b840b41dd1c1f7b0c36e0554a70b4c47ee4e9cc90b95c7117362c78b95";
+// All Pino worker modules are part of the SAME reviewed release, not optional.
+export const DEV_ACCOUNTING_OWNER_HASHES = Object.freeze({
+  "portalInvoiceAdapter.mjs": DEV_ACCOUNTING_OWNER_SHA256,
+  "pino-file.mjs": "bbc4281497fe72cf43c497927570f930aaed27f73481e652ccfef6a5d1e102f2",
+  "pino-pretty.mjs": "db4343e9a60574d43281e8e6731ec71a1317c53737c5cfc11049cd565ceae8ea",
+  "pino-worker.mjs": "b1905ab6d4843945437af840160a682b9d86c3bee9ae7cb96f21032a98652297",
+  "thread-stream-worker.mjs": "8d292b213919ff58dce983d0a34f68f3224345411fea8af1b64b11ec8cbeb249",
+});
 
 export function originalOwnerGateEnabled(env = process.env) {
   return env.APP_ENV?.trim().toLowerCase() === "development"
@@ -24,8 +35,8 @@ export function originalOwnerGateEnabled(env = process.env) {
     && env.CUSTOMER_PORTAL_REQUIRE_POSTED_AR_EVIDENCE_DEV === "true";
 }
 
-export function isReviewedOriginalOwnerBundle(bytes) {
-  return createHash("sha256").update(bytes).digest("hex") === DEV_ACCOUNTING_OWNER_SHA256;
+export function isReviewedOriginalOwnerBundle(bytes, expectedHash = DEV_ACCOUNTING_OWNER_SHA256) {
+  return createHash("sha256").update(bytes).digest("hex") === expectedHash;
 }
 
 export async function loadDevOriginalAccountingOwner() {
@@ -35,12 +46,15 @@ export async function loadDevOriginalAccountingOwner() {
   if (databaseEnvironment !== "development"
       || databaseConnectionSource !== "SUPABASE_DATABASE_URL_DEV") return null;
   try {
-    const actualPath = await realpath(DEV_ACCOUNTING_OWNER_FILE);
-    // No symlink, remote import, or env/HTTP-controlled path.
-    if (actualPath !== DEV_ACCOUNTING_OWNER_FILE) return null;
-    const bytes = await readFile(actualPath);
-    if (!isReviewedOriginalOwnerBundle(bytes)) return null;
-    const module = await import(pathToFileURL(actualPath).href);
+    for (const [name, expectedHash] of Object.entries(DEV_ACCOUNTING_OWNER_HASHES)) {
+      const intended = path.join(DEV_ACCOUNTING_OWNER_DIR, name);
+      const actualPath = await realpath(intended);
+      // Refuse any symlink or substituted worker even when the main ESM
+      // passes its digest: Pino runs separate Node worker modules.
+      if (actualPath !== intended) return null;
+      if (!isReviewedOriginalOwnerBundle(await readFile(actualPath), expectedHash)) return null;
+    }
+    const module = await import(pathToFileURL(DEV_ACCOUNTING_OWNER_FILE).href);
     return typeof module.postCustomerInvoiceWithOriginalOwner === "function"
       ? module.postCustomerInvoiceWithOriginalOwner
       : null;
