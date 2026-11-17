@@ -1,34 +1,36 @@
-# Customer Portal DEV — Undangan RFQ Vendor melalui CST WA Gateway
+# Customer Portal DEV — memakai WA Gateway CST PROD yang sudah ada
 
-## Sistem resmi
-- WA Gateway: `https://aicst.co.id` (CST, bukan Fonnte).
-- Existing gateway client: `customer-portal`, companyKey `1`.
-- Existing RFQ: #23; vendor Quote: #18; Supplier: #24; antrean WA: #93.
-- Satu antrean dan satu quotation dipertahankan. Tidak ada pembuatan ulang.
+## Keputusan
+- **Gateway existing:** `https://aicst.co.id` dengan `GET /v1/devices` dan `POST /v1/messages`.
+- **Tidak perlu membuat gateway baru, perangkat WhatsApp baru, atau memindai QR baru** jika memakai salah satu perangkat PROD yang sudah online dan diizinkan.
+- Gunakan **client aplikasi existing** `customer-portal`, companyKey `1`, yang sudah terdaftar di WA Gateway. Jangan memakai token milik Fleet, Tenant, Sport Center atau AI Core.
+- WA Gateway tidak dimodifikasi oleh perubahan Customer Portal ini. Pengiriman Customer Portal tetap OFF sampai hak akses aplikasi dan perangkat pengirim benar.
 
-## Audit registri gateway, 17 November 2026
-- Client `customer-portal` sudah ada dan active.
-- **Active API token = 0**, scopes `messages:send`, `messages:read`; **device scope belum ada**.
-- Device `customer-portal-dev` belum tercatat / belum dipasangkan.
-- Device milik Fleet, Tenant, Sport Center, AI Core, Handling dan SKY tidak boleh dipakai sebagai pengirim Customer Portal.
+## Audit registri PROD (17 November 2026)
+- Client `customer-portal`: active, `messages:read` dan `messages:send`, **0 token aktif**, **0 device scope**.
+- Device `primary-01`: OFFLINE dan disabled.
+- Perangkat online existing: `sport-center-report`, `mina-ai-sport-center`, `tenant-pos`, dan `ai-core`. Semua sudah digunakan oleh aplikasi lain; tidak ada pilihan yang boleh diambil otomatis tanpa persetujuan penggunaan identitas pengirimnya.
+- Artinya, **gateway dan perangkat sudah ada**, tetapi aplikasi Customer Portal belum diberi hak menggunakan perangkat mana pun.
 
-## Persiapan terpisah untuk administrator gateway
-1. Gunakan menu Admin resmi di `https://aicst.co.id/admin` untuk membuat/menghubungkan perangkat khusus `customer-portal-dev`; pasangkan nomor WhatsApp yang benar-benar diotorisasi (QR harus dilakukan oleh pemilik nomor).
-2. Kaitkan **hanya** perangkat itu kepada client `customer-portal`. Scopes efektif: `messages:send`, `messages:read`, `device:customer-portal-dev`, companyKey `1`. Jangan aktifkan scope per perangkat lain.
-3. Terbitkan satu token API client yang sah, khusus untuk Customer Portal DEV, bukan token Gateway Admin/Fleet/Tenant. Simpan rahasianya hanya pada konfigurasi runtime DEV.
-4. Pada runtime Customer Portal DEV, atur (nilai sebenarnya tidak dimasukkan ke repository atau komentar):
-   - `CUSTOMER_PORTAL_WA_GATEWAY_TOKEN_DEV` = token client khusus
-   - `CUSTOMER_PORTAL_WA_GATEWAY_DEVICE_ID_DEV` = `customer-portal-dev`
-   - `CUSTOMER_PORTAL_WA_GATEWAY_SENDER_PHONE_DEV` = nomor perangkat yang dipasangkan dalam format `62...`
-   - `CUSTOMER_PORTAL_DEV_VENDOR_WA_ENABLED` = `false` hingga verifikasi device + PIC selesai
-5. Cek Admin readiness dengan sesi Super Admin DEV. Gateway harus mengembalikan **tepat satu** device yang matching, `ONLINE`, `enabled=true`, company `1`, nomor sesuai.
-6. Setelah approval PIC dan identitas sender benar, Super Admin dapat mengaktifkan flag DEV dan mengirim **hanya antrean #93**. Jangan gunakan shared worker dengan `limit=1`.
+## Penyambungan memakai perangkat PROD existing
+1. Tentukan **satu** perangkat WA Gateway PROD yang sudah online dan secara eksplisit diizinkan sebagai pengirim Customer Portal. Verifikasi nama device dan nomor penuh secara privat di Admin Gateway; jangan menebak dari empat digit terakhir.
+2. Pada **client existing `customer-portal`**, Administrator WA Gateway menetapkan scope `messages:read`, `messages:send`, dan **`device:<id-perangkat-existing-yang-disetujui>` saja** (companyKey `1`). Jangan mengubah scope/token milik aplikasi lain.
+3. Terbitkan satu token API **untuk client existing `customer-portal`** karena saat ini 0 token aktif. Token tersebut hanya disimpan dalam environment Customer Portal DEV. Ini tidak membuat gateway maupun WhatsApp device baru.
+4. Pada runtime DEV `/etc/cst-customer-portal-dev/runtime.env`, isi:
+   - `CUSTOMER_PORTAL_WA_GATEWAY_TOKEN_DEV`: token milik client existing `customer-portal`.
+   - `CUSTOMER_PORTAL_WA_GATEWAY_DEVICE_ID_DEV`: **device ID PROD existing yang diizinkan**, bukan otomatis `customer-portal-dev`.
+   - `CUSTOMER_PORTAL_WA_GATEWAY_SENDER_PHONE_DEV`: nomor perangkat tersebut dalam format `62...`.
+   - `CUSTOMER_PORTAL_DEV_VENDOR_WA_ENABLED=false` sampai semua pemeriksaan sender/PIC lulus.
+5. Saat Admin memeriksa readiness, `GET /v1/devices` harus **secara autentik** mengembalikan `clientId="customer-portal"` dan `companyId="1"`, beserta **satu** perangkat yang cocok dengan ID dan nomor yang ditetapkan, `ONLINE`, `enabled=true`. Token Tenant/Fleet yang hanya melihat satu perangkat **tetap ditolak** karena `clientId` berbeda. Token umum yang melihat banyak perangkat juga ditolak.
+6. **Ketergantungan read-only pada Gateway PROD:** respons `GET /v1/devices` yang aktif saat audit belum memuat identitas client. Adapter tetap FAIL-CLOSED sampai endpoint gateway existing tersebut mengembalikan `clientId` dan `companyId` dari sesi autentikasi; jangan mengklaim siap hanya karena device cocok. Penambahan properti respons adalah backwards-compatible, tidak perlu gateway/device/QR baru; rilis perubahan gateway harus diuji tersendiri tanpa mengganggu layanan PROD.
+7. Periksa ulang tujuan WhatsApp PIC Supplier dan status Quote; hanya antrean undangan baru yang sah dapat diteruskan, tanpa retry otomatis jika status ambigu.
 
-## Semantik status
-- REST `POST /v1/messages` gateway merespons HTTP 202 `queued` + `messageId`. Ini **bukan** bukti WhatsApp sudah terkirim/dibaca.
-- Antrean Customer Portal berpindah dari `pending` ke `queued`, `attempt_count=1`, dan `payload_json.gateway_delivery.message_id` disimpan. `sent_at` **tidak ditetapkan** sebelum bukti terkirim.
-- Gunakan `GET /v1/messages/:messageId` (token app yang sama, `messages:read`) untuk melihat `queued/sent/delivered/read/failed` secara nyata. Jangan retry otomatis apabila provider response ambigu.
-- Quote #18 menjadi `opened` hanya jika vendor membuka link, bukan saat Admin melakukan check.
+## RFQ #23 dan Quote #18 yang sudah selesai
+- RFQ #23 saat audit terakhir sudah `awarded`, Quote #18 sudah `selected`. **Tidak ada undangan WhatsApp #93 yang perlu dikirim lagi.**
+- Antrean #93 tetap `pending` dengan `attempt_count=0`, `sent_at=NULL` sebagai histori. Jangan tandai `sent` palsu atau memaksakan send.
+- Permintaan WhatsApp baru menggunakan claim satu antrean yang idempoten. Gateway `queued` belum membuktikan `sent/delivered`; status sebenarnya dapat dicek melalui `GET /v1/messages/:messageId` dengan token aplikasi Customer Portal.
 
-## Cakupan rilis
-Perubahan terbatas pada jalur undangan vendor Customer Portal DEV, menghapus adapter Fonnte khusus jalur tersebut. Modul WA lama di luar undangan tidak boleh berubah tanpa audit tersendiri. Deployment PROD, gateway clients/devices yang sudah ada, Fleet, Tenant, AP/GL dan transaksi live tidak disentuh saat uji sintetis.
+## Batas keselamatan
+- Jangan membuat gateway/device/QR baru atau menebak perangkat alternatif ketika belum ada penetapan resmi.
+- Jangan meminjam, memutar, atau membagikan token Fleet, Tenant, Sport Center, AI Core, ataupun Admin Gateway.
+- Pertahankan fitur yang PASS di Customer Portal DEV; PROD Gateway aktif, Fleet, Tenant, Finance/AP/GL, dan transaksi riil tetap tidak tersentuh ketika menguji adapter sintetis.
