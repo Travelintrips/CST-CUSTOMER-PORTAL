@@ -1,0 +1,41 @@
+name: DEV Customer Invoice — Admin company-scope issuance guard
+
+on:
+  pull_request:
+    branches:
+      - test/dev-signed-admin-invoice-http-harness-20261118
+    paths:
+      - 'server/billing-operations.mjs'
+      - 'src/portal-customer-invoice-posted-ar-evidence.test.ts'
+      - 'src/dev-admin-invoice-signed-http-isolated.test.ts'
+      - '.github/workflows/dev-invoice-admin-company-gate.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify-company-scope:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.33.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: pnpm
+      - name: Install locked dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Validate company-bound signed Admin Invoice handler and rollback
+        env:
+          APP_ENV: development
+          NODE_ENV: test
+          SUPABASE_DATABASE_URL_DEV: postgresql://ci:ci@127.0.0.1:5432/ci
+        run: pnpm exec vitest run src/dev-admin-invoice-signed-http-isolated.test.ts src/portal-customer-invoice-posted-ar-evidence.test.ts
+      - name: TypeScript and server syntax
+        run: |
+          pnpm run typecheck
+          pnpm run verify:server-syntax
