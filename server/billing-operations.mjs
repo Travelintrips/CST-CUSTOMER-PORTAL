@@ -53,6 +53,19 @@ async function withTransaction(work) {
     // not an HTTP call or a separate pool connection, so commit/rollback
     // of Sales Invoice, journal and AR remains one transaction boundary.
     const result = await work((sql, values) => client.query(sql, values), client);
+    if (process.env.CUSTOMER_PORTAL_ATOMIC_ACCOUNTING_POST_DEV === "true" &&
+        process.env.CUSTOMER_PORTAL_REQUIRE_POSTED_AR_EVIDENCE_DEV === "true" &&
+        process.env.APP_ENV?.trim().toLowerCase() === "development") {
+      // The existing CST-DEV AR source/lines/journal constraint triggers are
+      // DEFERRABLE INITIALLY DEFERRED. Flushing them here proves the *actual*
+      // pre-commit financial invariants before acknowledging Invoice success.
+      // Any trigger error still causes withTransaction() to ROLLBACK. Never
+      // run the flush for the legacy feature-OFF path or production.
+      await client.query(
+        "set constraints customer_ar_journal_source_dev, " +
+        "customer_ar_journal_lines_dev, customer_ar_sales_source_dev immediate",
+      );
+    }
     await client.query("commit");
     return result;
   } catch (error) {
