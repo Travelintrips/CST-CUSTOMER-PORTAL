@@ -1,0 +1,59 @@
+name: DEV Customer Invoice — approval row-lock race protection
+
+on:
+  pull_request:
+    branches:
+      - fix/dev-finance-invoice-affiliation-review-flow-20261118
+    paths:
+      - 'server/billing-operations.mjs'
+      - 'src/portal-customer-invoice-posted-ar-evidence.test.ts'
+      - 'scripts/tests/dev-invoice-approval-row-lock-check.mjs'
+      - '.github/workflows/dev-invoice-approval-lock-race.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify-approval-locks:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_PASSWORD: synthetic
+          POSTGRES_DB: invoice_authority_synthetic
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d invoice_authority_synthetic"
+          --health-interval 3s
+          --health-timeout 5s
+          --health-retries 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.33.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: pnpm
+      - name: Install locked dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Real PostgreSQL16 concurrent approval revocation checks
+        env:
+          APP_ENV: development
+          DISPOSABLE_APPROVAL_LOCK_URL: postgresql://postgres:synthetic@127.0.0.1:5432/invoice_authority_synthetic
+        run: node scripts/tests/dev-invoice-approval-row-lock-check.mjs
+      - name: Invoice and signed Admin authorization regression
+        env:
+          APP_ENV: development
+          NODE_ENV: test
+          SUPABASE_DATABASE_URL_DEV: postgresql://ci:ci@127.0.0.1:5432/ci
+        run: pnpm exec vitest run src/dev-admin-invoice-signed-http-isolated.test.ts src/portal-customer-invoice-posted-ar-evidence.test.ts src/company-request-atomic-review.test.ts src/corporate-po-affiliation-gate.test.ts
+      - name: TypeScript and syntax
+        run: |
+          pnpm run typecheck
+          pnpm run verify:server-syntax
