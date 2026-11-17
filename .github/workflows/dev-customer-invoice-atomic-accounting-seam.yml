@@ -6,7 +6,10 @@ on:
       - test/dev-customer-invoice-posted-ar-proof-gate-20261117
     paths:
       - 'server/billing-operations.mjs'
+      - 'server/index.mjs'
+      - 'server/dev-accounting-owner-runtime.mjs'
       - 'src/portal-customer-invoice-posted-ar-evidence.test.ts'
+      - 'src/dev-accounting-owner-runtime.test.ts'
       - '.github/workflows/dev-customer-invoice-atomic-accounting-seam.yml'
   workflow_dispatch:
 
@@ -41,12 +44,21 @@ jobs:
           grep -Fq 'from public.bizportal_customer_ar_source_evidence_dev' "$f"
           grep -Fq 'status !== "posted"' "$f"
           ! grep -Eiq 'insert[[:space:]]+into[[:space:]]+public.accounting_entries|update[[:space:]]+public.accounting_entries' "$f"
+          # An HTTP caller must not supply a second financial writer or a
+          # runtime import path. The existing signed admin route uses the
+          # server-controlled checksum-pinned owner only on mark_invoiced.
+          grep -Fq 'await requireAdmin(request, response)' server/index.mjs
+          grep -Fq 'await loadTrustedDevAccountingOwner()' server/index.mjs
+          grep -Fq 'postSalesInvoiceWithClient,' server/index.mjs
+          grep -Fq 'DEV_ACCOUNTING_OWNER_HASH_MISMATCH' server/dev-accounting-owner-runtime.mjs
+          grep -Fq 'DEV_ACCOUNTING_OWNER_ENV_DENIED' server/dev-accounting-owner-runtime.mjs
+          ! grep -Fq 'request.body.postSalesInvoiceWithClient' server/index.mjs
           echo DEV_ATOMIC_POST_SEAM_VERIFICATION_GUARD_PASS
       - name: Posted-AR source and same-transaction Accounting receipt contract tests
         env:
           APP_ENV: development
           NODE_ENV: test
-        run: pnpm exec vitest run src/portal-customer-invoice-posted-ar-evidence.test.ts
+        run: pnpm exec vitest run src/portal-customer-invoice-posted-ar-evidence.test.ts src/dev-accounting-owner-runtime.test.ts
       - name: All existing Customer Portal regressions with no real DB or messages
         env:
           APP_ENV: development
@@ -63,4 +75,4 @@ jobs:
           pnpm run typecheck
           pnpm run verify:server-syntax
       - name: No tracked application changes during test
-        run: git diff --exit-code -- server/billing-operations.mjs src pnpm-lock.yaml
+        run: git diff --exit-code -- server/index.mjs server/billing-operations.mjs server/dev-accounting-owner-runtime.mjs src pnpm-lock.yaml
