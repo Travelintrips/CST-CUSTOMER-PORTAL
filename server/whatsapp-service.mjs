@@ -43,18 +43,20 @@ export async function sendGatewayMessage({ phone, message }) {
   } finally { clearTimeout(timeout); }
 }
 
-export async function sendFonnteMessage({ phone, message }) {
+// For high-trust DEV vendor invitations, the exact provider token used for
+// /device verification must also be used for /send. Never re-resolve it here.
+export async function sendFonnteMessageWithToken({ phone, message, token, fetchFn = fetch }) {
   const target = normalizeWhatsAppPhone(phone), body = clean(message);
-  const token = await resolveCustomerPortalFonnteToken();
+  const authorizedToken = clean(token);
   if (!target || !body) throw new Error("Nomor WhatsApp dan pesan wajib tersedia.");
-  if (!token) throw new Error("CUSTOMER_PORTAL_FONNTE_TOKEN belum dikonfigurasi.");
+  if (!authorizedToken) throw new Error("CUSTOMER_PORTAL_FONNTE_TOKEN belum dikonfigurasi.");
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 10000);
   try {
     const form = new URLSearchParams({ target, message: body });
-    const response = await fetch("https://api.fonnte.com/send", {
+    const response = await fetchFn("https://api.fonnte.com/send", {
       method: "POST",
-      headers: { Authorization: token, "Content-Type": "application/x-www-form-urlencoded", Accept: "application/json" },
+      headers: { Authorization: authorizedToken, "Content-Type": "application/x-www-form-urlencoded", Accept: "application/json" },
       body: form,
       signal: controller.signal,
     });
@@ -62,6 +64,13 @@ export async function sendFonnteMessage({ phone, message }) {
     if (!response.ok || payload?.status !== true) throw new Error(clean(payload?.reason) || `Fonnte HTTP ${response.status}`);
     return payload;
   } finally { clearTimeout(timeout); }
+}
+
+// Existing callers retain their normal, independently resolved sender token.
+// The restricted DEV invitation path uses sendFonnteMessageWithToken instead.
+export async function sendFonnteMessage({ phone, message }) {
+  const token = await resolveCustomerPortalFonnteToken();
+  return sendFonnteMessageWithToken({ phone, message, token });
 }
 
 function marketplaceMessage(row) {

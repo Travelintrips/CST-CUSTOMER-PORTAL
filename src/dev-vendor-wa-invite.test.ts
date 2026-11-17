@@ -3,8 +3,18 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import {
   getDevVendorWhatsAppReadiness,
-  sendOneDevVendorWhatsAppInvite,
+  sendOneDevVendorWhatsAppInvite as sendInviteService,
 } from "../server/dev-vendor-wa-invite.mjs";
+import { verifyDevVendorWaSender } from "../server/dev-vendor-wa-sender.mjs";
+import { sendFonnteMessageWithToken } from "../server/whatsapp-service.mjs";
+
+// All test sends use an explicitly synthetic token and an in-memory fake.
+function sendOneDevVendorWhatsAppInvite(input: Record<string, unknown>) {
+  return sendInviteService({
+    resolveSenderToken: async () => "synthetic-pinned-fonnte-token-A",
+    ...input,
+  });
+}
 
 const dev = { APP_ENV: "development", CUSTOMER_PORTAL_DEV_VENDOR_WA_ENABLED: "true", CUSTOMER_PORTAL_DEV_WA_SENDER_PHONE: "6281111111111" };
 const off = { ...dev, CUSTOMER_PORTAL_DEV_VENDOR_WA_ENABLED: "false" };
@@ -200,6 +210,58 @@ describe("DEV WhatsApp single existing vendor invite (fake sender / fake databas
       ...contact, env: dev, db: h.db, isConfigured: async () => true,
       verifySender: untrustedSender, send,
     })).rejects.toThrow(/tidak cocok/);
+    expect(send).not.toHaveBeenCalled();
+    expect(h.sqlCalls.every((sql) => sql.startsWith("select"))).toBe(true);
+    expect(h.data.queue_status).toBe("pending");
+  });
+
+  it("pins the SAME sender token to Fonnte /device and /send even when configured token rotates", async () => {
+    const h = harness();
+    const resolveSenderToken = vi.fn(async () => "synthetic-token-A");
+    const resolveAgain = vi.fn(async () => "synthetic-FLEET-token-B");
+    const fetchFn = vi.fn(async (url: string, options: { headers: { Authorization: string } }) => {
+      if (url === "https://api.fonnte.com/device") {
+        return {
+          ok: true, status: 200, json: async () => ({
+            status: true, device: dev.CUSTOMER_PORTAL_DEV_WA_SENDER_PHONE,
+            device_status: "connect",
+          }),
+        };
+      }
+      if (url === "https://api.fonnte.com/send") {
+        return { ok: true, status: 200, json: async () => ({ status: true }) };
+      }
+      throw Error("Unexpected provider path");
+    });
+    const result = await sendOneDevVendorWhatsAppInvite({
+      ...contact, env: dev, db: h.db, resolveSenderToken,
+      verifySender: ({ expectedPhone, senderToken }: {expectedPhone: string; senderToken: string}) =>
+        verifyDevVendorWaSender({
+          expectedPhone, senderToken, resolveToken: resolveAgain, fetchFn,
+        }),
+      send: ({ phone, message, token }: {phone: string; message: string; token: string}) =>
+        sendFonnteMessageWithToken({ phone, message, token, fetchFn }),
+    });
+    expect(result).toEqual({ queueId: 93, quoteId: 18, status: "provider_accepted" });
+    expect(resolveSenderToken).toHaveBeenCalledTimes(1);
+    expect(resolveAgain).not.toHaveBeenCalled();
+    expect(fetchFn).toHaveBeenCalledTimes(2);
+    expect(fetchFn.mock.calls.map(([, options]) => options.headers.Authorization))
+      .toEqual(["synthetic-token-A", "synthetic-token-A"]);
+    expect(JSON.stringify(result)).not.toContain("synthetic-token-A");
+    expect(h.data.queue_status).toBe("sent");
+  });
+
+  it("never claims a pending queue if the one pinned sender token is missing", async () => {
+    const h = harness();
+    const send = vi.fn();
+    const verifySender = vi.fn();
+    await expect(sendOneDevVendorWhatsAppInvite({
+      ...contact, env: dev, db: h.db,
+      resolveSenderToken: async () => "",
+      verifySender, send,
+    })).rejects.toThrow(/belum dikonfigurasi/);
+    expect(verifySender).not.toHaveBeenCalled();
     expect(send).not.toHaveBeenCalled();
     expect(h.sqlCalls.every((sql) => sql.startsWith("select"))).toBe(true);
     expect(h.data.queue_status).toBe("pending");

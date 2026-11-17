@@ -22,13 +22,15 @@ export function evaluateDevVendorWaSenderProfile({ expectedPhone, profile }) {
 }
 
 export async function verifyDevVendorWaSender({
-  expectedPhone, resolveToken = resolveCustomerPortalFonnteToken, fetchFn = fetch,
+  expectedPhone, senderToken, resolveToken = resolveCustomerPortalFonnteToken, fetchFn = fetch,
 } = {}) {
   const expected = normalizeWhatsAppPhone(expectedPhone);
   if (!expected || !/^628\d{8,12}$/.test(expected)) {
     return { matched: false, reason: "Nomor resmi pengirim WhatsApp DEV belum ditentukan." };
   }
-  const token = await resolveToken();
+  // An explicitly pinned token (even empty) must never fall back to another
+  // credential; the single-queue sender uses this same token for /send.
+  const token = String(senderToken !== undefined ? senderToken : await resolveToken()).trim();
   if (!token) return { matched: false, reason: "Token pengirim WhatsApp DEV belum tersedia." };
 
   const controller = new AbortController();

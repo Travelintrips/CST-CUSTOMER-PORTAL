@@ -2,9 +2,9 @@
 // No scheduler entrypoint, no Fleet/Tenant token fallback, and no automatic retry.
 import { query, databaseEnvironment, databaseConnectionSource } from "./db.mjs";
 import { buildDevVendorQuoteShare } from "./vendor-quote-share.mjs";
-import { customerPortalFonnteConfigured } from "./fonnte-config.mjs";
+import { customerPortalFonnteConfigured, resolveCustomerPortalFonnteToken } from "./fonnte-config.mjs";
 import { verifyDevVendorWaSender } from "./dev-vendor-wa-sender.mjs";
-import { normalizeWhatsAppPhone, sendFonnteMessage } from "./whatsapp-service.mjs";
+import { normalizeWhatsAppPhone, sendFonnteMessageWithToken } from "./whatsapp-service.mjs";
 
 const DEV_ORIGIN = "https://portaldev.72.61.210.205.sslip.io";
 const error = (statusCode, message) => Object.assign(new Error(message), { statusCode });
@@ -127,16 +127,21 @@ export const DEV_VENDOR_INVITE_CLAIM_SQL = [
 export async function sendOneDevVendorWhatsAppInvite({
   queueId, rfqId, quoteId, recipientLast4, confirmedRecipient,
   env = process.env, db = query,
-  isConfigured = customerPortalFonnteConfigured,
+  resolveSenderToken = resolveCustomerPortalFonnteToken,
   verifySender = verifyDevVendorWaSender,
-  send = sendFonnteMessage,
+  send = sendFonnteMessageWithToken,
 } = {}) {
   assertDevEnvironment(env);
   if (!confirmedRecipient || typeof recipientLast4 !== "string") {
     fail(409, "Konfirmasi PIC vendor diperlukan sebelum mengirim.");
   }
+  // Resolve exactly once per dispatch. The same snapshot is used for both the
+  // Fonnte /device identity check and /send; no provider credential re-read.
+  const senderToken = String(await resolveSenderToken() ?? "").trim();
   const readiness = await getDevVendorWhatsAppReadiness({
-    queueId, rfqId, quoteId, env, db, isConfigured, verifySender,
+    queueId, rfqId, quoteId, env, db,
+    isConfigured: async () => Boolean(senderToken),
+    verifySender: ({ expectedPhone }) => verifySender({ expectedPhone, senderToken }),
   });
   if (!readiness.ready) fail(409, readiness.reason ?? "Antrean belum siap dikirim.");
   if (recipientLast4 !== readiness.recipientLast4) {
@@ -164,7 +169,7 @@ export async function sendOneDevVendorWhatsAppInvite({
   ].join("\n");
   try {
     // Provider acceptance is not the same as WhatsApp delivery/read receipt.
-    await send({ phone, message });
+    await send({ phone, message, token: senderToken });
   } catch {
     await db(
       "update public.mkt_notification_queue set status='exhausted', last_error=$2, next_retry_at=null, updated_at=now() where id=$1 and status='sending' and attempt_count=1",
