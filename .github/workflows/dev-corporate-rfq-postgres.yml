@@ -1,0 +1,52 @@
+name: DEV Corporate Marketplace RFQ PostgreSQL E2E
+
+on:
+  pull_request:
+    paths:
+      - 'src/dev-corporate-marketplace-rfq-postgres.test.ts'
+      - 'server/customer-marketplace-rfq.mjs'
+      - 'server/corporate-po-affiliation-gate.mjs'
+      - '.github/workflows/dev-corporate-rfq-postgres.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  real-postgres-rfq:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: ci_rfq
+          POSTGRES_PASSWORD: CI_POSTGRES_DISPOSABLE_ONLY
+          POSTGRES_DB: payroll_ci
+        ports:
+          - 65432:5432
+        options: >-
+          --health-cmd "pg_isready -U ci_rfq -d payroll_ci"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          run_install: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Run existing canonical RFQ service against actual isolated PostgreSQL 16
+        env:
+          CI: 'true'
+          GITHUB_ACTIONS: 'true'
+          APP_ENV: development
+          NODE_ENV: test
+          TZ: Asia/Jakarta
+          CST_RFQ_DISPOSABLE_TEST: 'true'
+        run: pnpm exec vitest run src/dev-corporate-marketplace-rfq-postgres.test.ts
+      - name: Confirm source TypeScript compilation
+        run: pnpm typecheck
