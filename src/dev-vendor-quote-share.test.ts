@@ -67,7 +67,7 @@ describe("DEV-only admin bearer link for existing vendor quotation", () => {
     const end = handler.indexOf("const detailMatch = url.pathname.match(", start);
     const block = handler.slice(start, end);
     expect(index).toContain("await requireAdmin(request, response)");
-    expect(index).toContain("vendor-routing(?:\\/(?:invite-link|whatsapp-readiness|send-whatsapp))?");
+    expect(index).toContain("vendor-routing(?:\\/(?:invite-link|whatsapp-readiness|send-whatsapp|whatsapp-sync))?");
     expect(block).toContain('request.method === "GET"');
     expect(block).toContain('process.env.APP_ENV !== "development"');
     expect(block).toContain('buildDevVendorQuoteShare');

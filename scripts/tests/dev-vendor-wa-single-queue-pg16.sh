@@ -37,7 +37,9 @@ CREATE TABLE public.mkt_notification_queue (
   recipient_id integer, recipient_phone text, recipient_type text,
   event_type text, channel text, status text, attempt_count integer,
   sent_at timestamptz, payload_json jsonb, last_error text,
-  next_retry_at timestamptz, updated_at timestamptz default now()
+  next_retry_at timestamptz, updated_at timestamptz default now(),
+  CONSTRAINT mkt_notification_queue_status_check
+    CHECK (status IN ('pending','sending','queued','sent','failed','retrying','exhausted'))
 );
 INSERT INTO public.mkt_rfqs VALUES (23,'RFQ-SYNTHETIC',1);
 INSERT INTO public.suppliers VALUES (24,'Supplier Test','081234567890','PIC Test',1,true,true);
