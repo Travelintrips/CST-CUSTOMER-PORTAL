@@ -35,7 +35,10 @@ CREATE TABLE public.mkt_vendor_quotes (
 CREATE TABLE public.mkt_notification_queue (
   id integer primary key, rfq_id integer, vendor_quote_id integer,
   recipient_id integer, recipient_phone text, recipient_type text,
-  event_type text, channel text, status text, attempt_count integer,
+  event_type text, channel text,
+  status text CONSTRAINT mkt_notification_queue_status_check
+    CHECK (status IN ('pending','sending','sent','failed','retrying','exhausted')),
+  attempt_count integer,
   sent_at timestamptz, payload_json jsonb, last_error text,
   next_retry_at timestamptz, updated_at timestamptz default now()
 );
@@ -95,6 +98,20 @@ test "$RESULTS" = "0 1 " || { echo "FAIL: concurrent claim result=$RESULTS"; exi
 STATUS="$(docker exec "$NAME" psql -U postgres -d postgres -At -v ON_ERROR_STOP=1 -c \
   "select (select status from public.mkt_notification_queue where id=93)||'/'||(select attempt_count from public.mkt_notification_queue where id=93)||'/'||(select status from public.mkt_notification_queue where id=94)")"
 test "$STATUS" = "sending/1/pending" || { echo "FAIL: status=$STATUS"; exit 1; }
+
+# Reproduce the ACTUAL CST-DEV schema defect first: the historical CHECK
+# rejects queued despite the gateway integration requiring it.
+if docker exec "$NAME" psql -U postgres -d postgres -q -v ON_ERROR_STOP=1 \
+  -c "update public.mkt_notification_queue set status='queued' where id=93" \
+  >/dev/null 2>&1; then
+  echo "FAIL: historical status CHECK unexpectedly allowed queued"
+  exit 1
+fi
+
+# Apply the exact migration to the isolated database, not CST-DEV or PROD.
+docker exec -i "$NAME" psql -U postgres -d postgres -q -v ON_ERROR_STOP=1 \
+  < supabase/migrations/20261117093000_accept_cst_gateway_queued_status.sql \
+  >/dev/null
 
 # Gateway acceptance must persist QUEUED and the provider receipt ID, without
 # pretending that WhatsApp has already been sent.
