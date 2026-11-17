@@ -4,7 +4,6 @@ import { query, databaseEnvironment, databaseConnectionSource } from "./db.mjs";
 import { buildDevVendorQuoteShare } from "./vendor-quote-share.mjs";
 import { normalizeWhatsAppPhone } from "./wa-phone.mjs";
 import {
-  DEV_PORTAL_DEVICE_ID,
   resolveDevCustomerPortalGatewayToken,
   verifyDevCustomerPortalGatewaySender,
   sendDevCustomerPortalGatewayMessage,

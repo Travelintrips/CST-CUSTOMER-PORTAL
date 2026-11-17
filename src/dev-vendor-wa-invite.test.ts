@@ -10,7 +10,7 @@ import { buildDevGatewayIdempotencyKey } from "../server/dev-vendor-wa-gateway.m
 const dev = {
   APP_ENV: "development", NODE_ENV: "test",
   CUSTOMER_PORTAL_DEV_VENDOR_WA_ENABLED: "true",
-  CUSTOMER_PORTAL_WA_GATEWAY_DEVICE_ID_DEV: "customer-portal-dev",
+  CUSTOMER_PORTAL_WA_GATEWAY_DEVICE_ID_DEV: "authorized-existing-prod-device",
   CUSTOMER_PORTAL_WA_GATEWAY_SENDER_PHONE_DEV: "6281111111111",
 };
 const off = { ...dev, CUSTOMER_PORTAL_DEV_VENDOR_WA_ENABLED: "false" };

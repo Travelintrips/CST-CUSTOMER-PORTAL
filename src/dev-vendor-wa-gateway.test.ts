@@ -1,7 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   CST_GATEWAY_URL,
-  DEV_PORTAL_DEVICE_ID,
   resolveDevCustomerPortalGatewayToken,
   evaluateDevPortalGatewayDevice,
   verifyDevCustomerPortalGatewaySender,
@@ -10,9 +9,12 @@ import {
 } from "../server/dev-vendor-wa-gateway.mjs";
 
 const token = "synthetic-customer-portal-only-token";
-const device = { deviceId: "customer-portal-dev", companyId: "1",
-  name: "Customer Portal DEV", enabled: true, status: "ONLINE", phoneNumber: "6281111111111" };
-const verified = { expectedPhone: "081111111111", deviceId: "customer-portal-dev" };
+// This is a synthetic alias representing an EXISTING PROD sender chosen by
+// the admin, not a new device registration or a prescribed Fleet/Tenant ID.
+const EXISTING_PROD_DEVICE = "authorized-existing-prod-device";
+const device = { deviceId: EXISTING_PROD_DEVICE, companyId: "1",
+  name: "Previously registered PROD sender", enabled: true, status: "ONLINE", phoneNumber: "6281111111111" };
+const verified = { expectedPhone: "081111111111", deviceId: EXISTING_PROD_DEVICE };
 const fakeUuid = "123e4567-e89b-12d3-a456-426614174000";
 
 describe("CST WA Gateway DEV sender isolation (no live messages)", () => {
@@ -28,7 +30,7 @@ describe("CST WA Gateway DEV sender isolation (no live messages)", () => {
     })).toBe("");
   });
 
-  it("requires exactly one enabled online Customer Portal DEV device", () => {
+  it("requires exactly one online existing PROD device explicitly assigned to Customer Portal", () => {
     expect(evaluateDevPortalGatewayDevice({
       devices: [device], ...verified,
     })).toEqual({ matched: true, reason: null });
@@ -81,8 +83,8 @@ describe("CST WA Gateway DEV sender isolation (no live messages)", () => {
     const fetchFn = vi.fn();
     for (const args of [
       { gatewayToken: "", ...verified },
-      { gatewayToken: token, expectedPhone: "", deviceId: DEV_PORTAL_DEVICE_ID },
-      { gatewayToken: token, expectedPhone: verified.expectedPhone, deviceId: "tenant-pos" },
+      { gatewayToken: token, expectedPhone: "", deviceId: EXISTING_PROD_DEVICE },
+      { gatewayToken: token, expectedPhone: verified.expectedPhone, deviceId: "" },
     ]) {
       expect((await verifyDevCustomerPortalGatewaySender({
         ...args, fetchFn,
@@ -121,7 +123,7 @@ describe("CST WA Gateway DEV sender isolation (no live messages)", () => {
     const key = buildDevGatewayIdempotencyKey({ queueId: 93, rfqId: 23, quoteId: 18 });
     const result = await sendDevCustomerPortalGatewayMessage({
       gatewayToken: token, phone: "081234567890",
-      deviceId: DEV_PORTAL_DEVICE_ID, message: "Synthetic vendor invite",
+      deviceId: EXISTING_PROD_DEVICE, message: "Synthetic vendor invite",
       idempotencyKey: key, fetchFn,
     });
     expect(result).toEqual({ status: "queued", messageId: fakeUuid });
@@ -135,14 +137,14 @@ describe("CST WA Gateway DEV sender isolation (no live messages)", () => {
     });
     expect(JSON.parse(args.body)).toMatchObject({
       type: "text", text: "Synthetic vendor invite",
-      to: "6281234567890", deviceId: DEV_PORTAL_DEVICE_ID, clientMessageId: key,
+      to: "6281234567890", deviceId: EXISTING_PROD_DEVICE, clientMessageId: key,
     });
     expect(JSON.stringify(result)).not.toContain(token);
   });
 
   it("accepts provider duplicate as acknowledged but never claims delivery", async () => {
     const result = await sendDevCustomerPortalGatewayMessage({
-      gatewayToken: token, deviceId: DEV_PORTAL_DEVICE_ID,
+      gatewayToken: token, deviceId: EXISTING_PROD_DEVICE,
       phone: "6281234567890", message: "Synthetic",
       idempotencyKey: buildDevGatewayIdempotencyKey({ queueId: 93, rfqId: 23, quoteId: 18 }),
       fetchFn: async () => ({ ok: true, status: 200, json: async () => ({
@@ -155,7 +157,7 @@ describe("CST WA Gateway DEV sender isolation (no live messages)", () => {
   });
 
   it("rejects malformed/missing gateway acknowledgement or provider errors", async () => {
-    const opts = { gatewayToken: token, deviceId: DEV_PORTAL_DEVICE_ID,
+    const opts = { gatewayToken: token, deviceId: EXISTING_PROD_DEVICE,
       phone: "081234567890", message: "Synthetic",
       idempotencyKey: buildDevGatewayIdempotencyKey({ queueId: 93, rfqId: 23, quoteId: 18 }) };
     for (const payload of [
@@ -174,16 +176,19 @@ describe("CST WA Gateway DEV sender isolation (no live messages)", () => {
     })).rejects.toThrow(/tidak memastikan/);
   });
 
-  it("rejects unintended Fleet/Tenant device and no token before network access", async () => {
+  it("rejects missing or invalid existing-device assignment and absent token before network access", async () => {
     const fetchFn = vi.fn();
     const opts = { gatewayToken: token, phone: "081234567890",
       message: "Synthetic", idempotencyKey: "cst-customer-portal-dev:queue:93:rfq:23:quote:18",
       fetchFn };
     await expect(sendDevCustomerPortalGatewayMessage({
-      ...opts, deviceId: "tenant-pos",
+      ...opts, deviceId: "",
     })).rejects.toThrow(/perangkat/);
     await expect(sendDevCustomerPortalGatewayMessage({
-      ...opts, gatewayToken: "", deviceId: DEV_PORTAL_DEVICE_ID,
+      ...opts, deviceId: "../../tenant-pos",
+    })).rejects.toThrow(/perangkat/);
+    await expect(sendDevCustomerPortalGatewayMessage({
+      ...opts, gatewayToken: "", deviceId: EXISTING_PROD_DEVICE,
     })).rejects.toThrow(/Kredensial/);
     expect(fetchFn).not.toHaveBeenCalled();
   });

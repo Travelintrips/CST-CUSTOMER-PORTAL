@@ -3,33 +3,35 @@
 import { normalizeWhatsAppPhone } from "./wa-phone.mjs";
 
 export const CST_GATEWAY_URL = "https://aicst.co.id";
-export const DEV_PORTAL_DEVICE_ID = "customer-portal-dev";
 const EXPECTED_COMPANY = "1";
 
 const clean = (value) => typeof value === "string" ? value.trim() : "";
 const reject = (reason) => ({ matched: false, reason });
 const phoneValid = (value) => /^628\d{8,12}$/.test(value ?? "");
+const validExistingDeviceId = (value) => /^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$/.test(clean(value));
 
 export function resolveDevCustomerPortalGatewayToken(env = process.env) {
   // Dedicated, server-only client API token. No general gateway/admin fallback.
   return clean(env.CUSTOMER_PORTAL_WA_GATEWAY_TOKEN_DEV);
 }
 
-export function evaluateDevPortalGatewayDevice({ devices, expectedPhone, deviceId = DEV_PORTAL_DEVICE_ID }) {
+export function evaluateDevPortalGatewayDevice({ devices, expectedPhone, deviceId }) {
   const normalized = normalizeWhatsAppPhone(expectedPhone);
   if (!phoneValid(normalized)) return reject("Nomor resmi pengirim WA Gateway DEV belum ditentukan.");
-  if (deviceId !== DEV_PORTAL_DEVICE_ID) return reject("Perangkat tidak termasuk Customer Portal DEV.");
-  // Gateway returns only assigned devices for scoped clients. An unscoped
-  // Fleet/Tenant/Admin token exposing multiple devices MUST fail closed.
+  // No newly created device is required: an authorized, existing PROD device
+  // may be selected via explicit runtime configuration and per-client scopes.
+  if (!validExistingDeviceId(deviceId)) return reject("Perangkat WA Gateway PROD yang dipilih belum dikonfigurasi.");
+  // A dedicated customer-portal API token MUST expose exactly the one assigned
+  // device. Unscoped admin/Fleet/Tenant tokens that list many devices fail.
   if (!Array.isArray(devices) || devices.length !== 1) {
-    return reject("WA Gateway harus memberikan tepat satu perangkat khusus Customer Portal DEV.");
+    return reject("Token Customer Portal harus melihat tepat satu perangkat WA Gateway PROD yang ditetapkan.");
   }
   const device = devices[0];
-  if (device?.deviceId !== DEV_PORTAL_DEVICE_ID || device?.companyId !== EXPECTED_COMPANY) {
-    return reject("Perangkat atau perusahaan gateway bukan Customer Portal DEV.");
+  if (device?.deviceId !== deviceId || device?.companyId !== EXPECTED_COMPANY) {
+    return reject("Perangkat atau perusahaan gateway tidak cocok dengan penetapan Customer Portal.");
   }
   if (device?.enabled !== true || String(device?.status ?? "").toUpperCase() !== "ONLINE") {
-    return reject("Perangkat Customer Portal DEV belum online.");
+    return reject("Perangkat WA Gateway PROD yang ditetapkan belum online.");
   }
   if (normalizeWhatsAppPhone(device?.phoneNumber) !== normalized) {
     return reject("Nomor pengirim WA Gateway berbeda dari nomor resmi Customer Portal DEV.");
@@ -40,12 +42,12 @@ export function evaluateDevPortalGatewayDevice({ devices, expectedPhone, deviceI
 export async function verifyDevCustomerPortalGatewaySender({
   gatewayToken,
   expectedPhone,
-  deviceId = DEV_PORTAL_DEVICE_ID,
+  deviceId,
   fetchFn = fetch,
 } = {}) {
   const token = clean(gatewayToken);
   if (!token) return reject("Token client WA Gateway Customer Portal DEV belum tersedia.");
-  if (deviceId !== DEV_PORTAL_DEVICE_ID) return reject("Perangkat WA Gateway bukan Customer Portal DEV.");
+  if (!validExistingDeviceId(deviceId)) return reject("Perangkat WA Gateway PROD belum dipilih.");
   if (!phoneValid(normalizeWhatsAppPhone(expectedPhone))) {
     return reject("Nomor resmi pengirim WA Gateway DEV belum ditentukan.");
   }
@@ -79,13 +81,13 @@ export function buildDevGatewayIdempotencyKey({ queueId, rfqId, quoteId }) {
 }
 
 export async function sendDevCustomerPortalGatewayMessage({
-  gatewayToken, deviceId = DEV_PORTAL_DEVICE_ID, phone, message,
+  gatewayToken, deviceId, phone, message,
   idempotencyKey, fetchFn = fetch,
 } = {}) {
   const token = clean(gatewayToken);
   const number = normalizeWhatsAppPhone(phone);
-  if (!token || deviceId !== DEV_PORTAL_DEVICE_ID) {
-    throw Error("Kredensial/perangkat gateway Customer Portal DEV tidak valid.");
+  if (!token || !validExistingDeviceId(deviceId)) {
+    throw Error("Kredensial atau perangkat WA Gateway PROD pilihan Customer Portal tidak valid.");
   }
   if (!phoneValid(number) || !clean(message)) throw Error("Nomor tujuan atau pesan tidak valid.");
   if (!/^cst-customer-portal-dev:queue:[1-9]\d*:rfq:[1-9]\d*:quote:[1-9]\d*$/.test(clean(idempotencyKey))) {
