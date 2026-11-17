@@ -7,7 +7,7 @@ const m = vi.hoisted(() => ({
   connect: vi.fn(), query: vi.fn(), release: vi.fn(),
   gl: null as null | Record<string,unknown>, proof: [101] as number[],
   poster: vi.fn(), notifications: vi.fn(),
-  sql: [] as string[], commits: 0, rollbacks: 0,
+  sql: [] as string[], commits: 0, rollbacks: 0, approval:true,
 }));
 vi.mock("../server/db.mjs", () => ({
   pool: { connect: m.connect }, query: vi.fn(),
@@ -60,6 +60,7 @@ async function mockedSql(statement) {
   if(q==="commit"){m.commits++;return {rows:[]};}
   if(q==="rollback"){m.rollbacks++;return {rows:[]};}
   if(q.includes("from public.portal_company_members")) return {rows:[{company_id:1}]};
+  if(q.includes("from public.portal_company_requests approval")) return {rows:m.approval?[{approved:1}]:[]};
   if(q.includes("from public.sales_documents")) return {rows:[invoice()]};
   if(q.startsWith("update public.sales_documents")) return {rows:[invoice(true)]};
   if(q.includes("from public.accounting_entries e")) return {rows:m.gl?[m.gl]:[]};
@@ -128,7 +129,7 @@ afterAll(async()=>{
 });
 beforeEach(()=>{
   vi.clearAllMocks();
-  m.sql=[];m.commits=0;m.rollbacks=0;m.gl=gl();m.proof=[101];
+  m.sql=[];m.commits=0;m.rollbacks=0;m.gl=gl();m.proof=[101];m.approval=true;
   m.query.mockImplementation(mockedSql);
   m.connect.mockResolvedValue({query:m.query,release:m.release});
   m.poster.mockResolvedValue({posted:true,entryId:22});
@@ -177,6 +178,14 @@ describe("isolated HTTP: existing signed Portal session → existing Invoice han
     expect(m.poster).not.toHaveBeenCalled();
     expect(m.rollbacks).toBe(1);
     expect(m.commits).toBe(0);
+    expect(m.notifications).not.toHaveBeenCalled();
+  });
+  it("rejects signed Admin with only self-selected company membership",async()=>{
+    m.approval=false;
+    expect((await action(createSession(user("admin")))).status).toBe(403);
+    expect(m.poster).not.toHaveBeenCalled();
+    expect(m.commits).toBe(0);
+    expect(m.rollbacks).toBe(1);
     expect(m.notifications).not.toHaveBeenCalled();
   });
   it("rejects missing AR evidence after returned posted GL, leaving no COMMIT",async()=>{
