@@ -18,6 +18,10 @@ const m=vi.hoisted(()=>({
   poster:vi.fn(),
   glRow:null,
   bizOwner:[],
+  outbox:[],
+  audits:[],
+  failOutbox:false,
+  failAudit:false,
 }));
 vi.mock("../server/db.mjs",()=>({
   pool:{connect:m.connect},
@@ -53,7 +57,7 @@ const issued=()=>({
   ...base(),invoice_status:"invoiced",
   invoice_number:"INV-SO-QA-101",invoice_date:"2026-11-17",due_date:"2026-12-17",
 });
-async function sqlMock(statement){
+async function sqlMock(statement,params=[]){
   const q=String(statement).toLowerCase().trim();
   m.sql.push(q);
   if(q==="begin"||q==="commit"||q==="rollback")return {rows:[]};
@@ -62,6 +66,19 @@ async function sqlMock(statement){
   if(q.includes("from public.users"))return {rows:m.bizOwner};
   if(q.includes("from public.accounting_entries e")){
     return {rows: m.glRow ? [m.glRow] : []};
+  }
+  if(q.includes("from public.financial_outbox_events"))return {rows:m.outbox};
+  if(q.includes("into public.financial_outbox_events")){
+    if(m.failOutbox)throw Error("QA_OUTBOX_INSERT_FAILED");
+    const payload=JSON.parse(params[0]);
+    m.outbox.push({id:601,payload});
+    return {rows:[{id:601}]};
+  }
+  if(q.includes("from public.audit_accounting_events"))return {rows:m.audits};
+  if(q.includes("into public.audit_accounting_events")){
+    if(m.failAudit)throw Error("QA_ACCOUNTING_AUDIT_INSERT_FAILED");
+    m.audits.push({id:701});
+    return {rows:[{id:701}]};
   }
   if(q.includes("from public.bizportal_customer_ar_source_evidence_dev")){
     if(m.viewUnavailable)throw Object.assign(new Error("view missing"),{code:"42P01"});
@@ -97,6 +114,10 @@ beforeEach(()=>{
   m.currentInvoiceNumber=null;
   m.viewUnavailable=false;
   m.glRow=null;
+  m.outbox=[];
+  m.audits=[];
+  m.failOutbox=false;
+  m.failAudit=false;
   m.bizOwner=[{
     id:"qa-existing-bizportal-owner",role:"super_admin",
     system_role:"super_admin",status:"active",is_active:true,company_id:null,
@@ -243,6 +264,71 @@ describe("DEV-only atomic Accounting owner integration seam",()=>{
     expect(m.sql).toContain("rollback");
     noOutbound();
   });
+  it.each([1,3])("writes one transaction-bound journal outbox and audit for company %i",async companyId=>{
+    m.companyId=companyId;
+    m.glRow=validGl();
+    await perform(m.poster);
+    expect(m.outbox).toHaveLength(1);
+    expect(m.audits).toHaveLength(1);
+    expect(m.outbox[0].payload).toMatchObject({
+      eventType:"JOURNAL_CREATED",sourceType:"sales_invoice",
+      sourceId:101,entryId:22,companyId,
+      amount:100,actor:"qa-existing-bizportal-owner",
+      dedupeKey:"sales_invoice:"+companyId+":101:22",
+    });
+    const journalProof=sqlIndex("from public.bizportal_customer_ar_source_evidence_dev");
+    const outboxInsert=sqlIndex("into public.financial_outbox_events");
+    const accountingAudit=sqlIndex("into public.audit_accounting_events");
+    expect(outboxInsert).toBeGreaterThan(journalProof);
+    expect(accountingAudit).toBeGreaterThan(outboxInsert);
+    expect(sqlIndex("into public.activity_logs")).toBeGreaterThan(accountingAudit);
+    expect(m.sql).toContain("commit");
+  });
+  it("refuses duplicate prior outbox events before creating a new audit",async()=>{
+    m.outbox=[{id:6,payload:{}},{id:7,payload:{}}];
+    await expect(perform(m.poster)).rejects.toMatchObject({statusCode:422});
+    expect(sqlIndex("into public.financial_outbox_events")).toBe(-1);
+    expect(sqlIndex("into public.audit_accounting_events")).toBe(-1);
+    expect(m.sql).toContain("rollback");
+    expect(m.sql).not.toContain("commit");
+    noOutbound();
+  });
+  it("rejects a prior outbox event for a different company or source",async()=>{
+    m.outbox=[{id:6,payload:{
+      eventType:"JOURNAL_CREATED",sourceType:"sales_invoice",
+      sourceId:101,entryId:22,companyId:3,
+    }}];
+    await expect(perform(m.poster)).rejects.toMatchObject({statusCode:422});
+    expect(m.sql).toContain("rollback");
+    noOutbound();
+  });
+  it("reuses one matching legitimate outbox record without inserting another",async()=>{
+    m.outbox=[{id:6,payload:{
+      eventType:"JOURNAL_CREATED",sourceType:"sales_invoice",
+      sourceId:101,entryId:22,companyId:1,
+    }}];
+    await perform(m.poster);
+    expect(m.outbox).toHaveLength(1);
+    expect(sqlIndex("into public.financial_outbox_events")).toBe(-1);
+    expect(m.audits).toHaveLength(1);
+  });
+  it("rejects a second issuance audit rather than duplicating",async()=>{
+    m.audits=[{id:701}];
+    await expect(perform(m.poster)).rejects.toMatchObject({statusCode:422});
+    expect(m.sql).toContain("rollback");
+    expect(m.sql).not.toContain("commit");
+    noOutbound();
+  });
+  it.each(["outbox","audit"])("rolls back on failed %s persistence with no notifications",async target=>{
+    if(target==="outbox")m.failOutbox=true;
+    else m.failAudit=true;
+    await expect(perform(m.poster)).rejects.toThrow(
+      target==="outbox"?"QA_OUTBOX_INSERT_FAILED":"QA_ACCOUNTING_AUDIT_INSERT_FAILED"
+    );
+    expect(m.sql).toContain("rollback");
+    expect(m.sql).not.toContain("commit");
+    noOutbound();
+  });
   it("never posts using a missing/unwired owner; rolls back issuance",async()=>{
     await expect(perform()).rejects.toMatchObject({statusCode:503});
     expect(m.sql).toContain("rollback");
@@ -327,6 +413,8 @@ describe("DEV-only atomic Accounting owner integration seam",()=>{
     expect(m.poster).not.toHaveBeenCalled();
     expect(sqlIndex("from public.accounting_entries e")).toBe(-1);
     expect(sqlIndex("from public.users")).toBe(-1);
+    expect(sqlIndex("into public.financial_outbox_events")).toBe(-1);
+    expect(sqlIndex("into public.audit_accounting_events")).toBe(-1);
     expect(m.sql).toContain("commit");
   });
   it("refuses production even with a mock owner attached",async()=>{
