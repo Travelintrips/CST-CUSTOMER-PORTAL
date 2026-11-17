@@ -119,7 +119,11 @@ export async function getMarketplaceWhatsAppQueueStats() {
   );
   const row = result.rows[0] ?? {};
   const configured = Boolean(await resolveCustomerPortalFonnteToken());
-  const workerEnabled = process.env.CUSTOMER_PORTAL_WA_WORKER_ENABLED !== "false";
+  // Match server/index.mjs::startWorkers(): DEV never starts the legacy
+  // automatic queue worker, regardless of whether its flag is unset.
+  const appEnv = process.env.APP_ENV ?? process.env.NODE_ENV ?? "development";
+  const workerEnabled = (appEnv === "production" || process.env.NODE_ENV === "production")
+    && process.env.CUSTOMER_PORTAL_WA_WORKER_ENABLED !== "false";
   return {
     configured,
     workerEnabled,
