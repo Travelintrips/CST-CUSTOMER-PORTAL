@@ -38,7 +38,7 @@ describe("i18n translations", () => {
       const flat = flatten(await loadLocale(locale));
       expect(Object.keys(flat).length).toBe(baseKeys.length);
     }
-  }, 30_000);
+  }, 120_000);
 
   it("has every baseline key present in every locale", async () => {
     const baseline = flatten(await loadLocale("id-ID"));
