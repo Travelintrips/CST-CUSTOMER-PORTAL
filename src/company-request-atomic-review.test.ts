@@ -26,6 +26,7 @@ type DbState = {
   failStep?: string;
   profileCount?: number;
   changedCount?: number;
+  applicantId?: number;
 };
 type DbCall = { sql: string; args: unknown[] };
 
@@ -40,7 +41,7 @@ function setup(state: DbState = {}) {
       if (sql === "begin" || sql === "commit" || sql === "rollback") return { rows: [], rowCount: 0 };
       if (sql.includes("from public.portal_company_requests") && sql.includes("for update")) {
         if (state.requestStatus === null) return { rows: [], rowCount: 0 };
-        return { rows: [{ id: 17, portal_customer_id: 30, status: state.requestStatus ?? "pending" }], rowCount: 1 };
+        return { rows: [{ id: 17, portal_customer_id: state.applicantId ?? 30, status: state.requestStatus ?? "pending" }], rowCount: 1 };
       }
       if (sql.includes("from public.companies")) {
         return state.companyActive === false
@@ -105,6 +106,41 @@ describe("existing Admin review endpoint atomically updates company request and 
     expect(client.release).toHaveBeenCalledOnce();
   });
 
+  it("refuses self-approval while DEV Invoice finance gate is enabled", async () => {
+    vi.stubEnv("CST_CORPORATE_PO_APPROVAL_GATE_DEV","false");
+    vi.stubEnv("CUSTOMER_PORTAL_ATOMIC_ACCOUNTING_POST_DEV","true");
+    vi.stubEnv("CUSTOMER_PORTAL_REQUIRE_POSTED_AR_EVIDENCE_DEV","true");
+    const { history, client } = setup({ applicantId: 9 });
+    const ctx = input(approvedBody);
+    await handleAdminCompanyRequests(ctx);
+    expect(ctx.sendError).toHaveBeenCalledWith(ctx.response,403,expect.any(String));
+    expect(history.map(entry=>entry.sql)).toEqual([
+      "begin",expect.stringContaining("for update"),"rollback",
+    ]);
+    expect(client.release).toHaveBeenCalledOnce();
+    expect(history.some(entry=>entry.sql.startsWith("insert into"))).toBe(false);
+  });
+  it("allows independent Admin approval using existing flow when invoice flag is ON", async () => {
+    vi.stubEnv("CST_CORPORATE_PO_APPROVAL_GATE_DEV","false");
+    vi.stubEnv("CUSTOMER_PORTAL_ATOMIC_ACCOUNTING_POST_DEV","true");
+    vi.stubEnv("CUSTOMER_PORTAL_REQUIRE_POSTED_AR_EVIDENCE_DEV","true");
+    const { history } = setup({ applicantId: 30 });
+    const ctx=input(approvedBody);
+    await handleAdminCompanyRequests(ctx);
+    expect(ctx.sendError).not.toHaveBeenCalled();
+    expect(history.some(entry=>entry.sql.startsWith("insert into public.portal_company_members"))).toBe(true);
+    expect(history.at(-1)?.sql).toBe("commit");
+  });
+  it("requires a canonical company on invoice-only finance approval", async()=>{
+    vi.stubEnv("CST_CORPORATE_PO_APPROVAL_GATE_DEV","false");
+    vi.stubEnv("CUSTOMER_PORTAL_ATOMIC_ACCOUNTING_POST_DEV","true");
+    vi.stubEnv("CUSTOMER_PORTAL_REQUIRE_POSTED_AR_EVIDENCE_DEV","true");
+    setup();
+    const ctx=input({status:"approved",matchedCompanyId:null});
+    await handleAdminCompanyRequests(ctx);
+    expect(ctx.sendError).toHaveBeenCalledWith(ctx.response,400,expect.any(String));
+    expect(mocks.connect).not.toHaveBeenCalled();
+  });
   it("does not approve or reassign an already decided request", async () => {
     const { history, client } = setup({ requestStatus: "approved" });
     const ctx = input(approvedBody);
