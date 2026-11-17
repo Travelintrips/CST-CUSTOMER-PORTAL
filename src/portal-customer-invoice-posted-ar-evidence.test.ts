@@ -22,6 +22,7 @@ const m=vi.hoisted(()=>({
   audits:[],
   failOutbox:false,
   failAudit:false,
+  deferredConstraintFail:false,
 }));
 vi.mock("../server/db.mjs",()=>({
   pool:{connect:m.connect},
@@ -61,6 +62,10 @@ async function sqlMock(statement,params=[]){
   const q=String(statement).toLowerCase().trim();
   m.sql.push(q);
   if(q==="begin"||q==="commit"||q==="rollback")return {rows:[]};
+  if(q.startsWith("set constraints customer_ar_journal_source_dev")) {
+    if(m.deferredConstraintFail)throw Error("QA_DEFERRED_AR_CONSTRAINT_VIOLATION");
+    return {rows:[]};
+  }
   if(q.includes("from public.sales_documents"))return {rows:[base()]};
   if(q.startsWith("update public.sales_documents"))return {rows:[issued()]};
   if(q.includes("from public.users"))return {rows:m.bizOwner};
@@ -118,6 +123,7 @@ beforeEach(()=>{
   m.audits=[];
   m.failOutbox=false;
   m.failAudit=false;
+  m.deferredConstraintFail=false;
   m.bizOwner=[{
     id:"qa-existing-bizportal-owner",role:"super_admin",
     system_role:"super_admin",status:"active",is_active:true,company_id:null,
@@ -219,6 +225,23 @@ describe("DEV-only atomic Accounting owner integration seam",()=>{
     m.poster.mockResolvedValue({posted:true,entryId:22});
     m.glRow=validGl();
     m.proof=[101];
+  });
+  it("forces original deferred AR constraint triggers before COMMIT under atomic DEV flags",async()=>{
+    await perform(m.poster);
+    const constraint=sqlIndex("set constraints customer_ar_journal_source_dev");
+    expect(constraint).toBeGreaterThan(sqlIndex("into public.audit_accounting_events"));
+    expect(constraint).toBeGreaterThan(sqlIndex("into public.activity_logs"));
+    expect(constraint).toBeGreaterThan(sqlIndex("from public.bizportal_customer_ar_source_evidence_dev"));
+    expect(constraint).toBeLessThan(m.sql.indexOf("commit"));
+    expect(m.sql).toContain("commit");
+  });
+  it("rolls back the entire Invoice if original deferred AR constraint fails",async()=>{
+    m.deferredConstraintFail=true;
+    await expect(perform(m.poster)).rejects.toThrow("QA_DEFERRED_AR_CONSTRAINT_VIOLATION");
+    expect(sqlIndex("set constraints customer_ar_journal_source_dev")).toBeGreaterThan(0);
+    expect(m.sql).toContain("rollback");
+    expect(m.sql).not.toContain("commit");
+    expect(m.sendJson).not.toHaveBeenCalled();
   });
   it("records canonical BizPortal actor, not the unrelated Portal user ID",async()=>{
     await perform(m.poster);
@@ -415,6 +438,7 @@ describe("DEV-only atomic Accounting owner integration seam",()=>{
     expect(sqlIndex("from public.users")).toBe(-1);
     expect(sqlIndex("into public.financial_outbox_events")).toBe(-1);
     expect(sqlIndex("into public.audit_accounting_events")).toBe(-1);
+    expect(sqlIndex("set constraints customer_ar_journal_source_dev")).toBe(-1);
     expect(m.sql).toContain("commit");
   });
   it("refuses production even with a mock owner attached",async()=>{
