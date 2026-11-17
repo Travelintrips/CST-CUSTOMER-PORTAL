@@ -588,6 +588,30 @@ export async function handleAdminInvoices({ request, response, user, sendJson, s
           || !(await accessibleCompanyIds(user, db)).includes(companyId)) {
         fail(403, "Admin Portal tidak memiliki penugasan perusahaan untuk menerbitkan Invoice.");
       }
+      // An active membership may have originated from user self-selection.
+      // The existing corporate approval workflow provides independent
+      // reviewed_by/reviewed_at proof; financial posting requires that proof,
+      // not merely a self-selected member row. The reviewer must still be an
+      // active Portal Admin and cannot be the invoice-issuing Admin.
+      const authorization = await db(
+        `select 1 as approved
+           from public.portal_company_requests approval
+           join public.portal_customers reviewer
+             on reviewer.id=approval.reviewed_by
+            and reviewer.role='admin'
+            and (reviewer.account_status='active' or reviewer.account_status is null)
+          where approval.portal_customer_id=$1
+            and approval.matched_company_id=$2
+            and approval.status='approved'
+            and approval.reviewed_by is not null
+            and approval.reviewed_by<>$1
+            and approval.reviewed_at is not null
+          limit 1`,
+        [user.id, companyId],
+      );
+      if (authorization.rows.length !== 1) {
+        fail(403, "Penugasan perusahaan belum memiliki persetujuan Admin independen.");
+      }
     }
     if (row.invoice_status === "invoiced") {
       await requirePostedCustomerArEvidence(db, row);
