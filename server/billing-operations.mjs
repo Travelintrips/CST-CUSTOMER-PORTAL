@@ -493,15 +493,26 @@ async function requireAtomicSalesInvoicePosting(db, invoice, user, postWithClien
   }
   // Reuse one legitimate company-scoped posting owner; never implement
   // journal INSERT/UPDATE SQL here. It must post inside this db transaction.
-  const receipt = await postWithClient({
-    query: db,
-    transactionClient,
-    companyId,
-    source: "sales_invoice",
-    sourceId,
-    invoice,
-    actorId: user?.id ?? null,
-  });
+  let receipt;
+  try {
+    receipt = await postWithClient({
+      query: db,
+      transactionClient,
+      companyId,
+      source: "sales_invoice",
+      sourceId,
+      invoice,
+      actorId: user?.id ?? null,
+    });
+  } catch (error) {
+    // Nonzero PPN is intentionally unsupported by the existing engine v1.
+    // Return a clear business rejection rather than a generic HTTP 500.
+    // The surrounding transaction still rolls back every invoice mutation.
+    if (error?.message === "DEV_SALES_POSTING_TAX_NOT_READY") {
+      fail(422, "Posting Invoice dengan PPN belum didukung secara atomik.");
+    }
+    throw error;
+  }
   const entryId = Number(receipt?.entryId);
   if (receipt?.posted !== true || !Number.isSafeInteger(entryId) || entryId <= 0) {
     fail(422, "Jurnal penjualan belum berhasil di-posting.");
