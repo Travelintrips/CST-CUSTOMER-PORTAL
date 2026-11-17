@@ -1,0 +1,42 @@
+name: DEV Invoice — reuse audited company application and independent Admin review
+
+on:
+  pull_request:
+    branches:
+      - fix/dev-invoice-company-approved-affiliation-20261118
+    paths:
+      - 'server/corporate-po-affiliation-gate.mjs'
+      - 'server/admin-portal.mjs'
+      - 'src/company-request-atomic-review.test.ts'
+      - 'src/corporate-po-affiliation-gate.test.ts'
+      - '.github/workflows/dev-invoice-existing-company-approval.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  finance-company-approval:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.33.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: pnpm
+      - name: Install locked workspace packages
+        run: pnpm install --frozen-lockfile
+      - name: Approved affiliation and signed invoice regression
+        env:
+          APP_ENV: development
+          NODE_ENV: test
+          SUPABASE_DATABASE_URL_DEV: postgresql://ci:ci@127.0.0.1:5432/ci
+        run: pnpm exec vitest run src/company-request-atomic-review.test.ts src/corporate-po-affiliation-gate.test.ts src/existing-customer-company-application-dev.test.ts src/dev-admin-invoice-signed-http-isolated.test.ts src/portal-customer-invoice-posted-ar-evidence.test.ts
+      - name: TypeScript and syntax
+        run: |
+          pnpm run typecheck
+          pnpm run verify:server-syntax
