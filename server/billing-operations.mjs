@@ -45,7 +45,7 @@ function idempotencyKey(request, body) {
   return text(request.headers["idempotency-key"]) ?? text(body?.idempotencyKey);
 }
 
-async function withTransaction(work) {
+async function withTransaction(work, {verifyCustomerInvoiceAr = false} = {}) {
   const client = await pool.connect();
   try {
     await client.query("begin");
@@ -53,7 +53,8 @@ async function withTransaction(work) {
     // not an HTTP call or a separate pool connection, so commit/rollback
     // of Sales Invoice, journal and AR remains one transaction boundary.
     const result = await work((sql, values) => client.query(sql, values), client);
-    if (process.env.CUSTOMER_PORTAL_ATOMIC_ACCOUNTING_POST_DEV === "true" &&
+    if (verifyCustomerInvoiceAr &&
+        process.env.CUSTOMER_PORTAL_ATOMIC_ACCOUNTING_POST_DEV === "true" &&
         process.env.CUSTOMER_PORTAL_REQUIRE_POSTED_AR_EVIDENCE_DEV === "true" &&
         process.env.APP_ENV?.trim().toLowerCase() === "development") {
       // The existing CST-DEV AR source/lines/journal constraint triggers are
@@ -65,6 +66,38 @@ async function withTransaction(work) {
         "set constraints customer_ar_journal_source_dev, " +
         "customer_ar_journal_lines_dev, customer_ar_sales_source_dev immediate",
       );
+      // These original deferred triggers are projections. They do not
+      // necessarily raise when the source is absent. Require the actual
+      // company-scoped persisted AR projection BEFORE COMMIT, backed by the
+      // exact posted journal (and never by a free-form caller flag).
+      const companyId = Number(result?.companyId);
+      const invoiceId = Number(result?.id);
+      if (![1,3].includes(companyId) ||
+          !Number.isSafeInteger(invoiceId) || invoiceId <= 0) {
+        fail(422, "Invoice tanpa identitas perusahaan untuk verifikasi AR.");
+      }
+      const arResult = await client.query(
+        `select a.gl_entry_id,a.gross_amount,a.paid_amount,a.outstanding_amount
+           from public.ar_subledger a
+           join public.accounting_entries e
+             on e.id=a.gl_entry_id and e.company_id=a.company_id
+            and e.source='sales_invoice' and e.source_id=a.invoice_id
+            and e.status='posted' and not e.is_voided and not e.is_reversed
+          where a.company_id=$1 and a.invoice_id=$2
+            and a.invoice_number=$3
+            and a.notes='bizportal:customer-ar-source:v1'
+            and a.status <> 'STALE'
+          limit 2`,
+        [companyId, invoiceId, result.invoiceNumber],
+      );
+      const ar = arResult.rows[0];
+      const cents = (value) => Math.round(Number(value) * 100);
+      if (arResult.rows.length !== 1 || !ar?.gl_entry_id ||
+          cents(ar.gross_amount) !== cents(result.grandTotal) ||
+          cents(ar.paid_amount) !== cents(result.amountPaid) ||
+          cents(ar.outstanding_amount) !== cents(result.outstanding)) {
+        fail(422, "AR setelah constraint trigger belum cocok dengan Invoice dan jurnal.");
+      }
     }
     await client.query("commit");
     return result;
@@ -790,7 +823,7 @@ export async function handleAdminInvoices({ request, response, user, sendJson, s
         payload: { invoiceStatus: "invoiced" },
       });
     return mapped;
-  });
+  }, {verifyCustomerInvoiceAr: process.env.CUSTOMER_PORTAL_ATOMIC_ACCOUNTING_POST_DEV === "true"});
   sendJson(response, 200, result);
 }
 
