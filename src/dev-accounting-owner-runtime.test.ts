@@ -4,7 +4,7 @@ import { createHash } from "node:crypto";
 import { mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { fileURLToPath } from "node:url";
+
 import { loadTrustedDevAccountingOwner } from "../server/dev-accounting-owner-runtime.mjs";
 
 const keys = [
@@ -110,7 +110,7 @@ describe("DEV original Accounting owner runtime package integrity", () => {
   });
 
   it("wires the trusted callback only after the existing admin gate", async () => {
-    const source = await readFile(fileURLToPath(new URL("../server/index.mjs", import.meta.url)), "utf8");
+    const source = await readFile(join(process.cwd(), "server/index.mjs"), "utf8");
     const sectionStart = source.indexOf("  const adminInvoiceActionMatch = ");
     const sectionEnd = source.indexOf("  const adminInvoiceMatch =", sectionStart);
     expect(sectionStart).toBeGreaterThan(0);
