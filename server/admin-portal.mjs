@@ -1,7 +1,7 @@
 import { pool, query, databaseEnvironment, databaseConnectionSource } from "./db.mjs";
 import { buildDevVendorQuoteShare } from "./vendor-quote-share.mjs";
 import { getDevVendorWhatsAppReadiness, sendOneDevVendorWhatsAppInvite } from "./dev-vendor-wa-invite.mjs";
-import { reconcileOneDevVendorWaGatewayReceipt } from "./dev-vendor-wa-receipt.mjs";
+import { getDevVendorWaGatewayQueueSnapshot, reconcileOneDevVendorWaGatewayReceipt } from "./dev-vendor-wa-receipt.mjs";
 import {
   deleteDocumentObject,
   documentType,
@@ -2416,9 +2416,23 @@ async function handleServiceOperations(ctx) {
         if (queueRows.rows.length !== 1) {
           return adminError(ctx, 409, "Antrean undangan vendor tidak unik atau belum tersedia.");
         }
-        const readiness = await getDevVendorWhatsAppReadiness({
-          queueId: Number(queueRows.rows[0].id), rfqId, quoteId,
-        });
+        const queueId = Number(queueRows.rows[0].id);
+        const snapshot = await getDevVendorWaGatewayQueueSnapshot({ queueId, rfqId, quoteId });
+        // A queued/sent delivery is independently reconcilable even after
+        // the vendor opened/submitted the quotation. Never treat this
+        // snapshot as permission to send another invitation.
+        const readiness = ["queued", "sent"].includes(snapshot.queueStatus)
+          ? {
+              queueId, quoteId, queueStatus: snapshot.queueStatus,
+              canSync: snapshot.canSync,
+              provider: "cst-wa-gateway", ready: false,
+              enabled: false, senderConfigured: false, senderIdentityVerified: false,
+              recipientLast4: "",
+              reason: snapshot.canSync
+                ? "Pesan diterima Gateway; sinkronkan bukti kirim, jangan kirim ulang."
+                : "Undangan telah diproses; jangan kirim ulang.",
+            }
+          : await getDevVendorWhatsAppReadiness({ queueId, rfqId, quoteId });
         ctx.sendJson(response, 200, { data: readiness });
       } else if (vendorWaSendMatch) {
         const result = await sendOneDevVendorWhatsAppInvite({

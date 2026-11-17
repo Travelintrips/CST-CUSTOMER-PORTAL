@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import {
   reconcileOneDevVendorWaGatewayReceipt,
+  getDevVendorWaGatewayQueueSnapshot,
   DEV_VENDOR_GATEWAY_RECEIPT_UPDATE_SQL,
 } from "../server/dev-vendor-wa-receipt.mjs";
 import { CST_GATEWAY_URL } from "../server/dev-vendor-wa-gateway.mjs";
@@ -147,6 +148,53 @@ describe("Customer Portal DEV WA Gateway receipt reconciliation (NO outgoing POS
     expect(h.calls).toHaveLength(1);
   });
 
+  it("shows receipt sync for queued invitations after vendor opens/submits/selects quote; never authorizes resending", async () => {
+    for (const quoteStatus of ["opened", "submitted", "selected"]) {
+      const h = makeDb({ quote_status: quoteStatus });
+      const state = await getDevVendorWaGatewayQueueSnapshot(params(h));
+      expect(state).toEqual({
+        queueId: 96, quoteId: 20, queueStatus: "queued", canSync: true,
+      });
+      expect(h.calls).toHaveLength(1);
+      expect(h.calls[0].sql.toLowerCase().startsWith("select")).toBe(true);
+      const statusAfter = h.row.queue_status;
+      expect(statusAfter).toBe("queued");
+    }
+    const admin = readFileSync(resolve(process.cwd(), "server/admin-portal.mjs"), "utf8");
+    const ui = readFileSync(resolve(process.cwd(), "src/components/admin/MarketplaceVendorAssignment.tsx"), "utf8");
+    expect(admin).toContain('["queued", "sent"].includes(snapshot.queueStatus)');
+    expect(admin).toContain("await getDevVendorWhatsAppReadiness({ queueId, rfqId, quoteId })");
+    expect(ui).toContain("if (routed.vendorShareSupported && routed.quoteId)");
+    expect(ui).toContain('waReadiness?.queueStatus === "sent"');
+    expect(ui).toContain('waReadiness?.canSync === true');
+    expect(ui).toContain('["invited", "opened", "requote_requested"].includes(routing.quoteStatus ?? "") && (');
+  });
+
+  it("never makes pending/incorrect or malformed delivery queue eligible for receipt sync", async () => {
+    const cases = [
+      [{ queue_status: "pending", attempt_count: 0 }, false],
+      [{ queue_status: "sent", sent_at: sentAt }, false],
+      [{ queue_status: "queued", attempt_count: 0 }, false],
+      [{ queue_status: "queued", gateway_message_id: null }, false],
+      [{ queue_status: "queued", gateway_device_id: "primary-01" }, "reject"],
+      [{ recipient_id: 999 }, "reject"],
+      [{ rfq_company_id: 2 }, "reject"],
+    ] as Array<[Record<string, unknown>, boolean | string]>;
+    for (const [overrides, expected] of cases) {
+      const h = makeDb(overrides);
+      if (expected === "reject") {
+        await expect(getDevVendorWaGatewayQueueSnapshot(params(h)))
+          .rejects.toMatchObject({ statusCode: 409 });
+      } else {
+        const result = await getDevVendorWaGatewayQueueSnapshot(params(h));
+        expect(result.canSync).toBe(expected);
+        expect(result).not.toHaveProperty("ready");
+      }
+      expect(h.calls).toHaveLength(1);
+      expect(h.calls[0].sql.toLowerCase().startsWith("select")).toBe(true);
+    }
+  });
+
   it("records delivered/read timestamps only when the provider also has sentAt", async () => {
     const h = makeDb();
     await reconcileOneDevVendorWaGatewayReceipt(params(h, {
@@ -173,7 +221,7 @@ describe("Customer Portal DEV WA Gateway receipt reconciliation (NO outgoing POS
     expect(index).toContain("await requireAdmin(request, response)");
     expect(admin).toContain("reconcileOneDevVendorWaGatewayReceipt");
     expect(admin).toContain('process.env.APP_ENV !== "development"');
-    expect(ui).toContain('waReadiness?.queueStatus === "queued"');
+    expect(ui).toContain('waReadiness?.canSync === true');
     expect(ui).toContain("Sinkronkan Status WA (Tanpa Kirim Ulang)");
   });
 });

@@ -21,6 +21,7 @@ type WaReadiness = {
   quoteId: number;
   recipientLast4: string;
   queueStatus: string;
+  canSync?: boolean;
   senderConfigured: boolean;
   enabled: boolean;
   ready: boolean;
@@ -58,8 +59,9 @@ export function MarketplaceVendorAssignment({ rfqId }: { rfqId: number }) {
       if (!response.ok) throw new Error(payload.error ?? "Gagal memuat vendor produk");
       const routed = payload.data as VendorRouting;
       setRouting(routed);
-      if (routed.vendorShareSupported && routed.quoteId
-        && ["invited", "opened", "requote_requested"].includes(routed.quoteStatus ?? "")) {
+      // Read provider receipt availability even after vendor opened/submitted/
+      // selected the quote. This does NOT permit sending a new invitation.
+      if (routed.vendorShareSupported && routed.quoteId) {
         try {
           const waResponse = await fetch(
             `/api/portal/admin/service-operations/marketplace/${rfqId}/vendor-routing/whatsapp-readiness?quoteId=${routed.quoteId}`,
@@ -186,7 +188,7 @@ export function MarketplaceVendorAssignment({ rfqId }: { rfqId: number }) {
   }
 
   async function syncVendorWhatsAppReceipt() {
-    if (!routing?.quoteId || waReadiness?.queueStatus !== "queued" || waSyncing) return;
+    if (!routing?.quoteId || waReadiness?.canSync !== true || waSyncing) return;
     setWaSyncing(true);
     setError("");
     setNotice("");
@@ -266,7 +268,10 @@ export function MarketplaceVendorAssignment({ rfqId }: { rfqId: number }) {
         </p>
       ) : null}
 
-      {routing?.vendorShareSupported && routing?.quoteId && ["invited", "opened", "requote_requested"].includes(routing.quoteStatus ?? "") && (
+      {routing?.vendorShareSupported && routing?.quoteId && (
+        ["invited", "opened", "requote_requested"].includes(routing.quoteStatus ?? "")
+        || waReadiness?.canSync === true || waReadiness?.queueStatus === "sent"
+      ) && (
         <div className="mt-2 space-y-1.5">
           <p className="text-[11px] text-sky-800">
             WA Gateway CST: {waReadiness?.ready ? "Perangkat DEV terverifikasi untuk satu antrean (belum menjamin pesan diterima)."
@@ -294,7 +299,7 @@ export function MarketplaceVendorAssignment({ rfqId }: { rfqId: number }) {
               </Button>
             </div>
           )}
-          {waReadiness?.queueStatus === "queued" && (
+          {waReadiness?.canSync === true && (
             <Button
               type="button"
               size="sm"
@@ -307,6 +312,7 @@ export function MarketplaceVendorAssignment({ rfqId }: { rfqId: number }) {
               Sinkronkan Status WA (Tanpa Kirim Ulang)
             </Button>
           )}
+          {["invited", "opened", "requote_requested"].includes(routing.quoteStatus ?? "") && (
           <Button
             type="button"
             size="sm"
@@ -318,6 +324,7 @@ export function MarketplaceVendorAssignment({ rfqId }: { rfqId: number }) {
             {copying ? <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" /> : <Copy className="mr-1 h-3.5 w-3.5" />}
             Salin Undangan Vendor
           </Button>
+          )}
           <p className="text-[11px] text-amber-800">
             Undangan berisi tautan khusus. Admin harus memastikan kontak penerima
             sebelum mengirim melalui WhatsApp sendiri. Tombol ini tidak mengirim pesan otomatis.

@@ -45,6 +45,50 @@ update public.mkt_notification_queue
  returning id,status,attempt_count,sent_at
 `;
 
+
+/**
+ * Read-only queue snapshot for the Admin card. This is independent of quote
+ * invitation eligibility: vendors can open/submit a quote AFTER the gateway
+ * accepted the invitation but BEFORE Admin synchronizes provider SENT.
+ *
+ * It never checks the invitation token/status and never authorizes sending.
+ */
+export async function getDevVendorWaGatewayQueueSnapshot({
+  queueId, rfqId, quoteId, env = process.env, db = query,
+} = {}) {
+  if (env.APP_ENV !== "development" || env.NODE_ENV === "production"
+    || databaseEnvironment !== "development"
+    || databaseConnectionSource !== "SUPABASE_DATABASE_URL_DEV") {
+    fail(404, "Status WhatsApp hanya tersedia di Customer Portal DEV.");
+  }
+  if (![queueId, rfqId, quoteId].every(positiveId)) {
+    fail(400, "ID antrean, RFQ atau Quote tidak valid.");
+  }
+  const result = await db(DEV_VENDOR_GATEWAY_RECEIPT_SELECT_SQL, [queueId, rfqId, quoteId]);
+  const row = result.rows?.[0];
+  if (!row || Number(row.queue_id) !== Number(queueId)) fail(404, "Antrean WhatsApp tidak ditemukan.");
+  if (row.event_type !== "rfq_vendor_invited" || row.channel !== "whatsapp"
+    || row.recipient_type !== "vendor"
+    || Number(row.recipient_id) !== Number(row.vendor_id)
+    || Number(row.rfq_company_id) !== 1 || Number(row.supplier_company_id) !== 1) {
+    fail(409, "Binding antrean vendor tidak cocok.");
+  }
+  const deviceId = String(env.CUSTOMER_PORTAL_WA_GATEWAY_DEVICE_ID_DEV ?? "").trim();
+  if (row.gateway_device_id && row.gateway_device_id !== deviceId) {
+    fail(409, "Bukti perangkat Gateway tidak sesuai.");
+  }
+  const canSync = row.queue_status === "queued"
+    && Number(row.attempt_count) === 1
+    && row.sent_at == null
+    && validMessageId(row.gateway_message_id);
+  return {
+    queueId: Number(queueId),
+    quoteId: Number(quoteId),
+    queueStatus: String(row.queue_status),
+    canSync,
+  };
+}
+
 export async function reconcileOneDevVendorWaGatewayReceipt({
   queueId, rfqId, quoteId,
   env = process.env, db = query,
