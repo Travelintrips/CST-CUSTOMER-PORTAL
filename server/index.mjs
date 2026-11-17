@@ -36,6 +36,7 @@ import { handleDevCustomerMarketplaceQuote } from "./customer-marketplace-rfq.mj
 import { handleBizPortalActionBridge } from "./bizportal-action-bridge.mjs";
 import { createLogisticPaylabsLink, getLogisticPaylabsState, handlePaylabsAdminRoute, handlePaylabsWebhook } from "./paylabs-service.mjs";
 import { processMarketplaceWhatsAppQueue } from "./whatsapp-service.mjs";
+import { startDevVendorWaStatusPoller, stopDevVendorWaStatusPoller } from "./dev-vendor-wa-status-poller.mjs";
 import { startBackgroundLeadership, stopBackgroundLeadership } from "./background-leader.mjs";
 import {
   getOperationalSummary,
@@ -5097,6 +5098,9 @@ async function establishRuntimeReadiness() {
           onAcquired: async () => startBackgroundJobs(),
           onLost: async () => stopBackgroundJobs(),
         });
+      } else {
+        // Read provider receipts for queued DEV invites. No outbound worker.
+        startDevVendorWaStatusPoller();
       }
       return;
     } catch (error) {
@@ -5133,6 +5137,7 @@ async function shutdown(signal) {
   shutdownPromise = (async () => {
     runtimeState = "draining";
     console.log(`[customer-portal-api] ${signal}, draining for ${DRAIN_DELAY_MS}ms before shutdown`);
+    stopDevVendorWaStatusPoller();
     stopBackgroundJobs();
     await stopBackgroundLeadership();
 
