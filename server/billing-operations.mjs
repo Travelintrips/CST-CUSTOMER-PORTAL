@@ -579,6 +579,16 @@ export async function handleAdminInvoices({ request, response, user, sendJson, s
   }
   const result = await withTransaction(async (db, transactionClient) => {
     const row = await loadInvoice(invoiceId, user, { db, admin: true, forUpdate: true });
+    // Financial automation may issue only for an explicitly assigned company.
+    // The Portal's generic admin role alone is not a company-level financial
+    // authority. Keep previous HTTP behavior exactly when the DEV bridge is OFF.
+    if (process.env.CUSTOMER_PORTAL_ATOMIC_ACCOUNTING_POST_DEV === "true") {
+      const companyId = Number(row.company_id);
+      if (!Number.isSafeInteger(companyId) || ![1, 3].includes(companyId)
+          || !(await accessibleCompanyIds(user, db)).includes(companyId)) {
+        fail(403, "Admin Portal tidak memiliki penugasan perusahaan untuk menerbitkan Invoice.");
+      }
+    }
     if (row.invoice_status === "invoiced") {
       await requirePostedCustomerArEvidence(db, row);
       return mapInvoice(row);
