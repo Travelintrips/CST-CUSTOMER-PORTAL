@@ -14,7 +14,7 @@ const token = "synthetic-customer-portal-only-token";
 const EXISTING_PROD_DEVICE = "authorized-existing-prod-device";
 const device = { deviceId: EXISTING_PROD_DEVICE, companyId: "1",
   name: "Previously registered PROD sender", enabled: true, status: "ONLINE", phoneNumber: "6281111111111" };
-const verified = { expectedPhone: "081111111111", deviceId: EXISTING_PROD_DEVICE };
+const verified = { expectedPhone: "081111111111", deviceId: EXISTING_PROD_DEVICE, clientId: "customer-portal", companyId: "1" };
 const fakeUuid = "123e4567-e89b-12d3-a456-426614174000";
 
 describe("CST WA Gateway DEV sender isolation (no live messages)", () => {
@@ -64,7 +64,7 @@ describe("CST WA Gateway DEV sender isolation (no live messages)", () => {
 
   it("performs only the official GET /v1/devices with the pinned token", async () => {
     const fetchFn = vi.fn(async (_url: string, _opts: Record<string, any>) => ({
-      ok: true, json: async () => ({ devices: [device] }),
+      ok: true, json: async () => ({ devices: [device], clientId: "customer-portal", companyId: "1" }),
     }));
     const response = await verifyDevCustomerPortalGatewaySender({
       gatewayToken: token, ...verified, fetchFn,
@@ -77,6 +77,28 @@ describe("CST WA Gateway DEV sender isolation (no live messages)", () => {
       cache: "no-store",
     });
     expect(JSON.stringify(response)).not.toContain(token);
+  });
+
+  it("rejects a Fleet/Tenant token even when it sees exactly the matching existing device", async () => {
+    const fetchFn = vi.fn(async () => ({
+      ok: true,
+      json: async () => ({ clientId: "tenant-pos", companyId: "1", devices: [device] }),
+    }));
+    const response = await verifyDevCustomerPortalGatewaySender({
+      gatewayToken: token, ...verified, fetchFn,
+    });
+    expect(response.matched).toBe(false);
+    expect(response.reason).toMatch(/client customer-portal/);
+    expect(fetchFn).toHaveBeenCalledTimes(1);
+  });
+
+  it("rejects missing Gateway client identity even when the device and phone match", async () => {
+    const response = await verifyDevCustomerPortalGatewaySender({
+      gatewayToken: token, ...verified,
+      fetchFn: async () => ({ ok: true, json: async () => ({ devices: [device] }) }),
+    });
+    expect(response.matched).toBe(false);
+    expect(response.reason).toMatch(/client customer-portal/);
   });
 
   it("never contacts the gateway for a missing token or invalid device", async () => {

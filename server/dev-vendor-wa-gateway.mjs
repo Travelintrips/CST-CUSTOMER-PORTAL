@@ -15,7 +15,12 @@ export function resolveDevCustomerPortalGatewayToken(env = process.env) {
   return clean(env.CUSTOMER_PORTAL_WA_GATEWAY_TOKEN_DEV);
 }
 
-export function evaluateDevPortalGatewayDevice({ devices, expectedPhone, deviceId }) {
+export function evaluateDevPortalGatewayDevice({ devices, expectedPhone, deviceId, clientId, companyId }) {
+  // Only the authenticated Gateway response can attest the client identity.
+  // Never infer application ownership from device count or phone alone.
+  if (clientId !== "customer-portal" || companyId !== EXPECTED_COMPANY) {
+    return reject("Token WA Gateway bukan milik client customer-portal yang berwenang.");
+  }
   const normalized = normalizeWhatsAppPhone(expectedPhone);
   if (!phoneValid(normalized)) return reject("Nomor resmi pengirim WA Gateway DEV belum ditentukan.");
   // No newly created device is required: an authorized, existing PROD device
@@ -63,7 +68,10 @@ export async function verifyDevCustomerPortalGatewaySender({
     if (!response.ok) return reject("Kredensial WA Gateway DEV ditolak atau status perangkat tidak tersedia.");
     const payload = await response.json().catch(() => ({}));
     return evaluateDevPortalGatewayDevice({
-      devices: payload.devices, expectedPhone, deviceId,
+      devices: payload.devices,
+      clientId: payload.clientId,
+      companyId: payload.companyId,
+      expectedPhone, deviceId,
     });
   } catch {
     return reject("WA Gateway CST tidak dapat diperiksa.");

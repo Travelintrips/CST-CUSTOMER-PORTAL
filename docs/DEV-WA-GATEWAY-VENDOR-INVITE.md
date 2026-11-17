@@ -21,8 +21,9 @@
    - `CUSTOMER_PORTAL_WA_GATEWAY_DEVICE_ID_DEV`: **device ID PROD existing yang diizinkan**, bukan otomatis `customer-portal-dev`.
    - `CUSTOMER_PORTAL_WA_GATEWAY_SENDER_PHONE_DEV`: nomor perangkat tersebut dalam format `62...`.
    - `CUSTOMER_PORTAL_DEV_VENDOR_WA_ENABLED=false` sampai semua pemeriksaan sender/PIC lulus.
-5. Saat Admin memeriksa readiness, API client harus hanya melihat **satu** perangkat yang cocok dengan ID dan nomor yang ditetapkan, `ONLINE`, `enabled=true`, company `1`. Token umum yang bisa melihat banyak device akan ditolak.
-6. Periksa ulang tujuan WhatsApp PIC Supplier dan status Quote; hanya antrean undangan baru yang sah dapat diteruskan, tanpa retry otomatis jika status ambigu.
+5. Saat Admin memeriksa readiness, `GET /v1/devices` harus **secara autentik** mengembalikan `clientId="customer-portal"` dan `companyId="1"`, beserta **satu** perangkat yang cocok dengan ID dan nomor yang ditetapkan, `ONLINE`, `enabled=true`. Token Tenant/Fleet yang hanya melihat satu perangkat **tetap ditolak** karena `clientId` berbeda. Token umum yang melihat banyak perangkat juga ditolak.
+6. **Ketergantungan read-only pada Gateway PROD:** respons `GET /v1/devices` yang aktif saat audit belum memuat identitas client. Adapter tetap FAIL-CLOSED sampai endpoint gateway existing tersebut mengembalikan `clientId` dan `companyId` dari sesi autentikasi; jangan mengklaim siap hanya karena device cocok. Penambahan properti respons adalah backwards-compatible, tidak perlu gateway/device/QR baru; rilis perubahan gateway harus diuji tersendiri tanpa mengganggu layanan PROD.
+7. Periksa ulang tujuan WhatsApp PIC Supplier dan status Quote; hanya antrean undangan baru yang sah dapat diteruskan, tanpa retry otomatis jika status ambigu.
 
 ## RFQ #23 dan Quote #18 yang sudah selesai
 - RFQ #23 saat audit terakhir sudah `awarded`, Quote #18 sudah `selected`. **Tidak ada undangan WhatsApp #93 yang perlu dikirim lagi.**
