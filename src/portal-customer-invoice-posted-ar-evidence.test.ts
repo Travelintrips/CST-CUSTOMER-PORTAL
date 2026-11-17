@@ -249,6 +249,16 @@ describe("DEV-only atomic Accounting owner integration seam",()=>{
     expect(m.sql).toContain("rollback");
     noOutbound();
   });
+  it("locks company membership, independent approval and both Admin identities through COMMIT",async()=>{
+    await perform(m.poster);
+    const proof=m.sql.find(q=>q.includes("from public.portal_company_requests approval"));
+    expect(proof).toContain("join public.portal_company_members member");
+    expect(proof).toContain("member.is_active=true");
+    expect(proof).toContain("issuer.role='admin'");
+    expect(proof).toContain("for share of member, approval, reviewer, issuer");
+    expect(m.sql.indexOf(proof)).toBeLessThan(sqlIndex("update public.sales_documents"));
+    expect(m.sql).toContain("commit");
+  });
   it("requires the existing posted-AR proof flag before invoking Accounting",async()=>{
     delete process.env[flag];
     await expect(perform(m.poster)).rejects.toMatchObject({statusCode:503});
