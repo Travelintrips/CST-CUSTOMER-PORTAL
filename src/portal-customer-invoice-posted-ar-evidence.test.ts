@@ -213,6 +213,21 @@ describe("DEV-only atomic Accounting owner integration seam",()=>{
     expect(m.sql).not.toContain("commit");
     noOutbound();
   });
+  it("rejects already-invoiced replay when Admin lacks the invoice company assignment",async()=>{
+    m.companyId=3;
+    m.invoiceStatus="invoiced";
+    m.currentInvoiceNumber="INV-SO-QA-101";
+    m.query.mockImplementation(async (sql,params)=>{
+      if(String(sql).includes("from public.portal_company_members")) return {rows:[{company_id:1}]};
+      return sqlMock(sql,params);
+    });
+    await expect(perform(m.poster)).rejects.toMatchObject({statusCode:403});
+    expect(m.poster).not.toHaveBeenCalled();
+    expect(sqlIndex("from public.bizportal_customer_ar_source_evidence_dev")).toBe(-1);
+    expect(m.sql).toContain("rollback");
+    expect(m.sql).not.toContain("commit");
+    noOutbound();
+  });
   it("requires the existing posted-AR proof flag before invoking Accounting",async()=>{
     delete process.env[flag];
     await expect(perform(m.poster)).rejects.toMatchObject({statusCode:503});
