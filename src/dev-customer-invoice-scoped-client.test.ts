@@ -198,3 +198,76 @@ describe("DEV Customer Invoice GCP secret routing, all financial flags gated",()
    expect(loader).toHaveBeenCalledTimes(1);
  });
 });
+
+describe("DEV Invoice systemd credential routes through original company client",()=>{
+ const dir="/run/credentials/cst-customer-portal-dev.service";
+ it("uses only the DB-derived Diva DSN from systemd, never env DSNs",async()=>{
+  const calls=[];
+  class FakeClient{
+   constructor(options){calls.push(options)}
+   async connect(){}
+   async end(){}
+  }
+  const fetchSystemd=vi.fn(async()=>({
+   CUSTOMER_PORTAL_CST_INVOICE_WRITER_DSN_DEV:url(1),
+   CUSTOMER_PORTAL_DIVA_INVOICE_WRITER_DSN_DEV:url(3),
+  }));
+  const fetchGcp=vi.fn();
+  const selected=await openDevCompanyInvoiceWriter({
+   invoiceId:197,portalUser:admin,
+   lookupCompany:async()=>({rows:[{company_id:3}]}),
+   env:env({CREDENTIALS_DIRECTORY:dir,
+    CUSTOMER_PORTAL_DIVA_INVOICE_WRITER_DSN_DEV:"postgresql://postgres:unsafe@localhost:5432/postgres"}),
+   loadSystemdCredentials:fetchSystemd,
+   loadWriterSecrets:fetchGcp,
+   ClientCtor:FakeClient,readCa:async()=>fakeCa,
+  });
+  expect(selected.companyId).toBe(3);
+  expect(fetchSystemd).toHaveBeenCalledExactlyOnceWith({env:expect.objectContaining({CREDENTIALS_DIRECTORY:dir})});
+  expect(fetchGcp).not.toHaveBeenCalled();
+  expect(calls[0].connectionString).toBe(url(3));
+  await selected.client.end();
+ });
+ it("never falls back to old process.env when systemd file is missing",async()=>{
+  const fetchSystemd=vi.fn(async()=>{throw Error("raw-systemd-error-PRIVATE")});
+  let caught;
+  try{
+   await openDevCompanyInvoiceWriter({
+    invoiceId:195,portalUser:admin,
+    lookupCompany:async()=>({rows:[{company_id:1}]}),
+    env:env({CREDENTIALS_DIRECTORY:dir}),
+    loadSystemdCredentials:fetchSystemd,
+    readCa:async()=>fakeCa,
+   });
+  }catch(e){caught=e}
+  expect(caught?.statusCode).toBe(503);
+  expect(caught.message).not.toContain("PRIVATE");
+  expect(fetchSystemd).toHaveBeenCalledOnce();
+ });
+ it("refuses competing GCP bootstrap and systemd sources",async()=>{
+  const fetchSystemd=vi.fn();
+  const fetchGcp=vi.fn();
+  await expect(openDevCompanyInvoiceWriter({
+   invoiceId:195,portalUser:admin,
+   lookupCompany:async()=>({rows:[{company_id:1}]}),
+   env:env({CREDENTIALS_DIRECTORY:dir,
+    CUSTOMER_PORTAL_INVOICE_GCP_BOOTSTRAP_JSON_DEV:"unexpected-dual-config"}),
+   loadSystemdCredentials:fetchSystemd,loadWriterSecrets:fetchGcp,
+   readCa:async()=>fakeCa,
+  })).rejects.toMatchObject({statusCode:503});
+  expect(fetchSystemd).not.toHaveBeenCalled();
+  expect(fetchGcp).not.toHaveBeenCalled();
+ });
+ it("rejects a mismatched CST role returned from systemd",async()=>{
+  const fetchSystemd=vi.fn(async()=>({
+   CUSTOMER_PORTAL_CST_INVOICE_WRITER_DSN_DEV:url(3),
+   CUSTOMER_PORTAL_DIVA_INVOICE_WRITER_DSN_DEV:url(1),
+  }));
+  await expect(openDevCompanyInvoiceWriter({
+   invoiceId:195,portalUser:admin,
+   lookupCompany:async()=>({rows:[{company_id:1}]}),
+   env:env({CREDENTIALS_DIRECTORY:dir}),
+   loadSystemdCredentials:fetchSystemd,readCa:async()=>fakeCa,
+  })).rejects.toMatchObject({statusCode:503});
+ });
+});
