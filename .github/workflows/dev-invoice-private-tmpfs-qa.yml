@@ -1,0 +1,68 @@
+name: CST Invoice DEV — private container tmpfs isolation
+
+on:
+  push:
+    branches:
+      - test/dev-customer-invoice-private-tmpfs-20261119
+    paths:
+      - .github/workflows/dev-invoice-private-tmpfs-qa.yml
+      - Dockerfile.dev-vps
+      - ops/dev-invoice-keyless-credentials.compose.override.yml
+      - scripts/dev-invoice-compose-guard.sh
+      - scripts/dev-invoice-inject-verified-cms.sh
+      - scripts/dev-invoice-tmpfs-inject.mjs
+      - scripts/deploy-certified-vps.sh
+      - scripts/start-dev-vps.mjs
+      - scripts/tests/customer-invoice-compose-credential-override.qa.sh
+      - scripts/tests/customer-invoice-private-tmpfs-docker.qa.sh
+  pull_request:
+    branches:
+      - test/dev-customer-invoice-pinned-ca-20261119
+    paths:
+      - .github/workflows/dev-invoice-private-tmpfs-qa.yml
+      - Dockerfile.dev-vps
+      - ops/dev-invoice-keyless-credentials.compose.override.yml
+      - scripts/dev-invoice-compose-guard.sh
+      - scripts/dev-invoice-inject-verified-cms.sh
+      - scripts/dev-invoice-tmpfs-inject.mjs
+      - scripts/deploy-certified-vps.sh
+      - scripts/start-dev-vps.mjs
+
+permissions:
+  contents: read
+
+jobs:
+  compose-and-rollback-static:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify Compose does not expose host plaintext or change unrelated services
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash -n scripts/dev-invoice-compose-guard.sh
+          bash -n scripts/dev-invoice-inject-verified-cms.sh
+          bash -n scripts/deploy-certified-vps.sh
+          sudo bash scripts/tests/customer-invoice-compose-credential-override.qa.sh
+
+  exact-image-isolated-uid:
+    runs-on: ubuntu-latest
+    timeout-minutes: 28
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build original Customer Portal DEV Docker image with public CA and unique Invoice UID
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker build --pull=false -f Dockerfile.dev-vps \
+            --build-arg DEV_RELEASE_SHA="${GITHUB_SHA}" \
+            -t cst-invoice-private-tmpfs-qa:local .
+      - name: Prove private UID21110 tmpfs isolation and fail-closed synthetic credentials
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo env CST_INVOICE_QA_HOST_READER=nobody \
+            bash scripts/tests/customer-invoice-private-tmpfs-docker.qa.sh
+          echo PRIVATE_TMPFS_IMAGE_AND_HOST_UID_ISOLATION_PASS
+          echo NO_REAL_INVOICE_CREDENTIAL_OR_PROD_ACCESS
