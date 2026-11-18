@@ -1,0 +1,34 @@
+name: CST Invoice DEV — pinned Supabase CA in original Docker image
+
+on:
+  push:
+    branches:
+      - test/dev-customer-invoice-pinned-ca-20261119
+    paths:
+      - .github/workflows/dev-invoice-pinned-ca-image-qa.yml
+      - ops/dev-supabase-root-2021.crt
+      - Dockerfile.dev-vps
+      - scripts/tests/customer-invoice-pinned-ca-runtime.qa.sh
+  pull_request:
+    branches:
+      - test/dev-customer-invoice-systemd-keyless-delivery-20261119
+    paths:
+      - .github/workflows/dev-invoice-pinned-ca-image-qa.yml
+      - ops/dev-supabase-root-2021.crt
+      - Dockerfile.dev-vps
+      - scripts/tests/customer-invoice-pinned-ca-runtime.qa.sh
+
+permissions:
+  contents: read
+
+jobs:
+  public-ca-in-image:
+    runs-on: ubuntu-latest
+    timeout-minutes: 16
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify public CA file and Docker image runtime (no credentials)
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash scripts/tests/customer-invoice-pinned-ca-runtime.qa.sh
