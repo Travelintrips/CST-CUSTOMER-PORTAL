@@ -687,7 +687,7 @@ describe("real Ed25519 authorization chained into Invoice handler transaction", 
   });
 });
 
-\n// DEV-only regression: no global/bypass DB pool can post through Invoice,
+// DEV-only regression: no global/bypass DB pool can post through Invoice,
  // even if a route flag or a signed actor is accidentally accepted.
 describe("hard fail-closed on the actual PostgreSQL writer session",()=>{
  it.each([
