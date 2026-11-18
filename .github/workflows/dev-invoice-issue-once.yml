@@ -1,0 +1,86 @@
+name: CST Invoice DEV — one-time keyless credential bootstrap
+
+on:
+  push:
+    branches:
+      - test/dev-customer-invoice-keyless-bootstrap-once-20261119
+    paths:
+      - .github/workflows/dev-invoice-issue-once.yml
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: cst-invoice-dev-one-time-credential-bootstrap
+  cancel-in-progress: false
+
+jobs:
+  safe-preflight:
+    if: >-
+      github.event_name == 'push' &&
+      github.repository == 'Travelintrips/CST-CUSTOMER-PORTAL' &&
+      github.event.repository.id == 1369747600 &&
+      github.ref == 'refs/heads/test/dev-customer-invoice-keyless-bootstrap-once-20261119'
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify synthetic envelope without IAM or secrets
+        shell: bash
+        env:
+          RUNNER_ENVIRONMENT: ${{ runner.environment }}
+        run: |
+          set -euo pipefail
+          node scripts/dev-invoice-keyless-provision-once.mjs dry-run
+          test -s "$RUNNER_TEMP/cst-invoice-dev-bootstrap-envelope/invoice-envelope.cms"
+          test -s "$RUNNER_TEMP/cst-invoice-dev-bootstrap-envelope/invoice-envelope-manifest.json"
+          echo BOOTSTRAP_SYNTHETIC_PREFLIGHT_PASS
+          echo NO_GCP_SECRET_VERSION_ADDED
+
+  issue-once:
+    # First push: preflight-only SUCCESS. This job stays SKIPPED.
+    # Only second attempt of the SAME run may create version 1.
+    if: >-
+      github.run_attempt == 2 &&
+      github.event_name == 'push' &&
+      github.repository == 'Travelintrips/CST-CUSTOMER-PORTAL' &&
+      github.event.repository.id == 1369747600 &&
+      github.ref == 'refs/heads/test/dev-customer-invoice-keyless-bootstrap-once-20261119'
+    needs: safe-preflight
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Obtain temporary Google token from pinned GitHub OIDC
+        id: token
+        uses: google-github-actions/auth@v3
+        with:
+          project_id: secret-504012
+          workload_identity_provider: projects/653506647312/locations/global/workloadIdentityPools/fleet-dev-github/providers/customer-invoice-dev-issuer-oidc
+          service_account: bizportal-invoice-dev-issuer@secret-504012.iam.gserviceaccount.com
+          token_format: access_token
+          access_token_lifetime: 300s
+          create_credentials_file: false
+          export_environment_variables: false
+
+      - name: Issue exactly one Invoice-only encrypted credential version
+        shell: bash
+        env:
+          RUNNER_ENVIRONMENT: ${{ runner.environment }}
+          CST_INVOICE_PINNED_BOOTSTRAP_SHA: ${{ github.sha }}
+          CST_INVOICE_ISSUER_ACCESS_TOKEN: ${{ steps.token.outputs.access_token }}
+        run: |
+          set -euo pipefail
+          node scripts/dev-invoice-keyless-provision-once.mjs issue
+          test -s "$RUNNER_TEMP/cst-invoice-dev-bootstrap-envelope/invoice-envelope.cms"
+          test -s "$RUNNER_TEMP/cst-invoice-dev-bootstrap-envelope/invoice-envelope-manifest.json"
+          echo BOOTSTRAP_ONE_TIME_CIPHERTEXT_READY
+
+      - name: Upload only encrypted Invoice DEV bundle (one day)
+        uses: actions/upload-artifact@v4
+        with:
+          name: cst-invoice-dev-writer-credential-envelope-once
+          path: ${{ runner.temp }}/cst-invoice-dev-bootstrap-envelope/
+          if-no-files-found: error
+          retention-days: 1
