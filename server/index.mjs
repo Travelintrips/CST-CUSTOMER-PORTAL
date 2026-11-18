@@ -4811,6 +4811,11 @@ async function route(request, response) {
       if (request.body?.action === "mark_invoiced") {
         try {
           postSalesInvoiceWithClient = await loadDevOriginalAccountingOwner();
+          if (process.env.CUSTOMER_PORTAL_ATOMIC_ACCOUNTING_POST_DEV === "true"
+              && typeof postSalesInvoiceWithClient !== "function") {
+            sendError(response, 503, "Paket Accounting DEV belum siap atau tidak terverifikasi.");
+            return;
+          }
         } catch {
           // Fail before entering the Invoice transaction if the trusted
           // runtime package is missing, unpinned or otherwise invalid.
