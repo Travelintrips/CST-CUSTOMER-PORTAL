@@ -309,6 +309,15 @@ function ProtectedRoute({ component: Comp, adminOnly = false }: { component: Com
       }
 
       const role = bootstrap.role;
+      // While a company is pending, authenticated applicants must still be
+      // able to complete their own profile and upload identity documents.
+      // All business/transactional routes remain behind the existing gates.
+      const isProfileRecoveryPath =
+        location === "/company-profile" || location === "/profile/company-verification";
+      if (isProfileRecoveryPath && !adminOnly) {
+        setAuthorized(true);
+        return;
+      }
       if (adminOnly) {
         if (role !== "admin") navigate("/dashboard");
         else setAuthorized(true);
