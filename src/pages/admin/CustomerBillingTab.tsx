@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { CheckCircle2, FileCheck2, Loader2, RefreshCw } from "lucide-react";
 import { getAuthHeaders } from "@/lib/auth";
+import { requestBizPortalInvoiceProof } from "@/lib/bizportal-invoice-proof";
 
 type Invoice = {
   id: number;
@@ -85,11 +86,16 @@ export function CustomerBillingTab({ initialView = "all" }: { initialView?: "all
   async function issueInvoice(id: number) {
     setBusy(id);
     try {
+      // The default-OFF UI and existing Invoice action remain unchanged.
+      // Only a separately enabled DEV build invokes the BizPortal popup.
+      const externalAuth = import.meta.env.VITE_CUSTOMER_PORTAL_BIZPORTAL_ATTEST_DEV === "true"
+        ? await requestBizPortalInvoiceProof(id, getAuthHeaders())
+        : {};
       const response = await fetch(`/api/portal/admin/invoices/${id}/action`, {
         method: "POST",
         headers: { ...getAuthHeaders(), "Content-Type": "application/json" },
         credentials: "include",
-        body: JSON.stringify({ action: "mark_invoiced" }),
+        body: JSON.stringify({ action: "mark_invoiced", ...externalAuth }),
       });
       const body = await response.json();
       if (!response.ok) throw new Error(body.message ?? "Gagal menerbitkan invoice");
