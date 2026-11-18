@@ -24,6 +24,7 @@ const m=vi.hoisted(()=>({
   failOutbox:false,
   failAudit:false,
   deferredConstraintFail:false,
+  dbScopeOverride:null,
   arProjection:null,
 }));
 vi.mock("../server/db.mjs",()=>({
@@ -66,6 +67,19 @@ async function sqlMock(statement,params=[]){
   const q=String(statement).toLowerCase().trim();
   m.sql.push(q);
   if(q==="begin"||q==="commit"||q==="rollback")return {rows:[]};
+  if(q.includes("from pg_catalog.pg_roles r")) {
+    const role=m.companyId===3
+      ?"bizportal_finance_diva_login_dev"
+      :"bizportal_finance_cst_login_dev";
+    if(m.dbScopeOverride?.simulateSqlError)throw Error("QA_FAKE_DATABASE_ERROR");
+    if(m.dbScopeOverride?.noRow)return {rows:[]};
+    return {rows:[{
+      active_role:role,login_role:role,bypassrls:false,superuser:false,
+      users_rls:true,sales_rls:true,journal_rls:true,lines_rls:true,
+      ar_rls:true,audit_rls:true,outbox_rls:true,ppn_rls:true,
+      ...(m.dbScopeOverride??{}),
+    }]};
+  }
   if(q.startsWith("set constraints customer_ar_journal_source_dev")) {
     if(m.deferredConstraintFail)throw Error("QA_DEFERRED_AR_CONSTRAINT_VIOLATION");
     return {rows:[]};
@@ -130,6 +144,7 @@ beforeEach(()=>{
   m.failOutbox=false;
   m.failAudit=false;
   m.deferredConstraintFail=false;
+  m.dbScopeOverride=null;
   m.arProjection={gl_entry_id:22,gross_amount:"100.00",paid_amount:"0",outstanding_amount:"100.00"};
   m.bizOwner=[{
     id:"qa-existing-bizportal-owner",role:"super_admin",
@@ -235,6 +250,44 @@ describe("DEV-only atomic Accounting owner integration seam",()=>{
     m.poster.mockResolvedValue({posted:true,entryId:22});
     m.glRow=validGl();
     m.proof=[101];
+  });
+  it("verifies exact non-BYPASSRLS DB login before checking BizPortal identity or writing",async()=>{
+    await perform(m.poster);
+    const scope=sqlIndex("from pg_catalog.pg_roles r");
+    expect(scope).toBeGreaterThan(sqlIndex("from public.sales_documents"));
+    expect(scope).toBeLessThan(sqlIndex("from public.users"));
+    expect(scope).toBeLessThan(sqlIndex("update public.sales_documents"));
+    expect(m.poster).toHaveBeenCalledTimes(1);
+  });
+  it.each([
+    ["BYPASSRLS login",{active_role:"postgres",login_role:"postgres",bypassrls:true}],
+    ["wrong company login",{active_role:"bizportal_finance_diva_login_dev",login_role:"bizportal_finance_diva_login_dev"}],
+    ["SET ROLE impersonation",{login_role:"postgres"}],
+    ["RLS disabled on Invoice",{sales_rls:false}],
+    ["RLS disabled on GL",{journal_rls:false}],
+    ["RLS disabled on audit",{audit_rls:false}],
+    ["metadata lookup failed",{simulateSqlError:true}],
+    ["metadata absent",{noRow:true}],
+  ])("rejects %s before any Accounting, outbox or notification",async(_label,overrides)=>{
+    m.dbScopeOverride=overrides;
+    await expect(perform(m.poster)).rejects.toMatchObject({
+      statusCode:503,code:"DEV_SALES_POSTING_TENANT_ROLE_UNAVAILABLE",
+    });
+    expect(m.poster).not.toHaveBeenCalled();
+    expect(sqlIndex("from public.users")).toBe(-1);
+    expect(sqlIndex("update public.sales_documents")).toBe(-1);
+    expect(m.sql).toContain("rollback");
+    expect(m.sql).not.toContain("commit");
+    noOutbound();
+  });
+  it("protects posted Invoice replay from wrong tenant DB session",async()=>{
+    m.invoiceStatus="invoiced";
+    m.currentInvoiceNumber="INV-SO-QA-101";
+    m.dbScopeOverride={active_role:"postgres",login_role:"postgres",bypassrls:true};
+    await expect(perform(m.poster)).rejects.toMatchObject({statusCode:503});
+    expect(sqlIndex("from public.bizportal_customer_ar_source_evidence_dev")).toBe(-1);
+    expect(m.poster).not.toHaveBeenCalled();
+    expect(m.sql).toContain("rollback");
   });
   it("requires real materialized AR matching the posted company journal before COMMIT",async()=>{
     m.arProjection=null;
