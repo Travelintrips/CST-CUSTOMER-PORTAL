@@ -1,4 +1,5 @@
 import { pool, query } from "./db.mjs";
+import {assertDevCustomerInvoiceTenantDbSession} from "./dev-customer-invoice-tenant-db-session.mjs";
 import { signedPaymentProofUrl } from "./storage.mjs";
 import {
   bestEffortNotificationWrite,
@@ -761,6 +762,11 @@ export async function handleAdminInvoices({ request, response, user, sendJson, s
           process.env.CUSTOMER_PORTAL_REQUIRE_POSTED_AR_EVIDENCE_DEV !== "true") {
         fail(503, "Jalur posting Invoice atomik belum diaktifkan secara aman.");
       }
+      // The existing Portal DB login can bypass RLS. Never use it for
+      // company-isolated Accounting writes, even if the HTTP actor is valid.
+      // Execute the metadata probe on THIS SAME transaction, before calling
+      // any journal, tax, audit/outbox writer or posting replay path.
+      await assertDevCustomerInvoiceTenantDbSession(db, Number(row.company_id));
       canonicalActorId = await requireCanonicalSalesInvoiceOwner(
         db, user, Number(row.company_id),
       );
