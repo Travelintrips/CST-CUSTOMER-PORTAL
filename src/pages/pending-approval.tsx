@@ -214,6 +214,20 @@ export default function PendingApprovalPage() {
             </div>
           )}
 
+          {isCompanyPending && (
+            <div className="space-y-2">
+              <p className="text-sm text-gray-600">
+                Lengkapi profil PIC dan dokumen identitas sebelum Admin memproses pengajuan.
+              </p>
+              <Button variant="outline" className="w-full" onClick={() => setLocation("/company-profile")}>
+                Isi Alamat Sesuai KTP
+              </Button>
+              <Button variant="outline" className="w-full" onClick={() => setLocation("/profile/company-verification")}>
+                Upload KTP PIC
+              </Button>
+            </div>
+          )}
+
           {isRejected && (
             <Button
               className="w-full"

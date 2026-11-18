@@ -161,7 +161,7 @@ async function seedBase(client) {
       (19,24,25,'external-token','external-hash','invited',now()+interval '6 days',1),
       (20,25,26,'cross-token','cross-hash','invited',now()+interval '6 days',1),
       (21,26,24,'unapproved-token','unapproved-hash','invited',now()+interval '6 days',1),
-      (22,27,24,'expired-token','expired-hash','invited',now()-interval '1 day',1),
+      (22,27,24,'expired-token','expired-hash','invited',timestamp '2020-01-01 00:00:00',1),
       (23,28,24,'line-token','line-hash','invited',now()+interval '6 days',1),
       (24,29,24,'rollback-token','rollback-hash','invited',now()+interval '6 days',1);
   `);
