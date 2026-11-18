@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { useLocation, Link } from "wouter";
-import { getAuthHeaders, getAuthToken } from "@/lib/auth";
+import { getAuthHeaders, isAuthenticated } from "@/lib/auth";
 import { useToast } from "@/hooks/use-toast";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -72,7 +72,7 @@ const DOC_STATUS_CONFIG: Record<DocStatus, { label: string; color: string }> = {
 
 export default function CompanyVerificationPage() {
   const [, setLocation] = useLocation();
-  const token = getAuthToken();
+  const authed = isAuthenticated();
   const headers = getAuthHeaders() as Record<string, string>;
   const { toast } = useToast();
   const { t } = useLanguage();
@@ -87,8 +87,8 @@ export default function CompanyVerificationPage() {
   const [reuploadDocId, setReuploadDocId] = useState<number | null>(null);
 
   useEffect(() => {
-    if (!token) setLocation("/login");
-  }, [token]);
+    if (!authed) setLocation("/login");
+  }, [authed, setLocation]);
 
   async function load() {
     setLoading(true);
@@ -99,7 +99,7 @@ export default function CompanyVerificationPage() {
     setLoading(false);
   }
 
-  useEffect(() => { load(); }, []);
+  useEffect(() => { if (authed) void load(); }, [authed]);
 
   async function handleUpload() {
     if (!uploadFile) { toast({ title: t("companyVerif.selectFileFirst", "Pilih file terlebih dahulu"), variant: "destructive" }); return; }
