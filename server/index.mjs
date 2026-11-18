@@ -52,6 +52,11 @@ import {
   handleCustomerInvoices,
   handleCustomerPayments,
 } from "./billing-operations.mjs";
+import { loadTrustedDevAccountingOwner } from "./dev-accounting-owner-runtime.mjs";
+import {
+  mintPortalInvoiceChallenge, isDualSuperAdminProofRequired,
+  verifyIndependentBizPortalSuperAdminProof,
+} from "./dev-bizportal-invoice-attestation.mjs";
 import { handleFreightRoute } from "./freight-operations.mjs";
 import { handleGoogleMapsRoute } from "./google-maps-service.mjs";
 import {
@@ -4737,11 +4742,82 @@ async function route(request, response) {
     if (user) await handleCustomerPayments({ request, response, user, sendJson, sendError });
     return;
   }
+  if (request.method === "GET" &&
+      pathname === "/api/portal/admin/accounting/attestation-config") {
+    const user = await requireAdmin(request, response);
+    if (!user) return;
+    const required = isDualSuperAdminProofRequired() &&
+      process.env.CUSTOMER_PORTAL_REQUIRE_BIZPORTAL_ATTEST_DEV === "true";
+    if (!required) {
+      sendJson(response, 200, {required:false});
+      return;
+    }
+    const configured = (process.env.CUSTOMER_PORTAL_BIZPORTAL_AUTH_ORIGIN_DEV ?? "").trim();
+    let bizportalOrigin = null;
+    try {
+      const origin = new URL(configured);
+      if (origin.origin === configured && !origin.username && !origin.password &&
+          (origin.protocol === "https:" ||
+           (origin.protocol === "http:" && origin.hostname === "127.0.0.1"))) {
+        bizportalOrigin = origin.origin;
+      }
+    } catch {}
+    if (!bizportalOrigin) {
+      sendError(response, 503, "Alamat BizPortal DEV untuk otorisasi belum terverifikasi.");
+      return;
+    }
+    sendJson(response, 200, {required:true,bizportalOrigin});
+    return;
+  }
+  const adminInvoiceChallengeMatch = pathname.match(/^\/api\/portal\/admin\/invoices\/(\d+)\/accounting-challenge$/);
+  if (adminInvoiceChallengeMatch && request.method === "GET") {
+    const user = await requireAdmin(request, response);
+    if (!user) return;
+    if (!isDualSuperAdminProofRequired() ||
+        process.env.CUSTOMER_PORTAL_REQUIRE_BIZPORTAL_ATTEST_DEV !== "true") {
+      sendError(response, 404, "Endpoint tidak tersedia.");
+      return;
+    }
+    const invoiceId = Number(adminInvoiceChallengeMatch[1]);
+    if (!Number.isSafeInteger(invoiceId) || invoiceId <= 0) {
+      sendError(response, 400, "Invoice tidak valid.");
+      return;
+    }
+    const result = await query(
+      `select id, company_id from public.sales_documents
+        where id=$1 and company_id in (1,3)
+          and invoice_status in ('to_invoice','invoiced')
+        limit 1`,
+      [invoiceId],
+    );
+    if (result.rows.length !== 1) {
+      sendError(response, 404, "Invoice tidak ditemukan.");
+      return;
+    }
+    const challenge = mintPortalInvoiceChallenge({
+      portalUser:user,invoiceId,companyId:Number(result.rows[0].company_id),
+    });
+    sendJson(response, 200, {challenge,expiresInSeconds:90});
+    return;
+  }
   const adminInvoiceActionMatch = pathname.match(/^\/api\/portal\/admin\/invoices\/(\d+)\/action$/);
   if (adminInvoiceActionMatch && request.method === "POST") {
     const user = await requireAdmin(request, response);
     if (user) {
       request.body = await readJson(request);
+      // The HTTP request cannot select the Accounting writer: only the
+      // server-side SHA-256-pinned owner is accepted after requireAdmin().
+      let postSalesInvoiceWithClient = null;
+      if (request.body?.action === "mark_invoiced") {
+        try {
+          postSalesInvoiceWithClient = await loadTrustedDevAccountingOwner();
+        } catch {
+          // Fail before entering the Invoice transaction if the trusted
+          // runtime package is missing, unpinned or otherwise invalid.
+          sendError(response, 503, "Paket Accounting DEV belum siap atau tidak terverifikasi.");
+          return;
+        }
+      }
       await handleAdminInvoices({
         request,
         response,
@@ -4749,6 +4825,8 @@ async function route(request, response) {
         sendJson,
         sendError,
         invoiceId: Number(adminInvoiceActionMatch[1]),
+        postSalesInvoiceWithClient,
+        verifySignedBizPortalProof: verifyIndependentBizPortalSuperAdminProof,
       });
     }
     return;

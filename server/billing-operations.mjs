@@ -1,4 +1,5 @@
 import { pool, query } from "./db.mjs";
+import {assertDevCustomerInvoiceTenantDbSession} from "./dev-customer-invoice-tenant-db-session.mjs";
 import { signedPaymentProofUrl } from "./storage.mjs";
 import {
   bestEffortNotificationWrite,
@@ -45,11 +46,60 @@ function idempotencyKey(request, body) {
   return text(request.headers["idempotency-key"]) ?? text(body?.idempotencyKey);
 }
 
-async function withTransaction(work) {
+async function withTransaction(work, {verifyCustomerInvoiceAr = false} = {}) {
   const client = await pool.connect();
   try {
     await client.query("begin");
-    const result = await work((sql, values) => client.query(sql, values));
+    // The owner receives the same in-process PostgreSQL client. This is
+    // not an HTTP call or a separate pool connection, so commit/rollback
+    // of Sales Invoice, journal and AR remains one transaction boundary.
+    const result = await work((sql, values) => client.query(sql, values), client);
+    if (verifyCustomerInvoiceAr &&
+        process.env.CUSTOMER_PORTAL_ATOMIC_ACCOUNTING_POST_DEV === "true" &&
+        process.env.CUSTOMER_PORTAL_REQUIRE_POSTED_AR_EVIDENCE_DEV === "true" &&
+        process.env.APP_ENV?.trim().toLowerCase() === "development") {
+      // The existing CST-DEV AR source/lines/journal constraint triggers are
+      // DEFERRABLE INITIALLY DEFERRED. Flushing them here proves the *actual*
+      // pre-commit financial invariants before acknowledging Invoice success.
+      // Any trigger error still causes withTransaction() to ROLLBACK. Never
+      // run the flush for the legacy feature-OFF path or production.
+      await client.query(
+        "set constraints customer_ar_journal_source_dev, " +
+        "customer_ar_journal_lines_dev, customer_ar_sales_source_dev immediate",
+      );
+      // These original deferred triggers are projections. They do not
+      // necessarily raise when the source is absent. Require the actual
+      // company-scoped persisted AR projection BEFORE COMMIT, backed by the
+      // exact posted journal (and never by a free-form caller flag).
+      const companyId = Number(result?.companyId);
+      const invoiceId = Number(result?.id);
+      if (![1,3].includes(companyId) ||
+          !Number.isSafeInteger(invoiceId) || invoiceId <= 0) {
+        fail(422, "Invoice tanpa identitas perusahaan untuk verifikasi AR.");
+      }
+      const arResult = await client.query(
+        `select a.gl_entry_id,a.gross_amount,a.paid_amount,a.outstanding_amount
+           from public.ar_subledger a
+           join public.accounting_entries e
+             on e.id=a.gl_entry_id and e.company_id=a.company_id
+            and e.source='sales_invoice' and e.source_id=a.invoice_id
+            and e.status='posted' and not e.is_voided and not e.is_reversed
+          where a.company_id=$1 and a.invoice_id=$2
+            and a.invoice_number=$3
+            and a.notes='bizportal:customer-ar-source:v1'
+            and a.status <> 'STALE'
+          limit 2`,
+        [companyId, invoiceId, result.invoiceNumber],
+      );
+      const ar = arResult.rows[0];
+      const cents = (value) => Math.round(Number(value) * 100);
+      if (arResult.rows.length !== 1 || !ar?.gl_entry_id ||
+          cents(ar.gross_amount) !== cents(result.grandTotal) ||
+          cents(ar.paid_amount) !== cents(result.amountPaid) ||
+          cents(ar.outstanding_amount) !== cents(result.outstanding)) {
+        fail(422, "AR setelah constraint trigger belum cocok dengan Invoice dan jurnal.");
+      }
+    }
     await client.query("commit");
     return result;
   } catch (error) {
@@ -465,7 +515,220 @@ async function requirePostedCustomerArEvidence(db, invoice) {
   }
 }
 
-export async function handleAdminInvoices({ request, response, user, sendJson, sendError, invoiceId = null }) {
+// This is a transaction-bound integration seam to the EXISTING Accounting owner,
+// not a journal writer. OFF by default. The owner must be passed by trusted
+// server code, never taken from the HTTP request, and must use the exact same
+// query transaction for all posting statements (no independent connection,
+// background task, outbox, or uncommitted success response).
+// The existing Portal admin login is not a BizPortal Super Admin login.
+// Before invoking the original Accounting owner, independently reread the
+// ACTIVE canonical BizPortal identity in the SAME PostgreSQL transaction.
+// Never trust a role/email supplied by an HTTP body or an unverified JWT claim.
+// A lock prevents role revocation or deactivation from racing this issuance.
+async function requireCanonicalSalesInvoiceOwner(db, portalUser, companyId) {
+  const email = typeof portalUser?.email === "string" ? portalUser.email.trim() : "";
+  if (portalUser?.role !== "admin" || !email || ![1, 3].includes(companyId)) {
+    fail(403, "Hak Super Admin BizPortal diperlukan untuk posting Invoice.");
+  }
+  const matches = await db(
+    `select id, role, system_role, status, is_active, company_id
+       from public.users
+      where lower(trim(email)) = lower(trim($1))
+      limit 2
+      for share`,
+    [email],
+  );
+  if (matches.rows.length !== 1) {
+    fail(403, "Identitas Super Admin BizPortal tidak ditemukan atau tidak unik.");
+  }
+  const owner = matches.rows[0];
+  if (!owner.id || owner.role !== "super_admin" ||
+      owner.system_role !== "super_admin" ||
+      owner.status !== "active" || owner.is_active !== true ||
+      (owner.company_id != null && Number(owner.company_id) !== companyId)) {
+    fail(403, "Identitas Super Admin BizPortal tidak berwenang untuk perusahaan Invoice.");
+  }
+  return String(owner.id);
+}
+
+async function requireAtomicSalesInvoicePosting(db, invoice, canonicalActorId, postWithClient, transactionClient) {
+  if (process.env.CUSTOMER_PORTAL_ATOMIC_ACCOUNTING_POST_DEV !== "true") return;
+  if (process.env.APP_ENV?.trim().toLowerCase() !== "development" ||
+      process.env.CUSTOMER_PORTAL_REQUIRE_POSTED_AR_EVIDENCE_DEV !== "true") {
+    fail(503, "Jalur posting Invoice atomik belum diaktifkan secara aman.");
+  }
+  const companyId = Number(invoice?.company_id);
+  const sourceId = Number(invoice?.id);
+  const total = Number(invoice?.grand_total);
+  if (![1, 3].includes(companyId) || !Number.isSafeInteger(sourceId) || sourceId <= 0 ||
+      !Number.isFinite(total) || total <= 0 ||
+      !invoice?.invoice_number?.trim() || !invoice?.invoice_date || !invoice?.due_date) {
+    fail(422, "Identitas Invoice atau perusahaan untuk posting tidak valid.");
+  }
+  if (typeof postWithClient !== "function" ||
+      !transactionClient || typeof transactionClient.query !== "function") {
+    fail(503, "Pemilik posting jurnal Accounting DEV belum tersambung.");
+  }
+  // Reuse one legitimate company-scoped posting owner; never implement
+  // journal INSERT/UPDATE SQL here. It must post inside this db transaction.
+  let receipt;
+  try {
+    receipt = await postWithClient({
+      query: db,
+      transactionClient,
+      companyId,
+      source: "sales_invoice",
+      sourceId,
+      invoice,
+      actorId: canonicalActorId,
+    });
+  } catch (error) {
+    // Nonzero PPN is intentionally unsupported by the existing engine v1.
+    // Return a clear business rejection rather than a generic HTTP 500.
+    // The surrounding transaction still rolls back every invoice mutation.
+    if (typeof error?.message === "string" &&
+        error.message.startsWith("DEV_SALES_POSTING_TAX_")) {
+      // This also covers invalid/missing company tax config under the
+      // separately gated DEV PPN candidate. Never expose internal account IDs.
+      fail(422, "Posting PPN ditolak: konfigurasi atau perhitungan pajak belum tervalidasi.");
+    }
+    throw error;
+  }
+  const entryId = Number(receipt?.entryId);
+  if (receipt?.posted !== true || !Number.isSafeInteger(entryId) || entryId <= 0) {
+    fail(422, "Jurnal penjualan belum berhasil di-posting.");
+  }
+  // Treat a returned success from the owner as a claim until verified against
+  // the SAME database transaction, with exactly one posted, balanced
+  // same-company journal and the configured Sales journal.
+  const check = await db(
+    `select e.id,e.company_id,e.source::text as source,e.source_id,
+            e.status::text as status,e.total_debit,e.total_credit,
+            e.is_voided,e.is_reversed,
+            j.company_id as journal_company,
+            (select count(*)::int from public.accounting_entries x
+              where x.source='sales_invoice' and x.source_id=$2 and x.company_id=$3
+                and not x.is_voided and not x.is_reversed) as source_count,
+            (select count(*)::int from public.accounting_entry_lines l
+              where l.entry_id=e.id) as line_count,
+            (select coalesce(sum(l.debit),0) from public.accounting_entry_lines l
+              where l.entry_id=e.id) as lines_debit,
+            (select coalesce(sum(l.credit),0) from public.accounting_entry_lines l
+              where l.entry_id=e.id) as lines_credit
+       from public.accounting_entries e
+       join public.accounting_journals j on j.id=e.journal_id
+         and j.company_id=e.company_id and j.is_active
+       join public.accounting_settings cfg on cfg.company_id=e.company_id
+         and cfg.sales_journal_id=e.journal_id
+      where e.id=$1 and e.company_id=$3 and e.source='sales_invoice'
+        and e.source_id=$2
+      limit 2`,
+    [entryId, sourceId, companyId],
+  );
+  if (check.rows.length !== 1) {
+    fail(422, "Jurnal penjualan tidak sesuai dengan Invoice yang diterbitkan.");
+  }
+  const e = check.rows[0];
+  const close = (a,b) => Math.abs(Number(a) - Number(b)) < 0.005;
+  if (e.status !== "posted" || e.is_voided || e.is_reversed ||
+      Number(e.company_id) !== companyId || Number(e.source_id) !== sourceId ||
+      Number(e.journal_company) !== companyId ||
+      Number(e.source_count) !== 1 || Number(e.line_count) < 2 ||
+      !close(e.total_debit, total) || !close(e.total_credit, total) ||
+      !close(e.total_debit, e.lines_debit) ||
+      !close(e.total_credit, e.lines_credit)) {
+    fail(422, "Jurnal penjualan belum seimbang atau tidak memiliki bukti perusahaan yang sah.");
+  }
+  return { entryId };
+}
+
+// The existing original owner performs ALL GL journal writes. This helper
+// stores only audit + outbox evidence inside the caller's same PostgreSQL
+// transaction. Never fire-and-forget or use a separate connection before
+// the outer COMMIT. Outbox delivery happens separately after COMMIT.
+async function requireTransactionalSalesInvoiceEvidence(db, invoice, actorId, entryId) {
+  const companyId = Number(invoice?.company_id);
+  const sourceId = Number(invoice?.id);
+  const amount = Number(invoice?.grand_total);
+  if (![1, 3].includes(companyId) || !Number.isSafeInteger(sourceId) ||
+      sourceId <= 0 || !Number.isSafeInteger(entryId) || entryId <= 0 ||
+      typeof actorId !== "string" || !actorId ||
+      !Number.isFinite(amount) || amount <= 0 ||
+      !invoice?.invoice_number?.startsWith("INV-")) {
+    fail(422, "Bukti audit Invoice tidak memiliki identitas transaksi yang sah.");
+  }
+  // The Invoice source row is already FOR UPDATE-locked by this transaction,
+  // so two issuance requests cannot both enqueue for the same Invoice.
+  const key = `sales_invoice:${companyId}:${sourceId}:${entryId}`;
+  const priorOutbox = await db(
+    `select id, payload from public.financial_outbox_events
+      where entry_id=$1 and company_id=$2 and event_type='JOURNAL_CREATED'
+      order by id limit 2 for update`,
+    [entryId, companyId],
+  );
+  if (priorOutbox.rows.length > 1) {
+    fail(422, "Jurnal memiliki lebih dari satu event Accounting: penerbitan ditolak.");
+  }
+  if (priorOutbox.rows.length === 1) {
+    const previous = priorOutbox.rows[0].payload;
+    if (previous?.eventType !== "JOURNAL_CREATED" ||
+        previous?.sourceType !== "sales_invoice" ||
+        Number(previous?.companyId) !== companyId ||
+        Number(previous?.sourceId) !== sourceId ||
+        Number(previous?.entryId) !== entryId) {
+      fail(422, "Event Accounting tidak sesuai identitas Invoice/perusahaan.");
+    }
+  } else {
+    const payload = {
+      eventType: "JOURNAL_CREATED", sourceType: "sales_invoice",
+      sourceId, companyId, entryId, amount, actor: actorId,
+      ref: invoice.invoice_number, dedupeKey: key,
+    };
+    const saved = await db(
+      `insert into public.financial_outbox_events
+         (event_type,payload,status,entry_id,company_id)
+       values('JOURNAL_CREATED',$1::jsonb,'pending',$2,$3)
+       returning id`,
+      [JSON.stringify(payload), entryId, companyId],
+    );
+    if (saved.rows.length !== 1) {
+      fail(503, "Event Accounting belum dapat disimpan secara atomik.");
+    }
+  }
+
+  const audit = await db(
+    `select id from public.audit_accounting_events
+      where journal_id=$1 and company_id=$2
+        and action='SALES_INVOICE_ISSUED' and correlation_id=$3
+      order by id limit 2 for update`,
+    [entryId, companyId, key],
+  );
+  if (audit.rows.length !== 0) {
+    // A new Invoice must not acquire a second issuance audit.
+    fail(422, "Audit penerbitan Invoice sudah tercatat: duplikasi ditolak.");
+  }
+  const savedAudit = await db(
+    `insert into public.audit_accounting_events
+       (journal_id,action,company_id,amount,user_id,actor_type,
+        correlation_id,change_reason,after_state)
+     values($1,'SALES_INVOICE_ISSUED',$2,$3,$4,'SUPER_ADMIN',$5,
+            'ATOMIC_INVOICE_JOURNAL_AR',$6::jsonb)
+     returning id`,
+    [
+      entryId, companyId, amount, actorId, key,
+      JSON.stringify({
+        source: "sales_invoice", invoiceId: sourceId,
+        invoiceNumber: invoice.invoice_number, entryId, companyId,
+      }),
+    ],
+  );
+  if (savedAudit.rows.length !== 1) {
+    fail(503, "Audit Accounting belum dapat disimpan secara atomik.");
+  }
+  return { entryId, correlationKey: key };
+}
+
+export async function handleAdminInvoices({ request, response, user, sendJson, sendError, invoiceId = null, postSalesInvoiceWithClient = null, verifySignedBizPortalProof = null }) {
   if (request.method === "GET" && invoiceId == null) {
     sendJson(response, 200, { items: await listInvoices(user, { admin: true }) });
     return;
@@ -489,8 +752,50 @@ export async function handleAdminInvoices({ request, response, user, sendJson, s
     sendError(response, 400, "Action invoice tidak didukung.");
     return;
   }
-  const result = await withTransaction(async (db) => {
+  const result = await withTransaction(async (db, transactionClient) => {
     const row = await loadInvoice(invoiceId, user, { db, admin: true, forUpdate: true });
+    let canonicalActorId = null;
+    if (process.env.CUSTOMER_PORTAL_ATOMIC_ACCOUNTING_POST_DEV === "true") {
+      // Protect both the first issuance and replay of an existing Invoice.
+      // The Portal account alone is insufficient to grant Accounting rights.
+      if (process.env.APP_ENV?.trim().toLowerCase() !== "development" ||
+          process.env.CUSTOMER_PORTAL_REQUIRE_POSTED_AR_EVIDENCE_DEV !== "true") {
+        fail(503, "Jalur posting Invoice atomik belum diaktifkan secara aman.");
+      }
+      // The existing Portal DB login can bypass RLS. Never use it for
+      // company-isolated Accounting writes, even if the HTTP actor is valid.
+      // Execute the metadata probe on THIS SAME transaction, before calling
+      // any journal, tax, audit/outbox writer or posting replay path.
+      await assertDevCustomerInvoiceTenantDbSession(db, Number(row.company_id));
+      canonicalActorId = await requireCanonicalSalesInvoiceOwner(
+        db, user, Number(row.company_id),
+      );
+      // Email/role DB matching alone is NOT independent BizPortal login.
+      // Require a fresh Ed25519 assertion derived from its own signed
+      // Super Admin session, bound to this Portal user, Invoice and company.
+      // There is deliberately no flag combination that enables the new
+      // posting owner while bypassing this verification.
+      if (process.env.CUSTOMER_PORTAL_REQUIRE_BIZPORTAL_ATTEST_DEV !== "true" ||
+          typeof verifySignedBizPortalProof !== "function") {
+        fail(503, "Verifikasi sesi Super Admin BizPortal belum terpasang.");
+      }
+      let signedOwnerVerified = false;
+      try {
+        signedOwnerVerified = await verifySignedBizPortalProof({
+          challenge: request.body?.bizportalInvoiceChallenge,
+          proof: request.body?.bizportalInvoiceProof,
+          portalUser: user,
+          invoiceId: Number(row.id),
+          companyId: Number(row.company_id),
+          canonicalActorId,
+        });
+      } catch {
+        fail(403, "Bukti sesi Super Admin BizPortal tidak valid.");
+      }
+      if (signedOwnerVerified !== true) {
+        fail(403, "Sesi Super Admin BizPortal belum diverifikasi secara independen.");
+      }
+    }
     if (row.invoice_status === "invoiced") {
       await requirePostedCustomerArEvidence(db, row);
       return mapInvoice(row);
@@ -509,10 +814,24 @@ export async function handleAdminInvoices({ request, response, user, sendJson, s
         returning ${INVOICE_COLUMNS}`,
       [row.id],
     );
+    // DEV atomic bridge: only a trusted, company-scoped EXISTING posting owner
+    // may write the journal. Then independently verify the returned journal
+    // against persisted source/lines/GL and the existing AR evidence view.
+    // All of this occurs BEFORE COMMIT/audit/notifications.
+    const postingReceipt = await requireAtomicSalesInvoicePosting(
+      db, updated.rows[0], canonicalActorId, postSalesInvoiceWithClient, transactionClient,
+    );
     // Gate before COMMIT, audit or any outward notification. If the source
     // journal does not qualify, withTransaction rolls back the status/date
     // update and no customer can receive an unposted Invoice announcement.
     await requirePostedCustomerArEvidence(db, updated.rows[0]);
+    if (postingReceipt) {
+      // Journal+AR have already been verified in this SAME transaction.
+      // A missing/out-of-scope outbox or audit is an issuance failure: rollback.
+      await requireTransactionalSalesInvoiceEvidence(
+        db, updated.rows[0], canonicalActorId, postingReceipt.entryId,
+      );
+    }
     const mapped = mapInvoice(updated.rows[0]);
     await writeBillingActivity(db, {
       user,
@@ -538,7 +857,7 @@ export async function handleAdminInvoices({ request, response, user, sendJson, s
         payload: { invoiceStatus: "invoiced" },
       });
     return mapped;
-  });
+  }, {verifyCustomerInvoiceAr: process.env.CUSTOMER_PORTAL_ATOMIC_ACCOUNTING_POST_DEV === "true"});
   sendJson(response, 200, result);
 }
 
