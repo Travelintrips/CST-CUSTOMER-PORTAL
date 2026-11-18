@@ -4742,6 +4742,33 @@ async function route(request, response) {
     if (user) await handleCustomerPayments({ request, response, user, sendJson, sendError });
     return;
   }
+  if (request.method === "GET" &&
+      pathname === "/api/portal/admin/accounting/attestation-config") {
+    const user = await requireAdmin(request, response);
+    if (!user) return;
+    const required = isDualSuperAdminProofRequired() &&
+      process.env.CUSTOMER_PORTAL_REQUIRE_BIZPORTAL_ATTEST_DEV === "true";
+    if (!required) {
+      sendJson(response, 200, {required:false});
+      return;
+    }
+    const configured = (process.env.CUSTOMER_PORTAL_BIZPORTAL_AUTH_ORIGIN_DEV ?? "").trim();
+    let bizportalOrigin = null;
+    try {
+      const origin = new URL(configured);
+      if (origin.origin === configured && !origin.username && !origin.password &&
+          (origin.protocol === "https:" ||
+           (origin.protocol === "http:" && origin.hostname === "127.0.0.1"))) {
+        bizportalOrigin = origin.origin;
+      }
+    } catch {}
+    if (!bizportalOrigin) {
+      sendError(response, 503, "Alamat BizPortal DEV untuk otorisasi belum terverifikasi.");
+      return;
+    }
+    sendJson(response, 200, {required:true,bizportalOrigin});
+    return;
+  }
   const adminInvoiceChallengeMatch = pathname.match(/^\/api\/portal\/admin\/invoices\/(\d+)\/accounting-challenge$/);
   if (adminInvoiceChallengeMatch && request.method === "GET") {
     const user = await requireAdmin(request, response);
