@@ -8,8 +8,10 @@ on:
       - 'server/billing-operations.mjs'
       - 'server/index.mjs'
       - 'server/dev-accounting-owner-runtime.mjs'
+      - 'server/dev-bizportal-invoice-attestation.mjs'
       - 'src/portal-customer-invoice-posted-ar-evidence.test.ts'
       - 'src/dev-accounting-owner-runtime.test.ts'
+      - 'src/dev-bizportal-invoice-attestation.test.ts'
       - '.github/workflows/dev-customer-invoice-atomic-accounting-seam.yml'
   workflow_dispatch:
 
@@ -53,12 +55,17 @@ jobs:
           grep -Fq 'DEV_ACCOUNTING_OWNER_HASH_MISMATCH' server/dev-accounting-owner-runtime.mjs
           grep -Fq 'DEV_ACCOUNTING_OWNER_ENV_DENIED' server/dev-accounting-owner-runtime.mjs
           ! grep -Fq 'request.body.postSalesInvoiceWithClient' server/index.mjs
+          grep -Fq 'verifyIndependentBizPortalSuperAdminProof' server/index.mjs
+          grep -Fq 'CUSTOMER_PORTAL_REQUIRE_BIZPORTAL_ATTEST_DEV' server/billing-operations.mjs
+          grep -Fq 'verifySignedBizPortalProof' server/billing-operations.mjs
+          grep -Fq 'createPublicKey' server/dev-bizportal-invoice-attestation.mjs
+          grep -Fq 'timingSafeEqual' server/dev-bizportal-invoice-attestation.mjs
           echo DEV_ATOMIC_POST_SEAM_VERIFICATION_GUARD_PASS
       - name: Posted-AR source and same-transaction Accounting receipt contract tests
         env:
           APP_ENV: development
           NODE_ENV: test
-        run: pnpm exec vitest run src/portal-customer-invoice-posted-ar-evidence.test.ts src/dev-accounting-owner-runtime.test.ts
+        run: pnpm exec vitest run src/portal-customer-invoice-posted-ar-evidence.test.ts src/dev-accounting-owner-runtime.test.ts src/dev-bizportal-invoice-attestation.test.ts
       - name: All existing Customer Portal regressions with no real DB or messages
         env:
           APP_ENV: development
@@ -75,4 +82,4 @@ jobs:
           pnpm run typecheck
           pnpm run verify:server-syntax
       - name: No tracked application changes during test
-        run: git diff --exit-code -- server/index.mjs server/billing-operations.mjs server/dev-accounting-owner-runtime.mjs src pnpm-lock.yaml
+        run: git diff --exit-code -- server/index.mjs server/billing-operations.mjs server/dev-accounting-owner-runtime.mjs server/dev-bizportal-invoice-attestation.mjs src pnpm-lock.yaml
