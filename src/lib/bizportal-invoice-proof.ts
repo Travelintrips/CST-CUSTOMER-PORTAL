@@ -86,14 +86,15 @@ export async function requestBizPortalInvoiceProof(
   const popup=window.open("about:blank","_blank","width=540,height=670");
   if(!popup)throw Error("Popup BizPortal diblokir. Izinkan popup untuk melakukan verifikasi.");
   try{
-    const config=await getJson("/api/portal/admin/accounting/attestation-config",authHeaders)
-      as ConfigResult;
+    const config=(await getJson(
+      "/api/portal/admin/accounting/attestation-config",authHeaders,
+    )) as ConfigResult;
     if(config.required!==true)
       throw Error("Verifikasi lintas aplikasi belum diaktifkan secara konsisten di DEV.");
     const origin=approvedOrigin(config.bizportalOrigin);
-    const response=await getJson(
+    const response=(await getJson(
       "/api/portal/admin/invoices/"+invoiceId+"/accounting-challenge",authHeaders,
-    ) as ChallengeResult;
+    )) as ChallengeResult;
     const challenge=response.challenge;
     if(typeof challenge!=="string"||challenge.length<60||challenge.length>1600)
       throw Error("Challenge Invoice tidak valid.");
