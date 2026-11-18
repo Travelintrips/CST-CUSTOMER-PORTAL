@@ -38,6 +38,9 @@ jobs:
           echo BOOTSTRAP_SYNTHETIC_PREFLIGHT_PASS
           echo NO_GCP_SECRET_VERSION_ADDED
 
+  # WIF issuer provider uses short subject = repository_id:run_id,
+  # not the long GitHub branch sub, which exceeds the IAM 127-byte limit.
+  # GCP also pins SHA + RUN_ID + RUN_ATTEMPT=2, so a later rerun cannot issue.
   issue-once:
     # First push: preflight-only SUCCESS. This job stays SKIPPED.
     # Only second attempt of the SAME run may create version 1.
