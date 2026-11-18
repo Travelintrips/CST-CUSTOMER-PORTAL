@@ -10,6 +10,10 @@ import {
   hasInvoiceDevGcpBootstrap,
   loadDevCustomerInvoiceWriterSecrets,
 } from "./dev-customer-invoice-writer-secret.mjs";
+import {
+  hasDevCustomerInvoiceSystemdCredentials,
+  loadDevCustomerInvoiceSystemdCredentials,
+} from "./dev-customer-invoice-systemd-credential.mjs";
 
 const { Client } = pg;
 export const DEV_CUSTOMER_INVOICE_PROJECT_REF = "xssrfshdrtdfupgqwfdw";
@@ -76,6 +80,7 @@ export async function openDevCompanyInvoiceWriter({
   invoiceId,portalUser,lookupCompany,env=process.env,
   ClientCtor=Client,readCa=readPinnedDevInvoiceCa,
   loadWriterSecrets=loadDevCustomerInvoiceWriterSecrets,
+  loadSystemdCredentials=loadDevCustomerInvoiceSystemdCredentials,
 }) {
   if (!isDevInvoiceScopedWriterRequested(env)
       || portalUser?.role!=="admin" ||
@@ -92,12 +97,17 @@ export async function openDevCompanyInvoiceWriter({
   const companyId=Number(result.rows[0].company_id);
   const config=DEV_CUSTOMER_INVOICE_COMPANIES[companyId];
   if (!config) throw blocked();
-  // If a dedicated GCP bootstrap is configured, Secret Manager is the only
-  // credential source: never fall back to an env DSN on fetch/parse failure.
+  // A systemd credential is delivered through a read-only per-unit mount,
+  // never through env. If configured, it is authoritative and fail-closed;
+  // do not silently fall back to GCP bootstrap or an old postgres/Finance DSN.
   let secretSource;
   try {
-    secretSource=hasInvoiceDevGcpBootstrap(env)
-      ? await loadWriterSecrets({env}) : env;
+    const fromSystemd=hasDevCustomerInvoiceSystemdCredentials(env);
+    const fromGcp=hasInvoiceDevGcpBootstrap(env);
+    if (fromSystemd && fromGcp) throw blocked();
+    secretSource=fromSystemd
+      ? await loadSystemdCredentials({env})
+      : fromGcp ? await loadWriterSecrets({env}) : env;
   } catch { throw blocked(); }
   const parsed=parseDevInvoiceScopedWriterDsn(secretSource?.[config.env],companyId);
   const ca=await readCa();
