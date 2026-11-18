@@ -3,8 +3,6 @@
  * Invoice PostgreSQL writer DSNs. Does not grant roles or enable Invoice.
  * This path is deliberately absent/inert in the active DEV runtime.
  */
-import { SecretManagerServiceClient } from "@google-cloud/secret-manager";
-
 export const DEV_CUSTOMER_INVOICE_GCP_PROJECT = "secret-504012";
 export const DEV_CUSTOMER_INVOICE_SECRET =
   "projects/653506647312/secrets/bizportal-customer-invoice-writers-dev-companies/versions/latest";
@@ -45,7 +43,7 @@ function validateBootstrap(raw) {
   return credentials;
 }
 
-function validateSecretPayload(raw) {
+export function validateDevCustomerInvoiceSecretPayload(raw) {
   if (typeof raw !== "string" || raw.length > 16_384 || raw.length < 80)
     throw refused();
   let data;
@@ -72,7 +70,12 @@ function validateSecretPayload(raw) {
 
 export async function loadDevCustomerInvoiceWriterSecrets({
   env = process.env,
-  clientFactory = (credentials) => new SecretManagerServiceClient({ credentials }),
+  clientFactory = async (credentials) => {
+    // Only the direct GCP path needs the SDK. systemd credentials can be
+    // delivered without any Google runtime bootstrap or installed SDK.
+    const { SecretManagerServiceClient } = await import("@google-cloud/secret-manager");
+    return new SecretManagerServiceClient({ credentials });
+  },
 } = {}) {
   if (env.APP_ENV !== "development" || env.NODE_ENV !== "development"
       || env.CUSTOMER_PORTAL_ATOMIC_ACCOUNTING_POST_DEV !== "true"
@@ -83,14 +86,14 @@ export async function loadDevCustomerInvoiceWriterSecrets({
   const credentials = validateBootstrap(env[DEV_CUSTOMER_INVOICE_GCP_BOOTSTRAP_ENV]);
   let client;
   try {
-    client = clientFactory(credentials);
+    client = await clientFactory(credentials);
     if (typeof client?.accessSecretVersion !== "function") throw refused();
     const [version] = await client.accessSecretVersion({
       name: DEV_CUSTOMER_INVOICE_SECRET,
     });
     const bytes = version?.payload?.data;
     if (typeof bytes?.toString !== "function") throw refused();
-    return validateSecretPayload(bytes.toString("utf8"));
+    return validateDevCustomerInvoiceSecretPayload(bytes.toString("utf8"));
   } catch {
     // No secret values, credentials, GCP raw exceptions or database DSNs
     // are ever placed in thrown errors or logs.
