@@ -1,5 +1,6 @@
 import { pool, query } from "./db.mjs";
 import { signedPaymentProofUrl } from "./storage.mjs";
+import { requireDirectCompanyInvoiceWriterSession } from "./dev-customer-invoice-writer-session-guard.mjs";
 import {
   bestEffortNotificationWrite,
   notifyAdmins,
@@ -759,6 +760,9 @@ export async function handleAdminInvoices({ request, response, user, sendJson, s
     const row = await loadInvoice(invoiceId, user, { db, admin: true, forUpdate: true });
     let canonicalActorId = null;
     if (process.env.CUSTOMER_PORTAL_ATOMIC_ACCOUNTING_POST_DEV === "true") {
+      // A bypass-RLS/general service DB session is not a tenant writer,
+      // even after an independently signed Super Admin approval.
+      await requireDirectCompanyInvoiceWriterSession(transactionClient, Number(row.company_id));
       // Protect both the first issuance and replay of an existing Invoice.
       // The Portal account alone is insufficient to grant Accounting rights.
       if (process.env.APP_ENV?.trim().toLowerCase() !== "development" ||

@@ -9,6 +9,9 @@ const m=vi.hoisted(()=>({
   status:"confirmed",
   invoiceStatus:"to_invoice",
   companyId:1,
+  dbRoleOverride:null,
+  dbBypass:false,
+  dbRlsActive:true,
   currentInvoiceNumber:null,
   viewUnavailable:false,
   query:vi.fn(),
@@ -68,6 +71,17 @@ async function sqlMock(statement,params=[]){
   const q=String(statement).toLowerCase().trim();
   m.sql.push(q);
   if(q==="begin"||q==="commit"||q==="rollback")return {rows:[]};
+  if(q.includes("row_security_active(")) {
+    const scopedRole=m.dbRoleOverride ?? (m.companyId===3
+      ? "bizportal_customer_invoice_diva_writer_dev"
+      : "bizportal_customer_invoice_cst_writer_dev");
+    return {rows:[{
+      db_role:scopedRole,session_role:scopedRole,bypass_rls:m.dbBypass,
+      invoice_rls:m.dbRlsActive,gl_rls:m.dbRlsActive,
+      lines_rls:m.dbRlsActive,ar_rls:m.dbRlsActive,
+      taxes_rls:m.dbRlsActive,audit_rls:m.dbRlsActive,outbox_rls:m.dbRlsActive,
+    }]};
+  }
   if(q.startsWith("set constraints customer_ar_journal_source_dev")) {
     if(m.deferredConstraintFail)throw Error("QA_DEFERRED_AR_CONSTRAINT_VIOLATION");
     return {rows:[]};
@@ -134,6 +148,9 @@ beforeEach(()=>{
   m.status="confirmed";
   m.invoiceStatus="to_invoice";
   m.companyId=1;
+  m.dbRoleOverride=null;
+  m.dbBypass=false;
+  m.dbRlsActive=true;
   m.currentInvoiceNumber=null;
   m.viewUnavailable=false;
   m.glRow=null;
@@ -668,4 +685,24 @@ describe("real Ed25519 authorization chained into Invoice handler transaction", 
     expect(sqlIndex("from public.bizportal_customer_ar_source_evidence_dev")).toBe(-1);
     expect(m.sql).toContain("rollback");
   });
+});
+
+// DEV-only regression: no global/bypass DB pool can post through Invoice,
+ // even if a route flag or a signed actor is accidentally accepted.
+describe("hard fail-closed on the actual PostgreSQL writer session",()=>{
+ it.each([
+  ["global postgres bypass",()=>{m.dbRoleOverride="postgres";m.dbBypass=true;}],
+  ["CST invoice using Diva writer",()=>{m.dbRoleOverride="bizportal_customer_invoice_diva_writer_dev";}],
+  ["RLS disabled for required finance tables",()=>{m.dbRlsActive=false;}],
+ ])("blocks %s before any Invoice update, posting, audit or notification",async(_name,setup)=>{
+  process.env[bridge]="true";
+  process.env[attestFlag]="true";
+  setup();
+  await expect(perform(m.poster)).rejects.toMatchObject({statusCode:503});
+  expect(m.poster).not.toHaveBeenCalled();
+  expect(sqlIndex("update public.sales_documents")).toBe(-1);
+  expect(m.sql).toContain("rollback");
+  expect(m.sql).not.toContain("commit");
+  noOutbound();
+ });
 });
