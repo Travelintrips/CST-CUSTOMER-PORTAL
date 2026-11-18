@@ -533,6 +533,10 @@ async function requireCanonicalSalesInvoiceOwner(db, portalUser, companyId) {
     `select id, role, system_role, status, is_active, company_id
        from public.users
       where lower(trim(email)) = lower(trim($1))
+        and role = 'super_admin'
+        and system_role = 'super_admin'
+        and status = 'active'
+        and is_active is true
       limit 2
       for share`,
     [email],
