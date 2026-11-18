@@ -57,7 +57,7 @@ jobs:
         uses: google-github-actions/auth@v3
         with:
           project_id: secret-504012
-          workload_identity_provider: projects/653506647312/locations/global/workloadIdentityPools/fleet-dev-github/providers/customer-invoice-dev-issuer-oidc
+          workload_identity_provider: projects/653506647312/locations/global/workloadIdentityPools/cst-invoice-issuer-once/providers/customer-invoice-dev-issuer-oidc
           service_account: bizportal-invoice-dev-issuer@secret-504012.iam.gserviceaccount.com
           token_format: access_token
           access_token_lifetime: 300s
