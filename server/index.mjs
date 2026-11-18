@@ -53,6 +53,7 @@ import {
   handleCustomerPayments,
 } from "./billing-operations.mjs";
 import { loadDevOriginalAccountingOwner } from "./dev-original-accounting-owner-loader.mjs";
+import { resolveTrustedBizPortalInvoiceOrigin } from "./dev-bizportal-invoice-origin.mjs";
 import {
   mintPortalInvoiceChallenge, isDualSuperAdminProofRequired,
   verifyIndependentBizPortalSuperAdminProof,
@@ -4752,16 +4753,8 @@ async function route(request, response) {
       sendJson(response, 200, {required:false});
       return;
     }
-    const configured = (process.env.CUSTOMER_PORTAL_BIZPORTAL_AUTH_ORIGIN_DEV ?? "").trim();
-    let bizportalOrigin = null;
-    try {
-      const origin = new URL(configured);
-      if (origin.origin === configured && !origin.username && !origin.password &&
-          (origin.protocol === "https:" ||
-           (origin.protocol === "http:" && origin.hostname === "127.0.0.1"))) {
-        bizportalOrigin = origin.origin;
-      }
-    } catch {}
+    const configured = process.env.CUSTOMER_PORTAL_BIZPORTAL_AUTH_ORIGIN_DEV ?? "";
+    const bizportalOrigin = resolveTrustedBizPortalInvoiceOrigin(configured);
     if (!bizportalOrigin) {
       sendError(response, 503, "Alamat BizPortal DEV untuk otorisasi belum terverifikasi.");
       return;
