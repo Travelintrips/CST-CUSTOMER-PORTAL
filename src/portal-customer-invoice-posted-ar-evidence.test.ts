@@ -75,7 +75,17 @@ async function sqlMock(statement,params=[]){
   if(q.includes("from public.ar_subledger a"))return {rows:m.arProjection?[m.arProjection]:[]};
   if(q.includes("from public.sales_documents"))return {rows:[base()]};
   if(q.startsWith("update public.sales_documents"))return {rows:[issued()]};
-  if(q.includes("from public.users"))return {rows:m.bizOwner};
+  if(q.includes("from public.users")) {
+    // Emulate the WHERE clause of the canonical owner's active Super Admin
+    // lookup, ensuring inactive same-email legacy accounts never confer rights.
+    if(!q.includes("and role = 'super_admin'") ||
+        !q.includes("and system_role = 'super_admin'") ||
+        !q.includes("and status = 'active'") ||
+        !q.includes("and is_active is true"))throw Error("UNSCOPED_BIZPORTAL_OWNER_LOOKUP");
+    return {rows:m.bizOwner.filter(user=>
+      user.role==="super_admin" && user.system_role==="super_admin" &&
+      user.status==="active" && user.is_active===true).slice(0,2)};
+  }
   if(q.includes("from public.accounting_entries e")){
     return {rows: m.glRow ? [m.glRow] : []};
   }
@@ -347,6 +357,31 @@ describe("DEV-only atomic Accounting owner integration seam",()=>{
     expect(m.poster).not.toHaveBeenCalled();
     expect(m.sql).toContain("rollback");
     expect(m.sql).not.toContain("commit");
+    noOutbound();
+  });
+  it("ignores inactive legacy same-email Admin while requiring one active Super Admin and independent signed proof",async()=>{
+    m.bizOwner=[
+      {id:"dev_legacy_admin",role:"admin",system_role:null,status:"inactive",is_active:false,company_id:null},
+      {id:"qa-existing-bizportal-owner",role:"super_admin",system_role:"super_admin",
+        status:"active",is_active:true,company_id:null},
+    ];
+    await perform(m.poster);
+    expect(m.poster).toHaveBeenCalledTimes(1);
+    expect(m.poster.mock.calls[0][0].actorId).toBe("qa-existing-bizportal-owner");
+    expect(m.verifyIndependentOwner).toHaveBeenCalledTimes(1);
+    expect(m.sql).toContain("commit");
+  });
+  it("still rejects two active Super Admin identities sharing one email",async()=>{
+    m.bizOwner=[
+      {id:"owner_a",role:"super_admin",system_role:"super_admin",
+        status:"active",is_active:true,company_id:null},
+      {id:"owner_b",role:"super_admin",system_role:"super_admin",
+        status:"active",is_active:true,company_id:null},
+    ];
+    await expect(perform(m.poster)).rejects.toMatchObject({statusCode:403});
+    expect(m.poster).not.toHaveBeenCalled();
+    expect(m.verifyIndependentOwner).not.toHaveBeenCalled();
+    expect(m.sql).toContain("rollback");
     noOutbound();
   });
   it("requires a database-verified Portal email for canonical owner lookup",async()=>{
