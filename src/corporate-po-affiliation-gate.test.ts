@@ -4,6 +4,8 @@ import { join } from "node:path";
 import {
   assertDevCorporatePoAffiliation,
   corporatePoApprovalGateDevEnabled,
+  financialInvoiceCompanyReviewRequiredDev,
+  companyAffiliationReviewRequiredDev,
   stageDevExistingCompanyApproval,
 } from "../server/corporate-po-affiliation-gate.mjs";
 
@@ -118,6 +120,32 @@ describe("DEV existing company selection to Admin review", () => {
     expect(await stageDevExistingCompanyApproval(db,30,company,off)).toEqual({enabled:false});
     expect(db).not.toHaveBeenCalled();
   });
+  it("reuses the same company approval queue for DEV Invoice without enabling PO gate",async()=>{
+    const env={APP_ENV:"development",CST_CORPORATE_PO_APPROVAL_GATE_DEV:"false",
+      CUSTOMER_PORTAL_ATOMIC_ACCOUNTING_POST_DEV:"true",
+      CUSTOMER_PORTAL_REQUIRE_POSTED_AR_EVIDENCE_DEV:"true"};
+    expect(corporatePoApprovalGateDevEnabled(env)).toBe(false);
+    expect(financialInvoiceCompanyReviewRequiredDev(env)).toBe(true);
+    expect(companyAffiliationReviewRequiredDev(env)).toBe(true);
+    const db=createDb();
+    expect(await stageDevExistingCompanyApproval(db,30,company,env))
+      .toEqual({enabled:true,status:"company_pending"});
+    expect(db).toHaveBeenCalledTimes(3);
+  });
+  it("never starts finance affiliation review with only one flag or in PROD",async()=>{
+    for(const env of [
+      {APP_ENV:"development",CUSTOMER_PORTAL_ATOMIC_ACCOUNTING_POST_DEV:"true"},
+      {APP_ENV:"development",CUSTOMER_PORTAL_REQUIRE_POSTED_AR_EVIDENCE_DEV:"true"},
+      {APP_ENV:"production",CUSTOMER_PORTAL_ATOMIC_ACCOUNTING_POST_DEV:"true",
+        CUSTOMER_PORTAL_REQUIRE_POSTED_AR_EVIDENCE_DEV:"true"},
+    ]){
+      expect(financialInvoiceCompanyReviewRequiredDev(env)).toBe(false);
+      const db=vi.fn();
+      expect(await stageDevExistingCompanyApproval(db,30,company,env))
+        .toEqual({enabled:false});
+      expect(db).not.toHaveBeenCalled();
+    }
+  });
   it("uses existing pending request workflow instead of granting self-service membership",async()=>{
     const db=createDb();
     expect(await stageDevExistingCompanyApproval(db,30,company,on))
@@ -150,6 +178,8 @@ describe("DEV existing company selection to Admin review", () => {
     expect(onboard).toContain('status: "company_pending"');
     expect(onboard).toContain("profile_status='pending'");
     expect(src).toContain("on conflict (portal_customer_id, lower(requested_company_name))");
-    expect(src).toContain('corporatePoApprovalGateDevEnabled() && status === "approved" && matchedCompanyId == null');
+    expect(src).toContain('companyAffiliationReviewRequiredDev() && status === "approved" && matchedCompanyId == null');
+    expect(src).toContain('financialInvoiceCompanyReviewRequiredDev()');
+    expect(src).toContain('Number(current.portal_customer_id) === Number(ctx.user.id)');
   });
 });
