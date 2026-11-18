@@ -1,90 +1,77 @@
 #!/usr/bin/env bash
-# DEV-only dry run. Compare Compose service metadata; never run docker up.
+# DEV-only Compose static verification. No docker compose up or secrets read.
 set -euo pipefail
 umask 077
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT"
 source scripts/dev-invoice-compose-guard.sh
-work="$(mktemp -d /run/cst-invoice-compose-config-qa.XXXXXXXX)"
+work="$(mktemp -d /run/cst-invoice-compose-tmpfs-qa.XXXXXXXX)"
 trap 'rm -rf -- "$work"' EXIT
 chmod 700 "$work"
-printf '%s\n' CUSTOMER_PORTAL_ATOMIC_ACCOUNTING_POST_DEV=false > "$work/off.env"
-printf '%s\n' CUSTOMER_PORTAL_ATOMIC_ACCOUNTING_POST_DEV=true > "$work/on.env"
+printf '%s\n' 'CUSTOMER_PORTAL_ATOMIC_ACCOUNTING_POST_DEV=false' > "$work/off.env"
+printf '%s\n' \
+ 'CUSTOMER_PORTAL_ATOMIC_ACCOUNTING_POST_DEV=true' \
+ 'CUSTOMER_PORTAL_REQUIRE_POSTED_AR_EVIDENCE_DEV=true' \
+ 'CUSTOMER_PORTAL_REQUIRE_BIZPORTAL_ATTEST_DEV=true' > "$work/on.env"
 base=(-f compose.dev-vps.yml)
-unset CST_INVOICE_DEV_CREDENTIAL_DIRECTORY || true
-off=("${base[@]}")
-cst_invoice_compose_guard off "$work/off.env"
-test "${#off[@]}" -eq 2
-echo COMPOSE_LEGACY_FEATURE_OFF_UNMODIFIED_PASS
-if cst_invoice_compose_guard off "$work/on.env" >/dev/null 2>&1; then
-  echo ATOMIC_INVOICE_WITHOUT_CREDENTIAL_MOUNT_WAS_ALLOWED; exit 3
+unset CST_INVOICE_DEV_PRIVATE_TMPFS CST_INVOICE_DEV_CREDENTIAL_DIRECTORY || true
+legacy=("${base[@]}")
+cst_invoice_compose_guard legacy "$work/off.env"
+test "${#legacy[@]}" -eq 2
+echo PRIVATE_TMPFS_FEATURE_OFF_ORIGINAL_COMPOSE_UNCHANGED_PASS
+if cst_invoice_compose_guard legacy "$work/on.env" >/dev/null 2>&1;then
+ echo ATOMIC_ON_WITHOUT_PRIVATE_TMPFS_WAS_ACCEPTED;exit 3
 fi
-echo COMPOSE_ATOMIC_ON_MISSING_MOUNT_FAIL_CLOSED_PASS
-
-test "$(stat -f -c %T /run)" = tmpfs
-mkdir "$work/mounted"
-chown root:1000 "$work/mounted"
-chmod 0750 "$work/mounted"
-python3 - "$work/mounted/customer-invoice-writers-dev.json" <<'PY'
-import json,os,sys
-ref='xssrfshdrtdfupgqwfdw'
-payload={
- 'APP_ENV':'development','SUPABASE_PROJECT_REF':ref,
- 'CUSTOMER_PORTAL_CST_INVOICE_WRITER_DSN_DEV':
-  'postgresql://bizportal_customer_invoice_cst_writer_dev.'+ref+':synthetic-only-qa@aws-1-ap-southeast-2.pooler.supabase.com:5432/postgres?sslmode=verify-full&sslrootcert=/opt/cst-dev-finance-tls/supabase-root-2021.crt',
- 'CUSTOMER_PORTAL_DIVA_INVOICE_WRITER_DSN_DEV':
-  'postgresql://bizportal_customer_invoice_diva_writer_dev.'+ref+':synthetic-only-qa@aws-1-ap-southeast-2.pooler.supabase.com:5432/postgres?sslmode=verify-full&sslrootcert=/opt/cst-dev-finance-tls/supabase-root-2021.crt',
-}
-with open(sys.argv[1],'w') as f:json.dump(payload,f)
-os.chown(sys.argv[1],0,1000)
-os.chmod(sys.argv[1],0o440)
-PY
-export CST_INVOICE_DEV_CREDENTIAL_DIRECTORY="$work/mounted"
-with_override=("${base[@]}")
-cst_invoice_compose_guard with_override "$work/on.env"
-test "${#with_override[@]}" -eq 4
+echo ATOMIC_ON_NO_PRIVATE_TMPFS_FAIL_CLOSED_PASS
 docker compose "${base[@]}" config --no-env-resolution --format json > "$work/base.json"
-docker compose "${with_override[@]}" config --no-env-resolution --format json > "$work/combined.json"
-grep -Eq "^[[:space:]]+create_host_path:[[:space:]]+false[[:space:]]*$" ops/dev-invoice-keyless-credentials.compose.override.yml
-python3 - "$work/base.json" "$work/combined.json" "$work/mounted" <<'PY'
-import json,sys,copy
-base=json.load(open(sys.argv[1]))
-merged=json.load(open(sys.argv[2]))
-expect=sys.argv[3]
-assert set(base['services'])==set(merged['services'])=={'customer-portal-dev'}
-b=base['services']['customer-portal-dev']
-m=merged['services']['customer-portal-dev']
-assert 'CREDENTIALS_DIRECTORY' not in b['environment']
-assert m['environment'].pop('CREDENTIALS_DIRECTORY')=='/run/credentials/cst-customer-portal-dev.service'
-vol=m.pop('volumes')
-assert len(vol)==1
-v=vol[0]
-assert v['type']=='bind' and v['source']==expect
-assert v['target']=='/run/credentials/cst-customer-portal-dev.service'
-assert v['read_only'] is True
-assert v['bind'].get('create_host_path',False) is False
-assert b==m,'the override may not alter image, ports, env, restart, security, health or any other field'
-assert base['name']==merged['name']
-print('COMPOSE_ONLY_ONE_READONLY_CREDENTIAL_MOUNT_DIFF_PASS')
-print('COMPOSE_EXISTING_SERVICE_SECURITY_PORTS_RESTART_HEALTH_UNCHANGED_PASS')
+docker compose "${base[@]}" -f ops/dev-invoice-keyless-credentials.compose.override.yml config --no-env-resolution --format json > "$work/combined.json"
+python3 - "$work/base.json" "$work/combined.json" <<'PY'
+import json,sys
+base=json.load(open(sys.argv[1]));new=json.load(open(sys.argv[2]))
+assert set(base['services'])==set(new['services'])=={'customer-portal-dev'}
+assert base['name']==new['name']
+before=base['services']['customer-portal-dev']
+after=new['services']['customer-portal-dev']
+assert after.pop('user')=='21110:21110'
+assert 'CREDENTIALS_DIRECTORY' not in before['environment']
+assert after['environment'].pop('CREDENTIALS_DIRECTORY')=='/run/credentials/cst-customer-portal-dev.service'
+assert before.get('volumes')==after.get('volumes'), 'no host bind mounts allowed'
+prior=set(before.get('tmpfs',[]))
+extra=set(after['tmpfs'])-prior
+assert len(extra)==1, f'expect exactly one private container tmpfs, saw {extra}'
+mount=next(iter(extra))
+assert mount.startswith('/run/credentials/cst-customer-portal-dev.service:')
+opts=set(mount.split(':',1)[1].split(','))
+assert {'rw','noexec','nosuid','nodev','size=65536','mode=0700',
+        'uid=21110','gid=21110'} <= opts
+assert prior<=set(after['tmpfs'])
+after['tmpfs']=before.get('tmpfs',[])
+assert after==before, 'ports, health, image, restart, limits and security must be unchanged'
+print('COMPOSE_PRIVATE_TMPFS_UNIQUE_UID_NO_HOST_BIND_PASS')
+print('COMPOSE_LEGACY_IMAGE_PORTS_HEALTH_SECURITY_METADATA_UNCHANGED_PASS')
 PY
+export CST_INVOICE_DEV_PRIVATE_TMPFS=true
+if cst_invoice_compose_guard legacy "$work/off.env" >/dev/null 2>&1;then
+ echo ENABLING_TMPFS_WITH_ATOMIC_OFF_ACCEPTED;exit 4
+fi
+export CST_INVOICE_DEV_CREDENTIAL_DIRECTORY=/run/previous-plaintext-bundle
+if cst_invoice_compose_guard legacy "$work/on.env" >/dev/null 2>&1;then
+ echo LEGACY_HOST_PLAINTEXT_BIND_WAS_ACCEPTED;exit 5
+fi
 unset CST_INVOICE_DEV_CREDENTIAL_DIRECTORY
-if docker compose "${base[@]}" -f ops/dev-invoice-keyless-credentials.compose.override.yml config --no-env-resolution -q >/dev/null 2>&1; then
-  echo COMPOSE_DID_NOT_REQUIRE_EXPLICIT_HOST_CREDENTIAL_DIR; exit 6
+echo LEGACY_HOST_PLAINTEXT_BIND_REJECTED_PASS
+# GCP Actions has no real encrypted bundle: static diff and no-secret
+# rejection are enough. On owned VPS verify actual root-only CMS preflight.
+if [[ -s /etc/cst-invoice-dev/transport/invoice-writer-version1.cms ]];then
+ approved=("${base[@]}")
+ cst_invoice_compose_guard approved "$work/on.env"
+ test "${#approved[@]}" -eq 4
+ echo VPS_ROOT_ENCRYPTED_CREDENTIAL_PREFLIGHT_PASS
+else
+ echo CI_STATIC_ONLY_NO_ENCRYPTED_BUNDLE_AVAILABLE
 fi
-echo COMPOSE_NO_SILENT_HOST_PATH_DEFAULT_PASS
-
-export CST_INVOICE_DEV_CREDENTIAL_DIRECTORY="$work/nonexistent"
-bad=("${base[@]}")
-if cst_invoice_compose_guard bad "$work/on.env" >/dev/null 2>&1; then
-  echo COMPOSE_ALLOWED_NONEXISTENT_CREDENTIAL_DIR; exit 7
-fi
-chmod 0644 "$work/mounted/customer-invoice-writers-dev.json"
-export CST_INVOICE_DEV_CREDENTIAL_DIRECTORY="$work/mounted"
-if cst_invoice_compose_guard bad "$work/on.env" >/dev/null 2>&1; then
-  echo COMPOSE_ALLOWED_WORLD_READABLE_CREDENTIAL_FILE; exit 8
-fi
-echo COMPOSE_NONEXISTENT_OR_UNSAFE_CREDENTIAL_MOUNT_FAIL_CLOSED_PASS
 test "$(grep -Fc 'docker compose "${compose_files[@]}" up -d --no-build --force-recreate --no-deps customer-portal-dev' scripts/deploy-certified-vps.sh)" -eq 2
-echo CERTIFIED_DEPLOY_AND_ROLLBACK_SHARE_SAME_COMPOSE_OVERRIDE_PASS
-echo CUSTOMER_INVOICE_DEV_COMPOSE_CREDENTIAL_ISOLATION_QA_PASS
+test "$(grep -Fc 'bash ./scripts/dev-invoice-inject-verified-cms.sh cst-customer-portal-dev' scripts/deploy-certified-vps.sh)" -eq 2
+grep -q 'loadDevCustomerInvoiceSystemdCredentials' scripts/start-dev-vps.mjs
+echo CERTIFIED_FORWARD_AND_ROLLBACK_PRIVATE_CREDENTIAL_INJECTION_GUARD_PASS
+echo CUSTOMER_INVOICE_PRIVATE_TMPFS_DOCKER_COMPOSE_SOURCE_QA_PASS

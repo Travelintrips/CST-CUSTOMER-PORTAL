@@ -14,11 +14,15 @@ COPY --from=build /app/node_modules ./node_modules
 COPY --from=build /app/dist ./dist
 COPY --from=build /app/server ./server
 COPY --from=build /app/scripts/start-dev-vps.mjs ./scripts/start-dev-vps.mjs
+COPY --from=build /app/scripts/dev-invoice-tmpfs-inject.mjs ./scripts/dev-invoice-tmpfs-inject.mjs
 COPY --from=build /app/package.json ./package.json
 # PUBLIC Supabase Root CA, SHA-256 verified by the Invoice DEV scoped client.
 # Kept inside read-only container image; no secret keys or runtime credentials.
 RUN mkdir -p /opt/cst-dev-finance-tls
 COPY --from=build /app/ops/dev-supabase-root-2021.crt /opt/cst-dev-finance-tls/supabase-root-2021.crt
+# Optional Invoice-only identity: avoid reusing host GitHub runner UID/GID 1000.
+# Base service still runs as 'node' while feature OFF, unchanged.
+RUN addgroup -S -g 21110 cstinvoice && adduser -S -D -h /home/cstinvoice -u 21110 -G cstinvoice cstinvoice
 ENV APP_ENV=development NODE_ENV=development PORT=18444 CUSTOMER_PORTAL_PUBLIC_DIR=/app/dist/public
 USER node
 EXPOSE 18444

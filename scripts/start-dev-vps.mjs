@@ -44,4 +44,27 @@ process.env.SUPABASE_URL = url;
 process.env.SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY_DEV;
 process.env.SUPABASE_STORAGE_BUCKET = process.env.SUPABASE_STORAGE_BUCKET_DEV;
 process.env.CUSTOMER_PORTAL_DEV_VPS_SERVE_STATIC = "1";
+// With Invoice atomic posting explicitly enabled, do not open the HTTP
+// server until the root-verified encrypted bundle has been injected into
+// the container's unique-UID private tmpfs. No credentials on the host
+// bind mount or in process.env. Restart without injection fails closed.
+if (process.env.CUSTOMER_PORTAL_ATOMIC_ACCOUNTING_POST_DEV === "true") {
+  if (process.env.CREDENTIALS_DIRECTORY !==
+      "/run/credentials/cst-customer-portal-dev.service") {
+    abort("Invoice DEV credential tmpfs missing; refuse HTTP startup.");
+  }
+  const { loadDevCustomerInvoiceSystemdCredentials } =
+    await import("../server/dev-customer-invoice-systemd-credential.mjs");
+  let valid = false;
+  for (let i = 0; i < 80; i++) {
+    try {
+      await loadDevCustomerInvoiceSystemdCredentials();
+      valid = true;
+      break;
+    } catch {
+      await new Promise(resolve => setTimeout(resolve, 250));
+    }
+  }
+  if (!valid) abort("Invoice DEV credential missing after bounded startup grace.");
+}
 await import("../server/index.mjs");
