@@ -24,6 +24,13 @@ if ! git merge-base --is-ancestor HEAD "$certified_sha"; then
   exit 1
 fi
 
+# Use the same reviewed Compose files on certified forward deployment AND
+# rollback. Missing credential path when Invoice atomic mode is ON must
+# stop this attempt *before* updating the running DEV worktree/image.
+source ./scripts/dev-invoice-compose-guard.sh
+compose_files=(-f compose.dev-vps.yml)
+cst_invoice_compose_guard compose_files
+
 running_sha="$(curl -fsS --max-time 5 http://127.0.0.1:18444/api/portal/release-info 2>/dev/null | node -e 'let s="";process.stdin.on("data",x=>s+=x);process.stdin.on("end",()=>{try{process.stdout.write(JSON.parse(s).releaseId||"")}catch{}})' || true)"
 if [[ "$running_sha" == "$certified_sha" ]]; then
   echo "[dev-deploy] Already healthy at certified release $certified_sha"
@@ -43,7 +50,7 @@ if docker image inspect cst-customer-portal-dev:local >/dev/null 2>&1; then
   backup=1
 fi
 docker tag cst-customer-portal-dev:candidate cst-customer-portal-dev:local
-if ! DEV_RELEASE_SHA="$certified_sha" docker compose -f compose.dev-vps.yml up -d --no-build --force-recreate --no-deps customer-portal-dev; then
+if ! DEV_RELEASE_SHA="$certified_sha" docker compose "${compose_files[@]}" up -d --no-build --force-recreate --no-deps customer-portal-dev; then
   echo "[dev-deploy] Compose failed" >&2
   failed=1
 else
@@ -66,6 +73,6 @@ fi
 echo "[dev-deploy] FAILED: restoring previous DEV image" >&2
 if [[ "$backup" == 1 ]]; then
   docker tag cst-customer-portal-dev:rollback cst-customer-portal-dev:local
-  DEV_RELEASE_SHA="$running_sha" docker compose -f compose.dev-vps.yml up -d --no-build --force-recreate --no-deps customer-portal-dev || true
+  DEV_RELEASE_SHA="$running_sha" docker compose "${compose_files[@]}" up -d --no-build --force-recreate --no-deps customer-portal-dev || true
 fi
 exit 1
