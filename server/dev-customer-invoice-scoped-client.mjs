@@ -6,6 +6,10 @@
 import pg from "pg";
 import { readFile, realpath } from "node:fs/promises";
 import { createHash } from "node:crypto";
+import {
+  hasInvoiceDevGcpBootstrap,
+  loadDevCustomerInvoiceWriterSecrets,
+} from "./dev-customer-invoice-writer-secret.mjs";
 
 const { Client } = pg;
 export const DEV_CUSTOMER_INVOICE_PROJECT_REF = "xssrfshdrtdfupgqwfdw";
@@ -71,6 +75,7 @@ export async function readPinnedDevInvoiceCa() {
 export async function openDevCompanyInvoiceWriter({
   invoiceId,portalUser,lookupCompany,env=process.env,
   ClientCtor=Client,readCa=readPinnedDevInvoiceCa,
+  loadWriterSecrets=loadDevCustomerInvoiceWriterSecrets,
 }) {
   if (!isDevInvoiceScopedWriterRequested(env)
       || portalUser?.role!=="admin" ||
@@ -87,7 +92,14 @@ export async function openDevCompanyInvoiceWriter({
   const companyId=Number(result.rows[0].company_id);
   const config=DEV_CUSTOMER_INVOICE_COMPANIES[companyId];
   if (!config) throw blocked();
-  const parsed=parseDevInvoiceScopedWriterDsn(env[config.env],companyId);
+  // If a dedicated GCP bootstrap is configured, Secret Manager is the only
+  // credential source: never fall back to an env DSN on fetch/parse failure.
+  let secretSource;
+  try {
+    secretSource=hasInvoiceDevGcpBootstrap(env)
+      ? await loadWriterSecrets({env}) : env;
+  } catch { throw blocked(); }
+  const parsed=parseDevInvoiceScopedWriterDsn(secretSource?.[config.env],companyId);
   const ca=await readCa();
   if(typeof ca!=="string" || !ca.includes("BEGIN CERTIFICATE")) throw blocked();
   const client=new ClientCtor({
