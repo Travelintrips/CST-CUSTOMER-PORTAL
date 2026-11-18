@@ -25,7 +25,8 @@ describe("marketplace audit hardening contract", () => {
     expect(worker).toContain("getMarketplaceWhatsAppQueueStats");
     expect(worker).toContain("stuck_over_10m");
     expect(operations).toContain("/api/mkt/admin/notification-queue/stats");
-    expect(server).toContain("WhatsApp worker skipped");
+    expect(server).toContain("WhatsApp worker idle");
+    expect(server).toContain("if (result?.skipped)");
     expect(server).toContain("WhatsApp worker cycle");
   });
 

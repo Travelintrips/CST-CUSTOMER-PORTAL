@@ -644,70 +644,117 @@ async function handleAdminCompanyRequests(ctx) {
   const matchedCompanyId = body.matchedCompanyId == null ? null : numberOrNull(body.matchedCompanyId);
   if (!["pending", "in_review", "approved", "rejected"].includes(status)) return adminError(ctx, 400, "Status company request tidak valid.");
   if (body.matchedCompanyId != null && matchedCompanyId == null) return adminError(ctx, 400, "Company tidak valid.");
-  const requestResult = await query("select * from public.portal_company_requests where id = $1", [id]);
-  const current = requestResult.rows[0];
-  if (!current) return adminError(ctx, 404, "Company request tidak ditemukan.");
-  if (matchedCompanyId != null) {
-    const company = await query("select id from public.companies where id = $1 and coalesce(is_active, true) = true", [matchedCompanyId]);
-    if (!company.rows[0]) return adminError(ctx, 404, "Company tidak ditemukan.");
-  }
-  await query(
-    `update public.portal_company_requests
-        set status = $1, matched_company_id = $2, review_note = $3,
-            reviewed_by = $4, reviewed_at = now(), updated_at = now()
-      where id = $5`,
-    [status, matchedCompanyId, text(body.reviewNote) || null, ctx.user.id, id],
-  );
-  if (status === "approved" && matchedCompanyId != null) {
-    const member = await query(
-      "select id from public.portal_company_members where portal_customer_id = $1 and company_id = $2 limit 1",
-      [current.portal_customer_id, matchedCompanyId],
+  const client = await pool.connect();
+  let transactionOpen = false;
+  try {
+    await client.query("BEGIN");
+    transactionOpen = true;
+    // Lock the request so simultaneous decisions cannot create conflicting writes.
+    const requestResult = await client.query(
+      "select * from public.portal_company_requests where id = $1 for update",
+      [id],
     );
-    if (member.rows[0]) {
-      await query(
-        `update public.portal_company_members
-            set is_active = true, buyer_role = coalesce($1, buyer_role), updated_at = now()
-          where id = $2`,
-        [text(body.buyerRole) || null, member.rows[0].id],
+    const current = requestResult.rows[0];
+    if (!current) {
+      await client.query("ROLLBACK");
+      transactionOpen = false;
+      return adminError(ctx, 404, "Company request tidak ditemukan.");
+    }
+    if (!["pending", "submitted", "in_review"].includes(current.status)) {
+      await client.query("ROLLBACK");
+      transactionOpen = false;
+      return adminError(ctx, 409, "Pengajuan sudah diputuskan; muat ulang halaman.");
+    }
+    if (status === "approved") {
+      if (matchedCompanyId == null) {
+        await client.query("ROLLBACK");
+        transactionOpen = false;
+        return adminError(ctx, 400, "Pilih perusahaan kanonis sebelum menyetujui.");
+      }
+      if (Number(ctx.user.id) === Number(current.portal_customer_id)) {
+        await client.query("ROLLBACK");
+        transactionOpen = false;
+        return adminError(ctx, 403, "Pemohon tidak boleh menyetujui afiliasinya sendiri.");
+      }
+      // Database enforces the actual required identity/address fields. Do not bypass it.
+      await client.query("select public.assert_portal_profile_complete($1)", [current.portal_customer_id]);
+    }
+    if (status === "rejected" && !text(body.reviewNote)) {
+      await client.query("ROLLBACK");
+      transactionOpen = false;
+      return adminError(ctx, 400, "Catatan penolakan wajib diisi.");
+    }
+    if (matchedCompanyId != null) {
+      const company = await client.query(
+        "select id from public.companies where id = $1 and coalesce(is_active, true) = true",
+        [matchedCompanyId],
       );
-    } else {
-      await query(
+      if (!company.rows[0]) {
+        await client.query("ROLLBACK");
+        transactionOpen = false;
+        return adminError(ctx, 404, "Company tidak ditemukan atau tidak aktif.");
+      }
+    }
+
+    // All request, membership and profile changes must commit or roll back together.
+    await client.query(
+      `update public.portal_company_requests
+          set status = $1, matched_company_id = $2, review_note = $3,
+              reviewed_by = $4, reviewed_at = now(), updated_at = now()
+        where id = $5`,
+      [status, matchedCompanyId, text(body.reviewNote) || null, ctx.user.id, id],
+    );
+    if (status === "approved") {
+      await client.query(
         `insert into public.portal_company_members
           (portal_customer_id, company_id, buyer_role, is_active, invited_by, invited_at, joined_at, created_at, updated_at)
-         values ($1, $2, $3, true, $4, now(), now(), now(), now())`,
+         values ($1, $2, $3, true, $4, now(), now(), now(), now())
+         on conflict (portal_customer_id, company_id)
+         do update set is_active = true, updated_at = now()`,
         [current.portal_customer_id, matchedCompanyId, text(body.buyerRole, "member"), ctx.user.id],
       );
+      const canonicalCompany = await client.query(
+        `select coalesce(company_name, legal_name, name) as name
+           from public.companies where id = $1`,
+        [matchedCompanyId],
+      );
+      await client.query(
+        `update public.portal_customer_profiles
+            set profile_status = 'active',
+                company_name = coalesce($1, company_name),
+                updated_at = now()
+          where customer_id = $2`,
+        [canonicalCompany.rows[0]?.name ?? null, current.portal_customer_id],
+      );
+      await client.query(
+        `update public.portal_customers
+            set customer_type = 'company',
+                company = coalesce($1, company)
+          where id = $2`,
+        [canonicalCompany.rows[0]?.name ?? null, current.portal_customer_id],
+      );
+    } else if (status === "rejected") {
+      await client.query(
+        `update public.portal_customer_profiles
+            set profile_status = 'rejected',
+                verification_notes = coalesce($1, verification_notes),
+                updated_at = now()
+          where customer_id = $2`,
+        [text(body.reviewNote), current.portal_customer_id],
+      );
     }
-    const canonicalCompany = await query(
-      `select coalesce(company_name, legal_name, name) as name
-         from public.companies
-        where id = $1`,
-      [matchedCompanyId],
-    );
-    await query(
-      `update public.portal_customers
-          set customer_type = 'company',
-              company = coalesce($1, company)
-        where id = $2`,
-      [canonicalCompany.rows[0]?.name ?? null, current.portal_customer_id],
-    );
-    await query(
-      `update public.portal_customer_profiles
-          set profile_status = 'active',
-              company_name = coalesce($1, company_name),
-              updated_at = now()
-        where customer_id = $2`,
-      [canonicalCompany.rows[0]?.name ?? null, current.portal_customer_id],
-    );
-  } else if (status === "rejected") {
-    await query(
-      `update public.portal_customer_profiles
-          set profile_status = 'rejected',
-              verification_notes = coalesce($1, verification_notes),
-              updated_at = now()
-        where customer_id = $2`,
-      [text(body.reviewNote) || "Permintaan perusahaan ditolak.", current.portal_customer_id],
-    );
+    await client.query("COMMIT");
+    transactionOpen = false;
+  } catch (error) {
+    if (transactionOpen) {
+      try { await client.query("ROLLBACK"); } catch { /* preserve original error */ }
+    }
+    if (error?.code === "23514") {
+      return adminError(ctx, 422, "Profil customer belum lengkap. Lengkapi alamat KTP dan data wajib profil sebelum persetujuan.");
+    }
+    throw error;
+  } finally {
+    client.release();
   }
   ctx.sendJson(response, 200, { id, status, matchedCompanyId });
 }
