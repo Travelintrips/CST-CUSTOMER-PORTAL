@@ -16,6 +16,7 @@ const m=vi.hoisted(()=>({
   notifyPortalCustomers:vi.fn(),
   sendJson:vi.fn(),
   poster:vi.fn(),
+  verifyIndependentOwner:vi.fn(),
   glRow:null,
   bizOwner:[],
   outbox:[],
@@ -43,6 +44,8 @@ import {handleAdminInvoices} from "../server/billing-operations.mjs";
 const flag="CUSTOMER_PORTAL_REQUIRE_POSTED_AR_EVIDENCE_DEV";
 const originalFlag=process.env[flag],originalEnv=process.env.APP_ENV;
 const bridge="CUSTOMER_PORTAL_ATOMIC_ACCOUNTING_POST_DEV";
+const attestFlag="CUSTOMER_PORTAL_REQUIRE_BIZPORTAL_ATTEST_DEV";
+const originalAttestFlag=process.env[attestFlag];
 const originalBridge=process.env[bridge];
 
 const base=()=>({
@@ -95,14 +98,15 @@ async function sqlMock(statement,params=[]){
   if(q.includes("into public.activity_logs"))return {rows:[]};
   throw Error("UNEXPECTED_SQL_IN_TEST");
 }
-const perform=(posting=null,portalUser=null)=>handleAdminInvoices({
-  request:{method:"POST",body:{action:"mark_invoiced"}},
+const perform=(posting=null,portalUser=null,verifier=m.verifyIndependentOwner)=>handleAdminInvoices({
+  request:{method:"POST",body:{action:"mark_invoiced",bizportalInvoiceChallenge:"qa-signed-challenge",bizportalInvoiceProof:"qa-bizportal-proof"}},
   response:{},
   user:portalUser ?? {id:1,role:"admin",name:"DEV QA",email:"qa.owner@example.invalid"},
   sendJson:m.sendJson,
   sendError:vi.fn(),
   invoiceId:101,
   postSalesInvoiceWithClient:posting,
+  verifySignedBizPortalProof:verifier,
 });
 const sqlIndex=(substring)=>m.sql.findIndex(q=>q.includes(substring));
 const noOutbound=()=>{
@@ -135,6 +139,7 @@ beforeEach(()=>{
   m.query.mockImplementation(sqlMock);
   m.connect.mockResolvedValue({query:m.query,release:m.release});
   m.notifyAdmins.mockResolvedValue(undefined);
+  m.verifyIndependentOwner.mockResolvedValue(true);
   m.notifyPortalCustomers.mockResolvedValue(undefined);
   process.env.APP_ENV="development";
   process.env[flag]="true";
@@ -143,6 +148,7 @@ afterEach(()=>{
   if(originalFlag===undefined)delete process.env[flag];else process.env[flag]=originalFlag;
   if(originalEnv===undefined)delete process.env.APP_ENV;else process.env.APP_ENV=originalEnv;
   if(originalBridge===undefined)delete process.env[bridge];else process.env[bridge]=originalBridge;
+  if(originalAttestFlag===undefined)delete process.env[attestFlag];else process.env[attestFlag]=originalAttestFlag;
 });
 
 describe("DEV Customer Invoice posted AR evidence gate",()=>{
@@ -225,6 +231,7 @@ describe("DEV-only atomic Accounting owner integration seam",()=>{
   beforeEach(()=>{
     process.env[bridge]="true";
     process.env[flag]="true";
+    process.env[attestFlag]="true";
     m.poster.mockResolvedValue({posted:true,entryId:22});
     m.glRow=validGl();
     m.proof=[101];
@@ -270,6 +277,49 @@ describe("DEV-only atomic Accounting owner integration seam",()=>{
     expect(m.sql).toContain("rollback");
     expect(m.sql).not.toContain("commit");
     expect(m.sendJson).not.toHaveBeenCalled();
+  });
+  it("requires independently signed BizPortal proof after checking the DB owner and before posting",async()=>{
+    await perform(m.poster);
+    expect(m.verifyIndependentOwner).toHaveBeenCalledWith(expect.objectContaining({
+      challenge:"qa-signed-challenge",proof:"qa-bizportal-proof",
+      companyId:1,invoiceId:101,canonicalActorId:"qa-existing-bizportal-owner",
+      portalUser:expect.objectContaining({id:1,role:"admin"}),
+    }));
+    expect(m.poster).toHaveBeenCalledTimes(1);
+    expect(sqlIndex("from public.users")).toBeGreaterThan(0);
+    expect(sqlIndex("update public.sales_documents")).toBeGreaterThan(sqlIndex("from public.users"));
+  });
+  it("refuses to post or replay if independent BizPortal attestation opt-in is OFF",async()=>{
+    delete process.env[attestFlag];
+    await expect(perform(m.poster)).rejects.toMatchObject({statusCode:503});
+    expect(m.verifyIndependentOwner).not.toHaveBeenCalled();
+    expect(m.poster).not.toHaveBeenCalled();
+    expect(m.sql).toContain("rollback");
+    noOutbound();
+  });
+  it("refuses to post when no trusted verification callback is wired",async()=>{
+    await expect(perform(m.poster,null,null)).rejects.toMatchObject({statusCode:503});
+    expect(m.poster).not.toHaveBeenCalled();
+    expect(m.sql).toContain("rollback");
+    noOutbound();
+  });
+  it("denies invalid signature / wrong company / mismatched identity before posting",async()=>{
+    m.verifyIndependentOwner.mockResolvedValue(false);
+    await expect(perform(m.poster)).rejects.toMatchObject({statusCode:403});
+    expect(m.poster).not.toHaveBeenCalled();
+    expect(sqlIndex("update public.sales_documents")).toBe(-1);
+    expect(m.sql).toContain("rollback");
+    noOutbound();
+  });
+  it("does not let a posted Invoice bypass independent BizPortal proof on replay",async()=>{
+    m.invoiceStatus="invoiced";
+    m.currentInvoiceNumber="INV-SO-QA-101";
+    m.verifyIndependentOwner.mockResolvedValue(false);
+    await expect(perform(m.poster)).rejects.toMatchObject({statusCode:403});
+    expect(sqlIndex("from public.bizportal_customer_ar_source_evidence_dev")).toBe(-1);
+    expect(m.poster).not.toHaveBeenCalled();
+    expect(m.sql).toContain("rollback");
+    noOutbound();
   });
   it("records canonical BizPortal actor, not the unrelated Portal user ID",async()=>{
     await perform(m.poster);
