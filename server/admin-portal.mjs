@@ -647,6 +647,25 @@ async function handleAdminCompanyRequests(ctx) {
   const requestResult = await query("select * from public.portal_company_requests where id = $1", [id]);
   const current = requestResult.rows[0];
   if (!current) return adminError(ctx, 404, "Company request tidak ditemukan.");
+  if (status === "approved") {
+    if (matchedCompanyId == null) return adminError(ctx, 400, "Pilih perusahaan kanonis sebelum menyetujui.");
+    if (Number(ctx.user.id) === Number(current.portal_customer_id)) {
+      return adminError(ctx, 403, "Pemohon tidak boleh menyetujui afiliasinya sendiri.");
+    }
+    if (!["pending", "submitted", "in_review"].includes(current.status)) {
+      return adminError(ctx, 409, "Pengajuan ini sudah diputuskan; muat ulang sebelum meninjau.");
+    }
+    // Preflight the existing DB activation guard BEFORE any approval or membership writes.
+    // A missing KTP address must not cause a generic 500 after partial updates.
+    try {
+      await query("select public.assert_portal_profile_complete($1)", [current.portal_customer_id]);
+    } catch (error) {
+      if (error?.code === "23514") {
+        return adminError(ctx, 422, "Profil customer belum lengkap. Lengkapi alamat KTP dan data wajib profil sebelum persetujuan.");
+      }
+      throw error;
+    }
+  }
   if (matchedCompanyId != null) {
     const company = await query("select id from public.companies where id = $1 and coalesce(is_active, true) = true", [matchedCompanyId]);
     if (!company.rows[0]) return adminError(ctx, 404, "Company tidak ditemukan.");
