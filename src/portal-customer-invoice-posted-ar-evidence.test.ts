@@ -12,6 +12,12 @@ const m=vi.hoisted(()=>({
   dbRoleOverride:null,
   dbBypass:false,
   dbRlsActive:true,
+  membershipActive:true,
+  approvalCompanyId:null,
+  approvalStatus:"approved",
+  reviewerId:2,
+  reviewerActive:true,
+  issuerActive:true,
   currentInvoiceNumber:null,
   viewUnavailable:false,
   query:vi.fn(),
@@ -92,6 +98,20 @@ async function sqlMock(statement,params=[]){
     return {rows:[]};
   }
   if(q.includes("from public.ar_subledger a"))return {rows:m.arProjection?[m.arProjection]:[]};
+  if(q.includes("from public.portal_company_members") && !q.includes("portal_company_requests")) {
+    return {rows:m.membershipActive?[{company_id:m.companyId}]:[]};
+  }
+  if(q.includes("from public.portal_company_requests approval")) {
+    // Preserve exact PR214 locked independent reviewer contract, never a self-selected member only.
+    if(!q.includes("for share of member, approval, reviewer, issuer") ||
+       !q.includes("member.is_active=true") || !q.includes("approval.reviewed_by<>$1") ||
+       !q.includes("issuer.role=\'admin\'") || !q.includes("reviewer.role=\'admin\'"))
+      throw Error("UNLOCKED_OR_SELF_APPROVED_COMPANY_SCOPE");
+    const valid=m.membershipActive && m.approvalStatus==="approved" &&
+      m.reviewerId!==params[0] && m.reviewerActive && m.issuerActive &&
+      (m.approvalCompanyId??m.companyId)===params[1];
+    return {rows:valid?[{approved:1}]:[]};
+  }
   if(q.includes("from public.sales_documents"))return {rows:[base()]};
   if(q.startsWith("update public.sales_documents"))return {rows:[issued()]};
   if(q.includes("from public.users")) {
@@ -156,6 +176,12 @@ beforeEach(()=>{
   m.dbRoleOverride=null;
   m.dbBypass=false;
   m.dbRlsActive=true;
+  m.membershipActive=true;
+  m.approvalCompanyId=null;
+  m.approvalStatus="approved";
+  m.reviewerId=2;
+  m.reviewerActive=true;
+  m.issuerActive=true;
   m.currentInvoiceNumber=null;
   m.viewUnavailable=false;
   m.glRow=null;
@@ -751,5 +777,58 @@ describe("DEV Invoice binds a company-specific client for the complete transacti
   expect(m.connect).toHaveBeenCalledTimes(1);
   expect(m.release).toHaveBeenCalledTimes(1);
   expect(m.end).not.toHaveBeenCalled();
+ });
+});
+
+describe("existing independently approved company authority on scoped original Invoice writer",()=>{
+ beforeEach(()=>{
+  process.env[bridge]="true";
+  process.env[attestFlag]="true";
+ });
+ it("locks approved membership, independent reviewer and issuer on same scoped client before original posting",async()=>{
+  // Even if posting fails later, the exact authorization SQL must be sent
+  // before any source Invoice update or original journal callback.
+  await expect(perform()).rejects.toMatchObject({statusCode:503});
+  const idx=sqlIndex("from public.portal_company_requests approval");
+  expect(idx).toBeGreaterThan(sqlIndex("row_security_active("));
+  expect(m.sql[idx]).toContain("for share of member, approval, reviewer, issuer");
+  expect(m.sql[idx]).toContain("approval.reviewed_by<>$1");
+  expect(idx).toBeLessThan(sqlIndex("from public.users"));
+  expect(m.connect).not.toHaveBeenCalled();
+  expect(m.scopedOpen).toHaveBeenCalledTimes(1);
+ });
+ it.each([
+  ["no membership",()=>{m.membershipActive=false;}],
+  ["pending approval",()=>{m.approvalStatus="pending";}],
+  ["reviewer is issuer",()=>{m.reviewerId=1;}],
+  ["reviewer deactivated",()=>{m.reviewerActive=false;}],
+  ["issuer no longer admin",()=>{m.issuerActive=false;}],
+  ["approved wrong company",()=>{m.approvalCompanyId=3;}],
+ ])("refuses %s before Invoice update, GL, audit and external notifications",async(_label,change)=>{
+  change();
+  await expect(perform(m.poster)).rejects.toMatchObject({statusCode:403});
+  expect(m.poster).not.toHaveBeenCalled();
+  expect(sqlIndex("update public.sales_documents")).toBe(-1);
+  expect(m.sql).not.toContain("commit");
+  expect(m.sql).toContain("rollback");
+  expect(m.scopedOpen).toHaveBeenCalledTimes(1);
+  noOutbound();
+ });
+ it("rechecks independent approval on already-issued Invoice replay",async()=>{
+  m.invoiceStatus="invoiced";
+  m.currentInvoiceNumber="INV-SO-QA-101";
+  m.approvalStatus="rejected";
+  await expect(perform(m.poster)).rejects.toMatchObject({statusCode:403});
+  expect(m.poster).not.toHaveBeenCalled();
+  expect(sqlIndex("from public.bizportal_customer_ar_source_evidence_dev")).toBe(-1);
+  expect(m.sql).toContain("rollback");
+ });
+ it("preserves original behavior with financial feature OFF",async()=>{
+  delete process.env[bridge];
+  m.proof=[101];
+  await perform();
+  expect(sqlIndex("from public.portal_company_requests approval")).toBe(-1);
+  expect(m.scopedOpen).not.toHaveBeenCalled();
+  expect(m.connect).toHaveBeenCalledTimes(1);
  });
 });
