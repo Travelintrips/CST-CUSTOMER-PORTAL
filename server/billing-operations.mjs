@@ -1,5 +1,6 @@
 import { pool, query } from "./db.mjs";
 import { signedPaymentProofUrl } from "./storage.mjs";
+import { openDevCompanyInvoiceWriter } from "./dev-customer-invoice-scoped-client.mjs";
 import { requireDirectCompanyInvoiceWriterSession } from "./dev-customer-invoice-writer-session-guard.mjs";
 import {
   bestEffortNotificationWrite,
@@ -46,8 +47,8 @@ function idempotencyKey(request, body) {
   return text(request.headers["idempotency-key"]) ?? text(body?.idempotencyKey);
 }
 
-async function withTransaction(work, {verifyCustomerInvoiceAr = false} = {}) {
-  const client = await pool.connect();
+async function withTransaction(work, {verifyCustomerInvoiceAr = false, connect = null} = {}) {
+  const client = connect ? await connect() : await pool.connect();
   try {
     await client.query("begin");
     // The owner receives the same in-process PostgreSQL client. This is
@@ -106,7 +107,11 @@ async function withTransaction(work, {verifyCustomerInvoiceAr = false} = {}) {
     await client.query("rollback").catch(() => {});
     throw error;
   } finally {
-    client.release();
+    if (connect) {
+      // A failed socket close after COMMIT must not report a committed
+      // financial transaction as failed; the replay gate remains canonical.
+      try { await client.end(); } catch {}
+    } else client.release();
   }
 }
 
@@ -756,10 +761,24 @@ export async function handleAdminInvoices({ request, response, user, sendJson, s
     sendError(response, 400, "Action invoice tidak didukung.");
     return;
   }
+  const atomicRequested = process.env.CUSTOMER_PORTAL_ATOMIC_ACCOUNTING_POST_DEV === "true";
+  let selectedCompanyId = null;
+  const connect = atomicRequested ? async () => {
+    // The preliminary company selection is DB-derived and read-only;
+    // the entire locked Invoice/Accounting transaction uses the chosen role.
+    const selected = await openDevCompanyInvoiceWriter({
+      invoiceId, portalUser:user, lookupCompany:query,
+    });
+    selectedCompanyId = selected.companyId;
+    return selected.client;
+  } : null;
   const result = await withTransaction(async (db, transactionClient) => {
     const row = await loadInvoice(invoiceId, user, { db, admin: true, forUpdate: true });
     let canonicalActorId = null;
     if (process.env.CUSTOMER_PORTAL_ATOMIC_ACCOUNTING_POST_DEV === "true") {
+      if (selectedCompanyId !== Number(row.company_id)) {
+        fail(503, "Identitas perusahaan Invoice berubah selama pemilihan koneksi.");
+      }
       // A bypass-RLS/general service DB session is not a tenant writer,
       // even after an independently signed Super Admin approval.
       await requireDirectCompanyInvoiceWriterSession(transactionClient, Number(row.company_id));
@@ -859,7 +878,7 @@ export async function handleAdminInvoices({ request, response, user, sendJson, s
         payload: { invoiceStatus: "invoiced" },
       });
     return mapped;
-  }, {verifyCustomerInvoiceAr: process.env.CUSTOMER_PORTAL_ATOMIC_ACCOUNTING_POST_DEV === "true"});
+  }, {verifyCustomerInvoiceAr: atomicRequested, connect});
   sendJson(response, 200, result);
 }
 
