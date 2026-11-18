@@ -17,6 +17,8 @@ const m=vi.hoisted(()=>({
   query:vi.fn(),
   connect:vi.fn(),
   release:vi.fn(),
+  end:vi.fn(),
+  scopedOpen:vi.fn(),
   notifyAdmins:vi.fn(),
   notifyPortalCustomers:vi.fn(),
   sendJson:vi.fn(),
@@ -34,6 +36,9 @@ const m=vi.hoisted(()=>({
 vi.mock("../server/db.mjs",()=>({
   pool:{connect:m.connect},
   query:vi.fn(),
+}));
+vi.mock("../server/dev-customer-invoice-scoped-client.mjs",()=>({
+  openDevCompanyInvoiceWriter:m.scopedOpen,
 }));
 vi.mock("../server/storage.mjs",()=>({
   signedPaymentProofUrl:vi.fn(),
@@ -167,6 +172,9 @@ beforeEach(()=>{
   delete process.env[bridge];
   m.query.mockImplementation(sqlMock);
   m.connect.mockResolvedValue({query:m.query,release:m.release});
+  m.scopedOpen.mockImplementation(async()=>({
+    client:{query:m.query,release:m.release,end:m.end}, companyId:m.companyId,
+  }));
   m.notifyAdmins.mockResolvedValue(undefined);
   m.verifyIndependentOwner.mockResolvedValue(true);
   m.notifyPortalCustomers.mockResolvedValue(undefined);
@@ -704,5 +712,44 @@ describe("hard fail-closed on the actual PostgreSQL writer session",()=>{
   expect(m.sql).toContain("rollback");
   expect(m.sql).not.toContain("commit");
   noOutbound();
+ });
+});
+
+// The atomic path cannot quietly fall back to Portal's postgres pool.
+describe("DEV Invoice binds a company-specific client for the complete transaction",()=>{
+ it("does not touch the privileged pool after scoped writer RLS fails",async()=>{
+  process.env[bridge]="true";
+  process.env[attestFlag]="true";
+  m.dbRoleOverride="postgres";
+  m.dbBypass=true;
+  await expect(perform(m.poster)).rejects.toMatchObject({statusCode:503});
+  expect(m.scopedOpen).toHaveBeenCalledTimes(1);
+  expect(m.connect).not.toHaveBeenCalled();
+  expect(m.end).toHaveBeenCalledTimes(1);
+  expect(m.release).not.toHaveBeenCalled();
+  expect(m.sql).toContain("rollback");
+  expect(sqlIndex("update public.sales_documents")).toBe(-1);
+ });
+ it("rejects a DB-company change between read-only selection and FOR UPDATE",async()=>{
+  process.env[bridge]="true";
+  process.env[attestFlag]="true";
+  m.scopedOpen.mockResolvedValue({
+    client:{query:m.query,end:m.end},companyId:3,
+  });
+  await expect(perform(m.poster)).rejects.toMatchObject({statusCode:503});
+  expect(m.scopedOpen).toHaveBeenCalledTimes(1);
+  expect(m.connect).not.toHaveBeenCalled();
+  expect(m.end).toHaveBeenCalledTimes(1);
+  expect(sqlIndex("row_security_active(")).toBe(-1);
+  expect(sqlIndex("update public.sales_documents")).toBe(-1);
+ });
+ it("keeps original pool and release when atomic Invoice is OFF",async()=>{
+  delete process.env[bridge];
+  m.proof=[101];
+  await perform();
+  expect(m.scopedOpen).not.toHaveBeenCalled();
+  expect(m.connect).toHaveBeenCalledTimes(1);
+  expect(m.release).toHaveBeenCalledTimes(1);
+  expect(m.end).not.toHaveBeenCalled();
  });
 });
