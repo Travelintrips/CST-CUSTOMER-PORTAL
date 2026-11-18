@@ -1,5 +1,7 @@
 // @ts-nocheck — the imported JS service is deliberately tested with mocked IO.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { createHash, createPrivateKey, createPublicKey, hkdfSync, sign } from "node:crypto";
+import { mintPortalInvoiceChallenge, verifyIndependentBizPortalSuperAdminProof } from "../server/dev-bizportal-invoice-attestation.mjs";
 
 const m=vi.hoisted(()=>({
   sql:[],
@@ -87,7 +89,17 @@ async function sqlMock(statement,params=[]){
   if(q.includes("from public.ar_subledger a"))return {rows:m.arProjection?[m.arProjection]:[]};
   if(q.includes("from public.sales_documents"))return {rows:[base()]};
   if(q.startsWith("update public.sales_documents"))return {rows:[issued()]};
-  if(q.includes("from public.users"))return {rows:m.bizOwner};
+  if(q.includes("from public.users")) {
+    // Emulate the WHERE clause of the canonical owner's active Super Admin
+    // lookup, ensuring inactive same-email legacy accounts never confer rights.
+    if(!q.includes("and role = 'super_admin'") ||
+        !q.includes("and system_role = 'super_admin'") ||
+        !q.includes("and status = 'active'") ||
+        !q.includes("and is_active is true"))throw Error("UNSCOPED_BIZPORTAL_OWNER_LOOKUP");
+    return {rows:m.bizOwner.filter(user=>
+      user.role==="super_admin" && user.system_role==="super_admin" &&
+      user.status==="active" && user.is_active===true).slice(0,2)};
+  }
   if(q.includes("from public.accounting_entries e")){
     return {rows: m.glRow ? [m.glRow] : []};
   }
@@ -400,6 +412,31 @@ describe("DEV-only atomic Accounting owner integration seam",()=>{
     expect(m.sql).not.toContain("commit");
     noOutbound();
   });
+  it("ignores inactive legacy same-email Admin while requiring one active Super Admin and independent signed proof",async()=>{
+    m.bizOwner=[
+      {id:"dev_legacy_admin",role:"admin",system_role:null,status:"inactive",is_active:false,company_id:null},
+      {id:"qa-existing-bizportal-owner",role:"super_admin",system_role:"super_admin",
+        status:"active",is_active:true,company_id:null},
+    ];
+    await perform(m.poster);
+    expect(m.poster).toHaveBeenCalledTimes(1);
+    expect(m.poster.mock.calls[0][0].actorId).toBe("qa-existing-bizportal-owner");
+    expect(m.verifyIndependentOwner).toHaveBeenCalledTimes(1);
+    expect(m.sql).toContain("commit");
+  });
+  it("still rejects two active Super Admin identities sharing one email",async()=>{
+    m.bizOwner=[
+      {id:"owner_a",role:"super_admin",system_role:"super_admin",
+        status:"active",is_active:true,company_id:null},
+      {id:"owner_b",role:"super_admin",system_role:"super_admin",
+        status:"active",is_active:true,company_id:null},
+    ];
+    await expect(perform(m.poster)).rejects.toMatchObject({statusCode:403});
+    expect(m.poster).not.toHaveBeenCalled();
+    expect(m.verifyIndependentOwner).not.toHaveBeenCalled();
+    expect(m.sql).toContain("rollback");
+    noOutbound();
+  });
   it("requires a database-verified Portal email for canonical owner lookup",async()=>{
     await expect(perform(m.poster,{id:1,role:"admin",name:"QA no-email"}))
       .rejects.toMatchObject({statusCode:403});
@@ -589,5 +626,99 @@ describe("DEV-only atomic Accounting owner integration seam",()=>{
     expect(m.poster).not.toHaveBeenCalled();
     expect(m.sql).toContain("rollback");
     noOutbound();
+  });
+});
+
+describe("real Ed25519 authorization chained into Invoice handler transaction", () => {
+  const keys=["SESSION_SECRET","CUSTOMER_PORTAL_BIZPORTAL_ATTEST_SPKI_DEV"];
+  const originals=Object.fromEntries(keys.map(key=>[key,process.env[key]]));
+  const bizSessionSecret="fixture-independent-bizportal-session-signing-secret-32-plus";
+  const keySeed=hkdfSync("sha256",Buffer.from(bizSessionSecret),
+    Buffer.from("CST_BIZPORTAL_DEV_SESSION_DERIVED_KEY_V1"),
+    Buffer.from("CUSTOMER_INVOICE_ED25519_ATTESTATION_V1"),32);
+  const privateKey=createPrivateKey({
+    key:Buffer.concat([Buffer.from("302e020100300506032b657004220420","hex"),Buffer.from(keySeed)]),
+    format:"der",type:"pkcs8",
+  });
+  const spki=createPublicKey(privateKey).export({format:"der",type:"spki"}).toString("base64");
+  const portalUser={id:1,role:"admin",name:"DEV QA",email:"qa.owner@example.invalid"};
+  function proof(companyId,alterations={}) {
+    const ctx={portalUser,invoiceId:101,companyId,canonicalActorId:"qa-existing-bizportal-owner"};
+    const challenge=mintPortalInvoiceChallenge(ctx);
+    const now=Date.now();
+    const claims={v:1,purpose:"cst-customer-invoice-owner",aud:"CST_CUSTOMER_PORTAL_DEV",
+      actorId:ctx.canonicalActorId,email:portalUser.email,invoiceId:101,companyId,
+      challengeDigest:createHash("sha256").update(challenge).digest("hex"),
+      nonce:"b".repeat(32),iat:now,exp:now+60_000,...alterations};
+    const body=Buffer.from(JSON.stringify(claims)).toString("base64url");
+    const signature=sign(null,Buffer.from("CST_BIZPORTAL_CUSTOMER_INVOICE_DEV_V1\n"+body),
+      privateKey).toString("base64url");
+    return {challenge,proof:body+"."+signature};
+  }
+  function issue(companyId,evidence) {
+    return handleAdminInvoices({
+      request:{method:"POST",body:{action:"mark_invoiced",
+        bizportalInvoiceChallenge:evidence.challenge,bizportalInvoiceProof:evidence.proof}},
+      response:{},user:portalUser,sendJson:m.sendJson,sendError:vi.fn(),invoiceId:101,
+      postSalesInvoiceWithClient:m.poster,
+      verifySignedBizPortalProof:verifyIndependentBizPortalSuperAdminProof,
+    });
+  }
+  beforeEach(() => {
+    process.env.APP_ENV="development";
+    process.env[bridge]="true";
+    process.env[flag]="true";
+    process.env[attestFlag]="true";
+    process.env.SESSION_SECRET="fixture-portal-independent-invoice-secret-longer-than-32";
+    process.env.CUSTOMER_PORTAL_BIZPORTAL_ATTEST_SPKI_DEV=spki;
+    m.proof=[101];
+    m.poster.mockResolvedValue({posted:true,entryId:22});
+    m.glRow={id:22,company_id:1,source:"sales_invoice",source_id:101,
+      status:"posted",total_debit:"100.00",total_credit:"100.00",
+      is_voided:false,is_reversed:false,journal_company:1,
+      source_count:1,line_count:2,lines_debit:"100.00",lines_credit:"100.00"};
+  });
+  afterEach(() => {
+    for(const key of keys) {
+      if(originals[key]===undefined) delete process.env[key];
+      else process.env[key]=originals[key];
+    }
+  });
+  it.each([1,3])("accepts a real signed proof for company %i before one atomic Invoice commit",async companyId=>{
+    m.companyId=companyId;
+    m.glRow={...m.glRow,company_id:companyId,journal_company:companyId};
+    const evidence=proof(companyId);
+    await issue(companyId,evidence);
+    expect(m.poster).toHaveBeenCalledTimes(1);
+    expect(m.poster.mock.calls[0][0]).toMatchObject({companyId,sourceId:101});
+    expect(m.sql).toContain("commit");
+    expect(m.sql).not.toContain("rollback");
+    expect(m.outbox).toHaveLength(1);
+    expect(m.audits).toHaveLength(1);
+  });
+  it("rejects signed Company 1 proof for a Company 3 Invoice before updates or posting",async()=>{
+    m.companyId=3;
+    await expect(issue(3,proof(1))).rejects.toMatchObject({statusCode:403});
+    expect(m.poster).not.toHaveBeenCalled();
+    expect(sqlIndex("update public.sales_documents")).toBe(-1);
+    expect(m.sql).toContain("rollback");
+    expect(m.sql).not.toContain("commit");
+    noOutbound();
+  });
+  it("rejects a validly signed proof with wrong Invoice identity",async()=>{
+    await expect(issue(1,proof(1,{invoiceId:102}))).rejects.toMatchObject({statusCode:403});
+    expect(m.poster).not.toHaveBeenCalled();
+    expect(sqlIndex("update public.sales_documents")).toBe(-1);
+    expect(m.sql).not.toContain("commit");
+  });
+  it("rejects invalid proof even when an Invoice is already marked issued",async()=>{
+    m.invoiceStatus="invoiced";
+    m.currentInvoiceNumber="INV-SO-QA-101";
+    const evidence=proof(1);
+    evidence.proof=evidence.proof.slice(0,-3)+"AAA";
+    await expect(issue(1,evidence)).rejects.toMatchObject({statusCode:403});
+    expect(m.poster).not.toHaveBeenCalled();
+    expect(sqlIndex("from public.bizportal_customer_ar_source_evidence_dev")).toBe(-1);
+    expect(m.sql).toContain("rollback");
   });
 });

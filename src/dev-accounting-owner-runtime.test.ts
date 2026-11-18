@@ -134,7 +134,7 @@ describe("DEV original Accounting owner runtime package integrity", () => {
     expect(sectionStart).toBeGreaterThan(0);
     const section = source.slice(sectionStart, sectionEnd);
     expect(section.indexOf("await requireAdmin(request, response)"))
-      .toBeLessThan(section.indexOf("await loadTrustedDevAccountingOwner()"));
+      .toBeLessThan(section.indexOf("await loadDevOriginalAccountingOwner()"));
     expect(section).toContain("postSalesInvoiceWithClient,");
     expect(section).not.toContain("request.body.postSalesInvoiceWithClient");
   });
