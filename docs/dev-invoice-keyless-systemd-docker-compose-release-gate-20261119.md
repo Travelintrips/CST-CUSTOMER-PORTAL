@@ -1,6 +1,15 @@
 # CST Customer Invoice DEV — keyless encrypted credential handoff, Compose and certified-deploy guard
 
 Date: 19 November 2026 WIB. Status: **synthetic QA PASS, source-only candidate**.
+
+**SUPERSEDED SECURITY WARNING:** The old `root:node (UID/GID 1000)`
+host plaintext bind-mount example below must **never be deployed**. On
+`srv1792369`, host GID 1000 belongs to `githubrunner`, so it can read
+a `root:1000 0440` file. The current secure design is
+[private Docker tmpfs with unique UID 21110](dev-invoice-private-docker-tmpfs-gid-isolation-20261119.md),
+root-only CMS decryption piped directly to a private container tmpfs,
+no plaintext host bind. This previous document remains for historical
+test provenance only; follow the replacement runbook for release.
 Do not merge/deploy from Draft PR until all operational release conditions are met.
 
 ## Existing systems reused, no feature rebuild
