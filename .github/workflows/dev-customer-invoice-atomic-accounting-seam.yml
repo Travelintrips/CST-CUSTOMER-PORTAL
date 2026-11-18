@@ -12,6 +12,8 @@ on:
       - 'src/portal-customer-invoice-posted-ar-evidence.test.ts'
       - 'src/dev-accounting-owner-runtime.test.ts'
       - 'src/dev-bizportal-invoice-attestation.test.ts'
+      - 'src/lib/bizportal-invoice-proof.ts'
+      - 'src/pages/admin/CustomerBillingTab.tsx'
       - '.github/workflows/dev-customer-invoice-atomic-accounting-seam.yml'
   workflow_dispatch:
 
@@ -60,6 +62,10 @@ jobs:
           grep -Fq 'verifySignedBizPortalProof' server/billing-operations.mjs
           grep -Fq 'createPublicKey' server/dev-bizportal-invoice-attestation.mjs
           grep -Fq 'timingSafeEqual' server/dev-bizportal-invoice-attestation.mjs
+          grep -Fq 'VITE_CUSTOMER_PORTAL_BIZPORTAL_ATTEST_DEV' src/pages/admin/CustomerBillingTab.tsx
+          grep -Fq 'requestBizPortalInvoiceProof' src/pages/admin/CustomerBillingTab.tsx
+          grep -Fq 'CST_INVOICE_BIZPORTAL_ATTEST_V1' src/lib/bizportal-invoice-proof.ts
+          ! grep -Fq 'localStorage.setItem' src/lib/bizportal-invoice-proof.ts
           echo DEV_ATOMIC_POST_SEAM_VERIFICATION_GUARD_PASS
       - name: Posted-AR source and same-transaction Accounting receipt contract tests
         env:
