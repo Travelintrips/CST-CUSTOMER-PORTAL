@@ -53,6 +53,10 @@ import {
   handleCustomerPayments,
 } from "./billing-operations.mjs";
 import { loadTrustedDevAccountingOwner } from "./dev-accounting-owner-runtime.mjs";
+import {
+  mintPortalInvoiceChallenge, isDualSuperAdminProofRequired,
+  verifyIndependentBizPortalSuperAdminProof,
+} from "./dev-bizportal-invoice-attestation.mjs";
 import { handleFreightRoute } from "./freight-operations.mjs";
 import { handleGoogleMapsRoute } from "./google-maps-service.mjs";
 import {
@@ -4738,6 +4742,37 @@ async function route(request, response) {
     if (user) await handleCustomerPayments({ request, response, user, sendJson, sendError });
     return;
   }
+  const adminInvoiceChallengeMatch = pathname.match(/^\\/api\\/portal\\/admin\\/invoices\\/(\\d+)\\/accounting-challenge$/);
+  if (adminInvoiceChallengeMatch && request.method === "GET") {
+    const user = await requireAdmin(request, response);
+    if (!user) return;
+    if (!isDualSuperAdminProofRequired() ||
+        process.env.CUSTOMER_PORTAL_REQUIRE_BIZPORTAL_ATTEST_DEV !== "true") {
+      sendError(response, 404, "Endpoint tidak tersedia.");
+      return;
+    }
+    const invoiceId = Number(adminInvoiceChallengeMatch[1]);
+    if (!Number.isSafeInteger(invoiceId) || invoiceId <= 0) {
+      sendError(response, 400, "Invoice tidak valid.");
+      return;
+    }
+    const result = await query(
+      `select id, company_id from public.sales_documents
+        where id=$1 and company_id in (1,3)
+          and invoice_status in ('to_invoice','invoiced')
+        limit 1`,
+      [invoiceId],
+    );
+    if (result.rows.length !== 1) {
+      sendError(response, 404, "Invoice tidak ditemukan.");
+      return;
+    }
+    const challenge = mintPortalInvoiceChallenge({
+      portalUser:user,invoiceId,companyId:Number(result.rows[0].company_id),
+    });
+    sendJson(response, 200, {challenge,expiresInSeconds:90});
+    return;
+  }
   const adminInvoiceActionMatch = pathname.match(/^\/api\/portal\/admin\/invoices\/(\d+)\/action$/);
   if (adminInvoiceActionMatch && request.method === "POST") {
     const user = await requireAdmin(request, response);
@@ -4764,6 +4799,7 @@ async function route(request, response) {
         sendError,
         invoiceId: Number(adminInvoiceActionMatch[1]),
         postSalesInvoiceWithClient,
+        verifySignedBizPortalProof: verifyIndependentBizPortalSuperAdminProof,
       });
     }
     return;
