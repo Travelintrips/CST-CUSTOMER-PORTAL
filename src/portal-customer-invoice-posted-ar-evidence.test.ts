@@ -455,6 +455,17 @@ describe("DEV-only atomic Accounting owner integration seam",()=>{
     expect(m.sql).toContain("rollback");
     noOutbound();
   });
+  it.each([
+    "DEV_SALES_POSTING_TAX_SETTINGS_NOT_READY",
+    "DEV_SALES_POSTING_TAX_NOT_READY",
+  ])("returns HTTP422 and complete rollback on controlled %s",async code=>{
+    m.poster.mockRejectedValueOnce(Error(code));
+    await expect(perform(m.poster)).rejects.toMatchObject({statusCode:422});
+    expect(m.sql).toContain("rollback");
+    expect(m.sql).not.toContain("commit");
+    expect(m.poster).toHaveBeenCalledTimes(1);
+    noOutbound();
+  });
   it("returns a controlled HTTP 422 on unsupported atomic PPN, with rollback and no outbound",async()=>{
     m.poster.mockRejectedValueOnce(Error("DEV_SALES_POSTING_TAX_NOT_READY"));
     await expect(perform(m.poster)).rejects.toMatchObject({statusCode:422});
