@@ -585,8 +585,11 @@ async function requireAtomicSalesInvoicePosting(db, invoice, canonicalActorId, p
     // Nonzero PPN is intentionally unsupported by the existing engine v1.
     // Return a clear business rejection rather than a generic HTTP 500.
     // The surrounding transaction still rolls back every invoice mutation.
-    if (error?.message === "DEV_SALES_POSTING_TAX_NOT_READY") {
-      fail(422, "Posting Invoice dengan PPN belum didukung secara atomik.");
+    if (typeof error?.message === "string" &&
+        error.message.startsWith("DEV_SALES_POSTING_TAX_")) {
+      // This also covers invalid/missing company tax config under the
+      // separately gated DEV PPN candidate. Never expose internal account IDs.
+      fail(422, "Posting PPN ditolak: konfigurasi atau perhitungan pajak belum tervalidasi.");
     }
     throw error;
   }
