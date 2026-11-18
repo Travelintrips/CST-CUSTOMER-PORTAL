@@ -4742,7 +4742,7 @@ async function route(request, response) {
     if (user) await handleCustomerPayments({ request, response, user, sendJson, sendError });
     return;
   }
-  const adminInvoiceChallengeMatch = pathname.match(/^\\/api\\/portal\\/admin\\/invoices\\/(\\d+)\\/accounting-challenge$/);
+  const adminInvoiceChallengeMatch = pathname.match(/^\/api\/portal\/admin\/invoices\/(\d+)\/accounting-challenge$/);
   if (adminInvoiceChallengeMatch && request.method === "GET") {
     const user = await requireAdmin(request, response);
     if (!user) return;
