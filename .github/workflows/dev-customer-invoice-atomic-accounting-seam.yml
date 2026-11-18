@@ -13,6 +13,7 @@ on:
       - 'src/dev-accounting-owner-runtime.test.ts'
       - 'src/dev-bizportal-invoice-attestation.test.ts'
       - 'src/lib/bizportal-invoice-proof.ts'
+      - 'src/lib/bizportal-invoice-proof.test.ts'
       - 'src/pages/admin/CustomerBillingTab.tsx'
       - '.github/workflows/dev-customer-invoice-atomic-accounting-seam.yml'
   workflow_dispatch:
@@ -71,7 +72,7 @@ jobs:
         env:
           APP_ENV: development
           NODE_ENV: test
-        run: pnpm exec vitest run src/portal-customer-invoice-posted-ar-evidence.test.ts src/dev-accounting-owner-runtime.test.ts src/dev-bizportal-invoice-attestation.test.ts
+        run: pnpm exec vitest run src/portal-customer-invoice-posted-ar-evidence.test.ts src/dev-accounting-owner-runtime.test.ts src/dev-bizportal-invoice-attestation.test.ts src/lib/bizportal-invoice-proof.test.ts
       - name: All existing Customer Portal regressions with no real DB or messages
         env:
           APP_ENV: development
