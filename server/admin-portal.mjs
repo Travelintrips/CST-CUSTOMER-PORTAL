@@ -674,6 +674,20 @@ async function handleAdminCompanyRequests(ctx) {
       return adminError(ctx, 409, "Permohonan perusahaan ini sudah diputuskan. Muat ulang daftar.");
     }
 
+    if (status === "approved") {
+      if (matchedCompanyId == null) {
+        await client.query("rollback");
+        return adminError(ctx, 400, "Pilih perusahaan kanonis sebelum menyetujui.");
+      }
+      if (Number(ctx.user.id) === Number(current.portal_customer_id)) {
+        await client.query("rollback");
+        return adminError(ctx, 403, "Pemohon tidak boleh menyetujui afiliasinya sendiri.");
+      }
+      // Use the existing PostgreSQL activation guard before any mutation.
+      // A missing address must return 422, not a generic server error.
+      await client.query("select public.assert_portal_profile_complete($1)", [current.portal_customer_id]);
+    }
+
     let canonicalCompanyName = null;
     if (matchedCompanyId != null) {
       const company = await client.query(
@@ -754,6 +768,9 @@ async function handleAdminCompanyRequests(ctx) {
     ctx.sendJson(response, 200, { id, status, matchedCompanyId });
   } catch (error) {
     await client.query("rollback").catch(() => {});
+    if (error?.code === "23514") {
+      return adminError(ctx, 422, "Profil customer belum lengkap. Lengkapi alamat KTP dan data profil wajib sebelum persetujuan.");
+    }
     if (Number.isInteger(error?.statusCode)) {
       return adminError(ctx, error.statusCode, error.message);
     }
