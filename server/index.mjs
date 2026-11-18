@@ -52,7 +52,7 @@ import {
   handleCustomerInvoices,
   handleCustomerPayments,
 } from "./billing-operations.mjs";
-import { loadTrustedDevAccountingOwner } from "./dev-accounting-owner-runtime.mjs";
+import { loadDevOriginalAccountingOwner } from "./dev-original-accounting-owner-loader.mjs";
 import {
   mintPortalInvoiceChallenge, isDualSuperAdminProofRequired,
   verifyIndependentBizPortalSuperAdminProof,
@@ -4810,7 +4810,7 @@ async function route(request, response) {
       let postSalesInvoiceWithClient = null;
       if (request.body?.action === "mark_invoiced") {
         try {
-          postSalesInvoiceWithClient = await loadTrustedDevAccountingOwner();
+          postSalesInvoiceWithClient = await loadDevOriginalAccountingOwner();
         } catch {
           // Fail before entering the Invoice transaction if the trusted
           // runtime package is missing, unpinned or otherwise invalid.
