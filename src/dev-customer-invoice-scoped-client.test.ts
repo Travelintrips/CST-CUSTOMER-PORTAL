@@ -136,3 +136,65 @@ describe("DEV scoped Customer Invoice client, no privileged writer fallback",()=
   expect(closed).toHaveBeenCalledTimes(1);
  });
 });
+
+// GCP integration belongs to the existing one-client original Invoice path;
+// a configured GCP source must never fall back to arbitrary process.env DSNs.
+describe("DEV Customer Invoice GCP secret routing, all financial flags gated",()=>{
+ const bootstrap="CUSTOMER_PORTAL_INVOICE_GCP_BOOTSTRAP_JSON_DEV";
+ it("uses company3 credentials fetched from the exact GCP source",async()=>{
+   const options=[];
+   class MockClient{
+     constructor(o){options.push(o)}
+     async connect(){}
+     async end(){}
+   }
+   const secretLoader=vi.fn(async()=>({
+     CUSTOMER_PORTAL_CST_INVOICE_WRITER_DSN_DEV:url(1),
+     CUSTOMER_PORTAL_DIVA_INVOICE_WRITER_DSN_DEV:url(3),
+   }));
+   const chosen=await openDevCompanyInvoiceWriter({
+     invoiceId:197,portalUser:admin,
+     lookupCompany:async()=>({rows:[{company_id:3}]}),
+     env:env({[bootstrap]:"synthetic-dedicated-bootstrap",
+       CUSTOMER_PORTAL_DIVA_INVOICE_WRITER_DSN_DEV:"postgresql://postgres:unsafe@localhost:5432/postgres"}),
+     loadWriterSecrets:secretLoader,
+     ClientCtor:MockClient,readCa:async()=>fakeCa,
+   });
+   expect(secretLoader).toHaveBeenCalledTimes(1);
+   expect(chosen.companyId).toBe(3);
+   expect(options[0].connectionString).toBe(url(3));
+   expect(options[0].connectionString).not.toContain("postgres:unsafe");
+   await chosen.client.end();
+ });
+ it("does not fall back to env DSN when dedicated Secret Manager fetch fails",async()=>{
+   const connect=vi.fn();
+   const secretLoader=vi.fn(async()=>{throw Error("raw-private-GCP-error")});
+   class MockClient{async connect(){connect()} async end(){}}
+   let error;
+   try{
+     await openDevCompanyInvoiceWriter({
+       invoiceId:195,portalUser:admin,
+       lookupCompany:async()=>({rows:[{company_id:1}]}),
+       env:env({[bootstrap]:"synthetic-dedicated-bootstrap"}),
+       loadWriterSecrets:secretLoader,ClientCtor:MockClient,
+       readCa:async()=>fakeCa,
+     });
+   }catch(e){error=e}
+   expect(error.statusCode).toBe(503);
+   expect(error.message).not.toContain("raw-private-GCP-error");
+   expect(connect).not.toHaveBeenCalled();
+ });
+ it("never accepts a Diva DSN for a CST invoice from GCP",async()=>{
+   const loader=vi.fn(async()=>({
+     CUSTOMER_PORTAL_CST_INVOICE_WRITER_DSN_DEV:url(3),
+     CUSTOMER_PORTAL_DIVA_INVOICE_WRITER_DSN_DEV:url(1),
+   }));
+   await expect(openDevCompanyInvoiceWriter({
+     invoiceId:195,portalUser:admin,
+     lookupCompany:async()=>({rows:[{company_id:1}]}),
+     env:env({[bootstrap]:"synthetic-dedicated-bootstrap"}),
+     loadWriterSecrets:loader,readCa:async()=>fakeCa,
+   })).rejects.toMatchObject({statusCode:503});
+   expect(loader).toHaveBeenCalledTimes(1);
+ });
+});
