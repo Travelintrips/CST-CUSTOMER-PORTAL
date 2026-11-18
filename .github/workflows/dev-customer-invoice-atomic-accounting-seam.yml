@@ -9,9 +9,11 @@ on:
       - 'server/index.mjs'
       - 'server/dev-accounting-owner-runtime.mjs'
       - 'server/dev-bizportal-invoice-attestation.mjs'
+      - 'server/dev-customer-invoice-tenant-db-session.mjs'
       - 'src/portal-customer-invoice-posted-ar-evidence.test.ts'
       - 'src/dev-accounting-owner-runtime.test.ts'
       - 'src/dev-bizportal-invoice-attestation.test.ts'
+      - 'src/dev-customer-invoice-tenant-db-session.test.ts'
       - 'src/lib/bizportal-invoice-proof.ts'
       - 'src/lib/bizportal-invoice-proof.test.ts'
       - 'src/pages/admin/CustomerBillingTab.tsx'
@@ -63,6 +65,12 @@ jobs:
           grep -Fq 'verifySignedBizPortalProof' server/billing-operations.mjs
           grep -Fq 'createPublicKey' server/dev-bizportal-invoice-attestation.mjs
           grep -Fq 'timingSafeEqual' server/dev-bizportal-invoice-attestation.mjs
+          # Never enable the atomic owner on current BYPASSRLS Portal DB role.
+          grep -Fq 'assertDevCustomerInvoiceTenantDbSession' server/billing-operations.mjs
+          grep -Fq 'session_user::text as login_role' server/dev-customer-invoice-tenant-db-session.mjs
+          grep -Fq 'row_security_active' server/dev-customer-invoice-tenant-db-session.mjs
+          grep -Fq 'bypassrls !== false' server/dev-customer-invoice-tenant-db-session.mjs
+          grep -Fq 'DEV_SALES_POSTING_TENANT_ROLE_UNAVAILABLE' server/dev-customer-invoice-tenant-db-session.mjs
           grep -Fq 'VITE_CUSTOMER_PORTAL_BIZPORTAL_ATTEST_DEV' src/pages/admin/CustomerBillingTab.tsx
           grep -Fq 'requestBizPortalInvoiceProof' src/pages/admin/CustomerBillingTab.tsx
           grep -Fq 'CST_INVOICE_BIZPORTAL_ATTEST_V1' src/lib/bizportal-invoice-proof.ts
@@ -72,7 +80,7 @@ jobs:
         env:
           APP_ENV: development
           NODE_ENV: test
-        run: pnpm exec vitest run src/portal-customer-invoice-posted-ar-evidence.test.ts src/dev-accounting-owner-runtime.test.ts src/dev-bizportal-invoice-attestation.test.ts src/lib/bizportal-invoice-proof.test.ts
+        run: pnpm exec vitest run src/portal-customer-invoice-posted-ar-evidence.test.ts src/dev-accounting-owner-runtime.test.ts src/dev-bizportal-invoice-attestation.test.ts src/dev-customer-invoice-tenant-db-session.test.ts src/lib/bizportal-invoice-proof.test.ts
       - name: All existing Customer Portal regressions with no real DB or messages
         env:
           APP_ENV: development
@@ -89,4 +97,4 @@ jobs:
           pnpm run typecheck
           pnpm run verify:server-syntax
       - name: No tracked application changes during test
-        run: git diff --exit-code -- server/index.mjs server/billing-operations.mjs server/dev-accounting-owner-runtime.mjs server/dev-bizportal-invoice-attestation.mjs src pnpm-lock.yaml
+        run: git diff --exit-code -- server/index.mjs server/billing-operations.mjs server/dev-accounting-owner-runtime.mjs server/dev-bizportal-invoice-attestation.mjs server/dev-customer-invoice-tenant-db-session.mjs src pnpm-lock.yaml
