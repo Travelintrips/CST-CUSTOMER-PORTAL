@@ -724,7 +724,7 @@ async function requireTransactionalSalesInvoiceEvidence(db, invoice, actorId, en
   return { entryId, correlationKey: key };
 }
 
-export async function handleAdminInvoices({ request, response, user, sendJson, sendError, invoiceId = null, postSalesInvoiceWithClient = null }) {
+export async function handleAdminInvoices({ request, response, user, sendJson, sendError, invoiceId = null, postSalesInvoiceWithClient = null, verifySignedBizPortalProof = null }) {
   if (request.method === "GET" && invoiceId == null) {
     sendJson(response, 200, { items: await listInvoices(user, { admin: true }) });
     return;
@@ -761,6 +761,31 @@ export async function handleAdminInvoices({ request, response, user, sendJson, s
       canonicalActorId = await requireCanonicalSalesInvoiceOwner(
         db, user, Number(row.company_id),
       );
+      // Email/role DB matching alone is NOT independent BizPortal login.
+      // Require a fresh Ed25519 assertion derived from its own signed
+      // Super Admin session, bound to this Portal user, Invoice and company.
+      // There is deliberately no flag combination that enables the new
+      // posting owner while bypassing this verification.
+      if (process.env.CUSTOMER_PORTAL_REQUIRE_BIZPORTAL_ATTEST_DEV !== "true" ||
+          typeof verifySignedBizPortalProof !== "function") {
+        fail(503, "Verifikasi sesi Super Admin BizPortal belum terpasang.");
+      }
+      let signedOwnerVerified = false;
+      try {
+        signedOwnerVerified = await verifySignedBizPortalProof({
+          challenge: request.body?.bizportalInvoiceChallenge,
+          proof: request.body?.bizportalInvoiceProof,
+          portalUser: user,
+          invoiceId: Number(row.id),
+          companyId: Number(row.company_id),
+          canonicalActorId,
+        });
+      } catch {
+        fail(403, "Bukti sesi Super Admin BizPortal tidak valid.");
+      }
+      if (signedOwnerVerified !== true) {
+        fail(403, "Sesi Super Admin BizPortal belum diverifikasi secara independen.");
+      }
     }
     if (row.invoice_status === "invoiced") {
       await requirePostedCustomerArEvidence(db, row);
