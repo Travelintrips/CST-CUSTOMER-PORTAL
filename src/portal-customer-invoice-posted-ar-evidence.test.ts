@@ -12,12 +12,6 @@ const m=vi.hoisted(()=>({
   dbRoleOverride:null,
   dbBypass:false,
   dbRlsActive:true,
-  membershipActive:true,
-  approvalCompanyId:null,
-  approvalStatus:"approved",
-  reviewerId:2,
-  reviewerActive:true,
-  issuerActive:true,
   currentInvoiceNumber:null,
   viewUnavailable:false,
   query:vi.fn(),
@@ -98,20 +92,9 @@ async function sqlMock(statement,params=[]){
     return {rows:[]};
   }
   if(q.includes("from public.ar_subledger a"))return {rows:m.arProjection?[m.arProjection]:[]};
-  if(q.includes("from public.portal_company_members") && !q.includes("portal_company_requests")) {
-    return {rows:m.membershipActive?[{company_id:m.companyId}]:[]};
-  }
-  if(q.includes("from public.portal_company_requests approval")) {
-    // Preserve exact PR214 locked independent reviewer contract, never a self-selected member only.
-    if(!q.includes("for share of member, approval, reviewer, issuer") ||
-       !q.includes("member.is_active=true") || !q.includes("approval.reviewed_by<>$1") ||
-       !q.includes("issuer.role=\'admin\'") || !q.includes("reviewer.role=\'admin\'"))
-      throw Error("UNLOCKED_OR_SELF_APPROVED_COMPANY_SCOPE");
-    const valid=m.membershipActive && m.approvalStatus==="approved" &&
-      m.reviewerId!==params[0] && m.reviewerActive && m.issuerActive &&
-      (m.approvalCompanyId??m.companyId)===params[1];
-    return {rows:valid?[{approved:1}]:[]};
-  }
+  // Posting must never query or depend on a second Portal reviewer.
+  if(q.includes("from public.portal_company_requests approval"))
+    throw Error("UNEXPECTED_SECOND_ADMIN_APPROVAL_REQUIRED");
   if(q.includes("from public.sales_documents"))return {rows:[base()]};
   if(q.startsWith("update public.sales_documents"))return {rows:[issued()]};
   if(q.includes("from public.users")) {
@@ -176,12 +159,6 @@ beforeEach(()=>{
   m.dbRoleOverride=null;
   m.dbBypass=false;
   m.dbRlsActive=true;
-  m.membershipActive=true;
-  m.approvalCompanyId=null;
-  m.approvalStatus="approved";
-  m.reviewerId=2;
-  m.reviewerActive=true;
-  m.issuerActive=true;
   m.currentInvoiceNumber=null;
   m.viewUnavailable=false;
   m.glRow=null;
@@ -780,55 +757,88 @@ describe("DEV Invoice binds a company-specific client for the complete transacti
  });
 });
 
-describe("existing independently approved company authority on scoped original Invoice writer",()=>{
+describe("single Owner/Super Admin OTP approval for company-scoped Invoice",()=>{
  beforeEach(()=>{
   process.env[bridge]="true";
   process.env[attestFlag]="true";
+  m.proof=[101];
+  m.poster.mockResolvedValue({posted:true,entryId:22});
+  m.glRow={
+    id:22,company_id:1,source:"sales_invoice",source_id:101,
+    status:"posted",total_debit:"100.00",total_credit:"100.00",
+    is_voided:false,is_reversed:false,journal_company:1,
+    source_count:1,line_count:2,lines_debit:"100.00",lines_credit:"100.00",
+  };
  });
- it("locks approved membership, independent reviewer and issuer on same scoped client before original posting",async()=>{
-  // Even if posting fails later, the exact authorization SQL must be sent
-  // before any source Invoice update or original journal callback.
-  await expect(perform()).rejects.toMatchObject({statusCode:503});
-  const idx=sqlIndex("from public.portal_company_requests approval");
-  expect(idx).toBeGreaterThan(sqlIndex("row_security_active("));
-  expect(m.sql[idx]).toContain("for share of member, approval, reviewer, issuer");
-  expect(m.sql[idx]).toContain("approval.reviewed_by<>$1");
-  expect(idx).toBeLessThan(sqlIndex("from public.users"));
-  expect(m.connect).not.toHaveBeenCalled();
+ it.each([1,3])("one signed Super Admin approval issues company %i without another Admin or company request",async companyId=>{
+  // Hosted CST-DEV currently has zero Portal Admin memberships and no
+  // independently reviewed Admin-company request. Global canonical Owner
+  // may still issue after a single valid signed BizPortal Super Admin OTP.
+  m.companyId=companyId;
+  m.glRow={...m.glRow,company_id:companyId,journal_company:companyId};
+  await perform(m.poster);
   expect(m.scopedOpen).toHaveBeenCalledTimes(1);
+  expect(m.connect).not.toHaveBeenCalled();
+  expect(m.poster).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
+    companyId,sourceId:101,actorId:"qa-existing-bizportal-owner",
+  }));
+  expect(m.verifyIndependentOwner).toHaveBeenCalledTimes(1);
+  expect(sqlIndex("from public.portal_company_requests approval")).toBe(-1);
+  expect(m.sql.some(q=>q.includes("for share of member, approval, reviewer, issuer"))).toBe(false);
+  expect(sqlIndex("from public.users")).toBeGreaterThan(sqlIndex("row_security_active("));
+  expect(sqlIndex("update public.sales_documents")).toBeGreaterThan(sqlIndex("from public.users"));
+  expect(m.sql).toContain("commit");
+  expect(m.sql).not.toContain("rollback");
+  expect(m.outbox).toHaveLength(1);
+  expect(m.audits).toHaveLength(1);
  });
- it.each([
-  ["no membership",()=>{m.membershipActive=false;}],
-  ["pending approval",()=>{m.approvalStatus="pending";}],
-  ["reviewer is issuer",()=>{m.reviewerId=1;}],
-  ["reviewer deactivated",()=>{m.reviewerActive=false;}],
-  ["issuer no longer admin",()=>{m.issuerActive=false;}],
-  ["approved wrong company",()=>{m.approvalCompanyId=3;}],
- ])("refuses %s before Invoice update, GL, audit and external notifications",async(_label,change)=>{
-  change();
+ it("rejects a Portal Admin lacking matching active canonical Super Admin",async()=>{
+  m.bizOwner=[];
+  await expect(perform(m.poster)).rejects.toMatchObject({statusCode:403});
+  expect(m.verifyIndependentOwner).not.toHaveBeenCalled();
+  expect(m.poster).not.toHaveBeenCalled();
+  expect(sqlIndex("update public.sales_documents")).toBe(-1);
+  expect(m.sql).toContain("rollback");
+  noOutbound();
+ });
+ it("rejects a company-scoped Super Admin issuing another company's Invoice",async()=>{
+  m.companyId=3;
+  m.bizOwner=[{
+    id:"qa-owner-company-1",role:"super_admin",system_role:"super_admin",
+    status:"active",is_active:true,company_id:1,
+  }];
+  await expect(perform(m.poster)).rejects.toMatchObject({statusCode:403});
+  expect(m.verifyIndependentOwner).not.toHaveBeenCalled();
+  expect(m.poster).not.toHaveBeenCalled();
+  expect(sqlIndex("update public.sales_documents")).toBe(-1);
+  expect(m.sql).toContain("rollback");
+  noOutbound();
+ });
+ it("rejects unsigned or invalid Owner OTP before any Invoice mutation",async()=>{
+  m.verifyIndependentOwner.mockResolvedValue(false);
   await expect(perform(m.poster)).rejects.toMatchObject({statusCode:403});
   expect(m.poster).not.toHaveBeenCalled();
   expect(sqlIndex("update public.sales_documents")).toBe(-1);
   expect(m.sql).not.toContain("commit");
   expect(m.sql).toContain("rollback");
-  expect(m.scopedOpen).toHaveBeenCalledTimes(1);
   noOutbound();
  });
- it("rechecks independent approval on already-issued Invoice replay",async()=>{
+ it("also requires the one signed Owner OTP on Invoice replay",async()=>{
   m.invoiceStatus="invoiced";
   m.currentInvoiceNumber="INV-SO-QA-101";
-  m.approvalStatus="rejected";
+  m.verifyIndependentOwner.mockResolvedValue(false);
   await expect(perform(m.poster)).rejects.toMatchObject({statusCode:403});
-  expect(m.poster).not.toHaveBeenCalled();
   expect(sqlIndex("from public.bizportal_customer_ar_source_evidence_dev")).toBe(-1);
+  expect(sqlIndex("from public.portal_company_requests approval")).toBe(-1);
+  expect(m.poster).not.toHaveBeenCalled();
   expect(m.sql).toContain("rollback");
  });
- it("preserves original behavior with financial feature OFF",async()=>{
+ it("preserves existing financial feature OFF behavior",async()=>{
   delete process.env[bridge];
   m.proof=[101];
   await perform();
-  expect(sqlIndex("from public.portal_company_requests approval")).toBe(-1);
   expect(m.scopedOpen).not.toHaveBeenCalled();
   expect(m.connect).toHaveBeenCalledTimes(1);
+  expect(m.sql.some(q=>q.includes("portal_company_requests"))).toBe(false);
  });
 });
