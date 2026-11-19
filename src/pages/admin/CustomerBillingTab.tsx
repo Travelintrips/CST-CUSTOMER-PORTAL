@@ -67,7 +67,8 @@ export function CustomerBillingTab({ initialView = "all" }: { initialView?: "all
   const [handoffs,setHandoffs] = useState<Record<number,OwnerHandoff>>({});
   const handoffEnabled =
     import.meta.env.VITE_CUSTOMER_PORTAL_BIZPORTAL_ATTEST_DEV === "true" &&
-    import.meta.env.VITE_CUSTOMER_PORTAL_INVOICE_HANDOFF_DEV === "true";
+    import.meta.env.VITE_CUSTOMER_PORTAL_INVOICE_HANDOFF_DEV === "true" &&
+    import.meta.env.VITE_CUSTOMER_PORTAL_INVOICE_SIGNED_REVIEW_SNAPSHOT_DEV === "true";
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -221,10 +222,12 @@ export function CustomerBillingTab({ initialView = "all" }: { initialView?: "all
                   </div>
                   {invoice.invoiceStatus !== "invoiced" && (
                     <div className="flex flex-col gap-2">
-                      <button type="button" disabled={busy === invoice.id} onClick={() => void issueInvoice(invoice.id)}
-                        className="inline-flex items-center gap-2 rounded-lg bg-sky-600 px-3 py-2 text-sm font-medium text-white hover:bg-sky-700 disabled:opacity-50">
-                        {busy === invoice.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileCheck2 className="h-4 w-4" />} Terbitkan invoice
-                      </button>
+                      {!handoffEnabled && (
+                        <button type="button" disabled={busy === invoice.id} onClick={() => void issueInvoice(invoice.id)}
+                          className="inline-flex items-center gap-2 rounded-lg bg-sky-600 px-3 py-2 text-sm font-medium text-white hover:bg-sky-700 disabled:opacity-50">
+                          {busy === invoice.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileCheck2 className="h-4 w-4" />} Terbitkan invoice
+                        </button>
+                      )}
                       {handoffEnabled && (
                         <button type="button" disabled={busy === invoice.id}
                           onClick={() => void startOwnerHandoff(invoice.id)}
