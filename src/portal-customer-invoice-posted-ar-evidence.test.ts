@@ -103,6 +103,16 @@ async function sqlMock(statement,params=[]){
   if(q.includes("from public.sales_documents sd") &&
       q.includes("join public.accounting_taxes tax"))
     return {rows:m.reviewSource?[m.reviewSource]:[]};
+  // The new DEV tax row locks use the original same-client transaction,
+  // never a privileged pool or second connection.
+  if(q.includes("from public.accounting_settings") && q.includes("for share"))
+    return {rows:[{company_id:m.companyId,default_sales_tax_id:m.companyId===3?9:1,
+      ppn_output_account_id:m.companyId===3?49199:49109}]};
+  if(q.includes("from public.sales_documents") && q.includes("tax_rate_id"))
+    return {rows:[{id:101,company_id:m.companyId,tax_rate_id:m.reviewSource?.tax_rate_id??(m.companyId===3?9:1)}]};
+  if(q.includes("from public.accounting_taxes") && q.includes("for share"))
+    return {rows:[{id:params[0],company_id:m.companyId,is_active:true,
+      account_id:m.companyId===3?49199:49109,rate:"11.000"}]};
   if(q.includes("from public.sales_documents"))return {rows:[base()]};
   if(q.startsWith("update public.sales_documents"))return {rows:[issued()]};
   if(q.includes("from public.users")) {
@@ -635,7 +645,8 @@ describe("DEV-only atomic Accounting owner integration seam",()=>{
 
 describe("real Ed25519 authorization chained into Invoice handler transaction", () => {
   const snapshotFlag="CUSTOMER_PORTAL_INVOICE_SIGNED_REVIEW_SNAPSHOT_DEV";
-  const keys=["SESSION_SECRET","CUSTOMER_PORTAL_BIZPORTAL_ATTEST_SPKI_DEV",snapshotFlag];
+  const taxLockFlag="CUSTOMER_PORTAL_INVOICE_TAX_SOURCE_ROWLOCK_DEV";
+  const keys=["SESSION_SECRET","CUSTOMER_PORTAL_BIZPORTAL_ATTEST_SPKI_DEV",snapshotFlag,taxLockFlag];
   const originals=Object.fromEntries(keys.map(key=>[key,process.env[key]]));
   const bizSessionSecret="fixture-independent-bizportal-session-signing-secret-32-plus";
   const keySeed=hkdfSync("sha256",Buffer.from(bizSessionSecret),
@@ -761,11 +772,29 @@ describe("real Ed25519 authorization chained into Invoice handler transaction", 
     expect(m.outbox).toHaveLength(1);
     expect(m.audits).toHaveLength(1);
   });
+  it("fails closed before any Invoice financial mutation when tax rowlock policy has not been enabled",async()=>{
+    process.env[snapshotFlag]="true";
+    delete process.env[taxLockFlag];
+    const evidence=proof(1);
+    await expect(issue(1,evidence)).rejects.toMatchObject({statusCode:503});
+    expect(sqlIndex("update public.sales_documents")).toBe(-1);
+    expect(m.poster).not.toHaveBeenCalled();
+    expect(m.sql).toContain("rollback");
+  });
   it("posts only when signed Owner review matches same-client locked source",async()=>{
     process.env[snapshotFlag]="true";
+    process.env[taxLockFlag]="true";
     const evidence=proof(1);
     await issue(1,evidence);
     expect(m.sql.filter(q=>q.includes("join public.accounting_taxes tax"))).toHaveLength(1);
+    const settingsLock=sqlIndex("from public.accounting_settings");
+    const taxesLock=sqlIndex("from public.accounting_taxes");
+    const digestRead=sqlIndex("join public.accounting_taxes tax");
+    expect(settingsLock).toBeGreaterThan(0);
+    expect(taxesLock).toBeGreaterThan(settingsLock);
+    expect(digestRead).toBeGreaterThan(taxesLock);
+    expect(m.sql[settingsLock]).toContain("for share");
+    expect(m.sql[taxesLock]).toContain("for share");
     expect(sqlIndex("update public.sales_documents")).toBeGreaterThan(
       sqlIndex("join public.accounting_taxes tax"));
     expect(m.poster).toHaveBeenCalledTimes(1);
@@ -780,6 +809,7 @@ describe("real Ed25519 authorization chained into Invoice handler transaction", 
     ["tax source mapping",{tax_rate_id:9,selected_tax_id:9}],
   ])("rejects previously signed OTP after %s source changes",async(_key,change)=>{
     process.env[snapshotFlag]="true";
+    process.env[taxLockFlag]="true";
     const evidence=proof(1);
     m.reviewSource={...m.reviewSource,...change};
     await expect(issue(1,evidence)).rejects.toMatchObject({statusCode:409});
@@ -790,6 +820,7 @@ describe("real Ed25519 authorization chained into Invoice handler transaction", 
   });
   it("refuses a signed approval that omits financial review digest",async()=>{
     process.env[snapshotFlag]="true";
+    process.env[taxLockFlag]="true";
     delete process.env[snapshotFlag];
     const evidence=proof(1);
     process.env[snapshotFlag]="true";
