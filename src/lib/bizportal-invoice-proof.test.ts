@@ -84,3 +84,56 @@ describe("DEV-only original Invoice button BizPortal signed proof popup",()=>{
     expect(popup.close).toHaveBeenCalledTimes(1);
   });
 });
+
+// The remote-device path is not an OTP bypass: a signed remote proof is polled
+// by the original Portal Admin and is then still submitted to mark_invoiced.
+describe("DEV remote Owner OTP link, authenticated polling and fail-closed boundaries",()=>{
+  it("copies a short-lived BizPortal link and accepts an approved receipt",async()=>{
+    const {requestRemoteBizPortalInvoiceProof}=await import("./bizportal-invoice-proof");
+    setup();
+    const links=[];
+    win.setTimeout=(callback)=>{callback();return 1;};
+    vi.stubGlobal("fetch",vi.fn(async(path,init)=>{
+      const target=String(path);
+      if(target.includes("attestation-config"))return json({required:true,bizportalOrigin:origin});
+      if(target.includes("accounting-challenge"))return json({challenge,expiresInSeconds:90});
+      if(target.includes("remote-owner-status")){
+        expect(init.method).toBe("POST");
+        expect(init.headers.Authorization).toBe("Bearer QA");
+        expect(init.body).toBe(JSON.stringify({challenge}));
+        return json({approved:true,proof});
+      }
+      throw Error("unexpected request");
+    }));
+    await expect(requestRemoteBizPortalInvoiceProof(77,{Authorization:"Bearer QA"},url=>links.push(url)))
+      .resolves.toEqual({bizportalInvoiceChallenge:challenge,bizportalInvoiceProof:proof});
+    expect(links[0]).toContain("remote=1");
+    expect(links[0]).toContain(encodeURIComponent(challenge));
+    expect(links.at(-1)).toBe(null);
+    expect(win.open).not.toHaveBeenCalled(); // Owner's own device, no popup.
+  });
+  it("refuses an invalid proof from an authenticated remote status",async()=>{
+    const {requestRemoteBizPortalInvoiceProof}=await import("./bizportal-invoice-proof");
+    setup();
+    win.setTimeout=(callback)=>{callback();return 1;};
+    vi.stubGlobal("fetch",vi.fn(async path=>{
+      if(String(path).includes("attestation-config"))
+        return json({required:true,bizportalOrigin:origin});
+      if(String(path).includes("accounting-challenge"))
+        return json({challenge,expiresInSeconds:90});
+      return json({approved:true,proof:"invalid"});
+    }));
+    const links=[];
+    await expect(requestRemoteBizPortalInvoiceProof(77,{},url=>links.push(url)))
+      .rejects.toThrow("Bukti Owner/Super Admin tidak valid");
+    expect(links.at(-1)).toBe(null);
+  });
+  it("does not use untrusted HTTP origin from the remote config",async()=>{
+    const {requestRemoteBizPortalInvoiceProof}=await import("./bizportal-invoice-proof");
+    setup({required:true,bizportalOrigin:"http://evil.invalid"});
+    const links=[];
+    await expect(requestRemoteBizPortalInvoiceProof(77,{},url=>links.push(url)))
+      .rejects.toThrow("BizPortal DEV");
+    expect(links).toEqual([]);
+  });
+});

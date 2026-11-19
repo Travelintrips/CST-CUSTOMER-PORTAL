@@ -9,6 +9,7 @@ const m=vi.hoisted(()=>({
   status:"confirmed",
   invoiceStatus:"to_invoice",
   companyId:1,
+  grandTotal:"100.00",
   dbRoleOverride:null,
   dbBypass:false,
   dbRlsActive:true,
@@ -63,7 +64,7 @@ const base=()=>({
   id:101,doc_number:"SO-QA-101",kind:"order",
   status:m.status,invoice_status:m.invoiceStatus,
   company_id:m.companyId,customer_id:12,customer_name:"QA synthetic",
-  grand_total:"100.00",total_amount:"100.00",amount_paid:"0",
+  grand_total:m.grandTotal,total_amount:m.grandTotal,amount_paid:"0",
   payment_status:"unpaid",
   invoice_number:m.currentInvoiceNumber,invoice_date:m.currentInvoiceNumber?"2026-11-17":null,
   due_date:m.currentInvoiceNumber?"2026-12-17":null,
@@ -168,6 +169,7 @@ beforeEach(()=>{
   m.status="confirmed";
   m.invoiceStatus="to_invoice";
   m.companyId=1;
+  m.grandTotal="100.00";
   m.dbRoleOverride=null;
   m.dbBypass=false;
   m.dbRlsActive=true;
@@ -632,7 +634,8 @@ describe("real Ed25519 authorization chained into Invoice handler transaction", 
   const spki=createPublicKey(privateKey).export({format:"der",type:"spki"}).toString("base64");
   const portalUser={id:1,role:"admin",name:"DEV QA",email:"qa.owner@example.invalid"};
   function proof(companyId,alterations={}) {
-    const ctx={portalUser,invoiceId:101,companyId,canonicalActorId:"qa-existing-bizportal-owner"};
+    const ctx={portalUser,invoiceId:101,companyId,canonicalActorId:"qa-existing-bizportal-owner",
+      invoiceSnapshot:{documentNumber:"SO-QA-101",grandTotal:"100.00"}};
     const challenge=mintPortalInvoiceChallenge(ctx);
     const now=Date.now();
     const claims={v:1,purpose:"cst-customer-invoice-owner",aud:"CST_CUSTOMER_PORTAL_DEV",
@@ -741,6 +744,14 @@ describe("real Ed25519 authorization chained into Invoice handler transaction", 
     expect(m.sql).not.toContain("rollback");
     expect(m.outbox).toHaveLength(1);
     expect(m.audits).toHaveLength(1);
+  });
+  it("rejects a modified amount after Owner signs, before GL/AR/audit mutation",async()=>{
+    const evidence=proof(1);
+    m.grandTotal="200.00";
+    await expect(issue(1,evidence)).rejects.toMatchObject({statusCode:403});
+    expect(m.poster).not.toHaveBeenCalled();
+    expect(sqlIndex("update public.sales_documents")).toBe(-1);
+    expect(m.sql).toContain("rollback");
   });
   it("rejects signed Company 1 proof for a Company 3 Invoice before updates or posting",async()=>{
     m.companyId=3;

@@ -856,6 +856,7 @@ export async function handleAdminInvoices({ request, response, user, sendJson, s
           portalUser: user,
           invoiceId: Number(row.id),
           companyId: Number(row.company_id),
+          invoiceSnapshot:{documentNumber:row.doc_number,grandTotal:row.grand_total},
         });
       } catch {
         fail(403, "Bukti sesi Super Admin BizPortal tidak valid.");
