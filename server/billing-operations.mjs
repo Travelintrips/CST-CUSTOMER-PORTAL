@@ -961,20 +961,68 @@ export async function handleAdminInvoices({ request, response, user, sendJson, s
   sendJson(response, 200, result);
 }
 
+// Payment approval is an authorized company Admin action, NOT another
+// Owner OTP. A generic Portal Admin role cannot authorize another company.
+// Row locks protect against revocation during a status transaction.
+async function authorizedAdminPaymentCompanies(db,user) {
+  const portalId=Number(user?.id);
+  const email=typeof user?.email==="string"?user.email.trim():"";
+  if(user?.role!=="admin" || !Number.isSafeInteger(portalId) || portalId<=0 || !email)
+    fail(403,"Akun Admin pembayaran tidak valid.");
+  const matched=await db(
+    `select u.id,u.role,u.system_role,u.company_id
+       from public.portal_customers pc
+       join public.users u on lower(btrim(pc.email))=lower(btrim(u.email))
+      where pc.id=$1
+        and pc.role='admin'
+        and coalesce(pc.account_status,'active')='active'
+        and lower(btrim(pc.email))=lower(btrim($2))
+        and u.is_active is true and u.status='active'
+        and u.role in ('admin','super_admin')
+      limit 2 for share of pc,u`,
+    [portalId,email],
+  );
+  if(matched.rows.length!==1 || !matched.rows[0]?.id)
+    fail(403,"Identitas Admin pembayaran tidak aktif atau tidak unik.");
+  const actor=matched.rows[0],company=actor.company_id==null?null:Number(actor.company_id);
+  if(actor.role==='super_admin' && actor.system_role==='super_admin' &&
+     (company===null || [1,3].includes(company)))
+    return company===null?[1,3]:[company];
+  if(actor.role==='admin' && [1,3].includes(company)) {
+    const membership=await db(
+      `select id from public.portal_company_members
+        where portal_customer_id=$1 and company_id=$2 and is_active=true
+        limit 2 for share`,
+      [portalId,company],
+    );
+    if(membership.rows.length===1 && membership.rows[0]?.id) return [company];
+  }
+  fail(403,"Admin tidak memiliki penugasan perusahaan Invoice yang aktif.");
+}
+
 export async function handleAdminPayments({ request, response, user, sendJson, sendError, paymentId = null }) {
   if (request.method === "GET" && paymentId == null) {
-    const result = await query(
-      `select p.id, p.ref_kind, p.ref_id, p.ref_doc_number, p.amount, p.status, p.provider,
-              p.provider_order_id, p.provider_merchant_trade_no, p.payment_method,
-              p.payment_url, p.expired_at, p.paid_at, p.created_at, p.updated_at,
-              s.invoice_number, s.customer_name, s.payment_status as document_payment_status
-         from public.payments p
-         left join public.sales_documents s on s.id = p.ref_id and p.ref_kind = 'sales'
-        where p.ref_kind = 'sales'
-        order by p.created_at desc, p.id desc
-        limit 500`,
-    );
-    sendJson(response, 200, { items: result.rows.map((row) => ({ ...mapPayment(row), invoiceNumber: row.invoice_number, customerName: row.customer_name, documentPaymentStatus: row.document_payment_status })) });
+    const items=await withTransaction(async(db)=>{
+      const companies=await authorizedAdminPaymentCompanies(db,user);
+      const result=await db(
+        `select p.id, p.ref_kind, p.ref_id, p.ref_doc_number, p.amount, p.status, p.provider,
+                p.provider_order_id, p.provider_merchant_trade_no, p.payment_method,
+                p.payment_url, p.expired_at, p.paid_at, p.created_at, p.updated_at,
+                s.invoice_number, s.customer_name, s.payment_status as document_payment_status
+           from public.payments p
+           join public.sales_documents s on s.id=p.ref_id
+          where p.ref_kind='sales' and s.company_id=any($1::int[])
+            and (p.company_id is null or p.company_id=s.company_id)
+          order by p.created_at desc,p.id desc
+          limit 500`,
+        [companies],
+      );
+      return result.rows.map((row)=>({
+        ...mapPayment(row),invoiceNumber:row.invoice_number,
+        customerName:row.customer_name,documentPaymentStatus:row.document_payment_status,
+      }));
+    });
+    sendJson(response,200,{items});
     return;
   }
   if (request.method !== "POST" || paymentId == null) {
@@ -987,33 +1035,41 @@ export async function handleAdminPayments({ request, response, user, sendJson, s
     return;
   }
   const result = await withTransaction(async (db) => {
-    const paymentResult = await db(
-      `select p.id, p.ref_kind, p.ref_id, p.ref_doc_number, p.amount, p.status, p.provider,
-              p.provider_order_id, p.provider_merchant_trade_no, p.payment_method,
-              p.payment_url, p.expired_at, p.paid_at, p.created_at, p.updated_at
+    const paymentResult=await db(
+      `select p.id,p.ref_kind,p.ref_id,p.ref_doc_number,p.amount,p.status,p.provider,
+              p.provider_order_id,p.provider_merchant_trade_no,p.payment_method,
+              p.payment_url,p.expired_at,p.paid_at,p.created_at,p.updated_at,p.company_id
          from public.payments p
-        where p.id = $1 and p.ref_kind = 'sales'
+        where p.id=$1 and p.ref_kind='sales'
         for update`,
-      [integer(paymentId, "Payment")],
+      [integer(paymentId,"Payment")],
     );
-    const payment = paymentResult.rows[0];
-    if (!payment) fail(404, "Payment tidak ditemukan.");
-    if (payment.status === nextStatus) return { payment: mapPayment(payment), invoice: null, replayed: true };
-    if (payment.status === "paid" && nextStatus !== "paid") {
-      fail(409, "Payment paid tidak dapat dibatalkan melalui portal.");
-    }
-    if (!PAYMENT_TRANSITIONS[payment.status]?.has(nextStatus)) {
-      fail(409, `Payment ${payment.status} tidak dapat diubah menjadi ${nextStatus}.`);
-    }
-    const docResult = await db(
+    const payment=paymentResult.rows[0];
+    if(!payment) fail(404,"Payment tidak ditemukan.");
+    const docResult=await db(
       `select ${INVOICE_COLUMNS}
          from public.sales_documents
-        where id = $1
+        where id=$1
         for update`,
       [payment.ref_id],
     );
-    const invoice = docResult.rows[0];
-    if (!invoice) fail(409, "Sales document untuk payment tidak ditemukan.");
+    const invoice=docResult.rows[0];
+    if(!invoice) fail(409,"Sales document untuk payment tidak ditemukan.");
+    const allowedCompanies=await authorizedAdminPaymentCompanies(db,user);
+    if(!allowedCompanies.includes(Number(invoice.company_id)))
+      fail(403,"Admin tidak berwenang memperbarui pembayaran perusahaan Invoice ini.");
+    if(payment.company_id!=null && Number(payment.company_id)!==Number(invoice.company_id))
+      fail(409,"Perusahaan sumber Payment tidak cocok dengan Invoice.");
+    if(invoice.invoice_status!=='invoiced')
+      fail(409,"Payment hanya dapat diproses untuk Invoice yang sudah diterbitkan.");
+    // Replay must be checked AFTER authorization, even if already paid.
+    if(payment.status===nextStatus) return {
+      payment:mapPayment(payment),invoice:null,replayed:true,
+    };
+    if(payment.status==='paid' && nextStatus!=='paid')
+      fail(409,"Payment paid tidak dapat dibatalkan melalui portal.");
+    if(!PAYMENT_TRANSITIONS[payment.status]?.has(nextStatus))
+      fail(409,`Payment ${payment.status} tidak dapat diubah menjadi ${nextStatus}.`);
     if (nextStatus === "paid") {
       const paid = Number(invoice.amount_paid) + Number(payment.amount);
       if (paid > Number(invoice.grand_total) + 0.005) fail(409, "Total payment melebihi grand total invoice.");
