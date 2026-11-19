@@ -82,3 +82,43 @@ for CST/Diva, no invoice-ready document in hosted CST-DEV, handoff
 ticket state is only single-process, and no genuine hosted financial
 OTP-to-original-GL/PPN/AR/audit/outbox COMMIT/replay/rollback E2E.
 No automatic privileges, financial fixtures or PROD changes.
+
+## Critical correction after reproducing EXACT hosted B1 RLS (19 November)
+
+The earlier sandbox test used a permissive `FOR ALL` company policy.
+That was more permissive than the actual CST-DEV B1 settings/tax policies:
+`AS RESTRICTIVE FOR ALL` plus `FOR SELECT PERMISSIVE`, with no
+`FOR UPDATE PERMISSIVE`. The previously drafted B6-only RESTRICTIVE
+`FOR UPDATE` policy therefore **hid the source row on SELECT FOR SHARE**,
+even though PostgreSQL granted the intended narrow UPDATE(timestamp)
+column privileges. Source-only unit tests passed but real RLS parity failed.
+
+This Draft adds *exactly four* company/role-scoped PERMISSIVE UPDATE policies
+for `accounting_settings` and `accounting_taxes`, with `USING` restricted
+to CURRENT_USER=SESSION_USER and own company 1/3, AND
+`WITH CHECK(false)`. The original B1 RESTRICTIVE ALL and B6
+RESTRICTIVE UPDATE WITH CHECK(false) remain in force. A tax/config
+row can be locked through SELECT FOR SHARE, but **cannot be updated**.
+
+Verified on network-disconnected disposable PostgreSQL16:
+
+- Before the correction, RESTRICTIVE-only B6 FOR SHARE yields zero
+  company settings and tax rows for both CST/Diva (correct negative test).
+- Adding only four PERMISSIVE UPDATE policies permits company row locks.
+- Foreign-company rows remain invisible.
+- Even timestamp-column UPDATE attempts are denied.
+- Concurrent tax rate and default-tax edits wait until COMMIT.
+- Exact rollback drops all eight B6 policies and revokes the two
+  column grants, restoring baseline privilege-denied state.
+
+An independent full original Posting Engine E2E test loads **122 real
+CST-DEV Invoice writer RLS policies across 21 tables** from read-only
+`pg_policies` in a disposable PG16 container and proves the Owner-issued
+synthetic signed OTP → original GL/PPN/AR/audit/outbox and replay work
+with the same four additional PERMISSIVE B6 source policies. The
+separate Admin-staff issuer remains blocked by current `public.users`
+B2 RESTRICTIVE RLS, and is not silently promoted. Owner-issued initial
+DEV test can use the already matched canonical Owner identity.
+
+**All these SQL changes remain source-only.** Hosted CST-DEV has no B6
+policy applied, writer roles remain NOLOGIN, and PROD is unchanged.
