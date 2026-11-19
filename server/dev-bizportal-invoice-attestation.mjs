@@ -11,6 +11,7 @@
 import {
   createHmac, createHash, createPublicKey, randomBytes, timingSafeEqual, verify,
 } from "node:crypto";
+import {invoiceReviewSnapshotRequired,assertSameInvoiceReviewDigest} from "./dev-invoice-owner-review-snapshot.mjs";
 
 const CHALLENGE_DOMAIN="CST_PORTAL_CUSTOMER_INVOICE_CHALLENGE_V1\n";
 const PROOF_DOMAIN="CST_BIZPORTAL_CUSTOMER_INVOICE_DEV_V1\n";
@@ -74,6 +75,11 @@ export function mintPortalInvoiceChallenge(ctx) {
     portalUserId:Number(ctx.portalUser.id),portalEmail:emailOf(ctx.portalUser),
     iat:now,exp:now+TTL,nonce:randomBytes(16).toString("hex"),
   };
+  if(invoiceReviewSnapshotRequired()){
+    if(typeof ctx.reviewDigest!=="string" || !/^[a-f0-9]{64}$/.test(ctx.reviewDigest))
+      throw Error("DEV_INVOICE_SIGNED_REVIEW_DIGEST_REQUIRED");
+    claims.reviewDigest=ctx.reviewDigest;
+  }
   const body=Buffer.from(JSON.stringify(claims)).toString("base64url");
   const signature=createHmac("sha256",portalKey())
     .update(CHALLENGE_DOMAIN+body).digest("base64url");
@@ -91,9 +97,23 @@ function verifyChallenge(challenge,ctx) {
     c.invoiceId===Number(ctx.invoiceId)&&c.companyId===Number(ctx.companyId)&&
     c.portalUserId===Number(ctx.portalUser.id)&&
     c.portalEmail===emailOf(ctx.portalUser)&&
+    (!invoiceReviewSnapshotRequired() ||
+      (typeof c.reviewDigest==="string" && /^[a-f0-9]{64}$/.test(c.reviewDigest)))&&
     typeof c.nonce==="string"&&/^[a-f0-9]{32}$/.test(c.nonce)&&
     Number.isSafeInteger(c.iat)&&Number.isSafeInteger(c.exp)&&
     c.iat<=now+5000&&c.exp>now&&c.exp-c.iat===TTL;
+}
+
+// Read-only verification of the original Portal HMAC challenge and the
+// exact SOURCE digest reloaded under the original company-scoped transaction.
+export function assertInvoiceReviewChallengeMatchesSource(challenge,ctx,currentDigest) {
+  if(!invoiceReviewSnapshotRequired())return false;
+  validateContext(ctx);
+  if(!verifyChallenge(challenge,ctx))
+    throw Object.assign(new Error("Persetujuan Invoice tidak sesuai ringkasan finansial terkini."),{statusCode:409});
+  const claims=strictDecode(challenge,1600)?.claims;
+  assertSameInvoiceReviewDigest(claims?.reviewDigest,currentDigest);
+  return true;
 }
 
 function verifierKey() {

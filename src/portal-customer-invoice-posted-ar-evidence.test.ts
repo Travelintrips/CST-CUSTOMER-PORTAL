@@ -2,6 +2,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createHash, createPrivateKey, createPublicKey, hkdfSync, sign } from "node:crypto";
 import { mintPortalInvoiceChallenge, verifyIndependentBizPortalSuperAdminProof } from "../server/dev-bizportal-invoice-attestation.mjs";
+import {
+  buildInvoiceOwnerReviewSnapshot,invoiceOwnerReviewDigest,
+} from "../server/dev-invoice-owner-review-snapshot.mjs";
 
 const m=vi.hoisted(()=>({
   sql:[],
@@ -27,6 +30,7 @@ const m=vi.hoisted(()=>({
   glRow:null,
   bizOwner:[],
   bizIssuer:[],
+  reviewSource:null,
   outbox:[],
   audits:[],
   failOutbox:false,
@@ -96,6 +100,9 @@ async function sqlMock(statement,params=[]){
   // Posting must never query or depend on a second Portal reviewer.
   if(q.includes("from public.portal_company_requests approval"))
     throw Error("UNEXPECTED_SECOND_ADMIN_APPROVAL_REQUIRED");
+  if(q.includes("from public.sales_documents sd") &&
+      q.includes("join public.accounting_taxes tax"))
+    return {rows:m.reviewSource?[m.reviewSource]:[]};
   if(q.includes("from public.sales_documents"))return {rows:[base()]};
   if(q.startsWith("update public.sales_documents"))return {rows:[issued()]};
   if(q.includes("from public.users")) {
@@ -180,6 +187,14 @@ beforeEach(()=>{
   m.failAudit=false;
   m.deferredConstraintFail=false;
   m.arProjection={gl_entry_id:22,gross_amount:"100.00",paid_amount:"0",outstanding_amount:"100.00"};
+  m.reviewSource={
+    ...base(),total_amount:"89.00",tax_amount:"11.00",grand_total:"100.00",
+    tax_rate_id:1,selected_tax_id:1,tax_company_id:1,
+    selected_tax_rate:"11.000",selected_tax_account_id:49109,
+    ppn_output_account_id:49109,selected_tax_active:true,
+    tax_treatment:"taxable",cancelled_at:null,
+  };
+
   m.bizOwner=[{
     id:"qa-existing-bizportal-owner",email:"qa.owner@example.invalid",
     role:"super_admin",system_role:"super_admin",status:"active",
@@ -619,7 +634,8 @@ describe("DEV-only atomic Accounting owner integration seam",()=>{
 });
 
 describe("real Ed25519 authorization chained into Invoice handler transaction", () => {
-  const keys=["SESSION_SECRET","CUSTOMER_PORTAL_BIZPORTAL_ATTEST_SPKI_DEV"];
+  const snapshotFlag="CUSTOMER_PORTAL_INVOICE_SIGNED_REVIEW_SNAPSHOT_DEV";
+  const keys=["SESSION_SECRET","CUSTOMER_PORTAL_BIZPORTAL_ATTEST_SPKI_DEV",snapshotFlag];
   const originals=Object.fromEntries(keys.map(key=>[key,process.env[key]]));
   const bizSessionSecret="fixture-independent-bizportal-session-signing-secret-32-plus";
   const keySeed=hkdfSync("sha256",Buffer.from(bizSessionSecret),
@@ -633,6 +649,9 @@ describe("real Ed25519 authorization chained into Invoice handler transaction", 
   const portalUser={id:1,role:"admin",name:"DEV QA",email:"qa.owner@example.invalid"};
   function proof(companyId,alterations={}) {
     const ctx={portalUser,invoiceId:101,companyId,canonicalActorId:"qa-existing-bizportal-owner"};
+    if(process.env[snapshotFlag]==="true")
+      ctx.reviewDigest=invoiceOwnerReviewDigest(
+        buildInvoiceOwnerReviewSnapshot(m.reviewSource));
     const challenge=mintPortalInvoiceChallenge(ctx);
     const now=Date.now();
     const claims={v:1,purpose:"cst-customer-invoice-owner",aud:"CST_CUSTOMER_PORTAL_DEV",
@@ -741,6 +760,42 @@ describe("real Ed25519 authorization chained into Invoice handler transaction", 
     expect(m.sql).not.toContain("rollback");
     expect(m.outbox).toHaveLength(1);
     expect(m.audits).toHaveLength(1);
+  });
+  it("posts only when signed Owner review matches same-client locked source",async()=>{
+    process.env[snapshotFlag]="true";
+    const evidence=proof(1);
+    await issue(1,evidence);
+    expect(m.sql.filter(q=>q.includes("join public.accounting_taxes tax"))).toHaveLength(1);
+    expect(sqlIndex("update public.sales_documents")).toBeGreaterThan(
+      sqlIndex("join public.accounting_taxes tax"));
+    expect(m.poster).toHaveBeenCalledTimes(1);
+    expect(m.sql).toContain("commit");
+  });
+  it.each([
+    ["customer name",{customer_name:"CHANGED CUSTOMER"}],
+    ["total amount",{grand_total:"110.00"}],
+    ["tax amount",{tax_amount:"12.00"}],
+    ["tax rate",{selected_tax_rate:"12.000"}],
+    ["tax account",{selected_tax_account_id:49110,ppn_output_account_id:49110}],
+    ["tax source mapping",{tax_rate_id:9,selected_tax_id:9}],
+  ])("rejects previously signed OTP after %s source changes",async(_key,change)=>{
+    process.env[snapshotFlag]="true";
+    const evidence=proof(1);
+    m.reviewSource={...m.reviewSource,...change};
+    await expect(issue(1,evidence)).rejects.toMatchObject({statusCode:409});
+    expect(m.poster).not.toHaveBeenCalled();
+    expect(sqlIndex("update public.sales_documents")).toBe(-1);
+    expect(m.sql).toContain("rollback");
+    noOutbound();
+  });
+  it("refuses a signed approval that omits financial review digest",async()=>{
+    process.env[snapshotFlag]="true";
+    delete process.env[snapshotFlag];
+    const evidence=proof(1);
+    process.env[snapshotFlag]="true";
+    await expect(issue(1,evidence)).rejects.toMatchObject({statusCode:409});
+    expect(m.poster).not.toHaveBeenCalled();
+    expect(sqlIndex("update public.sales_documents")).toBe(-1);
   });
   it("rejects signed Company 1 proof for a Company 3 Invoice before updates or posting",async()=>{
     m.companyId=3;

@@ -1,19 +1,30 @@
 // @ts-nocheck
 import {afterEach,beforeEach,describe,expect,it} from "vitest";
+import {buildInvoiceOwnerReviewSnapshot,invoiceOwnerReviewDigest} from "../server/dev-invoice-owner-review-snapshot.mjs";
 import {
  createInvoiceOwnerHandoff,submitInvoiceOwnerHandoff,takeInvoiceOwnerHandoff,
  isInvoiceOwnerHandoffEnabled,isTrustedInvoiceOwnerHandoffPost,
- resetInvoiceOwnerHandoffsForQa
+ readInvoiceOwnerHandoffReview,resetInvoiceOwnerHandoffsForQa
 } from "../server/dev-invoice-owner-handoff.mjs";
 const enabled={APP_ENV:"development",CUSTOMER_PORTAL_ATOMIC_ACCOUNTING_POST_DEV:"true",
  CUSTOMER_PORTAL_REQUIRE_POSTED_AR_EVIDENCE_DEV:"true",
  CUSTOMER_PORTAL_REQUIRE_BIZPORTAL_ATTEST_DEV:"true",
- CUSTOMER_PORTAL_INVOICE_CROSS_DEVICE_HANDOFF_DEV:"true"};
+ CUSTOMER_PORTAL_INVOICE_CROSS_DEVICE_HANDOFF_DEV:"true",
+ CUSTOMER_PORTAL_INVOICE_SIGNED_REVIEW_SNAPSHOT_DEV:"true"};
 const issuer={id:11,email:"staff.cst@example.invalid",role:"admin"};
 const now=1_000_000;
+const reviewSnapshot=buildInvoiceOwnerReviewSnapshot({
+ id:77,company_id:1,doc_number:"SO-QA-77",customer_name:"QA Customer",
+ total_amount:"100.00",tax_amount:"11.00",grand_total:"111.00",
+ tax_rate_id:1,selected_tax_id:1,tax_company_id:1,
+ selected_tax_rate:"11.000",selected_tax_account_id:49109,
+ ppn_output_account_id:49109,selected_tax_active:true,
+ tax_treatment:"taxable",status:"confirmed",invoice_status:"to_invoice",
+ cancelled_at:null,
+});
 const claim=()=>createInvoiceOwnerHandoff({issuer,invoiceId:77,companyId:1,
  challenge:"signed-issuer.challenge."+"x".repeat(80),
- bizportalOrigin:"https://bizportal-dev.example.invalid",env:enabled,now});
+ reviewSnapshot,bizportalOrigin:"https://bizportal-dev.example.invalid",env:enabled,now});
 const proof="signed-owner-proof."+"y".repeat(100);
 const verify=({portalUser,invoiceId,companyId,challenge,proof:p})=>
  portalUser.id===11&&portalUser.email===issuer.email&&
@@ -45,6 +56,14 @@ describe("DEV-only cross-device Owner OTP handoff, volatile fail-closed",()=>{
    expect(isTrustedInvoiceOwnerHandoffPost({...req,url:"/api/portal/admin/invoices/77/action"},env)).toBe(false);
    expect(isTrustedInvoiceOwnerHandoffPost({...req,method:"GET"},env)).toBe(false);
    expect(isTrustedInvoiceOwnerHandoffPost({...req,url:url+"/other"},env)).toBe(false);
+ });
+ it("returns exact source review snapshot only to the short-lived random ticket",()=>{
+   const x=claim();
+   const r=readInvoiceOwnerHandoffReview({ticket:x.ticket,now,env:enabled});
+   expect(r).toEqual({snapshot:reviewSnapshot,digest:invoiceOwnerReviewDigest(reviewSnapshot)});
+   expect(x.approvalUrl).not.toContain("QA Customer");
+   expect(x.approvalUrl).not.toContain("111.00");
+   expect(()=>readInvoiceOwnerHandoffReview({ticket:x.ticket+"Z",now,env:enabled})).toThrow();
  });
  it("creates an HTTPS link with only signed challenge and unguessable ticket",()=>{
    const x=claim();expect(x.ticket).toMatch(/^[\w-]{43}$/);

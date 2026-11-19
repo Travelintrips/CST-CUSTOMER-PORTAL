@@ -60,8 +60,12 @@ import {
 import {
   isInvoiceOwnerHandoffEnabled, createInvoiceOwnerHandoff,
   submitInvoiceOwnerHandoff, takeInvoiceOwnerHandoff,
-  isTrustedInvoiceOwnerHandoffPost,
+  readInvoiceOwnerHandoffReview,isTrustedInvoiceOwnerHandoffPost,
 } from "./dev-invoice-owner-handoff.mjs";
+import {
+  invoiceReviewSnapshotRequired,readInvoiceOwnerReviewSnapshot,
+  invoiceOwnerReviewDigest,
+} from "./dev-invoice-owner-review-snapshot.mjs";
 import { handleFreightRoute } from "./freight-operations.mjs";
 import { handleGoogleMapsRoute } from "./google-maps-service.mjs";
 import {
@@ -4782,6 +4786,21 @@ async function route(request, response) {
   // Source-only, opt-in DEV Owner handoff. A separate authenticated BizPortal
   // browser submits the independent signed proof, but only the ORIGINAL Portal
   // issuer may claim it and invoke the unchanged Invoice handler.
+  const handoffReviewMatch = pathname.match(/^\/api\/portal\/dev\/invoice-owner-handoff\/([A-Za-z0-9_-]{43})\/review$/);
+  if (handoffReviewMatch && request.method === "GET") {
+    if(!isInvoiceOwnerHandoffEnabled()) {
+      sendError(response,404,"Endpoint tidak tersedia.");return;
+    }
+    // Only the random 80s capability ticket can read this transient source.
+    // No PII is embedded in the URL, HMAC challenge or GitHub artifacts.
+    const review=readInvoiceOwnerHandoffReview({ticket:handoffReviewMatch[1]});
+    sendJson(response,200,review,{
+      "Referrer-Policy":"no-referrer",
+      "X-Frame-Options":"DENY",
+      "Content-Security-Policy":"default-src 'none'",
+    });
+    return;
+  }
   const handoffReceiveMatch = pathname.match(/^\/api\/portal\/dev\/invoice-owner-handoff\/([A-Za-z0-9_-]{43})$/);
   if (handoffReceiveMatch && request.method === "POST") {
     if (!isTrustedInvoiceOwnerHandoffPost(request)) {
@@ -4843,9 +4862,16 @@ async function route(request, response) {
       sendError(response,403,"Admin penerbit belum memiliki penugasan perusahaan yang sah.");
       return;
     }
-    const challenge=mintPortalInvoiceChallenge({portalUser:user,invoiceId,companyId});
+    const reviewSnapshot=await readInvoiceOwnerReviewSnapshot(query,invoiceId);
+    if(reviewSnapshot.companyId!==companyId) {
+      sendError(response,409,"Perusahaan Invoice berubah.");return;
+    }
+    const challenge=mintPortalInvoiceChallenge({
+      portalUser:user,invoiceId,companyId,
+      reviewDigest:invoiceOwnerReviewDigest(reviewSnapshot),
+    });
     const handoff=createInvoiceOwnerHandoff({
-      issuer:user,invoiceId,companyId,challenge,
+      issuer:user,invoiceId,companyId,challenge,reviewSnapshot,
       bizportalOrigin:process.env.CUSTOMER_PORTAL_BIZPORTAL_AUTH_ORIGIN_DEV,
     });
     sendJson(response,200,handoff);
@@ -4888,8 +4914,14 @@ async function route(request, response) {
       sendError(response, 404, "Invoice tidak ditemukan.");
       return;
     }
+    const snapshot=invoiceReviewSnapshotRequired()
+      ? await readInvoiceOwnerReviewSnapshot(query,invoiceId) : null;
+    if(snapshot && snapshot.companyId!==Number(result.rows[0].company_id)) {
+      sendError(response,409,"Perusahaan Invoice berubah.");return;
+    }
     const challenge = mintPortalInvoiceChallenge({
       portalUser:user,invoiceId,companyId:Number(result.rows[0].company_id),
+      ...(snapshot?{reviewDigest:invoiceOwnerReviewDigest(snapshot)}:{}),
     });
     sendJson(response, 200, {challenge,expiresInSeconds:90});
     return;

@@ -5,6 +5,10 @@
  * deployment discards pending approvals instead of reusing untrusted proof.
  */
 import { createHash, randomBytes } from "node:crypto";
+import {
+  invoiceReviewSnapshotRequired,invoiceOwnerReviewDigest,
+  assertSameInvoiceReviewDigest,
+} from "./dev-invoice-owner-review-snapshot.mjs";
 
 const TTL_MS = 80_000;
 const MAX_PENDING = 64;
@@ -18,7 +22,8 @@ export function isInvoiceOwnerHandoffEnabled(env=process.env) {
     env.CUSTOMER_PORTAL_ATOMIC_ACCOUNTING_POST_DEV === "true" &&
     env.CUSTOMER_PORTAL_REQUIRE_POSTED_AR_EVIDENCE_DEV === "true" &&
     env.CUSTOMER_PORTAL_REQUIRE_BIZPORTAL_ATTEST_DEV === "true" &&
-    env.CUSTOMER_PORTAL_INVOICE_CROSS_DEVICE_HANDOFF_DEV === "true";
+    env.CUSTOMER_PORTAL_INVOICE_CROSS_DEVICE_HANDOFF_DEV === "true" &&
+    invoiceReviewSnapshotRequired(env);
 }
 export function isTrustedInvoiceOwnerHandoffPost(request,env=process.env) {
   if (!isInvoiceOwnerHandoffEnabled(env) || request?.method !== "POST" ||
@@ -46,7 +51,7 @@ function prune(now) {
   }
 }
 export function createInvoiceOwnerHandoff({
-  issuer,invoiceId,companyId,challenge,bizportalOrigin,
+  issuer,invoiceId,companyId,challenge,bizportalOrigin,reviewSnapshot,
   now=Date.now(),env=process.env,
 }) {
   if (!isInvoiceOwnerHandoffEnabled(env) || issuer?.role!=="admin" ||
@@ -56,6 +61,12 @@ export function createInvoiceOwnerHandoff({
       typeof challenge!=="string" || challenge.length<60 || challenge.length>1600) {
     throw invalid();
   }
+  let reviewDigest;
+  try {
+    reviewDigest=invoiceOwnerReviewDigest(reviewSnapshot);
+    if(!reviewSnapshot || reviewSnapshot.companyId!==companyId ||
+        reviewSnapshot.invoiceId!==invoiceId)throw invalid();
+  }catch{throw invalid();}
   let origin;
   try {
     origin=new URL(bizportalOrigin);
@@ -68,8 +79,8 @@ export function createInvoiceOwnerHandoff({
   const ticket=randomBytes(32).toString("base64url");
   pending.set(hash(ticket),{
     issuerId:Number(issuer.id),issuerEmail:normalize(issuer.email),
-    invoiceId,companyId,challenge,expiresAt:now+TTL_MS,
-    proof:null,taken:false,
+    invoiceId,companyId,challenge,reviewSnapshot,reviewDigest,
+    expiresAt:now+TTL_MS,proof:null,taken:false,
   });
   return {
     ticket,
@@ -77,6 +88,19 @@ export function createInvoiceOwnerHandoff({
       encodeURIComponent(challenge)+"&handoff="+encodeURIComponent(ticket),
     expiresInSeconds:TTL_MS/1000,
   };
+}
+// Capability-scoped read-only summary; no customer data in the URL or
+// in the signed HMAC challenge (only its digest). The ticket expires in 80s.
+export function readInvoiceOwnerHandoffReview({
+  ticket,now=Date.now(),env=process.env,
+}) {
+  if(!isInvoiceOwnerHandoffEnabled(env) || typeof ticket!=="string" ||
+     !/^[A-Za-z0-9_-]{43}$/.test(ticket))throw invalid();
+  prune(now);
+  const row=pending.get(hash(ticket));
+  if(!row || row.taken || row.expiresAt<=now)throw invalid();
+  assertSameInvoiceReviewDigest(row.reviewDigest,invoiceOwnerReviewDigest(row.reviewSnapshot));
+  return {snapshot:row.reviewSnapshot,digest:row.reviewDigest};
 }
 export function submitInvoiceOwnerHandoff({
   ticket,proof,verify,now=Date.now(),env=process.env,

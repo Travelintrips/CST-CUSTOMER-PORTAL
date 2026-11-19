@@ -5,6 +5,7 @@ import {
 } from "node:crypto";
 import {
   mintPortalInvoiceChallenge, verifyIndependentBizPortalSuperAdminProof,
+  assertInvoiceReviewChallengeMatchesSource,
 } from "../server/dev-bizportal-invoice-attestation.mjs";
 
 const SECRET="fixture-independent-bizportal-session-signing-secret-32-plus";
@@ -51,6 +52,20 @@ afterEach(()=>{for(const key of KEYS){
   else process.env[key]=original[key];
 }});
 describe("signed Portal challenge + independent BizPortal Ed25519 proof",()=>{
+  it("puts only SHA-256 source digest, never customer name or monetary values, inside the signed challenge",()=>{
+    process.env.CUSTOMER_PORTAL_INVOICE_SIGNED_REVIEW_SNAPSHOT_DEV="true";
+    const ctx={...context(),reviewDigest:"a".repeat(64)};
+    const challenge=mintPortalInvoiceChallenge(ctx);
+    const claims=JSON.parse(Buffer.from(challenge.split(".")[0],"base64url").toString("utf8"));
+    expect(claims.reviewDigest).toBe(ctx.reviewDigest);
+    expect(claims).not.toHaveProperty("customerName");
+    expect(claims).not.toHaveProperty("subtotal");
+    expect(claims).not.toHaveProperty("ppn");
+    expect(claims).not.toHaveProperty("total");
+    expect(assertInvoiceReviewChallengeMatchesSource(challenge,ctx,ctx.reviewDigest)).toBe(true);
+    expect(()=>assertInvoiceReviewChallengeMatchesSource(challenge,ctx,"b".repeat(64))).toThrow();
+    delete process.env.CUSTOMER_PORTAL_INVOICE_SIGNED_REVIEW_SNAPSHOT_DEV;
+  });
   it("accepts only the exact canonical BizPortal owner, Portal user and CST invoice",()=>{
     const ctx=context();
     const challenge=mintPortalInvoiceChallenge(ctx);

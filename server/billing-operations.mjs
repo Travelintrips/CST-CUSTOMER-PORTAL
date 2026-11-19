@@ -1,6 +1,11 @@
 import { pool, query } from "./db.mjs";
 import { signedPaymentProofUrl } from "./storage.mjs";
 import { openDevCompanyInvoiceWriter } from "./dev-customer-invoice-scoped-client.mjs";
+import {
+  invoiceReviewSnapshotRequired,readInvoiceOwnerReviewSnapshot,invoiceOwnerReviewDigest,
+} from "./dev-invoice-owner-review-snapshot.mjs";
+import {assertInvoiceReviewChallengeMatchesSource} from "./dev-bizportal-invoice-attestation.mjs";
+
 import { requireDirectCompanyInvoiceWriterSession } from "./dev-customer-invoice-writer-session-guard.mjs";
 import {
   bestEffortNotificationWrite,
@@ -841,6 +846,17 @@ export async function handleAdminInvoices({ request, response, user, sendJson, s
       // Invoice's canonical company (Owner may also issue for a global scope).
       // The company's admin assignment is checked even when an Owner signed.
       await requireCanonicalSalesInvoiceIssuer(db, user, Number(row.company_id));
+      if(invoiceReviewSnapshotRequired()){
+        // Re-read persisted customer/tax/total under the SAME company RLS
+        // transaction AFTER row FOR UPDATE; reject any post-consent changes
+        // before mutating Sales Invoice, GL, AR, PPN or audit.
+        const sourceSnapshot=await readInvoiceOwnerReviewSnapshot(db,Number(row.id));
+        assertInvoiceReviewChallengeMatchesSource(
+          request.body?.bizportalInvoiceChallenge,
+          {portalUser:user,invoiceId:Number(row.id),companyId:Number(row.company_id)},
+          invoiceOwnerReviewDigest(sourceSnapshot),
+        );
+      }
       // Exactly ONE signed approval: independently authenticated BizPortal
       // Owner/Super Admin (not a second reviewer/Admin). The trusted verifier
       // extracts actor identity from the actual Ed25519 signature, not HTTP.
