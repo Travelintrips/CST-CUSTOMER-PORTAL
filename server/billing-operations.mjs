@@ -530,34 +530,83 @@ async function requirePostedCustomerArEvidence(db, invoice) {
 // ACTIVE canonical BizPortal identity in the SAME PostgreSQL transaction.
 // Never trust a role/email supplied by an HTTP body or an unverified JWT claim.
 // A lock prevents role revocation or deactivation from racing this issuance.
-async function requireCanonicalSalesInvoiceOwner(db, portalUser, companyId) {
+// The Portal Admin who requests issuance is DISTINCT from the BizPortal
+// Owner/Super Admin who signs one OTP approval. Both identities are checked
+// and row-locked on the SAME dedicated company RLS client until COMMIT.
+// A Portal Admin must also have an active, explicit BizPortal company scope;
+// a generic Portal Admin role or self-selected customer membership is not enough.
+async function requireCanonicalSalesInvoiceIssuer(db, portalUser, companyId) {
   const email = typeof portalUser?.email === "string" ? portalUser.email.trim() : "";
   if (portalUser?.role !== "admin" || !email || ![1, 3].includes(companyId)) {
-    fail(403, "Hak Super Admin BizPortal diperlukan untuk posting Invoice.");
+    fail(403, "Admin penerbit tidak memiliki penugasan perusahaan yang sah.");
   }
-  const matches = await db(
+  const result = await db(
     `select id, role, system_role, status, is_active, company_id
        from public.users
-      where lower(trim(email)) = lower(trim($1))
-        and role = 'super_admin'
-        and system_role = 'super_admin'
-        and status = 'active'
+      where lower(trim(email))=lower(trim($1))
+        and status='active'
         and is_active is true
+        and (
+          (role='admin' and company_id=$2)
+          or (role='super_admin' and system_role='super_admin'
+              and (company_id is null or company_id=$2))
+        )
       limit 2
       for share`,
-    [email],
+    [email,companyId],
+  );
+  if (result.rows.length !== 1 || !result.rows[0].id) {
+    fail(403, "Penugasan perusahaan Admin penerbit tidak aktif atau tidak unik.");
+  }
+  const issuer = result.rows[0];
+  if (issuer.status !== "active" || issuer.is_active !== true ||
+      !(
+        (issuer.role === "admin" && Number(issuer.company_id) === companyId) ||
+        (issuer.role === "super_admin" && issuer.system_role === "super_admin" &&
+          (issuer.company_id == null || Number(issuer.company_id) === companyId))
+      )) {
+    fail(403, "Admin penerbit tidak diizinkan untuk perusahaan Invoice ini.");
+  }
+  return String(issuer.id);
+}
+
+// Approval identity comes ONLY from the verified Ed25519 BizPortal proof.
+// Never look up or authorize an owner from the Portal issuer email or HTTP
+// fields. The canonical active role/tenant must still match the signed actor.
+async function requireCanonicalSalesInvoiceOwner(db, verifiedApproval, companyId) {
+  const actorId = typeof verifiedApproval?.actorId === "string"
+    ? verifiedApproval.actorId.trim() : "";
+  const email = typeof verifiedApproval?.email === "string"
+    ? verifiedApproval.email.trim().toLowerCase() : "";
+  if (!actorId || !email || ![1,3].includes(companyId)) {
+    fail(403, "Identitas persetujuan Owner/Super Admin tidak valid.");
+  }
+  const matches = await db(
+    `select id, email, role, system_role, status, is_active, company_id
+       from public.users
+      where id=$1 and lower(trim(email))=lower(trim($2))
+        and role='super_admin'
+        and system_role='super_admin'
+        and status='active'
+        and is_active is true
+        and (company_id is null or company_id=$3)
+      limit 2
+      for share`,
+    [actorId, email, companyId],
   );
   if (matches.rows.length !== 1) {
-    fail(403, "Identitas Super Admin BizPortal tidak ditemukan atau tidak unik.");
+    fail(403, "Identitas Owner/Super Admin tidak aktif, tidak unik, atau lintas perusahaan.");
   }
   const owner = matches.rows[0];
-  if (!owner.id || owner.role !== "super_admin" ||
-      owner.system_role !== "super_admin" ||
+  if (String(owner.id) !== actorId ||
+      typeof owner.email !== "string" ||
+      owner.email.trim().toLowerCase() !== email ||
+      owner.role !== "super_admin" || owner.system_role !== "super_admin" ||
       owner.status !== "active" || owner.is_active !== true ||
       (owner.company_id != null && Number(owner.company_id) !== companyId)) {
-    fail(403, "Identitas Super Admin BizPortal tidak berwenang untuk perusahaan Invoice.");
+    fail(403, "Persetujuan Owner/Super Admin tidak berwenang untuk Invoice.");
   }
-  return String(owner.id);
+  return actorId;
 }
 
 async function requireAtomicSalesInvoicePosting(db, invoice, canonicalActorId, postWithClient, transactionClient) {
@@ -788,39 +837,36 @@ export async function handleAdminInvoices({ request, response, user, sendJson, s
           process.env.CUSTOMER_PORTAL_REQUIRE_POSTED_AR_EVIDENCE_DEV !== "true") {
         fail(503, "Jalur posting Invoice atomik belum diaktifkan secara aman.");
       }
-      // One approval: the canonical active Owner/Super Admin signed OTP proof.
-      // The company is bound by the database-owned Invoice, dedicated
-      // CURRENT_USER=SESSION_USER RLS session, and the Super Admin's own
-      // company_id (null for a global Owner). No second Portal Admin,
-      // self-requested affiliation or independent reviewer is required.
-      canonicalActorId = await requireCanonicalSalesInvoiceOwner(
-        db, user, Number(row.company_id),
-      );
-      // Email/role DB matching alone is NOT independent BizPortal login.
-      // Require a fresh Ed25519 assertion derived from its own signed
-      // Super Admin session, bound to this Portal user, Invoice and company.
-      // There is deliberately no flag combination that enables the new
-      // posting owner while bypassing this verification.
+      // The Portal Admin must be active and explicitly scoped to this
+      // Invoice's canonical company (Owner may also issue for a global scope).
+      // The company's admin assignment is checked even when an Owner signed.
+      await requireCanonicalSalesInvoiceIssuer(db, user, Number(row.company_id));
+      // Exactly ONE signed approval: independently authenticated BizPortal
+      // Owner/Super Admin (not a second reviewer/Admin). The trusted verifier
+      // extracts actor identity from the actual Ed25519 signature, not HTTP.
       if (process.env.CUSTOMER_PORTAL_REQUIRE_BIZPORTAL_ATTEST_DEV !== "true" ||
           typeof verifySignedBizPortalProof !== "function") {
         fail(503, "Verifikasi sesi Super Admin BizPortal belum terpasang.");
       }
-      let signedOwnerVerified = false;
+      let verifiedApproval = false;
       try {
-        signedOwnerVerified = await verifySignedBizPortalProof({
+        verifiedApproval = await verifySignedBizPortalProof({
           challenge: request.body?.bizportalInvoiceChallenge,
           proof: request.body?.bizportalInvoiceProof,
           portalUser: user,
           invoiceId: Number(row.id),
           companyId: Number(row.company_id),
-          canonicalActorId,
         });
       } catch {
         fail(403, "Bukti sesi Super Admin BizPortal tidak valid.");
       }
-      if (signedOwnerVerified !== true) {
+      if (!verifiedApproval || typeof verifiedApproval.actorId !== "string" ||
+          typeof verifiedApproval.email !== "string") {
         fail(403, "Sesi Super Admin BizPortal belum diverifikasi secara independen.");
       }
+      canonicalActorId = await requireCanonicalSalesInvoiceOwner(
+        db, verifiedApproval, Number(row.company_id),
+      );
     }
     if (row.invoice_status === "invoiced") {
       await requirePostedCustomerArEvidence(db, row);
