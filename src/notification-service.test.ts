@@ -11,7 +11,12 @@ type FakeRecord = {
   payload: Record<string, unknown>;
 };
 
-function fakeDb(options: { admins?: number[]; failInsert?: boolean } = {}) {
+function fakeDb(options: {
+  admins?: number[];
+  companyAdmins?: Record<number, number[]>;
+  failInsert?: boolean;
+  failRecipientLookup?: boolean;
+} = {}) {
   const records: FakeRecord[] = [];
   const calls: string[] = [];
   const admins = options.admins ?? [101, 102];
@@ -20,6 +25,11 @@ function fakeDb(options: { admins?: number[]; failInsert?: boolean } = {}) {
     calls.push(sql);
     if (sql.startsWith("savepoint") || sql.startsWith("release savepoint") || sql.startsWith("rollback to savepoint")) {
       return { rows: [], rowCount: 0 };
+    }
+    if (sql.includes("join public.users u") && sql.includes("from public.portal_customers pc")) {
+      if (options.failRecipientLookup) throw new Error("Scoped company source unavailable");
+      const company = Number(values[0]);
+      return { rows: (options.companyAdmins?.[company] ?? []).map((id) => ({ id })) };
     }
     if (sql.includes("select id") && sql.includes("role = 'admin'")) {
       return { rows: admins.map((id) => ({ id })) };
@@ -102,6 +112,89 @@ describe("portal notification contract", () => {
     expect(records.map((r) => r.recipientId)).toEqual([101]);
     expect(records[0].payload).toMatchObject({ audience: "admin", invoiceId: 201 });
     expect(calls.some((sql) => sql.includes("from public.portal_customers"))).toBe(false);
+  });
+
+  it.each([
+    { company: 1, recipients: [101] },
+    { company: 3, recipients: [101, 103] },
+  ])("limits company $company payment notifications to authorized Owner/staff", async ({company, recipients}) => {
+    const {db, records, calls} = fakeDb({
+      admins: [101, 102, 103, 104],
+      companyAdmins: {1:[101],3:[101, 103]},
+    });
+    const posted = await notifyAdmins(db, {
+      scopeCompanyId: company,
+      eventKey: "sales-payment:500:submitted",
+      type: "sales_payment_submitted",
+      title: "Payment customer masuk",
+      message: "Customer mengajukan pembayaran.",
+      resourceType: "payment",
+      resourceId: 500,
+      payload: {paymentId:500,invoiceId:201},
+    });
+    expect(posted).toBe(true);
+    expect(records.map((r)=>r.recipientId)).toEqual(recipients);
+    expect(records.every(r=>r.payload.audience==="admin" && r.payload.invoiceId===201)).toBe(true);
+    const source = calls.find((sql)=>sql.includes("join public.users u"));
+    expect(source).toContain("u.role = 'super_admin'");
+    expect(source).toContain("u.system_role = 'super_admin'");
+    expect(source).toContain("u.company_id = $1");
+    expect(source).toContain("pcm.is_active = true");
+    expect(calls.some((sql)=>sql.includes("select id") && sql.includes("role = 'admin'"))).toBe(false);
+    expect(records.every((r)=>r.recipientId!==102 && r.recipientId!==104)).toBe(true);
+  });
+
+  it("scopes payment status updates to the same authorized company Admins", async () => {
+    const {db, records} = fakeDb({admins:[101,102,103],companyAdmins:{1:[101]}});
+    const result = await notifyAdmins(db,{
+      scopeCompanyId:1,
+      eventKey:"sales-payment:500:paid",
+      type:"sales_payment_status_changed",
+      title:"Status payment berubah",
+      message:"Pembayaran telah dikonfirmasi",
+      resourceType:"payment",
+      resourceId:500,
+      payload:{paymentId:500,invoiceId:201,paymentStatus:"paid"},
+    });
+    expect(result).toBe(true);
+    expect(records.map(r=>r.recipientId)).toEqual([101]);
+    expect(records[0].payload.paymentStatus).toBe("paid");
+  });
+
+  it.each([0,4,null,NaN])("denies unknown payment company %s with no global Admin fallback",async(company)=>{
+    const {db,records,calls} = fakeDb({admins:[101,102,103],companyAdmins:{1:[101]}});
+    const accepted = await notifyAdmins(db,{
+      scopeCompanyId:company,
+      eventKey:"sales-payment:500:paid",
+      type:"sales_payment_status_changed",
+      title:"Status",
+      message:"No company scope",
+      resourceType:"payment",resourceId:500,
+    });
+    expect(accepted).toBe(false);
+    expect(records).toHaveLength(0);
+    expect(calls.every((s)=>!s.includes("from public.portal_customers"))).toBe(true);
+  });
+
+  it("does not broaden recipients when scoped Owner or company grants are unavailable",async()=>{
+    for(const options of [
+      {admins:[101,102],companyAdmins:{1:[]}},
+      {admins:[101,102],failRecipientLookup:true},
+      {admins:[101,102],companyAdmins:{1:Array.from({length:33},(_,i)=>i+1)}},
+    ]){
+      const {db,records,calls}=fakeDb(options);
+      const result=await notifyAdmins(db,{
+        scopeCompanyId:1,
+        eventKey:"sales-payment:100:submitted",
+        type:"sales_payment_submitted",
+        title:"Payment masuk",
+        message:"Uji tidak ada penerima",
+        resourceType:"payment",resourceId:100,
+      });
+      expect(result).toBe(false);
+      expect(records).toHaveLength(0);
+      expect(calls.some(sql=>sql.includes("select id") && sql.includes("role = 'admin'"))).toBe(false);
+    }
   });
 
   it("fails closed when notification storage/provider fails without throwing", async () => {

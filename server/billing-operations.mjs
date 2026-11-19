@@ -255,10 +255,12 @@ async function notifyInvoiceAdmins(db, invoice, {
     type,
     title,
     message,
-    // Only the already RLS-authorized issuer's inbox receives an issued
-    // Invoice notification. For existing payment flows preserve the
-    // unchanged default behavior until their recipient policy is reviewed.
-    ...(issuerPortalId == null ? {} : { explicitAdminIds: [issuerPortalId] }),
+    // New Invoice: only the company-validated issuing Portal Admin.
+    // Payments: resolve canonical active Owner / explicitly scoped staff
+    // under company-bound data, never broadcast to all Portal Admins.
+    ...(issuerPortalId == null
+      ? { scopeCompanyId: invoice?.company_id }
+      : { explicitAdminIds: [issuerPortalId] }),
     resourceType: payload.paymentId ? "payment" : "invoice",
     resourceId: payload.paymentId ?? invoice.id,
     link: "/admin?tab=service-operations",
