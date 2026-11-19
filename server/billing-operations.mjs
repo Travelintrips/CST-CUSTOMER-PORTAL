@@ -5,6 +5,7 @@ import {
   invoiceReviewSnapshotRequired,readInvoiceOwnerReviewSnapshot,invoiceOwnerReviewDigest,
 } from "./dev-invoice-owner-review-snapshot.mjs";
 import {assertInvoiceReviewChallengeMatchesSource} from "./dev-bizportal-invoice-attestation.mjs";
+import {lockInvoiceTaxSourceRows} from "./dev-invoice-tax-source-rowlock.mjs";
 
 import { requireDirectCompanyInvoiceWriterSession } from "./dev-customer-invoice-writer-session-guard.mjs";
 import {
@@ -847,6 +848,9 @@ export async function handleAdminInvoices({ request, response, user, sendJson, s
       // The company's admin assignment is checked even when an Owner signed.
       await requireCanonicalSalesInvoiceIssuer(db, user, Number(row.company_id));
       if(invoiceReviewSnapshotRequired()){
+        // Lock company tax settings and the exact accounting tax row in the
+        // SAME Invoice transaction. Concurrent editors wait until COMMIT.
+        await lockInvoiceTaxSourceRows(db,Number(row.company_id),Number(row.id));
         // Re-read persisted customer/tax/total under the SAME company RLS
         // transaction AFTER row FOR UPDATE; reject any post-consent changes
         // before mutating Sales Invoice, GL, AR, PPN or audit.
