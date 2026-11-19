@@ -86,6 +86,24 @@ describe("portal notification contract", () => {
     expect(records.every((record) => record.payload.resourceType === "invoice")).toBe(true);
   });
 
+  it("sends an issued Invoice only to the authorized Portal issuer without scanning all admins", async () => {
+    const { db, records, calls } = fakeDb({ admins: [101, 102, 103] });
+    const result = await notifyAdmins(db, {
+      explicitAdminIds: [101, 101],
+      eventKey: "sales-invoice:201:invoiced",
+      type: "sales_invoice_issued",
+      title: "Invoice diterbitkan",
+      message: "Invoice 201 diterbitkan.",
+      resourceType: "invoice",
+      resourceId: 201,
+      payload: { invoiceId: 201 },
+    });
+    expect(result).toBe(true);
+    expect(records.map((r) => r.recipientId)).toEqual([101]);
+    expect(records[0].payload).toMatchObject({ audience: "admin", invoiceId: 201 });
+    expect(calls.some((sql) => sql.includes("from public.portal_customers"))).toBe(false);
+  });
+
   it("fails closed when notification storage/provider fails without throwing", async () => {
     const { db, calls } = fakeDb({ failInsert: true });
 

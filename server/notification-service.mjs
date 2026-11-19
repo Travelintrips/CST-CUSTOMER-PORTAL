@@ -124,16 +124,23 @@ export async function notifyAdmins(db, {
   resourceId,
   link = "/admin?tab=service-operations",
   payload = {},
+  explicitAdminIds = undefined,
 }) {
   return bestEffortNotificationWrite(db, async () => {
-    const admins = await db(
-      `select id
-         from public.portal_customers
-        where role = 'admin'
-          and coalesce(account_status, 'active') = 'active'`,
-    );
+    // Invoice issuance runs under a tightly scoped company writer. A
+    // previously authorized issuer may notify only their own Portal Admin
+    // inbox. Never discover and disclose this company's Invoice to every
+    // Portal Admin. All existing non-Invoice callers retain legacy behavior.
+    const recipientIds = Array.isArray(explicitAdminIds)
+      ? explicitAdminIds
+      : (await db(
+          `select id
+             from public.portal_customers
+            where role = 'admin'
+              and coalesce(account_status, 'active') = 'active'`,
+        )).rows.map((row) => row.id);
     return insertNotifications(db, {
-      recipientIds: admins.rows.map((row) => row.id),
+      recipientIds,
       eventKey,
       type,
       title,
