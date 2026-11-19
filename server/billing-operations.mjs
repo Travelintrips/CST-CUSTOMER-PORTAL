@@ -520,44 +520,6 @@ async function requirePostedCustomerArEvidence(db, invoice) {
   }
 }
 
-/** Reuse PR214's existing independently reviewed Portal company authority.
- * The same transaction locks membership, approval, reviewer, issuer through
- * the Accounting COMMIT; self-selected membership alone is not permission. */
-async function requireApprovedPortalInvoiceCompany(db, portalUser, companyId) {
-  if (portalUser?.role !== "admin" || ![1, 3].includes(companyId)
-      || !(await accessibleCompanyIds(portalUser, db)).includes(companyId)) {
-    fail(403, "Admin Portal tidak memiliki penugasan perusahaan untuk menerbitkan Invoice.");
-  }
-  const authorization = await db(
-    `select 1 as approved
-       from public.portal_company_requests approval
-       join public.portal_company_members member
-         on member.portal_customer_id=approval.portal_customer_id
-        and member.company_id=approval.matched_company_id
-        and member.is_active=true
-       join public.portal_customers reviewer
-         on reviewer.id=approval.reviewed_by
-        and reviewer.role='admin'
-        and (reviewer.account_status='active' or reviewer.account_status is null)
-       join public.portal_customers issuer
-         on issuer.id=approval.portal_customer_id
-        and issuer.role='admin'
-        and (issuer.account_status='active' or issuer.account_status is null)
-      where approval.portal_customer_id=$1
-        and approval.matched_company_id=$2
-        and approval.status='approved'
-        and approval.reviewed_by is not null
-        and approval.reviewed_by<>$1
-        and approval.reviewed_at is not null
-      limit 1
-      for share of member, approval, reviewer, issuer`,
-    [portalUser.id, companyId],
-  );
-  if (authorization.rows.length !== 1) {
-    fail(403, "Penugasan perusahaan belum memiliki persetujuan Admin independen.");
-  }
-}
-
 // This is a transaction-bound integration seam to the EXISTING Accounting owner,
 // not a journal writer. OFF by default. The owner must be passed by trusted
 // server code, never taken from the HTTP request, and must use the exact same
@@ -826,9 +788,11 @@ export async function handleAdminInvoices({ request, response, user, sendJson, s
           process.env.CUSTOMER_PORTAL_REQUIRE_POSTED_AR_EVIDENCE_DEV !== "true") {
         fail(503, "Jalur posting Invoice atomik belum diaktifkan secara aman.");
       }
-      // PR214: lock independently approved Portal company affiliation on
-      // this SAME company-selected transaction before checking BizPortal proof.
-      await requireApprovedPortalInvoiceCompany(db, user, Number(row.company_id));
+      // One approval: the canonical active Owner/Super Admin signed OTP proof.
+      // The company is bound by the database-owned Invoice, dedicated
+      // CURRENT_USER=SESSION_USER RLS session, and the Super Admin's own
+      // company_id (null for a global Owner). No second Portal Admin,
+      // self-requested affiliation or independent reviewer is required.
       canonicalActorId = await requireCanonicalSalesInvoiceOwner(
         db, user, Number(row.company_id),
       );
