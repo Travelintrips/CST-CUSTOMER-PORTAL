@@ -57,6 +57,11 @@ import {
   mintPortalInvoiceChallenge, isDualSuperAdminProofRequired,
   verifyIndependentBizPortalSuperAdminProof,
 } from "./dev-bizportal-invoice-attestation.mjs";
+import {
+  isInvoiceOwnerHandoffEnabled, createInvoiceOwnerHandoff,
+  submitInvoiceOwnerHandoff, takeInvoiceOwnerHandoff,
+  isTrustedInvoiceOwnerHandoffPost,
+} from "./dev-invoice-owner-handoff.mjs";
 import { handleFreightRoute } from "./freight-operations.mjs";
 import { handleGoogleMapsRoute } from "./google-maps-service.mjs";
 import {
@@ -259,6 +264,11 @@ function corsHeaders(request) {
 
 function enforceRequestPolicy(request) {
   const origin = request.headers.origin;
+  // One narrowly-scoped signed-OTP handoff from the Owner's BizPortal
+  // device. This is never an Invoice issuance route or a cookie-authenticated
+  // mutation. All other cross-site requests keep the original restrictions.
+  const crossDeviceHandoff=isTrustedInvoiceOwnerHandoffPost(request);
+  if (crossDeviceHandoff) return;
   if (origin && !isAllowedOrigin(request, origin)) {
     const error = new Error("Origin is not allowed.");
     error.statusCode = 403;
@@ -4767,6 +4777,90 @@ async function route(request, response) {
       return;
     }
     sendJson(response, 200, {required:true,bizportalOrigin});
+    return;
+  }
+  // Source-only, opt-in DEV Owner handoff. A separate authenticated BizPortal
+  // browser submits the independent signed proof, but only the ORIGINAL Portal
+  // issuer may claim it and invoke the unchanged Invoice handler.
+  const handoffReceiveMatch = pathname.match(/^\/api\/portal\/dev\/invoice-owner-handoff\/([A-Za-z0-9_-]{43})$/);
+  if (handoffReceiveMatch && request.method === "POST") {
+    if (!isTrustedInvoiceOwnerHandoffPost(request)) {
+      sendError(response, 403, "Handoff OTP tidak diizinkan.");
+      return;
+    }
+    const bytes = await readRawBody(request, 2300);
+    const fields = new URLSearchParams(bytes?.toString("utf8") ?? "");
+    if ([...fields.keys()].length !== 1 || !fields.has("proof")) {
+      sendError(response, 400, "Bukti persetujuan tidak valid.");
+      return;
+    }
+    submitInvoiceOwnerHandoff({
+      ticket:handoffReceiveMatch[1],proof:fields.get("proof"),
+      verify:verifyIndependentBizPortalSuperAdminProof,
+    });
+    response.writeHead(200,{
+      "Content-Type":"text/html; charset=utf-8",
+      "Cache-Control":"no-store","Referrer-Policy":"no-referrer",
+      "Content-Security-Policy":"default-src 'none'; frame-ancestors 'none'; base-uri 'none'",
+      "X-Frame-Options":"DENY",
+    });
+    response.end("<!doctype html><html lang=\"id\"><meta charset=\"utf-8\"><title>Persetujuan terkirim</title><body>Persetujuan Owner berhasil dikirim. Admin penerbit masih harus menerbitkan Invoice melalui akun Portal miliknya.</body></html>");
+    return;
+  }
+  const adminInvoiceHandoffStart = pathname.match(/^\/api\/portal\/admin\/invoices\/(\d+)\/owner-handoff$/);
+  if (adminInvoiceHandoffStart && request.method === "POST") {
+    const user = await requireAdmin(request,response);
+    if (!user) return;
+    if (!isInvoiceOwnerHandoffEnabled()) {sendError(response,404,"Endpoint tidak tersedia.");return;}
+    const invoiceId=Number(adminInvoiceHandoffStart[1]);
+    if (!Number.isSafeInteger(invoiceId) || invoiceId<=0) {
+      sendError(response,400,"Invoice tidak valid.");return;
+    }
+    const result=await query(
+      `select id,company_id from public.sales_documents
+        where id=$1 and company_id in (1,3)
+          and invoice_status in ('to_invoice','invoiced') limit 2`,
+      [invoiceId],
+    );
+    if(result.rows.length!==1){sendError(response,404,"Invoice tidak ditemukan.");return;}
+    const companyId=Number(result.rows[0].company_id);
+    // Read-only preflight prevents an ordinary/unassigned Portal Admin from
+    // prompting an Owner to authorize an Invoice they cannot lawfully issue.
+    // Final issuance STILL rechecks both identities under company RLS + locks.
+    const scopedIssuer=await query(
+      `select id from public.users
+        where lower(trim(email))=lower(trim($1))
+          and is_active is true and status='active'
+          and (
+            (role='admin' and company_id=$2)
+            or (role='super_admin' and system_role='super_admin'
+                and (company_id is null or company_id=$2))
+          )
+        limit 2`,
+      [user.email,companyId],
+    );
+    if (scopedIssuer.rows.length!==1) {
+      sendError(response,403,"Admin penerbit belum memiliki penugasan perusahaan yang sah.");
+      return;
+    }
+    const challenge=mintPortalInvoiceChallenge({portalUser:user,invoiceId,companyId});
+    const handoff=createInvoiceOwnerHandoff({
+      issuer:user,invoiceId,companyId,challenge,
+      bizportalOrigin:process.env.CUSTOMER_PORTAL_BIZPORTAL_AUTH_ORIGIN_DEV,
+    });
+    sendJson(response,200,handoff);
+    return;
+  }
+  const adminInvoiceHandoffTake = pathname.match(/^\/api\/portal\/admin\/invoices\/(\d+)\/owner-handoff\/([A-Za-z0-9_-]{43})$/);
+  if (adminInvoiceHandoffTake && request.method === "GET") {
+    const user = await requireAdmin(request,response);
+    if(!user)return;
+    if(!isInvoiceOwnerHandoffEnabled()){sendError(response,404,"Endpoint tidak tersedia.");return;}
+    const result=takeInvoiceOwnerHandoff({
+      ticket:adminInvoiceHandoffTake[2],issuer:user,
+      invoiceId:Number(adminInvoiceHandoffTake[1]),
+    });
+    sendJson(response,200,result);
     return;
   }
   const adminInvoiceChallengeMatch = pathname.match(/^\/api\/portal\/admin\/invoices\/(\d+)\/accounting-challenge$/);
