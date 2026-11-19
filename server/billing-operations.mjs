@@ -1000,6 +1000,71 @@ async function authorizedAdminPaymentCompanies(db,user) {
   fail(403,"Admin tidak memiliki penugasan perusahaan Invoice yang aktif.");
 }
 
+// Financial DEV gate: a payment state or replay is not proof that the
+// original posted Invoice/AR still agrees. Recheck the original reviewed
+// source evidence and AR projection inside the SAME transaction, after
+// flushing its existing deferred constraint triggers. Never write a new
+// cash, bank or AR journal here; original Accounting remains the owner.
+async function requirePostedPaymentArConsistency(db,invoice) {
+  if(process.env.CUSTOMER_PORTAL_ATOMIC_ACCOUNTING_POST_DEV!=="true" ||
+     process.env.CUSTOMER_PORTAL_REQUIRE_POSTED_AR_EVIDENCE_DEV!=="true")return;
+  if(process.env.APP_ENV?.trim().toLowerCase()!=="development")
+    fail(503,"Verifikasi Payment dan AR tersedia hanya pada DEV.");
+  const companyId=Number(invoice?.company_id),invoiceId=Number(invoice?.id);
+  if(![1,3].includes(companyId) ||
+     !Number.isSafeInteger(invoiceId) || invoiceId<=0 ||
+     invoice?.invoice_status!=="invoiced" ||
+     !invoice?.invoice_number?.trim())
+    fail(422,"Identitas Invoice untuk pencocokan Payment/AR tidak lengkap.");
+  // The original reviewed AR projection is a deferred CONSTRAINT TRIGGER.
+  // Fail the parent transaction rather than acknowledging a paid status
+  // whose AR has not been projected and validated yet.
+  await db("set constraints customer_ar_journal_source_dev, "+
+           "customer_ar_journal_lines_dev, customer_ar_sales_source_dev immediate");
+  const sums=await db(
+    `select coalesce(sum(amount) filter (where status='paid'),0) as paid
+       from public.payments
+      where ref_kind='sales' and ref_id=$1`,
+    [invoiceId],
+  );
+  const evidence=await db(
+    `select invoice_id from public.bizportal_customer_ar_source_evidence_dev
+      where company_id=$1 and invoice_id=$2 limit 2`,
+    [companyId,invoiceId],
+  );
+  const arResult=await db(
+    `select a.gl_entry_id,a.gross_amount,a.paid_amount,a.outstanding_amount
+       from public.ar_subledger a
+       join public.accounting_entries e
+         on e.id=a.gl_entry_id and e.company_id=a.company_id
+        and e.source='sales_invoice' and e.source_id=a.invoice_id
+        and e.status='posted' and not e.is_voided and not e.is_reversed
+      where a.company_id=$1 and a.invoice_id=$2
+        and a.invoice_number=$3
+        and a.notes='bizportal:customer-ar-source:v1'
+        and a.status <> 'STALE'
+      limit 2`,
+    [companyId,invoiceId,invoice.invoice_number],
+  );
+  const cents=(v)=>Math.round(Number(v)*100);
+  const gross=cents(invoice.grand_total),paid=cents(invoice.amount_paid);
+  const sumPaid=cents(sums.rows[0]?.paid);
+  const ar=arResult.rows[0];
+  const expectedStatus=paid===gross?"paid":paid>0?"partial":"unpaid";
+  if(sums.rows.length!==1 || evidence.rows.length!==1 ||
+     Number(evidence.rows[0]?.invoice_id)!==invoiceId ||
+     arResult.rows.length!==1 || !ar?.gl_entry_id ||
+     !Number.isFinite(gross) || gross<=0 ||
+     !Number.isFinite(paid) || paid<0 || paid>gross ||
+     !Number.isFinite(sumPaid) || sumPaid!==paid ||
+     invoice.payment_status!==expectedStatus ||
+     cents(ar.gross_amount)!==gross ||
+     cents(ar.paid_amount)!==paid ||
+     cents(ar.outstanding_amount)!==gross-paid) {
+    fail(422,"Status Payment tidak cocok dengan jurnal sumber dan AR. Transaksi dibatalkan.");
+  }
+}
+
 export async function handleAdminPayments({ request, response, user, sendJson, sendError, paymentId = null }) {
   if (request.method === "GET" && paymentId == null) {
     const items=await withTransaction(async(db)=>{
@@ -1063,9 +1128,10 @@ export async function handleAdminPayments({ request, response, user, sendJson, s
     if(invoice.invoice_status!=='invoiced')
       fail(409,"Payment hanya dapat diproses untuk Invoice yang sudah diterbitkan.");
     // Replay must be checked AFTER authorization, even if already paid.
-    if(payment.status===nextStatus) return {
-      payment:mapPayment(payment),invoice:null,replayed:true,
-    };
+    if(payment.status===nextStatus) {
+      await requirePostedPaymentArConsistency(db,invoice);
+      return {payment:mapPayment(payment),invoice:null,replayed:true};
+    }
     if(payment.status==='paid' && nextStatus!=='paid')
       fail(409,"Payment paid tidak dapat dibatalkan melalui portal.");
     if(!PAYMENT_TRANSITIONS[payment.status]?.has(nextStatus))
@@ -1136,6 +1202,7 @@ export async function handleAdminPayments({ request, response, user, sendJson, s
         message: `Payment ${payment.id} untuk invoice ${invoice.invoice_number ?? invoice.doc_number} berstatus ${nextStatus}.`,
         payload: { paymentId: payment.id, paymentStatus: nextStatus, amountPaid },
       });
+    await requirePostedPaymentArConsistency(db,updatedInvoice);
     return {
       payment: mapPayment(updatedPayment.rows[0]),
       invoice: mapInvoice(updatedInvoice),

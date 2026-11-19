@@ -1,6 +1,6 @@
 // @ts-nocheck — isolated original Portal handler security regression.
 // No DB credentials/production sessions; all SQL statements are mocked.
-import {beforeEach,describe,expect,it,vi} from "vitest";
+import {afterEach,beforeEach,describe,expect,it,vi} from "vitest";
 
 const m=vi.hoisted(()=>({
   connect:vi.fn(),query:vi.fn(),sendJson:vi.fn(),notifyAdmins:vi.fn(),
@@ -48,7 +48,10 @@ function setup(overrides={}) {
     companyId:1,actorRole:"super_admin",actorCompanyId:null,
     systemRole:"super_admin",membership:[55],principalCount:1,
     status:"pending",invoiceStatus:"invoiced",paymentCompanyId:1,
-    paymentAmount:"40.00",paidAmount:"0.00",...overrides,
+    paymentAmount:"40.00",paidAmount:"0.00",
+    sourceEvidence:true,arExists:true,arPaidOverride:null,arGrossOverride:null,
+    arOutstandingOverride:null,paidSumOverride:null,postedGl:true,
+    ...overrides,
   };
   m.state=f;m.sql=[];m.commits=0;m.rollbacks=0;
   m.notifyAdmins.mockReset().mockResolvedValue(true);
@@ -58,6 +61,8 @@ function setup(overrides={}) {
     if(sql==="begin")return {rows:[]};
     if(sql==="commit"){m.commits++;return {rows:[]}}
     if(sql==="rollback"){m.rollbacks++;return {rows:[]}}
+    if(sql.startsWith("set constraints customer_ar_journal_source_dev"))
+      return {rows:[]};
     if(sql.includes("from public.portal_customers pc") && sql.includes("join public.users u")){
       return {rows:Array.from({length:f.principalCount},(_,n)=>({
         id:"qa-bizportal-user-"+n,role:f.actorRole,
@@ -71,7 +76,9 @@ function setup(overrides={}) {
         amount:f.paymentAmount,status:f.status}]};
     if(sql.includes("from public.sales_documents") && sql.includes("for update"))
       return {rows:[{...invoice(f.companyId),
-        invoice_status:f.invoiceStatus,amount_paid:f.paidAmount}]};
+        invoice_status:f.invoiceStatus,amount_paid:f.paidAmount,
+        payment_status:Number(f.paidAmount)>=111?"paid":
+          Number(f.paidAmount)>0?"partial":"unpaid"}]};
     if(sql.includes("from public.payments p") && sql.includes("join public.sales_documents s")){
       const allowed=params[0]??[];
       return {rows:[1,3].filter(c=>allowed.includes(c)).map(c=>({
@@ -84,8 +91,23 @@ function setup(overrides={}) {
       f.status=params[1];
       return {rows:[{...payment(f.paymentCompanyId),status:f.status}]};
     }
-    if(sql.includes("coalesce(sum(amount) filter"))
+    if(sql.includes("coalesce(sum(amount) filter")){
+      if(sql.includes("as paid"))return {rows:[{paid:f.paidSumOverride??f.paidAmount}]};
       return {rows:[{amount_paid:f.paymentAmount}]};
+    }
+    if(sql.includes("from public.bizportal_customer_ar_source_evidence_dev"))
+      return {rows:f.sourceEvidence?[{invoice_id:201}]:[]};
+    if(sql.includes("from public.ar_subledger a") &&
+       sql.includes("join public.accounting_entries e")) {
+      if(!f.arExists)return {rows:[]};
+      const paid=f.arPaidOverride??f.paidAmount;
+      return {rows:[{
+        gl_entry_id:f.postedGl?900:null,
+        gross_amount:f.arGrossOverride??"111.00",
+        paid_amount:paid,
+        outstanding_amount:f.arOutstandingOverride??String(111-Number(paid)),
+      }]};
+    }
     if(sql.startsWith("update public.sales_documents")){
       f.paidAmount=String(params[1]);
       return {rows:[],rowCount:1};
@@ -125,6 +147,7 @@ async function list(requestUser=user()){
 
 describe("admin Invoice payment authorization: current company and identity",()=>{
   beforeEach(()=>setup());
+  afterEach(()=>vi.unstubAllEnvs());
 
   it.each([1,3])("allows active canonical global Owner on company %i without second OTP",async company=>{
     setup({companyId:company,paymentCompanyId:company});
@@ -191,6 +214,72 @@ describe("admin Invoice payment authorization: current company and identity",()=
     setup({status:"paid"});
     await expect(act({...user(),role:"customer"})).rejects.toMatchObject({statusCode:403});
     expect(updates()).toHaveLength(0);
+  });
+
+  const signedArDevMode=()=>{
+    vi.stubEnv("APP_ENV","development");
+    vi.stubEnv("CUSTOMER_PORTAL_ATOMIC_ACCOUNTING_POST_DEV","true");
+    vi.stubEnv("CUSTOMER_PORTAL_REQUIRE_POSTED_AR_EVIDENCE_DEV","true");
+  };
+  it("flushes deferred AR trigger and verifies original GL/PPN-source before marking paid",async()=>{
+    signedArDevMode();
+    setup();
+    const [_,code,response]=await act();
+    expect(code).toBe(200);
+    expect(response.payment.status).toBe("paid");
+    const flush=m.sql.findIndex(x=>x.sql.startsWith("set constraints"));
+    const evidence=m.sql.findIndex(x=>x.sql.includes("from public.bizportal_customer_ar_source_evidence_dev"));
+    const ar=m.sql.findIndex(x=>x.sql.includes("from public.ar_subledger a"));
+    const commit=m.sql.findIndex(x=>x.sql==="commit");
+    expect(flush).toBeGreaterThan(0);
+    expect(evidence).toBeGreaterThan(flush);
+    expect(ar).toBeGreaterThan(evidence);
+    expect(commit).toBeGreaterThan(ar);
+  });
+  it("rejects an already-paid replay when original AR is missing",async()=>{
+    signedArDevMode();
+    setup({status:"paid",paidAmount:"40.00",arExists:false});
+    await expect(act()).rejects.toMatchObject({statusCode:422});
+    expect(m.commits).toBe(0);
+    expect(m.rollbacks).toBe(1);
+    expect(updates()).toHaveLength(0);
+  });
+  it("rejects paid replay when total paid payments differs from original Invoice",async()=>{
+    signedArDevMode();
+    setup({status:"paid",paidAmount:"40.00",paidSumOverride:"0.00"});
+    await expect(act()).rejects.toMatchObject({statusCode:422});
+    expect(m.commits).toBe(0);
+    expect(updates()).toHaveLength(0);
+  });
+  it.each([
+    ["stale AR after status update",{arPaidOverride:"0.00"}],
+    ["incorrect AR outstanding",{arOutstandingOverride:"111.00"}],
+    ["missing canonical posted journal",{postedGl:false}],
+    ["missing original accounting source evidence",{sourceEvidence:false}],
+  ])("rolls back payment status when %s",async(_case,overrides)=>{
+    signedArDevMode();
+    setup(overrides);
+    await expect(act()).rejects.toMatchObject({statusCode:422});
+    expect(m.commits).toBe(0);
+    expect(m.rollbacks).toBe(1);
+  });
+  it("checks authorized paid replay against original posted AR without double-mutating",async()=>{
+    signedArDevMode();
+    setup({status:"paid",paidAmount:"40.00"});
+    const [_,code,result]=await act();
+    expect(code).toBe(200);
+    expect(result.replayed).toBe(true);
+    expect(m.sql.some(x=>x.sql.includes("from public.ar_subledger a"))).toBe(true);
+    expect(updates()).toHaveLength(0);
+    expect(m.commits).toBe(1);
+  });
+  it("financial DEV gate fails closed if an operator enables it in production",async()=>{
+    signedArDevMode();
+    vi.stubEnv("APP_ENV","production");
+    setup();
+    await expect(act()).rejects.toMatchObject({statusCode:503});
+    expect(m.commits).toBe(0);
+    expect(m.rollbacks).toBe(1);
   });
 
   it("filters Admin payment list to canonical company scope",async()=>{
