@@ -248,12 +248,17 @@ async function notifyInvoiceAdmins(db, invoice, {
   title,
   message,
   payload = {},
+  issuerPortalId = null,
 }) {
   return notifyAdmins(db, {
     eventKey,
     type,
     title,
     message,
+    // Only the already RLS-authorized issuer's inbox receives an issued
+    // Invoice notification. For existing payment flows preserve the
+    // unchanged default behavior until their recipient policy is reviewed.
+    ...(issuerPortalId == null ? {} : { explicitAdminIds: [issuerPortalId] }),
     resourceType: payload.paymentId ? "payment" : "invoice",
     resourceId: payload.paymentId ?? invoice.id,
     link: "/admin?tab=service-operations",
@@ -942,6 +947,7 @@ export async function handleAdminInvoices({ request, response, user, sendJson, s
       payload: { invoiceStatus: "invoiced" },
     });
       await notifyInvoiceAdmins(db, updated.rows[0], {
+        issuerPortalId: user.id,
         eventKey: `sales-invoice:${row.id}:invoiced`,
         type: "sales_invoice_issued",
         title: "Invoice diterbitkan",
