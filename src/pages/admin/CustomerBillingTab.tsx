@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { CheckCircle2, FileCheck2, Loader2, RefreshCw } from "lucide-react";
 import { getAuthHeaders } from "@/lib/auth";
-import { requestBizPortalInvoiceProof } from "@/lib/bizportal-invoice-proof";
+import { requestBizPortalInvoiceProof, requestRemoteBizPortalInvoiceProof } from "@/lib/bizportal-invoice-proof";
 
 type Invoice = {
   id: number;
@@ -57,6 +57,7 @@ export function CustomerBillingTab({ initialView = "all" }: { initialView?: "all
   const [payments, setPayments] = useState<Payment[]>([]);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState<number | null>(null);
+  const [remoteApproval, setRemoteApproval] = useState<{invoiceId:number,url:string}|null>(null);
   const [error, setError] = useState("");
 
   const load = useCallback(async () => {
@@ -83,13 +84,16 @@ export function CustomerBillingTab({ initialView = "all" }: { initialView?: "all
 
   useEffect(() => { void load(); }, [load]);
 
-  async function issueInvoice(id: number) {
+  async function issueInvoice(id: number, remoteOwner = false) {
     setBusy(id);
     try {
       // The default-OFF UI and existing Invoice action remain unchanged.
       // Only a separately enabled DEV build invokes the BizPortal popup.
       const externalAuth = import.meta.env.VITE_CUSTOMER_PORTAL_BIZPORTAL_ATTEST_DEV === "true"
-        ? await requestBizPortalInvoiceProof(id, getAuthHeaders())
+        ? remoteOwner
+          ? await requestRemoteBizPortalInvoiceProof(id,getAuthHeaders(),url=>
+              setRemoteApproval(url?{invoiceId:id,url}:null))
+          : await requestBizPortalInvoiceProof(id, getAuthHeaders())
         : {};
       const response = await fetch(`/api/portal/admin/invoices/${id}/action`, {
         method: "POST",
@@ -103,6 +107,7 @@ export function CustomerBillingTab({ initialView = "all" }: { initialView?: "all
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Gagal menerbitkan invoice");
     } finally {
+      setRemoteApproval(null);
       setBusy(null);
     }
   }
@@ -160,6 +165,28 @@ export function CustomerBillingTab({ initialView = "all" }: { initialView?: "all
                       Sisa {money(invoice.outstanding)} · {statusLabel[invoice.invoiceStatus] ?? invoice.invoiceStatus} · {statusLabel[invoice.paymentStatus] ?? invoice.paymentStatus}
                     </p>
                   </div>
+                  {remoteApproval?.invoiceId===invoice.id && (
+                    <div className="w-full rounded-lg border border-sky-200 bg-sky-50 p-3 text-sm">
+                      <p className="font-medium text-slate-900">Menunggu satu persetujuan Owner/Super Admin</p>
+                      <p className="mt-1 text-slate-600">Salin tautan ini lalu kirim kepada Owner. Owner membuka tautan pada HP atau komputer sendiri dan menyetujui melalui sesi OTP BizPortal.</p>
+                      <input aria-label="Tautan persetujuan Owner" readOnly value={remoteApproval.url}
+                        className="mt-2 w-full rounded border bg-white p-2 text-xs text-slate-800" onFocus={e=>e.currentTarget.select()}/>
+                      <button type="button" className="mt-2 rounded border border-sky-500 px-3 py-2 text-sky-700"
+                        onClick={()=>void navigator.clipboard?.writeText(remoteApproval.url)}>
+                        Salin tautan
+                      </button>
+                      <p className="mt-1 text-xs text-slate-600">Tautan berlaku 90 detik. Invoice belum diterbitkan sampai persetujuan terverifikasi.</p>
+                    </div>
+                  )}
+                  {invoice.invoiceStatus !== "invoiced" &&
+                   import.meta.env.VITE_CUSTOMER_PORTAL_REMOTE_OWNER_OTP_DEV === "true" &&
+                   import.meta.env.VITE_CUSTOMER_PORTAL_BIZPORTAL_ATTEST_DEV === "true" && (
+                    <button type="button" disabled={busy!==null}
+                      onClick={() => void issueInvoice(invoice.id,true)}
+                      className="rounded-lg border border-sky-500 px-3 py-2 text-sm font-medium text-sky-700 hover:bg-sky-50 disabled:opacity-50">
+                      Minta persetujuan Owner (perangkat lain)
+                    </button>
+                  )}
                   {invoice.invoiceStatus !== "invoiced" && (
                     <button type="button" disabled={busy === invoice.id} onClick={() => void issueInvoice(invoice.id)}
                       className="inline-flex items-center gap-2 rounded-lg bg-sky-600 px-3 py-2 text-sm font-medium text-white hover:bg-sky-700 disabled:opacity-50">

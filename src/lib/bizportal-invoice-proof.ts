@@ -107,3 +107,49 @@ export async function requestBizPortalInvoiceProof(
     if(!popup.closed)popup.close();
   }
 }
+
+/** Optional remote Owner device; shares only a time-limited signed challenge.
+ * The independently authenticated Owner receives a one-click confirmation
+ * page on BizPortal. The Portal Admin remains the sole reader of the receipt;
+ * final issuance still re-verifies Ed25519 proof, tenant RLS and Accounting.
+ */
+export async function requestRemoteBizPortalInvoiceProof(
+  invoiceId:number,authHeaders:PortalAuthHeaders,
+  onLink:(url:string|null)=>void,
+):Promise<{bizportalInvoiceChallenge:string;bizportalInvoiceProof:string}>{
+  if(!Number.isSafeInteger(invoiceId)||invoiceId<=0)throw Error("ID Invoice tidak valid.");
+  const config=await getJson("/api/portal/admin/accounting/attestation-config",authHeaders) as ConfigResult;
+  if(config.required!==true)throw Error("Persetujuan Invoice DEV belum aktif.");
+  const origin=approvedOrigin(config.bizportalOrigin);
+  const result=await getJson(
+    "/api/portal/admin/invoices/"+invoiceId+"/accounting-challenge",authHeaders,
+  ) as ChallengeResult;
+  const challenge=result.challenge;
+  if(typeof challenge!=="string"||challenge.length<60||challenge.length>1600)
+    throw Error("Challenge Invoice tidak valid.");
+  const approvalUrl=origin+"/api/auth/dev/customer-invoice-attestation?remote=1&challenge="+
+    encodeURIComponent(challenge);
+  onLink(approvalUrl);
+  try {
+    // No websocket, background queue, new auth or long-lived credential.
+    // The remote Owner proof expires within the original 90-second challenge.
+    for(let i=0;i<45;i++){
+      await new Promise<void>(resolve=>window.setTimeout(resolve,1800));
+      const response=await fetch(
+        "/api/portal/admin/invoices/"+invoiceId+"/remote-owner-status",
+        {method:"POST",credentials:"include",cache:"no-store",
+          headers:{...authHeaders,"Content-Type":"application/json"},
+          body:JSON.stringify({challenge})},
+      );
+      const data=await response.json().catch(()=>({}));
+      if(!response.ok)
+        throw Error(data.message??"Sesi persetujuan Owner tidak valid.");
+      if(data.approved===true){
+        if(typeof data.proof!=="string"||data.proof.length<60||data.proof.length>1700)
+          throw Error("Bukti Owner/Super Admin tidak valid.");
+        return {bizportalInvoiceChallenge:challenge,bizportalInvoiceProof:data.proof};
+      }
+    }
+    throw Error("Persetujuan Owner belum diterima dalam 90 detik. Ulangi permintaan.");
+  }finally{onLink(null);}
+}

@@ -63,6 +63,23 @@ function validateContext(ctx) {
   }
 }
 
+// Canonical fixed-cent source amount; no JS floating-point rounding ambiguity.
+// Read only from a database-owned sales_documents row, never from HTTP body.
+function invoiceSnapshot(ctx) {
+  const v=ctx?.invoiceSnapshot;
+  if(!v)return null;
+  const documentNumber=v.documentNumber;
+  const raw=String(v.grandTotal??"").trim();
+  if(typeof documentNumber!=="string" || documentNumber.length<1 ||
+     documentNumber.length>90 || !/^[a-zA-Z0-9_./-]+$/.test(documentNumber) ||
+     !/^[0-9]{1,12}(?:\.[0-9]{1,2})?$/.test(raw)) {
+    throw Error("DEV_INVOICE_SNAPSHOT_INVALID");
+  }
+  const [whole,fraction=""]=raw.split(".");
+  return {documentNumber,amountCents:
+    (BigInt(whole)*100n+BigInt((fraction+"00").slice(0,2))).toString()};
+}
+
 /** Only server-generated for a signed, DB-checked Portal admin and real Invoice. */
 export function mintPortalInvoiceChallenge(ctx) {
   if(!isDualSuperAdminProofRequired())throw Error("DEV_PORTAL_ATTESTATION_NOT_ENABLED");
@@ -74,6 +91,8 @@ export function mintPortalInvoiceChallenge(ctx) {
     portalUserId:Number(ctx.portalUser.id),portalEmail:emailOf(ctx.portalUser),
     iat:now,exp:now+TTL,nonce:randomBytes(16).toString("hex"),
   };
+  const snapshot=invoiceSnapshot(ctx);
+  if(snapshot)Object.assign(claims,snapshot);
   const body=Buffer.from(JSON.stringify(claims)).toString("base64url");
   const signature=createHmac("sha256",portalKey())
     .update(CHALLENGE_DOMAIN+body).digest("base64url");
@@ -93,7 +112,38 @@ function verifyChallenge(challenge,ctx) {
     c.portalEmail===emailOf(ctx.portalUser)&&
     typeof c.nonce==="string"&&/^[a-f0-9]{32}$/.test(c.nonce)&&
     Number.isSafeInteger(c.iat)&&Number.isSafeInteger(c.exp)&&
-    c.iat<=now+5000&&c.exp>now&&c.exp-c.iat===TTL;
+    c.iat<=now+5000&&c.exp>now&&c.exp-c.iat===TTL&&
+    (!(c.documentNumber!=null||c.amountCents!=null) ||
+      (typeof c.documentNumber==="string" &&
+       /^[a-zA-Z0-9_./-]{1,90}$/.test(c.documentNumber) &&
+       typeof c.amountCents==="string" && /^[0-9]{1,15}$/.test(c.amountCents) &&
+       (!ctx.invoiceSnapshot || (() => {
+         try {
+           const snapshot=invoiceSnapshot(ctx);
+           return snapshot.documentNumber===c.documentNumber &&
+             snapshot.amountCents===c.amountCents;
+         } catch {return false;}
+       })())));
+}
+
+// Enables the network-received proof to be checked without trusting an
+// unauthenticated HTTP caller for issuer identity or tenant. The challenge
+// itself must be authenticated by the original Portal HMAC, not just decoded.
+export function inspectSignedPortalInvoiceChallenge(challenge) {
+  const token=strictDecode(challenge,1600);
+  if(!token)return null;
+  const c=token.claims;
+  if(!Number.isSafeInteger(c.portalUserId) || c.portalUserId<1 ||
+     typeof c.portalEmail!=="string" ||
+     c.portalEmail!==c.portalEmail.trim().toLowerCase() ||
+     !Number.isSafeInteger(c.invoiceId) || c.invoiceId<1 ||
+     ![1,3].includes(c.companyId)) return null;
+  const portalUser={id:c.portalUserId,email:c.portalEmail,role:"admin"};
+  try {
+    if(!verifyChallenge(challenge,{portalUser,invoiceId:c.invoiceId,companyId:c.companyId}))return null;
+  }catch{return null;}
+  return {portalUser,invoiceId:c.invoiceId,companyId:c.companyId,expiresAt:c.exp,
+    documentNumber:c.documentNumber??null,amountCents:c.amountCents??null};
 }
 
 function verifierKey() {
@@ -110,12 +160,12 @@ function verifierKey() {
  * Verify both app sessions and exact source/tenant/nonce binding.
  */
 export function verifyIndependentBizPortalSuperAdminProof({
-  challenge,proof,portalUser,invoiceId,companyId,canonicalActorId,
+  challenge,proof,portalUser,invoiceId,companyId,canonicalActorId,invoiceSnapshot,
 }) {
   if(!isDualSuperAdminProofRequired() ||
       process.env.CUSTOMER_PORTAL_REQUIRE_BIZPORTAL_ATTEST_DEV!=="true")
     throw Error("DEV_BIZPORTAL_ATTESTATION_NOT_ENABLED");
-  const ctx={portalUser,invoiceId,companyId};
+  const ctx={portalUser,invoiceId,companyId,invoiceSnapshot};
   validateContext(ctx);
   if(!verifyChallenge(challenge,ctx))return false;
   const token=strictDecode(proof,1700);

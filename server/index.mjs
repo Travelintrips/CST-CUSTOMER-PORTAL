@@ -54,6 +54,11 @@ import {
 } from "./billing-operations.mjs";
 import { loadDevOriginalAccountingOwner } from "./dev-original-accounting-owner-loader.mjs";
 import {
+  isDevRemoteInvoiceOwnerEnabled,
+  receiveDevRemoteOwnerProof,
+  readDevRemoteOwnerProof,
+} from "./dev-invoice-owner-receipt.mjs";
+import {
   mintPortalInvoiceChallenge, isDualSuperAdminProofRequired,
   verifyIndependentBizPortalSuperAdminProof,
 } from "./dev-bizportal-invoice-attestation.mjs";
@@ -4769,6 +4774,52 @@ async function route(request, response) {
     sendJson(response, 200, {required:true,bizportalOrigin});
     return;
   }
+  // Optional one-Owner OTP handoff from a DIFFERENT device. The BizPortal
+  // server submits only its Ed25519-signed proof through exact-origin HTTPS.
+  // No cookie/token/API key in this endpoint; invalid cryptographic evidence
+  // cannot create an approval and nothing posts Accounting automatically.
+  if (pathname === "/api/portal/dev/remote-owner-invoice/receipt" &&
+      request.method === "POST") {
+    response.setHeader("Cache-Control","no-store");
+    if (!isDevRemoteInvoiceOwnerEnabled()) {
+      sendError(response,404,"Endpoint tidak tersedia."); return;
+    }
+    const size=Number(request.headers["content-length"]??0);
+    if (!Number.isFinite(size) || size<0 || size>5000) {
+      sendError(response,413,"Bukti persetujuan terlalu besar."); return;
+    }
+    const body=await readJson(request);
+    try {
+      receiveDevRemoteOwnerProof({challenge:body?.challenge,proof:body?.proof});
+      sendJson(response,202,{accepted:true});
+    } catch {
+      sendError(response,403,"Bukti Owner/Super Admin tidak dapat diverifikasi.");
+    }
+    return;
+  }
+  // Only the authenticated Portal Admin who minted the HMAC challenge can
+  // retrieve the signed proof; it is NEVER returned to a public caller.
+  const remoteInvoiceStatusMatch=pathname.match(
+    /^\/api\/portal\/admin\/invoices\/(\d+)\/remote-owner-status$/);
+  if(remoteInvoiceStatusMatch && request.method==="POST") {
+    response.setHeader("Cache-Control","no-store");
+    const user=await requireAdmin(request,response);
+    if(!user)return;
+    if(!isDevRemoteInvoiceOwnerEnabled()) {
+      sendError(response,404,"Endpoint tidak tersedia.");return;
+    }
+    const body=await readJson(request);
+    try {
+      const status=readDevRemoteOwnerProof({
+        challenge:body?.challenge,portalUser:user,
+        invoiceId:Number(remoteInvoiceStatusMatch[1]),
+      });
+      sendJson(response,200,status);
+    }catch{
+      sendError(response,403,"Sesi permintaan persetujuan Invoice tidak sah.");
+    }
+    return;
+  }
   const adminInvoiceChallengeMatch = pathname.match(/^\/api\/portal\/admin\/invoices\/(\d+)\/accounting-challenge$/);
   if (adminInvoiceChallengeMatch && request.method === "GET") {
     const user = await requireAdmin(request, response);
@@ -4784,7 +4835,7 @@ async function route(request, response) {
       return;
     }
     const result = await query(
-      `select id, company_id from public.sales_documents
+      `select id, company_id, doc_number, grand_total from public.sales_documents
         where id=$1 and company_id in (1,3)
           and invoice_status in ('to_invoice','invoiced')
         limit 1`,
@@ -4796,6 +4847,8 @@ async function route(request, response) {
     }
     const challenge = mintPortalInvoiceChallenge({
       portalUser:user,invoiceId,companyId:Number(result.rows[0].company_id),
+      invoiceSnapshot:{documentNumber:result.rows[0].doc_number,
+        grandTotal:result.rows[0].grand_total},
     });
     sendJson(response, 200, {challenge,expiresInSeconds:90});
     return;
