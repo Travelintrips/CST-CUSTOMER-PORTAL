@@ -248,8 +248,22 @@ async function notifyInvoiceAdmins(db, invoice, {
   title,
   message,
   payload = {},
+  issuerPortalId = null,
 }) {
+  // Finance issuance must NOT notify every Portal Admin: some active Portal
+  // Admins have no canonical BizPortal company issuance authority.
+  // This applies only to the new signed-Owner atomic DEV route; preserve
+  // legacy behavior for payment and unrelated modules already in use.
+  const targeted = process.env.APP_ENV === 'development' &&
+    process.env.CUSTOMER_PORTAL_ATOMIC_ACCOUNTING_POST_DEV === 'true' &&
+    process.env.CUSTOMER_PORTAL_REQUIRE_BIZPORTAL_ATTEST_DEV === 'true' &&
+    type === 'sales_invoice_issued';
+  if (targeted && (!Number.isSafeInteger(Number(issuerPortalId)) ||
+      Number(issuerPortalId) <= 0)) {
+    fail(503, 'Penerima notifikasi Invoice belum terverifikasi.');
+  }
   return notifyAdmins(db, {
+    ...(targeted ? {recipientIds:[Number(issuerPortalId)]} : {}),
     eventKey,
     type,
     title,
@@ -947,6 +961,7 @@ export async function handleAdminInvoices({ request, response, user, sendJson, s
         title: "Invoice diterbitkan",
         message: `Invoice ${mapped.invoiceNumber} diterbitkan dan menunggu pembayaran customer.`,
         payload: { invoiceStatus: "invoiced" },
+        issuerPortalId: user.id,
       });
     return mapped;
   }, {verifyCustomerInvoiceAr: atomicRequested, connect});

@@ -124,13 +124,25 @@ export async function notifyAdmins(db, {
   resourceId,
   link = "/admin?tab=service-operations",
   payload = {},
+  recipientIds = null,
 }) {
+  // Only the signed-Owner financial issuance path passes recipientIds.
+  // Preserve existing all-admin behavior for every unrelated caller.
+  const targeted = recipientIds !== null;
+  if (targeted && (!Array.isArray(recipientIds) || recipientIds.length > 40 ||
+      recipientIds.some(id => !Number.isSafeInteger(Number(id)) || Number(id) <= 0))) {
+    return false;
+  }
+  const scopedIds = targeted ? [...new Set(recipientIds.map(Number))] : [];
+  if (targeted && scopedIds.length === 0) return false;
   return bestEffortNotificationWrite(db, async () => {
     const admins = await db(
       `select id
          from public.portal_customers
         where role = 'admin'
-          and coalesce(account_status, 'active') = 'active'`,
+          and coalesce(account_status, 'active') = 'active'
+          ${targeted ? 'and id = any($1::int[])' : ''}`,
+      targeted ? [scopedIds] : [],
     );
     return insertNotifications(db, {
       recipientIds: admins.rows.map((row) => row.id),
