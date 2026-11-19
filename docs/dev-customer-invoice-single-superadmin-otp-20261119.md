@@ -1,3 +1,8 @@
+> **CATATAN 19 Nov 2026:** Versi berikutnya mendukung Admin penerbit
+> berbeda dari Owner/Super Admin penyetuju. Lihat
+> docs/dev-invoice-separated-issuer-single-owner-20261119.md.
+> Dokumen lama di bawah adalah baseline PR #226 dan bukan aturan akhir.
+
 # Customer Invoice DEV — satu persetujuan Owner/Super Admin
 
 Keputusan bisnis: **cukup satu persetujuan Owner/Super Admin**, bukan dua

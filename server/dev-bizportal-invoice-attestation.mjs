@@ -117,15 +117,16 @@ export function verifyIndependentBizPortalSuperAdminProof({
     throw Error("DEV_BIZPORTAL_ATTESTATION_NOT_ENABLED");
   const ctx={portalUser,invoiceId,companyId};
   validateContext(ctx);
-  if(typeof canonicalActorId!=="string" || !canonicalActorId ||
-     !verifyChallenge(challenge,ctx))return false;
+  if(!verifyChallenge(challenge,ctx))return false;
   const token=strictDecode(proof,1700);
   if(!token||token.signature.length!==86)return false;
   const c=token.claims,now=Date.now();
   if(c.v!==1||c.purpose!=="cst-customer-invoice-owner"||
      c.aud!=="CST_CUSTOMER_PORTAL_DEV"||
-     c.actorId!==canonicalActorId||
-     c.email!==emailOf(portalUser)||
+     typeof c.actorId!=="string"||c.actorId.length<1||c.actorId.length>256||
+     (canonicalActorId!=null && c.actorId!==canonicalActorId)||
+     typeof c.email!=="string"||c.email.length<3||c.email.length>320||
+     c.email!==c.email.trim().toLowerCase()||!c.email.includes("@")||
      c.invoiceId!==Number(invoiceId)||
      c.companyId!==Number(companyId)||
      c.challengeDigest!==createHash("sha256").update(challenge,"utf8").digest("hex")||
@@ -133,7 +134,11 @@ export function verifyIndependentBizPortalSuperAdminProof({
      !Number.isSafeInteger(c.iat)||!Number.isSafeInteger(c.exp)||
      c.iat>now+5000||c.exp<=now||c.exp-c.iat!==60_000)return false;
   try {
-    return verify(null,Buffer.from(PROOF_DOMAIN+token.body),
-      verifierKey(),Buffer.from(token.signature,"base64url"));
+    if(!verify(null,Buffer.from(PROOF_DOMAIN+token.body),
+      verifierKey(),Buffer.from(token.signature,"base64url")))return false;
+    // These claims are now trusted because the signature, Portal challenge,
+    // tenant, Invoice and nonce/expiry were verified above. The caller MUST
+    // still lock and check the active canonical Super Admin row in PostgreSQL.
+    return {actorId:c.actorId,email:c.email};
   }catch{return false;}
 }

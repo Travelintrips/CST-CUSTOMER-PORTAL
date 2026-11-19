@@ -26,6 +26,7 @@ const m=vi.hoisted(()=>({
   verifyIndependentOwner:vi.fn(),
   glRow:null,
   bizOwner:[],
+  bizIssuer:[],
   outbox:[],
   audits:[],
   failOutbox:false,
@@ -98,15 +99,26 @@ async function sqlMock(statement,params=[]){
   if(q.includes("from public.sales_documents"))return {rows:[base()]};
   if(q.startsWith("update public.sales_documents"))return {rows:[issued()]};
   if(q.includes("from public.users")) {
-    // Emulate the WHERE clause of the canonical owner's active Super Admin
-    // lookup, ensuring inactive same-email legacy accounts never confer rights.
-    if(!q.includes("and role = 'super_admin'") ||
-        !q.includes("and system_role = 'super_admin'") ||
-        !q.includes("and status = 'active'") ||
-        !q.includes("and is_active is true"))throw Error("UNSCOPED_BIZPORTAL_OWNER_LOOKUP");
-    return {rows:m.bizOwner.filter(user=>
-      user.role==="super_admin" && user.system_role==="super_admin" &&
-      user.status==="active" && user.is_active===true).slice(0,2)};
+    if(!q.includes("for share") || !q.includes("status='active'") ||
+        !q.includes("is_active is true"))
+      throw Error("UNSCOPED_BIZPORTAL_IDENTITY_LOOKUP");
+    if(q.includes("where id=$1")) {
+      if(!q.includes("role='super_admin'") || !q.includes("system_role='super_admin'"))
+        throw Error("UNSCOPED_BIZPORTAL_APPROVER_LOOKUP");
+      return {rows:m.bizOwner.filter(row=>
+        row.id===params[0] && row.email?.toLowerCase()===params[1]?.toLowerCase() &&
+        row.role==="super_admin" && row.system_role==="super_admin" &&
+        row.status==="active" && row.is_active===true &&
+        (row.company_id==null || row.company_id===params[2])).slice(0,2)};
+    }
+    if(!q.includes("role='admin'") || !q.includes("company_id=$2"))
+      throw Error("UNSCOPED_BIZPORTAL_ISSUER_LOOKUP");
+    return {rows:m.bizIssuer.filter(row=>
+      row.email?.toLowerCase()===params[0]?.toLowerCase() &&
+      row.status==="active" && row.is_active===true &&
+      ((row.role==="admin" && row.company_id===params[1]) ||
+        (row.role==="super_admin" && row.system_role==="super_admin" &&
+          (row.company_id==null || row.company_id===params[1])))).slice(0,2)};
   }
   if(q.includes("from public.accounting_entries e")){
     return {rows: m.glRow ? [m.glRow] : []};
@@ -169,9 +181,11 @@ beforeEach(()=>{
   m.deferredConstraintFail=false;
   m.arProjection={gl_entry_id:22,gross_amount:"100.00",paid_amount:"0",outstanding_amount:"100.00"};
   m.bizOwner=[{
-    id:"qa-existing-bizportal-owner",role:"super_admin",
-    system_role:"super_admin",status:"active",is_active:true,company_id:null,
+    id:"qa-existing-bizportal-owner",email:"qa.owner@example.invalid",
+    role:"super_admin",system_role:"super_admin",status:"active",
+    is_active:true,company_id:null,
   }];
+  m.bizIssuer=[{...m.bizOwner[0]}];
   delete process.env[bridge];
   m.query.mockImplementation(sqlMock);
   m.connect.mockResolvedValue({query:m.query,release:m.release});
@@ -179,7 +193,7 @@ beforeEach(()=>{
     client:{query:m.query,release:m.release,end:m.end}, companyId:m.companyId,
   }));
   m.notifyAdmins.mockResolvedValue(undefined);
-  m.verifyIndependentOwner.mockResolvedValue(true);
+  m.verifyIndependentOwner.mockResolvedValue({actorId:"qa-existing-bizportal-owner",email:"qa.owner@example.invalid"});
   m.notifyPortalCustomers.mockResolvedValue(undefined);
   process.env.APP_ENV="development";
   process.env[flag]="true";
@@ -318,11 +332,11 @@ describe("DEV-only atomic Accounting owner integration seam",()=>{
     expect(m.sql).not.toContain("commit");
     expect(m.sendJson).not.toHaveBeenCalled();
   });
-  it("requires independently signed BizPortal proof after checking the DB owner and before posting",async()=>{
+  it("requires signed BizPortal approval and canonical Company issuer before posting",async()=>{
     await perform(m.poster);
     expect(m.verifyIndependentOwner).toHaveBeenCalledWith(expect.objectContaining({
       challenge:"qa-signed-challenge",proof:"qa-bizportal-proof",
-      companyId:1,invoiceId:101,canonicalActorId:"qa-existing-bizportal-owner",
+      companyId:1,invoiceId:101,
       portalUser:expect.objectContaining({id:1,role:"admin"}),
     }));
     expect(m.poster).toHaveBeenCalledTimes(1);
@@ -372,13 +386,13 @@ describe("DEV-only atomic Accounting owner integration seam",()=>{
   it.each([
     ["no matching canonical owner", []],
     ["multiple matched identities", [
-      {id:"a",role:"super_admin",system_role:"super_admin",status:"active",is_active:true,company_id:null},
-      {id:"b",role:"super_admin",system_role:"super_admin",status:"active",is_active:true,company_id:null},
+      {id:"a",email:"qa.owner@example.invalid",role:"super_admin",system_role:"super_admin",status:"active",is_active:true,company_id:null},
+      {id:"b",email:"qa.owner@example.invalid",role:"super_admin",system_role:"super_admin",status:"active",is_active:true,company_id:null},
     ]],
-    ["ordinary BizPortal admin", [{id:"other",role:"admin",system_role:"admin",status:"active",is_active:true,company_id:null}]],
-    ["system role not Super Admin", [{id:"other",role:"super_admin",system_role:null,status:"active",is_active:true,company_id:null}]],
-    ["suspended canonical owner", [{id:"other",role:"super_admin",system_role:"super_admin",status:"inactive",is_active:false,company_id:null}]],
-    ["wrong company", [{id:"other",role:"super_admin",system_role:"super_admin",status:"active",is_active:true,company_id:3}]],
+    ["ordinary BizPortal admin", [{id:"other",email:"qa.owner@example.invalid",role:"admin",system_role:"admin",status:"active",is_active:true,company_id:null}]],
+    ["system role not Super Admin", [{id:"other",email:"qa.owner@example.invalid",role:"super_admin",system_role:null,status:"active",is_active:true,company_id:null}]],
+    ["suspended canonical owner", [{id:"other",email:"qa.owner@example.invalid",role:"super_admin",system_role:"super_admin",status:"inactive",is_active:false,company_id:null}]],
+    ["wrong company", [{id:"other",email:"qa.owner@example.invalid",role:"super_admin",system_role:"super_admin",status:"active",is_active:true,company_id:3}]],
   ])("rejects %s before Accounting and rolls back",async(_label,matched)=>{
     m.bizOwner=matched;
     await expect(perform(m.poster)).rejects.toMatchObject({statusCode:403});
@@ -389,8 +403,8 @@ describe("DEV-only atomic Accounting owner integration seam",()=>{
   });
   it("ignores inactive legacy same-email Admin while requiring one active Super Admin and independent signed proof",async()=>{
     m.bizOwner=[
-      {id:"dev_legacy_admin",role:"admin",system_role:null,status:"inactive",is_active:false,company_id:null},
-      {id:"qa-existing-bizportal-owner",role:"super_admin",system_role:"super_admin",
+      {id:"dev_legacy_admin",email:"qa.owner@example.invalid",role:"admin",system_role:null,status:"inactive",is_active:false,company_id:null},
+      {id:"qa-existing-bizportal-owner",email:"qa.owner@example.invalid",role:"super_admin",system_role:"super_admin",
         status:"active",is_active:true,company_id:null},
     ];
     await perform(m.poster);
@@ -401,14 +415,14 @@ describe("DEV-only atomic Accounting owner integration seam",()=>{
   });
   it("still rejects two active Super Admin identities sharing one email",async()=>{
     m.bizOwner=[
-      {id:"owner_a",role:"super_admin",system_role:"super_admin",
+      {id:"owner_a",email:"qa.owner@example.invalid",role:"super_admin",system_role:"super_admin",
         status:"active",is_active:true,company_id:null},
-      {id:"owner_b",role:"super_admin",system_role:"super_admin",
+      {id:"owner_b",email:"qa.owner@example.invalid",role:"super_admin",system_role:"super_admin",
         status:"active",is_active:true,company_id:null},
     ];
     await expect(perform(m.poster)).rejects.toMatchObject({statusCode:403});
     expect(m.poster).not.toHaveBeenCalled();
-    expect(m.verifyIndependentOwner).not.toHaveBeenCalled();
+    expect(m.verifyIndependentOwner).toHaveBeenCalledTimes(1);
     expect(m.sql).toContain("rollback");
     noOutbound();
   });
@@ -659,6 +673,63 @@ describe("real Ed25519 authorization chained into Invoice handler transaction", 
       else process.env[key]=originals[key];
     }
   });
+  async function separateIssuerInvoice(companyId,{issuerCompany=companyId,proofActor="qa-existing-bizportal-owner",replay=false}={}) {
+    const issuer={id:46,role:"admin",name:"QA delegated staff",email:"staff.issuer@example.invalid"};
+    m.companyId=companyId;
+    m.bizIssuer=[{id:"qa-staff-issuer",email:issuer.email,role:"admin",
+      system_role:null,status:"active",is_active:true,company_id:issuerCompany}];
+    m.glRow={...m.glRow,company_id:companyId,journal_company:companyId};
+    if(replay){m.invoiceStatus="invoiced";m.currentInvoiceNumber="INV-SO-QA-101";}
+    const ctx={portalUser:issuer,invoiceId:101,companyId};
+    const challenge=mintPortalInvoiceChallenge(ctx),now=Date.now();
+    const claims={v:1,purpose:"cst-customer-invoice-owner",aud:"CST_CUSTOMER_PORTAL_DEV",
+      actorId:proofActor,email:"qa.owner@example.invalid",invoiceId:101,companyId,
+      challengeDigest:createHash("sha256").update(challenge).digest("hex"),
+      nonce:"c".repeat(32),iat:now,exp:now+60_000};
+    const body=Buffer.from(JSON.stringify(claims)).toString("base64url");
+    const signature=sign(null,Buffer.from("CST_BIZPORTAL_CUSTOMER_INVOICE_DEV_V1\n"+body),
+      privateKey).toString("base64url");
+    return handleAdminInvoices({
+      request:{method:"POST",body:{action:"mark_invoiced",
+        bizportalInvoiceChallenge:challenge,bizportalInvoiceProof:body+"."+signature,
+        // These caller-supplied fields MUST NOT determine approver identity.
+        actorId:"forged-actor-from-http",approverEmail:"forged@example.invalid"}},
+      response:{},user:issuer,sendJson:m.sendJson,sendError:vi.fn(),invoiceId:101,
+      postSalesInvoiceWithClient:m.poster,
+      verifySignedBizPortalProof:verifyIndependentBizPortalSuperAdminProof,
+    });
+  }
+  it.each([1,3])("permits a separate company %i staff issuer with one signed global Owner approval",async companyId=>{
+    await separateIssuerInvoice(companyId);
+    expect(m.poster).toHaveBeenCalledTimes(1);
+    expect(m.poster.mock.calls[0][0]).toMatchObject({
+      companyId,actorId:"qa-existing-bizportal-owner",
+    });
+    expect(m.sql.filter(q=>q.includes("from public.users"))).toHaveLength(2);
+    expect(m.sql).toContain("commit");
+    expect(m.outbox).toHaveLength(1);
+    expect(m.audits).toHaveLength(1);
+  });
+  it("blocks unassigned staff even when a valid Owner proof is signed",async()=>{
+    await expect(separateIssuerInvoice(3,{issuerCompany:1})).rejects.toMatchObject({statusCode:403});
+    expect(sqlIndex("update public.sales_documents")).toBe(-1);
+    expect(sqlIndex("into public.audit_accounting_events")).toBe(-1);
+    expect(m.poster).not.toHaveBeenCalled();
+    expect(m.sql).toContain("rollback");
+  });
+  it("blocks a signer that does not match the canonical active Owner ID",async()=>{
+    await expect(separateIssuerInvoice(1,{proofActor:"attacker-wrong-actor"}))
+      .rejects.toMatchObject({statusCode:403});
+    expect(m.poster).not.toHaveBeenCalled();
+    expect(sqlIndex("update public.sales_documents")).toBe(-1);
+    expect(m.sql).toContain("rollback");
+  });
+  it("rechecks independently signed Owner on replay but never posts twice",async()=>{
+    await separateIssuerInvoice(1,{replay:true});
+    expect(m.poster).not.toHaveBeenCalled();
+    expect(m.sql.filter(q=>q.includes("from public.users"))).toHaveLength(2);
+    expect(m.sql).toContain("commit");
+  });
   it.each([1,3])("accepts a real signed proof for company %i before one atomic Invoice commit",async companyId=>{
     m.companyId=companyId;
     m.glRow={...m.glRow,company_id:companyId,journal_company:companyId};
@@ -795,7 +866,7 @@ describe("single Owner/Super Admin OTP approval for company-scoped Invoice",()=>
  it("rejects a Portal Admin lacking matching active canonical Super Admin",async()=>{
   m.bizOwner=[];
   await expect(perform(m.poster)).rejects.toMatchObject({statusCode:403});
-  expect(m.verifyIndependentOwner).not.toHaveBeenCalled();
+  expect(m.verifyIndependentOwner).toHaveBeenCalledTimes(1);
   expect(m.poster).not.toHaveBeenCalled();
   expect(sqlIndex("update public.sales_documents")).toBe(-1);
   expect(m.sql).toContain("rollback");
@@ -804,11 +875,11 @@ describe("single Owner/Super Admin OTP approval for company-scoped Invoice",()=>
  it("rejects a company-scoped Super Admin issuing another company's Invoice",async()=>{
   m.companyId=3;
   m.bizOwner=[{
-    id:"qa-owner-company-1",role:"super_admin",system_role:"super_admin",
+    id:"qa-owner-company-1",email:"qa.owner@example.invalid",role:"super_admin",system_role:"super_admin",
     status:"active",is_active:true,company_id:1,
   }];
   await expect(perform(m.poster)).rejects.toMatchObject({statusCode:403});
-  expect(m.verifyIndependentOwner).not.toHaveBeenCalled();
+  expect(m.verifyIndependentOwner).toHaveBeenCalledTimes(1);
   expect(m.poster).not.toHaveBeenCalled();
   expect(sqlIndex("update public.sales_documents")).toBe(-1);
   expect(m.sql).toContain("rollback");

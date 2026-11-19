@@ -55,13 +55,13 @@ describe("signed Portal challenge + independent BizPortal Ed25519 proof",()=>{
     const ctx=context();
     const challenge=mintPortalInvoiceChallenge(ctx);
     const proof=createSignedProof(challenge);
-    expect(verifyIndependentBizPortalSuperAdminProof({...ctx,challenge,proof})).toBe(true);
+    expect(verifyIndependentBizPortalSuperAdminProof({...ctx,challenge,proof})).toEqual({actorId,email:user.email});
   });
   it("accepts Diva company3 only when the proof is for Diva",()=>{
     const ctx=context(3,77);
     const challenge=mintPortalInvoiceChallenge(ctx);
     const proof=createSignedProof(challenge,{companyId:3});
-    expect(verifyIndependentBizPortalSuperAdminProof({...ctx,challenge,proof})).toBe(true);
+    expect(verifyIndependentBizPortalSuperAdminProof({...ctx,challenge,proof})).toEqual({actorId,email:user.email});
     expect(verifyIndependentBizPortalSuperAdminProof({...context(1),challenge,proof})).toBe(false);
   });
   it("blocks a second invoice even with valid signed BizPortal proof",()=>{
@@ -101,9 +101,19 @@ describe("signed Portal challenge + independent BizPortal Ed25519 proof",()=>{
       })).toBe(false);
     }
   });
-  it("rejects a proof for another email or company",()=>{
+  it("accepts a separately signed Owner identity while retaining the Portal issuer challenge",()=>{
     const ctx=context(),challenge=mintPortalInvoiceChallenge(ctx);
-    for(const data of [{email:"other@example.invalid"},{companyId:3}]){
+    const proof=createSignedProof(challenge,{actorId:"different-owner",email:"owner.approver@example.invalid"});
+    expect(verifyIndependentBizPortalSuperAdminProof({
+      portalUser:ctx.portalUser,companyId:ctx.companyId,invoiceId:ctx.invoiceId,challenge,proof,
+    })).toEqual({actorId:"different-owner",email:"owner.approver@example.invalid"});
+    expect(verifyIndependentBizPortalSuperAdminProof({
+      portalUser:{...ctx.portalUser,id:999},companyId:ctx.companyId,invoiceId:ctx.invoiceId,challenge,proof,
+    })).toBe(false);
+  });
+  it("rejects a signed proof for another company or malformed approver email",()=>{
+    const ctx=context(),challenge=mintPortalInvoiceChallenge(ctx);
+    for(const data of [{email:"NOT-NORMALIZED@example.invalid"},{companyId:3}]){
       const proof=createSignedProof(challenge,data);
       expect(verifyIndependentBizPortalSuperAdminProof({...ctx,challenge,proof})).toBe(false);
     }
