@@ -30,6 +30,9 @@ fi
 source ./scripts/dev-invoice-compose-guard.sh
 compose_files=(-f compose.dev-vps.yml)
 cst_invoice_compose_guard compose_files
+# Audited Accounting code is a read-only bind; reject missing, substituted
+# or unsafe host files *before* advancing the certified DEV release.
+python3 scripts/dev-accounting-owner-bundle-guard.py --host
 # An opt-in must first have a compatible currently-running image for safe
 # rollback. A legacy UID1000 image is never upgraded directly with Invoice ON.
 if [[ "${CST_INVOICE_DEV_PRIVATE_TMPFS:-false}" == true ]]; then

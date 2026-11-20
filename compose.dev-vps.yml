@@ -25,6 +25,15 @@ services:
     security_opt:
       - no-new-privileges:true
     read_only: true
+    # Reviewed public Accounting code only. Never mount credentials or DB sockets.
+    # The runtime's SHA-pinned loader refuses any file substitution.
+    volumes:
+      - type: bind
+        source: /opt/cst-customer-invoice-owner-bundle-dev
+        target: /opt/cst-customer-invoice-owner-bundle-dev
+        read_only: true
+        bind:
+          create_host_path: false
     tmpfs:
       - /tmp:size=64m
     healthcheck:
