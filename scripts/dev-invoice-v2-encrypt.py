@@ -75,10 +75,11 @@ def validate_dsn(raw: str, role: str) -> None:
     except ValueError:
         raise Refused("INVALID_COMPANY_SCOPED_DSN") from None
     pooler = bool(re.fullmatch(r"aws-[0-9]+-ap-southeast-[12][.]pooler[.]supabase[.]com", host or ""))
-    direct = host == "db." + REF
-    expected_user = role + "." + REF if pooler else role
+    # The existing CST-DEV application writer supports verified session-pooler DSNs.
+    # Direct endpoints must not pass until application hostname support is reviewed.
+    expected_user = role + "." + REF
     if (u.scheme != "postgresql" or u.fragment or port != 5432
-        or u.path != "/postgres" or not (direct or pooler)
+        or u.path != "/postgres" or not pooler
         or uname != expected_user or not password or len(password) < 8
         or set(query) != {"sslmode", "sslrootcert"}
         or query["sslmode"] != ["verify-full"]
