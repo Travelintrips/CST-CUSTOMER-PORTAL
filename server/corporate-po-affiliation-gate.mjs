@@ -23,6 +23,17 @@ export function corporatePoApprovalGateDevEnabled(env = process.env) {
     && env.CST_CORPORATE_PO_APPROVAL_GATE_DEV === "true";
 }
 
+// Reuse the existing reviewed-company application route for financial invoices.
+// This does NOT activate the corporate PO preflight or grant permissions.
+export function financialInvoiceCompanyReviewRequiredDev(env = process.env) {
+  return env.APP_ENV?.trim().toLowerCase() === "development"
+    && env.CUSTOMER_PORTAL_ATOMIC_ACCOUNTING_POST_DEV === "true"
+    && env.CUSTOMER_PORTAL_REQUIRE_POSTED_AR_EVIDENCE_DEV === "true";
+}
+export function companyAffiliationReviewRequiredDev(env = process.env) {
+  return corporatePoApprovalGateDevEnabled(env) || financialInvoiceCompanyReviewRequiredDev(env);
+}
+
 export async function assertDevCorporatePoAffiliation(dbQuery, rfq, env = process.env) {
   if (!corporatePoApprovalGateDevEnabled(env)) return { enabled: false };
 
@@ -76,7 +87,7 @@ export async function assertDevCorporatePoAffiliation(dbQuery, rfq, env = proces
  * membership through customer self-selection.
  */
 export async function stageDevExistingCompanyApproval(dbQuery, customerIdRaw, company, env = process.env) {
-  if (!corporatePoApprovalGateDevEnabled(env)) return { enabled: false };
+  if (!companyAffiliationReviewRequiredDev(env)) return { enabled: false };
   const customerId = positiveId(customerIdRaw);
   const companyId = positiveId(company?.id);
   const companyName = typeof company?.name === "string" ? company.name.trim() : "";

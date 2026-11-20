@@ -124,16 +124,56 @@ export async function notifyAdmins(db, {
   resourceId,
   link = "/admin?tab=service-operations",
   payload = {},
+  explicitAdminIds = undefined,
+  scopeCompanyId = undefined,
 }) {
   return bestEffortNotificationWrite(db, async () => {
-    const admins = await db(
-      `select id
-         from public.portal_customers
-        where role = 'admin'
-          and coalesce(account_status, 'active') = 'active'`,
-    );
+    // Three intentional routes: trusted already-verified Invoice issuer;
+    // exact-company payment recipient resolution; original generic callers.
+    // A company-scoped request must NEVER fall back to all Portal Admins.
+    let recipientIds;
+    if (Array.isArray(explicitAdminIds)) {
+      recipientIds = explicitAdminIds;
+    } else if (scopeCompanyId !== undefined) {
+      const companyId = Number(scopeCompanyId);
+      if (![1, 3].includes(companyId)) return false;
+      const recipients = await db(
+        `select distinct pc.id
+           from public.portal_customers pc
+           join public.users u
+             on lower(btrim(u.email)) = lower(btrim(pc.email))
+          where pc.role = 'admin'
+            and coalesce(pc.account_status, 'active') = 'active'
+            and u.is_active = true and u.status = 'active'
+            and (
+              (u.role = 'super_admin'
+                 and u.system_role = 'super_admin'
+                 and (u.company_id is null or u.company_id = $1))
+              or (u.role = 'admin' and u.company_id = $1
+                  and exists (
+                    select 1 from public.portal_company_members pcm
+                     where pcm.portal_customer_id = pc.id
+                       and pcm.company_id = $1
+                       and pcm.is_active = true))
+            )
+          order by pc.id
+          limit 33`,
+        [companyId],
+      );
+      if (recipients.rows.length === 0 || recipients.rows.length > 32) return false;
+      recipientIds = recipients.rows.map((row) => row.id);
+    } else {
+      // Preserve the existing Marketplace / other legacy Admin inbox behavior.
+      const admins = await db(
+        `select id
+           from public.portal_customers
+          where role = 'admin'
+            and coalesce(account_status, 'active') = 'active'`,
+      );
+      recipientIds = admins.rows.map((row) => row.id);
+    }
     return insertNotifications(db, {
-      recipientIds: admins.rows.map((row) => row.id),
+      recipientIds,
       eventKey,
       type,
       title,

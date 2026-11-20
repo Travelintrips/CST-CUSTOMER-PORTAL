@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { CheckCircle2, FileCheck2, Loader2, RefreshCw } from "lucide-react";
 import { getAuthHeaders } from "@/lib/auth";
+import { requestBizPortalInvoiceProof } from "@/lib/bizportal-invoice-proof";
 
 type Invoice = {
   id: number;
@@ -16,6 +17,12 @@ type Invoice = {
   documentStatus: string;
   dueDate: string | null;
   createdAt: string;
+};
+
+type OwnerHandoff = {
+  ticket:string;
+  approvalUrl:string;
+  expiresInSeconds:number;
 };
 
 type Payment = {
@@ -57,6 +64,11 @@ export function CustomerBillingTab({ initialView = "all" }: { initialView?: "all
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState<number | null>(null);
   const [error, setError] = useState("");
+  const [handoffs,setHandoffs] = useState<Record<number,OwnerHandoff>>({});
+  const handoffEnabled =
+    import.meta.env.VITE_CUSTOMER_PORTAL_BIZPORTAL_ATTEST_DEV === "true" &&
+    import.meta.env.VITE_CUSTOMER_PORTAL_INVOICE_HANDOFF_DEV === "true" &&
+    import.meta.env.VITE_CUSTOMER_PORTAL_INVOICE_SIGNED_REVIEW_SNAPSHOT_DEV === "true";
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -82,14 +94,23 @@ export function CustomerBillingTab({ initialView = "all" }: { initialView?: "all
 
   useEffect(() => { void load(); }, [load]);
 
-  async function issueInvoice(id: number) {
+  async function issueInvoice(id: number, verifiedAuth?:{
+    bizportalInvoiceChallenge:string;bizportalInvoiceProof:string;
+  }) {
     setBusy(id);
     try {
+      // The default-OFF UI and existing Invoice action remain unchanged.
+      // Only a separately enabled DEV build invokes the BizPortal popup.
+      const externalAuth = verifiedAuth ?? (
+        import.meta.env.VITE_CUSTOMER_PORTAL_BIZPORTAL_ATTEST_DEV === "true"
+          ? await requestBizPortalInvoiceProof(id, getAuthHeaders())
+          : {}
+      );
       const response = await fetch(`/api/portal/admin/invoices/${id}/action`, {
         method: "POST",
         headers: { ...getAuthHeaders(), "Content-Type": "application/json" },
         credentials: "include",
-        body: JSON.stringify({ action: "mark_invoiced" }),
+        body: JSON.stringify({ action: "mark_invoiced", ...externalAuth }),
       });
       const body = await response.json();
       if (!response.ok) throw new Error(body.message ?? "Gagal menerbitkan invoice");
@@ -99,6 +120,51 @@ export function CustomerBillingTab({ initialView = "all" }: { initialView?: "all
     } finally {
       setBusy(null);
     }
+  }
+
+  async function startOwnerHandoff(id:number) {
+    if(!handoffEnabled)return;
+    setBusy(id);
+    setError("");
+    try {
+      const response=await fetch(`/api/portal/admin/invoices/${id}/owner-handoff`,{
+        method:"POST",credentials:"include",
+        headers:getAuthHeaders(),
+      });
+      const body=await response.json();
+      if(!response.ok)throw Error(body.message??"Gagal membuat link persetujuan Owner.");
+      if(typeof body.ticket!=="string" || typeof body.approvalUrl!=="string")
+        throw Error("Link otorisasi Owner tidak valid.");
+      setHandoffs(prev=>({...prev,[id]:body as OwnerHandoff}));
+    }catch(cause){
+      setError(cause instanceof Error?cause.message:"Gagal membuat link Owner.");
+    }finally{setBusy(null);}
+  }
+
+  async function finishOwnerHandoff(id:number) {
+    const handoff=handoffs[id];
+    if(!handoff)return;
+    setBusy(id);
+    setError("");
+    try {
+      const response=await fetch(
+        `/api/portal/admin/invoices/${id}/owner-handoff/${encodeURIComponent(handoff.ticket)}`,{
+          credentials:"include",cache:"no-store",headers:getAuthHeaders(),
+        });
+      const body=await response.json();
+      if(!response.ok)throw Error(body.message??"Persetujuan Owner belum tersedia.");
+      if(body.ready!==true){
+        setError("Persetujuan Owner belum diterima. Pastikan Owner sudah menekan Setujui satu kali.");
+        return;
+      }
+      setHandoffs(prev=>{const next={...prev};delete next[id];return next;});
+      await issueInvoice(id,{
+        bizportalInvoiceChallenge:body.bizportalInvoiceChallenge,
+        bizportalInvoiceProof:body.bizportalInvoiceProof,
+      });
+    }catch(cause){
+      setError(cause instanceof Error?cause.message:"Gagal memverifikasi persetujuan Owner.");
+    }finally{setBusy(null);}
   }
 
   async function markPaymentStatus(id: number, status: "paid") {
@@ -155,10 +221,42 @@ export function CustomerBillingTab({ initialView = "all" }: { initialView?: "all
                     </p>
                   </div>
                   {invoice.invoiceStatus !== "invoiced" && (
-                    <button type="button" disabled={busy === invoice.id} onClick={() => void issueInvoice(invoice.id)}
-                      className="inline-flex items-center gap-2 rounded-lg bg-sky-600 px-3 py-2 text-sm font-medium text-white hover:bg-sky-700 disabled:opacity-50">
-                      {busy === invoice.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileCheck2 className="h-4 w-4" />} Terbitkan invoice
-                    </button>
+                    <div className="flex flex-col gap-2">
+                      {!handoffEnabled && (
+                        <button type="button" disabled={busy === invoice.id} onClick={() => void issueInvoice(invoice.id)}
+                          className="inline-flex items-center gap-2 rounded-lg bg-sky-600 px-3 py-2 text-sm font-medium text-white hover:bg-sky-700 disabled:opacity-50">
+                          {busy === invoice.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileCheck2 className="h-4 w-4" />} Terbitkan invoice
+                        </button>
+                      )}
+                      {handoffEnabled && (
+                        <button type="button" disabled={busy === invoice.id}
+                          onClick={() => void startOwnerHandoff(invoice.id)}
+                          className="rounded-lg border px-3 py-2 text-sm text-slate-700 hover:bg-slate-50 disabled:opacity-50">
+                          Persetujuan Owner dari HP lain
+                        </button>
+                      )}
+                      {handoffEnabled && handoffs[invoice.id] && (
+                        <div className="max-w-sm space-y-2 text-xs">
+                          <p>Owner login ke BizPortal di perangkatnya, buka link berikut, lalu tekan Setujui satu kali. Link berlaku 80 detik.</p>
+                          <input aria-label="Link persetujuan Owner" type="text" readOnly
+                            value={handoffs[invoice.id].approvalUrl}
+                            onFocus={event=>event.currentTarget.select()}
+                            className="w-full rounded border p-2 text-slate-700"/>
+                          <div className="flex gap-2">
+                            <button type="button" className="rounded border px-3 py-2"
+                              onClick={() => void navigator.clipboard.writeText(handoffs[invoice.id].approvalUrl).catch(
+                                ()=>setError("Salin link secara manual dari kolom di atas."))}>
+                              Salin link
+                            </button>
+                            <button type="button" disabled={busy===invoice.id}
+                              className="rounded bg-sky-600 px-3 py-2 text-white disabled:opacity-50"
+                              onClick={() => void finishOwnerHandoff(invoice.id)}>
+                              Periksa & terbitkan
+                            </button>
+                          </div>
+                        </div>
+                      )}
+                    </div>
                   )}
                 </div>
               ))}

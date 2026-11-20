@@ -1,0 +1,1001 @@
+// @ts-nocheck — the imported JS service is deliberately tested with mocked IO.
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { createHash, createPrivateKey, createPublicKey, hkdfSync, sign } from "node:crypto";
+import { mintPortalInvoiceChallenge, verifyIndependentBizPortalSuperAdminProof } from "../server/dev-bizportal-invoice-attestation.mjs";
+import {
+  buildInvoiceOwnerReviewSnapshot,invoiceOwnerReviewDigest,
+} from "../server/dev-invoice-owner-review-snapshot.mjs";
+
+const m=vi.hoisted(()=>({
+  sql:[],
+  proof:[],
+  status:"confirmed",
+  invoiceStatus:"to_invoice",
+  companyId:1,
+  dbRoleOverride:null,
+  dbBypass:false,
+  dbRlsActive:true,
+  currentInvoiceNumber:null,
+  viewUnavailable:false,
+  query:vi.fn(),
+  connect:vi.fn(),
+  release:vi.fn(),
+  end:vi.fn(),
+  scopedOpen:vi.fn(),
+  notifyAdmins:vi.fn(),
+  notifyPortalCustomers:vi.fn(),
+  sendJson:vi.fn(),
+  poster:vi.fn(),
+  verifyIndependentOwner:vi.fn(),
+  glRow:null,
+  bizOwner:[],
+  bizIssuer:[],
+  reviewSource:null,
+  outbox:[],
+  audits:[],
+  failOutbox:false,
+  failAudit:false,
+  deferredConstraintFail:false,
+  arProjection:null,
+}));
+vi.mock("../server/db.mjs",()=>({
+  pool:{connect:m.connect},
+  query:vi.fn(),
+}));
+vi.mock("../server/dev-customer-invoice-scoped-client.mjs",()=>({
+  openDevCompanyInvoiceWriter:m.scopedOpen,
+}));
+vi.mock("../server/storage.mjs",()=>({
+  signedPaymentProofUrl:vi.fn(),
+}));
+vi.mock("../server/notification-service.mjs",()=>({
+  bestEffortNotificationWrite:vi.fn(async (_db,work)=>work()),
+  notifyAdmins:m.notifyAdmins,
+  notifyPortalCustomers:m.notifyPortalCustomers,
+}));
+
+import {handleAdminInvoices} from "../server/billing-operations.mjs";
+
+const flag="CUSTOMER_PORTAL_REQUIRE_POSTED_AR_EVIDENCE_DEV";
+const originalFlag=process.env[flag],originalEnv=process.env.APP_ENV;
+const bridge="CUSTOMER_PORTAL_ATOMIC_ACCOUNTING_POST_DEV";
+const attestFlag="CUSTOMER_PORTAL_REQUIRE_BIZPORTAL_ATTEST_DEV";
+const originalAttestFlag=process.env[attestFlag];
+const originalBridge=process.env[bridge];
+
+const base=()=>({
+  id:101,doc_number:"SO-QA-101",kind:"order",
+  status:m.status,invoice_status:m.invoiceStatus,
+  company_id:m.companyId,customer_id:12,customer_name:"QA synthetic",
+  grand_total:"100.00",total_amount:"100.00",amount_paid:"0",
+  payment_status:"unpaid",
+  invoice_number:m.currentInvoiceNumber,invoice_date:m.currentInvoiceNumber?"2026-11-17":null,
+  due_date:m.currentInvoiceNumber?"2026-12-17":null,
+  notes:null,
+});
+const issued=()=>({
+  ...base(),invoice_status:"invoiced",
+  invoice_number:"INV-SO-QA-101",invoice_date:"2026-11-17",due_date:"2026-12-17",
+});
+async function sqlMock(statement,params=[]){
+  const q=String(statement).toLowerCase().trim();
+  m.sql.push(q);
+  if(q==="begin"||q==="commit"||q==="rollback")return {rows:[]};
+  if(q.includes("row_security_active(")) {
+    const scopedRole=m.dbRoleOverride ?? (m.companyId===3
+      ? "bizportal_customer_invoice_diva_writer_dev"
+      : "bizportal_customer_invoice_cst_writer_dev");
+    return {rows:[{
+      db_role:scopedRole,session_role:scopedRole,bypass_rls:m.dbBypass,
+      invoice_rls:m.dbRlsActive,gl_rls:m.dbRlsActive,
+      lines_rls:m.dbRlsActive,ar_rls:m.dbRlsActive,
+      taxes_rls:m.dbRlsActive,audit_rls:m.dbRlsActive,outbox_rls:m.dbRlsActive,
+    }]};
+  }
+  if(q.startsWith("set constraints customer_ar_journal_source_dev")) {
+    if(m.deferredConstraintFail)throw Error("QA_DEFERRED_AR_CONSTRAINT_VIOLATION");
+    return {rows:[]};
+  }
+  if(q.includes("from public.ar_subledger a"))return {rows:m.arProjection?[m.arProjection]:[]};
+  // Posting must never query or depend on a second Portal reviewer.
+  if(q.includes("from public.portal_company_requests approval"))
+    throw Error("UNEXPECTED_SECOND_ADMIN_APPROVAL_REQUIRED");
+  if(q.includes("from public.sales_documents sd") &&
+      q.includes("join public.accounting_taxes tax"))
+    return {rows:m.reviewSource?[m.reviewSource]:[]};
+  // The new DEV tax row locks use the original same-client transaction,
+  // never a privileged pool or second connection.
+  if(q.includes("from public.accounting_settings") && q.includes("for share"))
+    return {rows:[{company_id:m.companyId,default_sales_tax_id:m.companyId===3?9:1,
+      ppn_output_account_id:m.companyId===3?49199:49109}]};
+  if(q.includes("from public.sales_documents") && q.includes("tax_rate_id"))
+    return {rows:[{id:101,company_id:m.companyId,tax_rate_id:m.reviewSource?.tax_rate_id??(m.companyId===3?9:1)}]};
+  if(q.includes("from public.accounting_taxes") && q.includes("for share"))
+    return {rows:[{id:params[0],company_id:m.companyId,is_active:true,
+      account_id:m.companyId===3?49199:49109,rate:"11.000"}]};
+  if(q.includes("from public.sales_documents"))return {rows:[base()]};
+  if(q.startsWith("update public.sales_documents"))return {rows:[issued()]};
+  if(q.includes("from public.users")) {
+    if(!q.includes("for share") || !q.includes("status='active'") ||
+        !q.includes("is_active is true"))
+      throw Error("UNSCOPED_BIZPORTAL_IDENTITY_LOOKUP");
+    if(q.includes("where id=$1")) {
+      if(!q.includes("role='super_admin'") || !q.includes("system_role='super_admin'"))
+        throw Error("UNSCOPED_BIZPORTAL_APPROVER_LOOKUP");
+      return {rows:m.bizOwner.filter(row=>
+        row.id===params[0] && row.email?.toLowerCase()===params[1]?.toLowerCase() &&
+        row.role==="super_admin" && row.system_role==="super_admin" &&
+        row.status==="active" && row.is_active===true &&
+        (row.company_id==null || row.company_id===params[2])).slice(0,2)};
+    }
+    if(!q.includes("role='admin'") || !q.includes("company_id=$2"))
+      throw Error("UNSCOPED_BIZPORTAL_ISSUER_LOOKUP");
+    return {rows:m.bizIssuer.filter(row=>
+      row.email?.toLowerCase()===params[0]?.toLowerCase() &&
+      row.status==="active" && row.is_active===true &&
+      ((row.role==="admin" && row.company_id===params[1]) ||
+        (row.role==="super_admin" && row.system_role==="super_admin" &&
+          (row.company_id==null || row.company_id===params[1])))).slice(0,2)};
+  }
+  if(q.includes("from public.accounting_entries e")){
+    return {rows: m.glRow ? [m.glRow] : []};
+  }
+  if(q.includes("from public.financial_outbox_events"))return {rows:m.outbox};
+  if(q.includes("into public.financial_outbox_events")){
+    if(m.failOutbox)throw Error("QA_OUTBOX_INSERT_FAILED");
+    const payload=JSON.parse(params[0]);
+    m.outbox.push({id:601,payload});
+    return {rows:[{id:601}]};
+  }
+  if(q.includes("from public.audit_accounting_events"))return {rows:m.audits};
+  if(q.includes("into public.audit_accounting_events")){
+    if(m.failAudit)throw Error("QA_ACCOUNTING_AUDIT_INSERT_FAILED");
+    m.audits.push({id:701});
+    return {rows:[{id:701}]};
+  }
+  if(q.includes("from public.bizportal_customer_ar_source_evidence_dev")){
+    if(m.viewUnavailable)throw Object.assign(new Error("view missing"),{code:"42P01"});
+    return {rows:m.proof.map(id=>({invoice_id:id}))};
+  }
+  if(q.includes("from public.portal_customers"))return {rows:[]};
+  if(q.includes("into public.activity_logs"))return {rows:[]};
+  throw Error("UNEXPECTED_SQL_IN_TEST");
+}
+const perform=(posting=null,portalUser=null,verifier=m.verifyIndependentOwner)=>handleAdminInvoices({
+  request:{method:"POST",body:{action:"mark_invoiced",bizportalInvoiceChallenge:"qa-signed-challenge",bizportalInvoiceProof:"qa-bizportal-proof"}},
+  response:{},
+  user:portalUser ?? {id:1,role:"admin",name:"DEV QA",email:"qa.owner@example.invalid"},
+  sendJson:m.sendJson,
+  sendError:vi.fn(),
+  invoiceId:101,
+  postSalesInvoiceWithClient:posting,
+  verifySignedBizPortalProof:verifier,
+});
+const sqlIndex=(substring)=>m.sql.findIndex(q=>q.includes(substring));
+const noOutbound=()=>{
+  expect(m.notifyAdmins).not.toHaveBeenCalled();
+  expect(m.notifyPortalCustomers).not.toHaveBeenCalled();
+  expect(sqlIndex("into public.activity_logs")).toBe(-1);
+};
+
+beforeEach(()=>{
+  vi.clearAllMocks();
+  m.sql.length=0;
+  m.proof=[];
+  m.status="confirmed";
+  m.invoiceStatus="to_invoice";
+  m.companyId=1;
+  m.dbRoleOverride=null;
+  m.dbBypass=false;
+  m.dbRlsActive=true;
+  m.currentInvoiceNumber=null;
+  m.viewUnavailable=false;
+  m.glRow=null;
+  m.outbox=[];
+  m.audits=[];
+  m.failOutbox=false;
+  m.failAudit=false;
+  m.deferredConstraintFail=false;
+  m.arProjection={gl_entry_id:22,gross_amount:"100.00",paid_amount:"0",outstanding_amount:"100.00"};
+  m.reviewSource={
+    ...base(),total_amount:"89.00",tax_amount:"11.00",grand_total:"100.00",
+    tax_rate_id:1,selected_tax_id:1,tax_company_id:1,
+    selected_tax_rate:"11.000",selected_tax_account_id:49109,
+    ppn_output_account_id:49109,selected_tax_active:true,
+    tax_treatment:"taxable",cancelled_at:null,
+  };
+
+  m.bizOwner=[{
+    id:"qa-existing-bizportal-owner",email:"qa.owner@example.invalid",
+    role:"super_admin",system_role:"super_admin",status:"active",
+    is_active:true,company_id:null,
+  }];
+  m.bizIssuer=[{...m.bizOwner[0]}];
+  delete process.env[bridge];
+  m.query.mockImplementation(sqlMock);
+  m.connect.mockResolvedValue({query:m.query,release:m.release});
+  m.scopedOpen.mockImplementation(async()=>({
+    client:{query:m.query,release:m.release,end:m.end}, companyId:m.companyId,
+  }));
+  m.notifyAdmins.mockResolvedValue(undefined);
+  m.verifyIndependentOwner.mockResolvedValue({actorId:"qa-existing-bizportal-owner",email:"qa.owner@example.invalid"});
+  m.notifyPortalCustomers.mockResolvedValue(undefined);
+  process.env.APP_ENV="development";
+  process.env[flag]="true";
+});
+afterEach(()=>{
+  if(originalFlag===undefined)delete process.env[flag];else process.env[flag]=originalFlag;
+  if(originalEnv===undefined)delete process.env.APP_ENV;else process.env.APP_ENV=originalEnv;
+  if(originalBridge===undefined)delete process.env[bridge];else process.env[bridge]=originalBridge;
+  if(originalAttestFlag===undefined)delete process.env[attestFlag];else process.env[attestFlag]=originalAttestFlag;
+});
+
+describe("DEV Customer Invoice posted AR evidence gate",()=>{
+  it("rolls back invoice number/status/date when a posted sales journal is missing",async()=>{
+    await expect(perform()).rejects.toMatchObject({statusCode:422});
+    expect(sqlIndex("update public.sales_documents")).toBeGreaterThanOrEqual(0);
+    expect(sqlIndex("from public.bizportal_customer_ar_source_evidence_dev"))
+      .toBeGreaterThan(sqlIndex("update public.sales_documents"));
+    expect(m.sql).toContain("rollback");
+    expect(m.sql).not.toContain("commit");
+    noOutbound();
+  });
+  it("reuses security-invoker AR evidence after invoice fields are updated and before notifications",async()=>{
+    m.proof=[101];
+    await perform();
+    expect(m.sql).toContain("commit");
+    const proof=sqlIndex("from public.bizportal_customer_ar_source_evidence_dev");
+    const audit=sqlIndex("into public.activity_logs");
+    expect(proof).toBeGreaterThan(sqlIndex("update public.sales_documents"));
+    expect(proof).toBeLessThan(audit);
+    expect(m.notifyAdmins).toHaveBeenCalledTimes(1);
+    expect(m.notifyPortalCustomers).toHaveBeenCalledTimes(1);
+    expect(m.sendJson).toHaveBeenCalledWith({},200,expect.objectContaining({
+      id:101,invoiceStatus:"invoiced",invoiceNumber:"INV-SO-QA-101",
+    }));
+  });
+  it("never accepts ambiguous posted AR evidence or a different invoice identity",async()=>{
+    for (const found of [[101,101],[999]]) {
+      m.sql.length=0;m.proof=found;
+      await expect(perform()).rejects.toMatchObject({statusCode:422});
+      expect(m.sql).toContain("rollback");
+      noOutbound();
+    }
+  });
+  it("does not let replay of an old invoice bypass missing posted journal proof",async()=>{
+    m.invoiceStatus="invoiced";
+    m.currentInvoiceNumber="INV-SO-QA-101";
+    await expect(perform()).rejects.toMatchObject({statusCode:422});
+    expect(sqlIndex("update public.sales_documents")).toBe(-1);
+    expect(m.sql).toContain("rollback");
+    noOutbound();
+  });
+  it("refuses unsupported company/issuer identity while DEV gate is ON",async()=>{
+    m.companyId=2;
+    await expect(perform()).rejects.toMatchObject({statusCode:422});
+    expect(sqlIndex("from public.bizportal_customer_ar_source_evidence_dev")).toBe(-1);
+    expect(m.sql).toContain("rollback");
+    noOutbound();
+  });
+  it("fails closed if the AR evidence view is missing (no unproven commit)",async()=>{
+    m.viewUnavailable=true;
+    await expect(perform()).rejects.toMatchObject({code:"42P01"});
+    expect(m.sql).toContain("rollback");
+    expect(m.sql).not.toContain("commit");
+    noOutbound();
+  });
+  it("does not change old invoice behavior while flag is OFF",async()=>{
+    delete process.env[flag];
+    await perform();
+    expect(sqlIndex("from public.bizportal_customer_ar_source_evidence_dev")).toBe(-1);
+    expect(m.sql).toContain("commit");
+    expect(m.notifyAdmins).toHaveBeenCalledTimes(1);
+  });
+  it("rejects a mistaken production activation instead of bypassing the proof gate",async()=>{
+    process.env.APP_ENV="production";
+    await expect(perform()).rejects.toMatchObject({statusCode:503});
+    expect(m.sql).toContain("rollback");
+    noOutbound();
+  });
+});
+
+
+describe("DEV-only atomic Accounting owner integration seam",()=>{
+  const validGl=()=>({
+    id:22,company_id:m.companyId,source:"sales_invoice",source_id:101,
+    status:"posted",total_debit:"100.00",total_credit:"100.00",
+    is_voided:false,is_reversed:false,journal_company:m.companyId,
+    source_count:1,line_count:2,lines_debit:"100.00",lines_credit:"100.00",
+  });
+  beforeEach(()=>{
+    process.env[bridge]="true";
+    process.env[flag]="true";
+    process.env[attestFlag]="true";
+    m.poster.mockResolvedValue({posted:true,entryId:22});
+    m.glRow=validGl();
+    m.proof=[101];
+  });
+  it("requires real materialized AR matching the posted company journal before COMMIT",async()=>{
+    m.arProjection=null;
+    await expect(perform(m.poster)).rejects.toMatchObject({statusCode:422});
+    expect(sqlIndex("from public.ar_subledger a")).toBeGreaterThan(sqlIndex("set constraints customer_ar_journal_source_dev"));
+    expect(m.sql).toContain("rollback");
+    expect(m.sql).not.toContain("commit");
+    expect(m.sendJson).not.toHaveBeenCalled();
+  });
+  it("rejects materialized AR with mismatched amounts before COMMIT",async()=>{
+    m.arProjection={gl_entry_id:22,gross_amount:"99.00",paid_amount:"0",outstanding_amount:"99.00"};
+    await expect(perform(m.poster)).rejects.toMatchObject({statusCode:422});
+    expect(m.sql).toContain("rollback");
+    expect(m.sql).not.toContain("commit");
+  });
+  it("never flushes accounting constraints during legacy payment transactions",async()=>{
+    // This branch ensures the transaction helper itself is not globally gated;
+    // the actual payment HTTP regression is covered by the full Portal CI.
+    delete process.env[bridge];
+    await perform();
+    expect(sqlIndex("set constraints customer_ar_journal_source_dev")).toBe(-1);
+    expect(sqlIndex("from public.ar_subledger a")).toBe(-1);
+    expect(m.sql).toContain("commit");
+  });
+  it("forces original deferred AR constraint triggers before COMMIT under atomic DEV flags",async()=>{
+    await perform(m.poster);
+    const constraint=sqlIndex("set constraints customer_ar_journal_source_dev");
+    expect(constraint).toBeGreaterThan(sqlIndex("into public.audit_accounting_events"));
+    expect(constraint).toBeGreaterThan(sqlIndex("into public.activity_logs"));
+    expect(constraint).toBeGreaterThan(sqlIndex("from public.bizportal_customer_ar_source_evidence_dev"));
+    expect(constraint).toBeLessThan(m.sql.indexOf("commit"));
+    expect(sqlIndex("from public.ar_subledger a")).toBeGreaterThan(constraint);
+    expect(sqlIndex("from public.ar_subledger a")).toBeLessThan(m.sql.indexOf("commit"));
+    expect(m.sql).toContain("commit");
+  });
+  it("rolls back the entire Invoice if original deferred AR constraint fails",async()=>{
+    m.deferredConstraintFail=true;
+    await expect(perform(m.poster)).rejects.toThrow("QA_DEFERRED_AR_CONSTRAINT_VIOLATION");
+    expect(sqlIndex("set constraints customer_ar_journal_source_dev")).toBeGreaterThan(0);
+    expect(m.sql).toContain("rollback");
+    expect(m.sql).not.toContain("commit");
+    expect(m.sendJson).not.toHaveBeenCalled();
+  });
+  it("requires signed BizPortal approval and canonical Company issuer before posting",async()=>{
+    await perform(m.poster);
+    expect(m.verifyIndependentOwner).toHaveBeenCalledWith(expect.objectContaining({
+      challenge:"qa-signed-challenge",proof:"qa-bizportal-proof",
+      companyId:1,invoiceId:101,
+      portalUser:expect.objectContaining({id:1,role:"admin"}),
+    }));
+    expect(m.poster).toHaveBeenCalledTimes(1);
+    expect(sqlIndex("from public.users")).toBeGreaterThan(0);
+    expect(sqlIndex("update public.sales_documents")).toBeGreaterThan(sqlIndex("from public.users"));
+  });
+  it("refuses to post or replay if independent BizPortal attestation opt-in is OFF",async()=>{
+    delete process.env[attestFlag];
+    await expect(perform(m.poster)).rejects.toMatchObject({statusCode:503});
+    expect(m.verifyIndependentOwner).not.toHaveBeenCalled();
+    expect(m.poster).not.toHaveBeenCalled();
+    expect(m.sql).toContain("rollback");
+    noOutbound();
+  });
+  it("refuses to post when no trusted verification callback is wired",async()=>{
+    await expect(perform(m.poster,null,null)).rejects.toMatchObject({statusCode:503});
+    expect(m.poster).not.toHaveBeenCalled();
+    expect(m.sql).toContain("rollback");
+    noOutbound();
+  });
+  it("denies invalid signature / wrong company / mismatched identity before posting",async()=>{
+    m.verifyIndependentOwner.mockResolvedValue(false);
+    await expect(perform(m.poster)).rejects.toMatchObject({statusCode:403});
+    expect(m.poster).not.toHaveBeenCalled();
+    expect(sqlIndex("update public.sales_documents")).toBe(-1);
+    expect(m.sql).toContain("rollback");
+    noOutbound();
+  });
+  it("does not let a posted Invoice bypass independent BizPortal proof on replay",async()=>{
+    m.invoiceStatus="invoiced";
+    m.currentInvoiceNumber="INV-SO-QA-101";
+    m.verifyIndependentOwner.mockResolvedValue(false);
+    await expect(perform(m.poster)).rejects.toMatchObject({statusCode:403});
+    expect(sqlIndex("from public.bizportal_customer_ar_source_evidence_dev")).toBe(-1);
+    expect(m.poster).not.toHaveBeenCalled();
+    expect(m.sql).toContain("rollback");
+    noOutbound();
+  });
+  it("records canonical BizPortal actor, not the unrelated Portal user ID",async()=>{
+    await perform(m.poster);
+    expect(m.poster).toHaveBeenCalledTimes(1);
+    expect(m.poster.mock.calls[0][0].actorId).toBe("qa-existing-bizportal-owner");
+    expect(sqlIndex("from public.users")).toBeGreaterThan(sqlIndex("from public.sales_documents"));
+    expect(sqlIndex("from public.users")).toBeLessThan(sqlIndex("from public.accounting_entries e"));
+    expect(m.sql).toContain("commit");
+  });
+  it.each([
+    ["no matching canonical owner", []],
+    ["multiple matched identities", [
+      {id:"a",email:"qa.owner@example.invalid",role:"super_admin",system_role:"super_admin",status:"active",is_active:true,company_id:null},
+      {id:"b",email:"qa.owner@example.invalid",role:"super_admin",system_role:"super_admin",status:"active",is_active:true,company_id:null},
+    ]],
+    ["ordinary BizPortal admin", [{id:"other",email:"qa.owner@example.invalid",role:"admin",system_role:"admin",status:"active",is_active:true,company_id:null}]],
+    ["system role not Super Admin", [{id:"other",email:"qa.owner@example.invalid",role:"super_admin",system_role:null,status:"active",is_active:true,company_id:null}]],
+    ["suspended canonical owner", [{id:"other",email:"qa.owner@example.invalid",role:"super_admin",system_role:"super_admin",status:"inactive",is_active:false,company_id:null}]],
+    ["wrong company", [{id:"other",email:"qa.owner@example.invalid",role:"super_admin",system_role:"super_admin",status:"active",is_active:true,company_id:3}]],
+  ])("rejects %s before Accounting and rolls back",async(_label,matched)=>{
+    m.bizOwner=matched;
+    await expect(perform(m.poster)).rejects.toMatchObject({statusCode:403});
+    expect(m.poster).not.toHaveBeenCalled();
+    expect(m.sql).toContain("rollback");
+    expect(m.sql).not.toContain("commit");
+    noOutbound();
+  });
+  it("ignores inactive legacy same-email Admin while requiring one active Super Admin and independent signed proof",async()=>{
+    m.bizOwner=[
+      {id:"dev_legacy_admin",email:"qa.owner@example.invalid",role:"admin",system_role:null,status:"inactive",is_active:false,company_id:null},
+      {id:"qa-existing-bizportal-owner",email:"qa.owner@example.invalid",role:"super_admin",system_role:"super_admin",
+        status:"active",is_active:true,company_id:null},
+    ];
+    await perform(m.poster);
+    expect(m.poster).toHaveBeenCalledTimes(1);
+    expect(m.poster.mock.calls[0][0].actorId).toBe("qa-existing-bizportal-owner");
+    expect(m.verifyIndependentOwner).toHaveBeenCalledTimes(1);
+    expect(m.sql).toContain("commit");
+  });
+  it("still rejects two active Super Admin identities sharing one email",async()=>{
+    m.bizOwner=[
+      {id:"owner_a",email:"qa.owner@example.invalid",role:"super_admin",system_role:"super_admin",
+        status:"active",is_active:true,company_id:null},
+      {id:"owner_b",email:"qa.owner@example.invalid",role:"super_admin",system_role:"super_admin",
+        status:"active",is_active:true,company_id:null},
+    ];
+    await expect(perform(m.poster)).rejects.toMatchObject({statusCode:403});
+    expect(m.poster).not.toHaveBeenCalled();
+    expect(m.verifyIndependentOwner).toHaveBeenCalledTimes(1);
+    expect(m.sql).toContain("rollback");
+    noOutbound();
+  });
+  it("requires a database-verified Portal email for canonical owner lookup",async()=>{
+    await expect(perform(m.poster,{id:1,role:"admin",name:"QA no-email"}))
+      .rejects.toMatchObject({statusCode:403});
+    expect(sqlIndex("from public.users")).toBe(-1);
+    expect(m.poster).not.toHaveBeenCalled();
+    expect(m.sql).toContain("rollback");
+    noOutbound();
+  });
+  it("does not let an unauthorized Portal admin replay a posted Invoice",async()=>{
+    m.invoiceStatus="invoiced";
+    m.currentInvoiceNumber="INV-SO-QA-101";
+    m.bizOwner=[];
+    await expect(perform(m.poster)).rejects.toMatchObject({statusCode:403});
+    expect(sqlIndex("from public.bizportal_customer_ar_source_evidence_dev")).toBe(-1);
+    expect(m.poster).not.toHaveBeenCalled();
+    expect(m.sql).toContain("rollback");
+    noOutbound();
+  });
+  it.each([1,3])("writes one transaction-bound journal outbox and audit for company %i",async companyId=>{
+    m.companyId=companyId;
+    m.glRow=validGl();
+    await perform(m.poster);
+    expect(m.outbox).toHaveLength(1);
+    expect(m.audits).toHaveLength(1);
+    expect(m.outbox[0].payload).toMatchObject({
+      eventType:"JOURNAL_CREATED",sourceType:"sales_invoice",
+      sourceId:101,entryId:22,companyId,
+      amount:100,actor:"qa-existing-bizportal-owner",
+      dedupeKey:"sales_invoice:"+companyId+":101:22",
+    });
+    const journalProof=sqlIndex("from public.bizportal_customer_ar_source_evidence_dev");
+    const outboxInsert=sqlIndex("into public.financial_outbox_events");
+    const accountingAudit=sqlIndex("into public.audit_accounting_events");
+    expect(outboxInsert).toBeGreaterThan(journalProof);
+    expect(accountingAudit).toBeGreaterThan(outboxInsert);
+    expect(sqlIndex("into public.activity_logs")).toBeGreaterThan(accountingAudit);
+    expect(m.sql).toContain("commit");
+  });
+  it("refuses duplicate prior outbox events before creating a new audit",async()=>{
+    m.outbox=[{id:6,payload:{}},{id:7,payload:{}}];
+    await expect(perform(m.poster)).rejects.toMatchObject({statusCode:422});
+    expect(sqlIndex("into public.financial_outbox_events")).toBe(-1);
+    expect(sqlIndex("into public.audit_accounting_events")).toBe(-1);
+    expect(m.sql).toContain("rollback");
+    expect(m.sql).not.toContain("commit");
+    noOutbound();
+  });
+  it("rejects a prior outbox event for a different company or source",async()=>{
+    m.outbox=[{id:6,payload:{
+      eventType:"JOURNAL_CREATED",sourceType:"sales_invoice",
+      sourceId:101,entryId:22,companyId:3,
+    }}];
+    await expect(perform(m.poster)).rejects.toMatchObject({statusCode:422});
+    expect(m.sql).toContain("rollback");
+    noOutbound();
+  });
+  it("reuses one matching legitimate outbox record without inserting another",async()=>{
+    m.outbox=[{id:6,payload:{
+      eventType:"JOURNAL_CREATED",sourceType:"sales_invoice",
+      sourceId:101,entryId:22,companyId:1,
+    }}];
+    await perform(m.poster);
+    expect(m.outbox).toHaveLength(1);
+    expect(sqlIndex("into public.financial_outbox_events")).toBe(-1);
+    expect(m.audits).toHaveLength(1);
+  });
+  it("rejects a second issuance audit rather than duplicating",async()=>{
+    m.audits=[{id:701}];
+    await expect(perform(m.poster)).rejects.toMatchObject({statusCode:422});
+    expect(m.sql).toContain("rollback");
+    expect(m.sql).not.toContain("commit");
+    noOutbound();
+  });
+  it.each(["outbox","audit"])("rolls back on failed %s persistence with no notifications",async target=>{
+    if(target==="outbox")m.failOutbox=true;
+    else m.failAudit=true;
+    await expect(perform(m.poster)).rejects.toThrow(
+      target==="outbox"?"QA_OUTBOX_INSERT_FAILED":"QA_ACCOUNTING_AUDIT_INSERT_FAILED"
+    );
+    expect(m.sql).toContain("rollback");
+    expect(m.sql).not.toContain("commit");
+    noOutbound();
+  });
+  it("never posts using a missing/unwired owner; rolls back issuance",async()=>{
+    await expect(perform()).rejects.toMatchObject({statusCode:503});
+    expect(m.sql).toContain("rollback");
+    expect(m.sql).not.toContain("commit");
+    expect(sqlIndex("from public.accounting_entries e")).toBe(-1);
+    noOutbound();
+  });
+  it("requires the existing posted-AR proof flag before invoking Accounting",async()=>{
+    delete process.env[flag];
+    await expect(perform(m.poster)).rejects.toMatchObject({statusCode:503});
+    expect(m.poster).not.toHaveBeenCalled();
+    expect(m.sql).toContain("rollback");
+    noOutbound();
+  });
+  it("fails closed when the owner rejects or raises an error",async()=>{
+    m.poster.mockResolvedValue({posted:false});
+    await expect(perform(m.poster)).rejects.toMatchObject({statusCode:422});
+    expect(m.sql).toContain("rollback");
+    noOutbound();
+    m.sql.length=0;
+    m.poster.mockRejectedValueOnce(Error("posting temporarily unavailable"));
+    await expect(perform(m.poster)).rejects.toThrow("posting temporarily unavailable");
+    expect(m.sql).toContain("rollback");
+    noOutbound();
+  });
+  it.each([
+    "DEV_SALES_POSTING_TAX_SETTINGS_NOT_READY",
+    "DEV_SALES_POSTING_TAX_NOT_READY",
+  ])("returns HTTP422 and complete rollback on controlled %s",async code=>{
+    m.poster.mockRejectedValueOnce(Error(code));
+    await expect(perform(m.poster)).rejects.toMatchObject({statusCode:422});
+    expect(m.sql).toContain("rollback");
+    expect(m.sql).not.toContain("commit");
+    expect(m.poster).toHaveBeenCalledTimes(1);
+    noOutbound();
+  });
+  it("returns a controlled HTTP 422 on unsupported atomic PPN, with rollback and no outbound",async()=>{
+    m.poster.mockRejectedValueOnce(Error("DEV_SALES_POSTING_TAX_NOT_READY"));
+    await expect(perform(m.poster)).rejects.toMatchObject({statusCode:422});
+    expect(m.sql).toContain("rollback");
+    expect(m.sql).not.toContain("commit");
+    noOutbound();
+  });
+  it.each([1,3])("accepts only a posted balanced company %i journal in the current transaction",async companyId=>{
+    m.companyId=companyId;
+    m.glRow=validGl();
+    await perform(m.poster);
+    expect(m.poster).toHaveBeenCalledTimes(1);
+    const receipt=m.poster.mock.calls[0][0];
+    expect(receipt).toMatchObject({
+      companyId,source:"sales_invoice",sourceId:101,
+      invoice:expect.objectContaining({invoice_number:"INV-SO-QA-101"}),
+    });
+    expect(typeof receipt.query).toBe("function");
+    expect(receipt.transactionClient).toBeDefined();
+    expect(receipt.transactionClient.query).toBe(m.query);
+    expect(receipt.transactionClient.release).toBe(m.release);
+    const journalCheck=sqlIndex("from public.accounting_entries e");
+    expect(journalCheck).toBeGreaterThan(sqlIndex("update public.sales_documents"));
+    expect(journalCheck).toBeLessThan(sqlIndex("from public.bizportal_customer_ar_source_evidence_dev"));
+    expect(sqlIndex("into public.activity_logs"))
+      .toBeGreaterThan(sqlIndex("from public.bizportal_customer_ar_source_evidence_dev"));
+    expect(m.sql).toContain("commit");
+    expect(m.notifyPortalCustomers).toHaveBeenCalledTimes(1);
+  });
+  it.each([
+    ["wrong tenant",{company_id:3,journal_company:3}],
+    ["not posted",{status:"draft"}],
+    ["voided",{is_voided:true}],
+    ["duplicate source",{source_count:2}],
+    ["not balanced",{lines_credit:"99.99"}],
+    ["not correct amount",{total_debit:"90.00"}],
+    ["insufficient lines",{line_count:1}],
+  ])("rolls back when Accounting receipt is %s",async(_label,changes)=>{
+    m.glRow={...validGl(),...changes};
+    await expect(perform(m.poster)).rejects.toMatchObject({statusCode:422});
+    expect(m.sql).toContain("rollback");
+    expect(m.sql).not.toContain("commit");
+    noOutbound();
+  });
+  it("replay never invokes Accounting twice and still checks the existing source proof",async()=>{
+    m.invoiceStatus="invoiced";
+    m.currentInvoiceNumber="INV-SO-QA-101";
+    await perform(m.poster);
+    expect(m.poster).not.toHaveBeenCalled();
+    expect(sqlIndex("from public.accounting_entries e")).toBe(-1);
+    expect(sqlIndex("from public.bizportal_customer_ar_source_evidence_dev")).toBeGreaterThan(-1);
+    expect(m.sql).toContain("commit");
+  });
+  it("the new bridge OFF retains all previously PASS Invoice behavior",async()=>{
+    delete process.env[bridge];
+    await perform(m.poster);
+    expect(m.poster).not.toHaveBeenCalled();
+    expect(sqlIndex("from public.accounting_entries e")).toBe(-1);
+    expect(sqlIndex("from public.users")).toBe(-1);
+    expect(sqlIndex("into public.financial_outbox_events")).toBe(-1);
+    expect(sqlIndex("into public.audit_accounting_events")).toBe(-1);
+    expect(sqlIndex("set constraints customer_ar_journal_source_dev")).toBe(-1);
+    expect(m.sql).toContain("commit");
+  });
+  it("refuses production even with a mock owner attached",async()=>{
+    process.env.APP_ENV="production";
+    await expect(perform(m.poster)).rejects.toMatchObject({statusCode:503});
+    expect(m.poster).not.toHaveBeenCalled();
+    expect(m.sql).toContain("rollback");
+    noOutbound();
+  });
+});
+
+describe("real Ed25519 authorization chained into Invoice handler transaction", () => {
+  const snapshotFlag="CUSTOMER_PORTAL_INVOICE_SIGNED_REVIEW_SNAPSHOT_DEV";
+  const taxLockFlag="CUSTOMER_PORTAL_INVOICE_TAX_SOURCE_ROWLOCK_DEV";
+  const keys=["SESSION_SECRET","CUSTOMER_PORTAL_BIZPORTAL_ATTEST_SPKI_DEV",snapshotFlag,taxLockFlag];
+  const originals=Object.fromEntries(keys.map(key=>[key,process.env[key]]));
+  const bizSessionSecret="fixture-independent-bizportal-session-signing-secret-32-plus";
+  const keySeed=hkdfSync("sha256",Buffer.from(bizSessionSecret),
+    Buffer.from("CST_BIZPORTAL_DEV_SESSION_DERIVED_KEY_V1"),
+    Buffer.from("CUSTOMER_INVOICE_ED25519_ATTESTATION_V1"),32);
+  const privateKey=createPrivateKey({
+    key:Buffer.concat([Buffer.from("302e020100300506032b657004220420","hex"),Buffer.from(keySeed)]),
+    format:"der",type:"pkcs8",
+  });
+  const spki=createPublicKey(privateKey).export({format:"der",type:"spki"}).toString("base64");
+  const portalUser={id:1,role:"admin",name:"DEV QA",email:"qa.owner@example.invalid"};
+  function proof(companyId,alterations={}) {
+    const ctx={portalUser,invoiceId:101,companyId,canonicalActorId:"qa-existing-bizportal-owner"};
+    if(process.env[snapshotFlag]==="true")
+      ctx.reviewDigest=invoiceOwnerReviewDigest(
+        buildInvoiceOwnerReviewSnapshot(m.reviewSource));
+    const challenge=mintPortalInvoiceChallenge(ctx);
+    const now=Date.now();
+    const claims={v:1,purpose:"cst-customer-invoice-owner",aud:"CST_CUSTOMER_PORTAL_DEV",
+      actorId:ctx.canonicalActorId,email:portalUser.email,invoiceId:101,companyId,
+      challengeDigest:createHash("sha256").update(challenge).digest("hex"),
+      nonce:"b".repeat(32),iat:now,exp:now+60_000,...alterations};
+    const body=Buffer.from(JSON.stringify(claims)).toString("base64url");
+    const signature=sign(null,Buffer.from("CST_BIZPORTAL_CUSTOMER_INVOICE_DEV_V1\n"+body),
+      privateKey).toString("base64url");
+    return {challenge,proof:body+"."+signature};
+  }
+  function issue(companyId,evidence) {
+    return handleAdminInvoices({
+      request:{method:"POST",body:{action:"mark_invoiced",
+        bizportalInvoiceChallenge:evidence.challenge,bizportalInvoiceProof:evidence.proof}},
+      response:{},user:portalUser,sendJson:m.sendJson,sendError:vi.fn(),invoiceId:101,
+      postSalesInvoiceWithClient:m.poster,
+      verifySignedBizPortalProof:verifyIndependentBizPortalSuperAdminProof,
+    });
+  }
+  beforeEach(() => {
+    process.env.APP_ENV="development";
+    process.env[bridge]="true";
+    process.env[flag]="true";
+    process.env[attestFlag]="true";
+    process.env.SESSION_SECRET="fixture-portal-independent-invoice-secret-longer-than-32";
+    process.env.CUSTOMER_PORTAL_BIZPORTAL_ATTEST_SPKI_DEV=spki;
+    m.proof=[101];
+    m.poster.mockResolvedValue({posted:true,entryId:22});
+    m.glRow={id:22,company_id:1,source:"sales_invoice",source_id:101,
+      status:"posted",total_debit:"100.00",total_credit:"100.00",
+      is_voided:false,is_reversed:false,journal_company:1,
+      source_count:1,line_count:2,lines_debit:"100.00",lines_credit:"100.00"};
+  });
+  afterEach(() => {
+    for(const key of keys) {
+      if(originals[key]===undefined) delete process.env[key];
+      else process.env[key]=originals[key];
+    }
+  });
+  async function separateIssuerInvoice(companyId,{issuerCompany=companyId,proofActor="qa-existing-bizportal-owner",replay=false}={}) {
+    const issuer={id:46,role:"admin",name:"QA delegated staff",email:"staff.issuer@example.invalid"};
+    m.companyId=companyId;
+    m.bizIssuer=[{id:"qa-staff-issuer",email:issuer.email,role:"admin",
+      system_role:null,status:"active",is_active:true,company_id:issuerCompany}];
+    m.glRow={...m.glRow,company_id:companyId,journal_company:companyId};
+    if(replay){m.invoiceStatus="invoiced";m.currentInvoiceNumber="INV-SO-QA-101";}
+    const ctx={portalUser:issuer,invoiceId:101,companyId};
+    const challenge=mintPortalInvoiceChallenge(ctx),now=Date.now();
+    const claims={v:1,purpose:"cst-customer-invoice-owner",aud:"CST_CUSTOMER_PORTAL_DEV",
+      actorId:proofActor,email:"qa.owner@example.invalid",invoiceId:101,companyId,
+      challengeDigest:createHash("sha256").update(challenge).digest("hex"),
+      nonce:"c".repeat(32),iat:now,exp:now+60_000};
+    const body=Buffer.from(JSON.stringify(claims)).toString("base64url");
+    const signature=sign(null,Buffer.from("CST_BIZPORTAL_CUSTOMER_INVOICE_DEV_V1\n"+body),
+      privateKey).toString("base64url");
+    return handleAdminInvoices({
+      request:{method:"POST",body:{action:"mark_invoiced",
+        bizportalInvoiceChallenge:challenge,bizportalInvoiceProof:body+"."+signature,
+        // These caller-supplied fields MUST NOT determine approver identity.
+        actorId:"forged-actor-from-http",approverEmail:"forged@example.invalid"}},
+      response:{},user:issuer,sendJson:m.sendJson,sendError:vi.fn(),invoiceId:101,
+      postSalesInvoiceWithClient:m.poster,
+      verifySignedBizPortalProof:verifyIndependentBizPortalSuperAdminProof,
+    });
+  }
+  it.each([1,3])("permits a separate company %i staff issuer with one signed global Owner approval",async companyId=>{
+    await separateIssuerInvoice(companyId);
+    expect(m.poster).toHaveBeenCalledTimes(1);
+    expect(m.poster.mock.calls[0][0]).toMatchObject({
+      companyId,actorId:"qa-existing-bizportal-owner",
+    });
+    expect(m.sql.filter(q=>q.includes("from public.users"))).toHaveLength(2);
+    expect(m.sql).toContain("commit");
+    expect(m.outbox).toHaveLength(1);
+    expect(m.audits).toHaveLength(1);
+  });
+  it("blocks unassigned staff even when a valid Owner proof is signed",async()=>{
+    await expect(separateIssuerInvoice(3,{issuerCompany:1})).rejects.toMatchObject({statusCode:403});
+    expect(sqlIndex("update public.sales_documents")).toBe(-1);
+    expect(sqlIndex("into public.audit_accounting_events")).toBe(-1);
+    expect(m.poster).not.toHaveBeenCalled();
+    expect(m.sql).toContain("rollback");
+  });
+  it("blocks a signer that does not match the canonical active Owner ID",async()=>{
+    await expect(separateIssuerInvoice(1,{proofActor:"attacker-wrong-actor"}))
+      .rejects.toMatchObject({statusCode:403});
+    expect(m.poster).not.toHaveBeenCalled();
+    expect(sqlIndex("update public.sales_documents")).toBe(-1);
+    expect(m.sql).toContain("rollback");
+  });
+  it("rechecks independently signed Owner on replay but never posts twice",async()=>{
+    await separateIssuerInvoice(1,{replay:true});
+    expect(m.poster).not.toHaveBeenCalled();
+    expect(m.sql.filter(q=>q.includes("from public.users"))).toHaveLength(2);
+    expect(m.sql).toContain("commit");
+  });
+  it.each([1,3])("accepts a real signed proof for company %i before one atomic Invoice commit",async companyId=>{
+    m.companyId=companyId;
+    m.glRow={...m.glRow,company_id:companyId,journal_company:companyId};
+    const evidence=proof(companyId);
+    await issue(companyId,evidence);
+    expect(m.poster).toHaveBeenCalledTimes(1);
+    expect(m.poster.mock.calls[0][0]).toMatchObject({companyId,sourceId:101});
+    expect(m.sql).toContain("commit");
+    expect(m.sql).not.toContain("rollback");
+    expect(m.outbox).toHaveLength(1);
+    expect(m.audits).toHaveLength(1);
+  });
+  it("fails closed before any Invoice financial mutation when tax rowlock policy has not been enabled",async()=>{
+    process.env[snapshotFlag]="true";
+    delete process.env[taxLockFlag];
+    const evidence=proof(1);
+    await expect(issue(1,evidence)).rejects.toMatchObject({statusCode:503});
+    expect(sqlIndex("update public.sales_documents")).toBe(-1);
+    expect(m.poster).not.toHaveBeenCalled();
+    expect(m.sql).toContain("rollback");
+  });
+  it("posts only when signed Owner review matches same-client locked source",async()=>{
+    process.env[snapshotFlag]="true";
+    process.env[taxLockFlag]="true";
+    const evidence=proof(1);
+    await issue(1,evidence);
+    expect(m.sql.filter(q=>q.includes("join public.accounting_taxes tax"))).toHaveLength(1);
+    const settingsLock=sqlIndex("from public.accounting_settings");
+    const taxesLock=sqlIndex("from public.accounting_taxes");
+    const digestRead=sqlIndex("join public.accounting_taxes tax");
+    expect(settingsLock).toBeGreaterThan(0);
+    expect(taxesLock).toBeGreaterThan(settingsLock);
+    expect(digestRead).toBeGreaterThan(taxesLock);
+    expect(m.sql[settingsLock]).toContain("for share");
+    expect(m.sql[taxesLock]).toContain("for share");
+    expect(sqlIndex("update public.sales_documents")).toBeGreaterThan(
+      sqlIndex("join public.accounting_taxes tax"));
+    expect(m.poster).toHaveBeenCalledTimes(1);
+    expect(m.sql).toContain("commit");
+  });
+  it.each([
+    ["customer name",{customer_name:"CHANGED CUSTOMER"}],
+    ["total amount",{grand_total:"110.00"}],
+    ["tax amount",{tax_amount:"12.00"}],
+    ["tax rate",{selected_tax_rate:"12.000"}],
+    ["tax account",{selected_tax_account_id:49110,ppn_output_account_id:49110}],
+    ["tax source mapping",{tax_rate_id:9,selected_tax_id:9}],
+  ])("rejects previously signed OTP after %s source changes",async(_key,change)=>{
+    process.env[snapshotFlag]="true";
+    process.env[taxLockFlag]="true";
+    const evidence=proof(1);
+    m.reviewSource={...m.reviewSource,...change};
+    await expect(issue(1,evidence)).rejects.toMatchObject({statusCode:409});
+    expect(m.poster).not.toHaveBeenCalled();
+    expect(sqlIndex("update public.sales_documents")).toBe(-1);
+    expect(m.sql).toContain("rollback");
+    noOutbound();
+  });
+  it("refuses a signed approval that omits financial review digest",async()=>{
+    process.env[snapshotFlag]="true";
+    process.env[taxLockFlag]="true";
+    delete process.env[snapshotFlag];
+    const evidence=proof(1);
+    process.env[snapshotFlag]="true";
+    await expect(issue(1,evidence)).rejects.toMatchObject({statusCode:409});
+    expect(m.poster).not.toHaveBeenCalled();
+    expect(sqlIndex("update public.sales_documents")).toBe(-1);
+  });
+  it("rejects signed Company 1 proof for a Company 3 Invoice before updates or posting",async()=>{
+    m.companyId=3;
+    await expect(issue(3,proof(1))).rejects.toMatchObject({statusCode:403});
+    expect(m.poster).not.toHaveBeenCalled();
+    expect(sqlIndex("update public.sales_documents")).toBe(-1);
+    expect(m.sql).toContain("rollback");
+    expect(m.sql).not.toContain("commit");
+    noOutbound();
+  });
+  it("rejects a validly signed proof with wrong Invoice identity",async()=>{
+    await expect(issue(1,proof(1,{invoiceId:102}))).rejects.toMatchObject({statusCode:403});
+    expect(m.poster).not.toHaveBeenCalled();
+    expect(sqlIndex("update public.sales_documents")).toBe(-1);
+    expect(m.sql).not.toContain("commit");
+  });
+  it("rejects invalid proof even when an Invoice is already marked issued",async()=>{
+    m.invoiceStatus="invoiced";
+    m.currentInvoiceNumber="INV-SO-QA-101";
+    const evidence=proof(1);
+    evidence.proof=evidence.proof.slice(0,-3)+"AAA";
+    await expect(issue(1,evidence)).rejects.toMatchObject({statusCode:403});
+    expect(m.poster).not.toHaveBeenCalled();
+    expect(sqlIndex("from public.bizportal_customer_ar_source_evidence_dev")).toBe(-1);
+    expect(m.sql).toContain("rollback");
+  });
+});
+
+// DEV-only regression: no global/bypass DB pool can post through Invoice,
+ // even if a route flag or a signed actor is accidentally accepted.
+describe("hard fail-closed on the actual PostgreSQL writer session",()=>{
+ it.each([
+  ["global postgres bypass",()=>{m.dbRoleOverride="postgres";m.dbBypass=true;}],
+  ["CST invoice using Diva writer",()=>{m.dbRoleOverride="bizportal_customer_invoice_diva_writer_dev";}],
+  ["RLS disabled for required finance tables",()=>{m.dbRlsActive=false;}],
+ ])("blocks %s before any Invoice update, posting, audit or notification",async(_name,setup)=>{
+  process.env[bridge]="true";
+  process.env[attestFlag]="true";
+  setup();
+  await expect(perform(m.poster)).rejects.toMatchObject({statusCode:503});
+  expect(m.poster).not.toHaveBeenCalled();
+  expect(sqlIndex("update public.sales_documents")).toBe(-1);
+  expect(m.sql).toContain("rollback");
+  expect(m.sql).not.toContain("commit");
+  noOutbound();
+ });
+});
+
+// The atomic path cannot quietly fall back to Portal's postgres pool.
+describe("DEV Invoice binds a company-specific client for the complete transaction",()=>{
+ it("does not touch the privileged pool after scoped writer RLS fails",async()=>{
+  process.env[bridge]="true";
+  process.env[attestFlag]="true";
+  m.dbRoleOverride="postgres";
+  m.dbBypass=true;
+  await expect(perform(m.poster)).rejects.toMatchObject({statusCode:503});
+  expect(m.scopedOpen).toHaveBeenCalledTimes(1);
+  expect(m.connect).not.toHaveBeenCalled();
+  expect(m.end).toHaveBeenCalledTimes(1);
+  expect(m.release).not.toHaveBeenCalled();
+  expect(m.sql).toContain("rollback");
+  expect(sqlIndex("update public.sales_documents")).toBe(-1);
+ });
+ it("rejects a DB-company change between read-only selection and FOR UPDATE",async()=>{
+  process.env[bridge]="true";
+  process.env[attestFlag]="true";
+  m.scopedOpen.mockResolvedValue({
+    client:{query:m.query,end:m.end},companyId:3,
+  });
+  await expect(perform(m.poster)).rejects.toMatchObject({statusCode:503});
+  expect(m.scopedOpen).toHaveBeenCalledTimes(1);
+  expect(m.connect).not.toHaveBeenCalled();
+  expect(m.end).toHaveBeenCalledTimes(1);
+  expect(sqlIndex("row_security_active(")).toBe(-1);
+  expect(sqlIndex("update public.sales_documents")).toBe(-1);
+ });
+ it("keeps original pool and release when atomic Invoice is OFF",async()=>{
+  delete process.env[bridge];
+  m.proof=[101];
+  await perform();
+  expect(m.scopedOpen).not.toHaveBeenCalled();
+  expect(m.connect).toHaveBeenCalledTimes(1);
+  expect(m.release).toHaveBeenCalledTimes(1);
+  expect(m.end).not.toHaveBeenCalled();
+ });
+});
+
+describe("single Owner/Super Admin OTP approval for company-scoped Invoice",()=>{
+ beforeEach(()=>{
+  process.env[bridge]="true";
+  process.env[attestFlag]="true";
+  m.proof=[101];
+  m.poster.mockResolvedValue({posted:true,entryId:22});
+  m.glRow={
+    id:22,company_id:1,source:"sales_invoice",source_id:101,
+    status:"posted",total_debit:"100.00",total_credit:"100.00",
+    is_voided:false,is_reversed:false,journal_company:1,
+    source_count:1,line_count:2,lines_debit:"100.00",lines_credit:"100.00",
+  };
+ });
+ it.each([1,3])("one signed Super Admin approval issues company %i without another Admin or company request",async companyId=>{
+  // Hosted CST-DEV currently has zero Portal Admin memberships and no
+  // independently reviewed Admin-company request. Global canonical Owner
+  // may still issue after a single valid signed BizPortal Super Admin OTP.
+  m.companyId=companyId;
+  m.glRow={...m.glRow,company_id:companyId,journal_company:companyId};
+  await perform(m.poster);
+  expect(m.scopedOpen).toHaveBeenCalledTimes(1);
+  expect(m.connect).not.toHaveBeenCalled();
+  expect(m.poster).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
+    companyId,sourceId:101,actorId:"qa-existing-bizportal-owner",
+  }));
+  expect(m.verifyIndependentOwner).toHaveBeenCalledTimes(1);
+  expect(sqlIndex("from public.portal_company_requests approval")).toBe(-1);
+  expect(m.sql.some(q=>q.includes("for share of member, approval, reviewer, issuer"))).toBe(false);
+  expect(sqlIndex("from public.users")).toBeGreaterThan(sqlIndex("row_security_active("));
+  expect(sqlIndex("update public.sales_documents")).toBeGreaterThan(sqlIndex("from public.users"));
+  expect(m.sql).toContain("commit");
+  expect(m.sql).not.toContain("rollback");
+  expect(m.outbox).toHaveLength(1);
+  expect(m.audits).toHaveLength(1);
+ });
+ it("rejects a Portal Admin lacking matching active canonical Super Admin",async()=>{
+  m.bizOwner=[];
+  await expect(perform(m.poster)).rejects.toMatchObject({statusCode:403});
+  expect(m.verifyIndependentOwner).toHaveBeenCalledTimes(1);
+  expect(m.poster).not.toHaveBeenCalled();
+  expect(sqlIndex("update public.sales_documents")).toBe(-1);
+  expect(m.sql).toContain("rollback");
+  noOutbound();
+ });
+ it("rejects a company-scoped Super Admin issuing another company's Invoice",async()=>{
+  m.companyId=3;
+  m.bizOwner=[{
+    id:"qa-owner-company-1",email:"qa.owner@example.invalid",role:"super_admin",system_role:"super_admin",
+    status:"active",is_active:true,company_id:1,
+  }];
+  await expect(perform(m.poster)).rejects.toMatchObject({statusCode:403});
+  expect(m.verifyIndependentOwner).toHaveBeenCalledTimes(1);
+  expect(m.poster).not.toHaveBeenCalled();
+  expect(sqlIndex("update public.sales_documents")).toBe(-1);
+  expect(m.sql).toContain("rollback");
+  noOutbound();
+ });
+ it("rejects unsigned or invalid Owner OTP before any Invoice mutation",async()=>{
+  m.verifyIndependentOwner.mockResolvedValue(false);
+  await expect(perform(m.poster)).rejects.toMatchObject({statusCode:403});
+  expect(m.poster).not.toHaveBeenCalled();
+  expect(sqlIndex("update public.sales_documents")).toBe(-1);
+  expect(m.sql).not.toContain("commit");
+  expect(m.sql).toContain("rollback");
+  noOutbound();
+ });
+ it("also requires the one signed Owner OTP on Invoice replay",async()=>{
+  m.invoiceStatus="invoiced";
+  m.currentInvoiceNumber="INV-SO-QA-101";
+  m.verifyIndependentOwner.mockResolvedValue(false);
+  await expect(perform(m.poster)).rejects.toMatchObject({statusCode:403});
+  expect(sqlIndex("from public.bizportal_customer_ar_source_evidence_dev")).toBe(-1);
+  expect(sqlIndex("from public.portal_company_requests approval")).toBe(-1);
+  expect(m.poster).not.toHaveBeenCalled();
+  expect(m.sql).toContain("rollback");
+ });
+ it("preserves existing financial feature OFF behavior",async()=>{
+  delete process.env[bridge];
+  m.proof=[101];
+  await perform();
+  expect(m.scopedOpen).not.toHaveBeenCalled();
+  expect(m.connect).toHaveBeenCalledTimes(1);
+  expect(m.sql.some(q=>q.includes("portal_company_requests"))).toBe(false);
+ });
+});

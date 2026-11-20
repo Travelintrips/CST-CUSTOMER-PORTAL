@@ -161,7 +161,9 @@ async function seedBase(client) {
       (19,24,25,'external-token','external-hash','invited',now()+interval '6 days',1),
       (20,25,26,'cross-token','cross-hash','invited',now()+interval '6 days',1),
       (21,26,24,'unapproved-token','unapproved-hash','invited',now()+interval '6 days',1),
-      (22,27,24,'expired-token','expired-hash','invited',now()-interval '1 day',1),
+      -- Always expire against the test's fixed "now" (2026-11-17 UTC),
+      -- not against wall-clock time when the GitHub runner executes.
+      (22,27,24,'expired-token','expired-hash','invited',timestamp '2026-11-16 00:00:00',1),
       (23,28,24,'line-token','line-hash','invited',now()+interval '6 days',1),
       (24,29,24,'rollback-token','rollback-hash','invited',now()+interval '6 days',1);
   `);
@@ -171,6 +173,14 @@ async function run() {
   const client = await pool.connect();
   try {
     await seedBase(client);
+    // The app's injected clock is fixed at 2026-11-17. Verify that the QA
+    // invitation is expired relative to THAT clock, even if run days later.
+    const expiredFixture = (await client.query(
+      "select valid_until from public.mkt_vendor_quotes where id=22",
+    )).rows[0];
+    assert.ok(expiredFixture?.valid_until instanceof Date &&
+      expiredFixture.valid_until.getTime() < now.getTime(),
+      "Expired invitation QA fixture must predate the injected test clock");
     const first = await transaction((tx) => submitInternalVendorQuote({
       db: tx, admin, rfqId: 23, quoteId: 18, body, env, now, writeEvent: auditWriter(tx),
     }));

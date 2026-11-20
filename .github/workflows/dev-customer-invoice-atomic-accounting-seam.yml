@@ -1,0 +1,92 @@
+name: Customer Invoice DEV — Atomic Existing Accounting Owner Contract
+
+on:
+  pull_request:
+    branches:
+      - test/dev-customer-invoice-posted-ar-proof-gate-20261117
+    paths:
+      - 'server/billing-operations.mjs'
+      - 'server/index.mjs'
+      - 'server/dev-accounting-owner-runtime.mjs'
+      - 'server/dev-bizportal-invoice-attestation.mjs'
+      - 'src/portal-customer-invoice-posted-ar-evidence.test.ts'
+      - 'src/dev-accounting-owner-runtime.test.ts'
+      - 'src/dev-bizportal-invoice-attestation.test.ts'
+      - 'src/lib/bizportal-invoice-proof.ts'
+      - 'src/lib/bizportal-invoice-proof.test.ts'
+      - 'src/pages/admin/CustomerBillingTab.tsx'
+      - '.github/workflows/dev-customer-invoice-atomic-accounting-seam.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  customer-invoice-atomic-posting-owner-seam:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.33.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: pnpm
+      - name: Exact release dependency graph
+        run: pnpm install --frozen-lockfile
+      - name: Keep real Accounting owner separate and always fail closed in DEV
+        shell: bash
+        run: |
+          set -euo pipefail
+          f=server/billing-operations.mjs
+          grep -Fq 'process.env.CUSTOMER_PORTAL_ATOMIC_ACCOUNTING_POST_DEV !== "true"' "$f"
+          grep -Fq 'process.env.CUSTOMER_PORTAL_REQUIRE_POSTED_AR_EVIDENCE_DEV !== "true"' "$f"
+          grep -Fq 'typeof postWithClient !== "function"' "$f"
+          grep -Fq 'source: "sales_invoice"' "$f"
+          grep -Fq 'from public.accounting_entries e' "$f"
+          grep -Fq 'from public.bizportal_customer_ar_source_evidence_dev' "$f"
+          grep -Fq 'status !== "posted"' "$f"
+          ! grep -Eiq 'insert[[:space:]]+into[[:space:]]+public.accounting_entries|update[[:space:]]+public.accounting_entries' "$f"
+          # An HTTP caller must not supply a second financial writer or a
+          # runtime import path. The existing signed admin route uses the
+          # server-controlled checksum-pinned owner only on mark_invoiced.
+          grep -Fq 'await requireAdmin(request, response)' server/index.mjs
+          grep -Fq 'await loadTrustedDevAccountingOwner()' server/index.mjs
+          grep -Fq 'postSalesInvoiceWithClient,' server/index.mjs
+          grep -Fq 'DEV_ACCOUNTING_OWNER_HASH_MISMATCH' server/dev-accounting-owner-runtime.mjs
+          grep -Fq 'DEV_ACCOUNTING_OWNER_ENV_DENIED' server/dev-accounting-owner-runtime.mjs
+          ! grep -Fq 'request.body.postSalesInvoiceWithClient' server/index.mjs
+          grep -Fq 'verifyIndependentBizPortalSuperAdminProof' server/index.mjs
+          grep -Fq 'CUSTOMER_PORTAL_REQUIRE_BIZPORTAL_ATTEST_DEV' server/billing-operations.mjs
+          grep -Fq 'verifySignedBizPortalProof' server/billing-operations.mjs
+          grep -Fq 'createPublicKey' server/dev-bizportal-invoice-attestation.mjs
+          grep -Fq 'timingSafeEqual' server/dev-bizportal-invoice-attestation.mjs
+          grep -Fq 'VITE_CUSTOMER_PORTAL_BIZPORTAL_ATTEST_DEV' src/pages/admin/CustomerBillingTab.tsx
+          grep -Fq 'requestBizPortalInvoiceProof' src/pages/admin/CustomerBillingTab.tsx
+          grep -Fq 'CST_INVOICE_BIZPORTAL_ATTEST_V1' src/lib/bizportal-invoice-proof.ts
+          ! grep -Fq 'localStorage.setItem' src/lib/bizportal-invoice-proof.ts
+          echo DEV_ATOMIC_POST_SEAM_VERIFICATION_GUARD_PASS
+      - name: Posted-AR source and same-transaction Accounting receipt contract tests
+        env:
+          APP_ENV: development
+          NODE_ENV: test
+        run: pnpm exec vitest run src/portal-customer-invoice-posted-ar-evidence.test.ts src/dev-accounting-owner-runtime.test.ts src/dev-bizportal-invoice-attestation.test.ts src/lib/bizportal-invoice-proof.test.ts
+      - name: All existing Customer Portal regressions with no real DB or messages
+        env:
+          APP_ENV: development
+          NODE_ENV: test
+          SESSION_SECRET: customer-portal-release-contract-secret-32
+          SUPABASE_DATABASE_URL_DEV: postgresql://ci:ci@127.0.0.1:5432/ci
+          SMTP_FROM: test@example.com
+          SMTP_USER: test@example.com
+          SMTP_PASS: test-smtp-secret
+          CUSTOMER_PORTAL_FONNTE_TOKEN: test-fonnte-token
+        run: pnpm exec vitest run --maxWorkers=2
+      - name: TypeScript and syntax
+        run: |
+          pnpm run typecheck
+          pnpm run verify:server-syntax
+      - name: No tracked application changes during test
+        run: git diff --exit-code -- server/index.mjs server/billing-operations.mjs server/dev-accounting-owner-runtime.mjs server/dev-bizportal-invoice-attestation.mjs src pnpm-lock.yaml

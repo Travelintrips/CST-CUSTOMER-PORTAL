@@ -10,7 +10,7 @@ import {
   uploadDocument,
 } from "./storage.mjs";
 import { createFreightActionToken } from "./freight-operations.mjs";
-import { corporatePoApprovalGateDevEnabled, stageDevExistingCompanyApproval } from "./corporate-po-affiliation-gate.mjs";
+import { corporatePoApprovalGateDevEnabled, companyAffiliationReviewRequiredDev, financialInvoiceCompanyReviewRequiredDev, stageDevExistingCompanyApproval } from "./corporate-po-affiliation-gate.mjs";
 
 const TERMINAL_STATUSES = new Set(["completed", "cancelled", "rejected", "expired", "done"]);
 const SERVICE_LABELS = {
@@ -648,7 +648,7 @@ async function handleAdminCompanyRequests(ctx) {
   const matchedCompanyId = body.matchedCompanyId == null ? null : numberOrNull(body.matchedCompanyId);
   if (!["pending", "in_review", "approved", "rejected"].includes(status)) return adminError(ctx, 400, "Status company request tidak valid.");
   if (body.matchedCompanyId != null && (!matchedCompanyId || matchedCompanyId <= 0)) return adminError(ctx, 400, "Company tidak valid.");
-  if (corporatePoApprovalGateDevEnabled() && status === "approved" && matchedCompanyId == null) {
+  if (companyAffiliationReviewRequiredDev() && status === "approved" && matchedCompanyId == null) {
     return adminError(ctx, 400, "Pilih perusahaan canonical sebelum menyetujui afiliasi.");
   }
   // The request decision, membership, and profile are one unit. A successful
@@ -672,6 +672,11 @@ async function handleAdminCompanyRequests(ctx) {
     if (!["pending", "in_review"].includes(current.status)) {
       await client.query("rollback");
       return adminError(ctx, 409, "Permohonan perusahaan ini sudah diputuskan. Muat ulang daftar.");
+    }
+    if (status === "approved" && financialInvoiceCompanyReviewRequiredDev()
+        && Number(current.portal_customer_id) === Number(ctx.user.id)) {
+      await client.query("rollback");
+      return adminError(ctx, 403, "Persetujuan afiliasi keuangan harus diberikan Admin lain.");
     }
 
     let canonicalCompanyName = null;
