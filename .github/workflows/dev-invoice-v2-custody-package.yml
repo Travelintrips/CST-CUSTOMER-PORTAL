@@ -54,7 +54,7 @@ jobs:
         with:
           project_id: secret-504012
           # NEW provider: do not broaden or reuse the old push-only IAM-proof provider.
-          workload_identity_provider: projects/653506647312/locations/global/workloadIdentityPools/fleet-dev-github/providers/customer-invoice-dev-custody-v2-oidc
+          workload_identity_provider: projects/653506647312/locations/global/workloadIdentityPools/fleet-dev-github/providers/invoice-dev-custody-v2-oidc
           service_account: bizportal-invoice-dev-reader@secret-504012.iam.gserviceaccount.com
           token_format: access_token
           access_token_lifetime: 300s
