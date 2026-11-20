@@ -1,0 +1,114 @@
+name: CST Invoice DEV — approved V2 ciphertext-only handoff
+
+# This workflow cannot run from a PR, push, or schedule. It is intentionally
+# dormant until the approved environment and distinct OIDC provider exist.
+on:
+  workflow_dispatch:
+    inputs:
+      approval_text:
+        description: 'Type APPROVE-ENCRYPTED-CST-DEV-V2 after reviewing Issue 238 and GCP custody'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: cst-dev-invoice-secret-v2-custody
+  cancel-in-progress: false
+
+jobs:
+  package-ciphertext-only:
+    if: >-
+      github.repository == 'Travelintrips/CST-CUSTOMER-PORTAL' &&
+      github.repository_id == '1369747600' &&
+      github.ref == 'refs/heads/main' &&
+      github.event_name == 'workflow_dispatch'
+    # REQUIRES environment settings: required human reviewers, branch main only,
+    # and environment variable CST_DEV_INVOICE_CUSTODY_ENABLED=approved-reviewed.
+    environment: cst-dev-invoice-custody
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout reviewed main branch
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Enforce owner and environment custody approval
+        shell: bash
+        env:
+          CST_DEV_INVOICE_CUSTODY_APPROVAL: ${{ inputs.approval_text }}
+          CST_DEV_INVOICE_CUSTODY_ENABLED: ${{ vars.CST_DEV_INVOICE_CUSTODY_ENABLED }}
+        run: |
+          set -euo pipefail
+          [[ "$CST_DEV_INVOICE_CUSTODY_APPROVAL" == 'APPROVE-ENCRYPTED-CST-DEV-V2' ]] || exit 2
+          [[ "$CST_DEV_INVOICE_CUSTODY_ENABLED" == 'approved-reviewed' ]] || exit 2
+          [[ "$GITHUB_REPOSITORY_ID" == 1369747600 && "$GITHUB_REF" == 'refs/heads/main' ]] || exit 2
+          echo "CST_DEV_V2_OWNER_ENVIRONMENT_GATE_PASS"
+
+      - name: Obtain a short-lived access token using NEW custody-only OIDC provider
+        id: keyless
+        uses: google-github-actions/auth@v3
+        with:
+          project_id: secret-504012
+          # NEW provider: do not broaden or reuse the old push-only IAM-proof provider.
+          workload_identity_provider: projects/653506647312/locations/global/workloadIdentityPools/fleet-dev-github/providers/customer-invoice-dev-custody-v2-oidc
+          service_account: bizportal-invoice-dev-reader@secret-504012.iam.gserviceaccount.com
+          token_format: access_token
+          access_token_lifetime: 300s
+          create_credentials_file: false
+          export_environment_variables: false
+
+      - name: Encrypt exact Version 2 in memory (never show or write plaintext)
+        shell: bash
+        env:
+          GCP_ACCESS_TOKEN: ${{ steps.keyless.outputs.access_token }}
+          CST_DEV_INVOICE_CUSTODY_APPROVAL: ${{ inputs.approval_text }}
+          CST_DEV_INVOICE_CUSTODY_ENABLED: ${{ vars.CST_DEV_INVOICE_CUSTODY_ENABLED }}
+        run: |
+          set -euo pipefail
+          python3 scripts/dev-invoice-v2-encrypt.py \
+            --mode real \
+            --recipient-cert scripts/dev-invoice-envelope-recipient.pem \
+            --out-dir "$RUNNER_TEMP/cst-invoice-v2-ciphertext"
+          echo "ONLY_ENCRYPTED_CMS_AND_MANIFEST"
+
+      - name: Verify encrypted artifact digest and exact V2 reference without decryption
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import hashlib, json, os
+          from pathlib import Path
+          d = Path(os.environ['RUNNER_TEMP'])/'cst-invoice-v2-ciphertext'
+          files = {p.name for p in d.iterdir()}
+          assert files == {'invoice-writer-version2.cms','invoice-writer-version2.manifest.json'}
+          m = json.loads((d/'invoice-writer-version2.manifest.json').read_text())
+          assert set(m) == {'source_sha','certificate_sha256','envelope_sha256','secret_version','credential_count','format'}
+          assert m['source_sha']==os.environ['GITHUB_SHA']
+          assert m['secret_version']=='projects/653506647312/secrets/bizportal-customer-invoice-writers-dev-companies/versions/2'
+          assert m['certificate_sha256']=='38a9abcbbcca3535601265ae2c9a8a4b574f90767b5fe83291d38bf4513cb334'
+          assert m['format']=='CMS-AES-256-GCM' and m['credential_count']==2
+          assert hashlib.sha256((d/'invoice-writer-version2.cms').read_bytes()).hexdigest()==m['envelope_sha256']
+          print('CST_DEV_V2_ENVELOPE_METADATA_ONLY_PASS')
+          PY
+
+      - name: Upload encrypted artifacts only (one-day retention)
+        uses: actions/upload-artifact@v4
+        with:
+          name: cst-dev-invoice-v2-ciphertext-only
+          path: |
+            ${{ runner.temp }}/cst-invoice-v2-ciphertext/invoice-writer-version2.cms
+            ${{ runner.temp }}/cst-invoice-v2-ciphertext/invoice-writer-version2.manifest.json
+          if-no-files-found: error
+          retention-days: 1
+
+      - name: Remove runner-side encrypted temporary copies
+        if: always()
+        shell: bash
+        run: |
+          rm -f "$RUNNER_TEMP/cst-invoice-v2-ciphertext/invoice-writer-version2.cms" \
+                "$RUNNER_TEMP/cst-invoice-v2-ciphertext/invoice-writer-version2.manifest.json"
+          rmdir "$RUNNER_TEMP/cst-invoice-v2-ciphertext" 2>/dev/null || true
