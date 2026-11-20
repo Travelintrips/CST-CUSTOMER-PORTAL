@@ -23,22 +23,43 @@ test("PR208 package pins all five artifacts, exact DEV database and fail-closed 
   assert.match(loader, /isReviewedOriginalOwnerBundle\(await readFile\(actualPath\), expectedHash\)/);
 });
 
-test("runtime loader stays OFF without flags, and fails closed without original owner bundle", () => {
+test("runtime owner stays OFF by default; a present bundle must be SHA-pinned", () => {
+  // CI has no host-installed bundle; on the DEV VPS the exact reviewed bundle
+  // is already staged. Both conditions must pass without disabling any guard.
   const source = [
-    "import { loadDevOriginalAccountingOwner } from './server/dev-original-accounting-owner-loader.mjs';",
-    "if (await loadDevOriginalAccountingOwner() !== null) process.exit(10);",
-    "process.env.CUSTOMER_PORTAL_ATOMIC_ACCOUNTING_POST_DEV = 'true';",
-    "process.env.CUSTOMER_PORTAL_REQUIRE_POSTED_AR_EVIDENCE_DEV = 'true';",
-    "if (await loadDevOriginalAccountingOwner() !== null) process.exit(11);",
-    "console.log('PINNED_OWNER_MISSING_FAIL_CLOSED_PASS');"
+    "(async () => {",
+    "  const fs=require('node:fs'),crypto=require('node:crypto'),path=require('node:path');",
+    "  const mod=await import('./server/dev-original-accounting-owner-loader.mjs');",
+    "  if(await mod.loadDevOriginalAccountingOwner()!==null)process.exit(10);",
+    "  process.env.CUSTOMER_PORTAL_ATOMIC_ACCOUNTING_POST_DEV='true';",
+    "  process.env.CUSTOMER_PORTAL_REQUIRE_POSTED_AR_EVIDENCE_DEV='true';",
+    "  let present=true;",
+    "  for(const [name,sha] of Object.entries(mod.DEV_ACCOUNTING_OWNER_HASHES)){",
+    "    const file=path.join(mod.DEV_ACCOUNTING_OWNER_DIR,name);",
+    "    let bytes;",
+    "    try{",
+    "      if(fs.realpathSync(file)!==file)throw Error('unsafe bundle path');",
+    "      bytes=fs.readFileSync(file);",
+    "    }catch{present=false;break;}",
+    "    if(crypto.createHash('sha256').update(bytes).digest('hex')!==sha){present=false;break;}",
+    "  }",
+    "  const owner=await mod.loadDevOriginalAccountingOwner();",
+    "  if(present && typeof owner!=='function')process.exit(11);",
+    "  if(!present && owner!==null)process.exit(12);",
+    "  process.env.SUPABASE_DATABASE_URL_DEV='postgresql://ci:ci@127.0.0.1:5432/ci';",
+    "  if(await mod.loadDevOriginalAccountingOwner()!==null)process.exit(13);",
+    "  console.log('OWNER_BUNDLE_ABSENT_OR_PINNED_FAIL_CLOSED_PASS');",
+    "  process.exit(0);",
+    "})().catch(()=>process.exit(14));"
   ].join("\n");
-  const run = spawnSync(process.execPath, ["--input-type=module","--eval",source],{
-    cwd:process.cwd(),encoding:"utf8",timeout:12000,
+  const run=spawnSync(process.execPath,["--eval",source],{
+    cwd:process.cwd(),encoding:"utf8",timeout:20_000,
     env:{...process.env,APP_ENV:"development",NODE_ENV:"development",
       SUPABASE_DATABASE_URL_DEV:"postgresql://postgres.xssrfshdrtdfupgqwfdw:dummy@127.0.0.1:6543/cst_dev",
       CUSTOMER_PORTAL_ATOMIC_ACCOUNTING_POST_DEV:"false",
-      CUSTOMER_PORTAL_REQUIRE_POSTED_AR_EVIDENCE_DEV:"false"}
+      CUSTOMER_PORTAL_REQUIRE_POSTED_AR_EVIDENCE_DEV:"false",
+      CUSTOMER_PORTAL_REQUIRE_BIZPORTAL_ATTEST_DEV:"false"},
   });
-  assert.equal(run.status,0,run.stderr || run.stdout);
-  assert.match(run.stdout,/PINNED_OWNER_MISSING_FAIL_CLOSED_PASS/);
+  assert.equal(run.status,0,run.stderr||run.stdout);
+  assert.match(run.stdout,/OWNER_BUNDLE_ABSENT_OR_PINNED_FAIL_CLOSED_PASS/);
 });
