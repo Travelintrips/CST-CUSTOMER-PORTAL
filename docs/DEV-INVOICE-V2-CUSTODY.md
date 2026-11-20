@@ -9,7 +9,7 @@ This is **a draft workflow**, not approval to retrieve a secret. The previous IA
 ## Verified current GitHub and GCP controls (20 November 2026)
 - GitHub Environment `cst-dev-invoice-custody` was **created and verified** with required reviewer `Travelintrips`, custom branch policy permitting **only main**, `can_admins_bypass=false`, and an environment variable `CST_DEV_INVOICE_CUSTODY_ENABLED=blocked`. This **does not** authorize a real secret run.
 - Repository `main` has **no classic branch protection and no repository ruleset** on the current read-only inspection. The release-custody workflow must **not** be merged, its blocking variable must not be changed to `approved-reviewed`, and Secret Manager IAM must not be broadened until appropriate main branch review/protection is agreed and verified. Enabling protections affects the entire repository and requires an explicit owner decision.
-- The required GCP provider `customer-invoice-dev-custody-v2-oidc` is **absent**, while the older push-only IAM-proof provider remains intact. Do not reuse or widen its condition.
+- The required GCP provider `invoice-dev-custody-v2-oidc` is **absent**, while the older push-only IAM-proof provider remains intact. Do not reuse or widen its condition.
 - GitHub Actions dependencies in both custody workflows are pinned to **immutable reviewed commit SHA**, not movable `@v3` / `@v4` tags. The CI must be rechecked after this change.
 - No Secret Version 2 payload was read, and no GCP IAM/DB role/PROD changes were made by this repository PR.
 
@@ -17,7 +17,7 @@ This is **a draft workflow**, not approval to retrieve a secret. The previous IA
 
 1. Review the source commit / GitHub protected `main` branch and create the GitHub Environment **`cst-dev-invoice-custody`**, with a required Owner/authorized reviewer, deployment branch restricted to protected **main** only, and environment variable `CST_DEV_INVOICE_CUSTODY_ENABLED=approved-reviewed`. Until this configuration is verified, the workflow must not be promoted to main.
 2. Through an approved GCP change, create a new separate OIDC provider (no reuse or broadening of the existing `customer-invoice-dev-oidc` provider):
-   `projects/653506647312/locations/global/workloadIdentityPools/fleet-dev-github/providers/customer-invoice-dev-custody-v2-oidc`
+   `projects/653506647312/locations/global/workloadIdentityPools/fleet-dev-github/providers/invoice-dev-custody-v2-oidc`
    Issuer `https://token.actions.githubusercontent.com`. Attribute mapping: `google.subject=assertion.sub`, `attribute.repository_id=assertion.repository_id`, `attribute.ref=assertion.ref`, `attribute.workflow_ref=assertion.workflow_ref`.
    **Required strict CEL attribute condition** (the administrator must verify every claim):
    ```
@@ -38,6 +38,7 @@ This is **a draft workflow**, not approval to retrieve a secret. The previous IA
 
 - The existing V1 secret is disabled; never retry it, use `latest`, or copy/relabel its CMS.
 - The RSA recipient certificate file `scripts/dev-invoice-envelope-recipient.pem` is **public**. Its DER fingerprint must equal `38a9abcbbcca3535601265ae2c9a8a4b574f90767b5fe83291d38bf4513cb334`. **Never commit or transmit the matching private key.**
+- For this release, the encrypted payload accepts **only Supabase session-pooler** DSNs on port 5432, matching the supported CST-DEV app path. Direct `db.<project>.supabase.co` connections are deliberately rejected until application support has been independently reviewed; truncated direct hostnames are invalid.
 - The workflow never uploads DSN or password values. Ephemeral runner memory still temporarily holds plaintext; do not claim data never exists in memory. Errors are generalized to prevent accidental leakage.
 - The Python helper enforces exact GCP numeric-project Version 2, exact Supabase DEV ref, exactly two scoped company writer DSNs, TLS verify-full root CA, CRC32C integrity, recipient cert fingerprint, immutable source SHA.
 - Synthetic fixture is explicitly `qa_only` and rejected by the real V2 release checker. Do not treat synthetic QA as an operational pass.
