@@ -6,6 +6,13 @@ A **manual-only**, DEV-scoped GitHub Actions workflow that fetches the immutable
 
 This is **a draft workflow**, not approval to retrieve a secret. The previous IAM-proof workflow `dev-invoice-keyless-secret-probe.yml` and its existing OIDC provider must remain unchanged. They are restricted to a push on a different branch and cannot authorize this new workflow.
 
+## Verified current GitHub and GCP controls (20 November 2026)
+- GitHub Environment `cst-dev-invoice-custody` was **created and verified** with required reviewer `Travelintrips`, custom branch policy permitting **only main**, `can_admins_bypass=false`, and an environment variable `CST_DEV_INVOICE_CUSTODY_ENABLED=blocked`. This **does not** authorize a real secret run.
+- Repository `main` has **no classic branch protection and no repository ruleset** on the current read-only inspection. The release-custody workflow must **not** be merged, its blocking variable must not be changed to `approved-reviewed`, and Secret Manager IAM must not be broadened until appropriate main branch review/protection is agreed and verified. Enabling protections affects the entire repository and requires an explicit owner decision.
+- The required GCP provider `customer-invoice-dev-custody-v2-oidc` is **absent**, while the older push-only IAM-proof provider remains intact. Do not reuse or widen its condition.
+- GitHub Actions dependencies in both custody workflows are pinned to **immutable reviewed commit SHA**, not movable `@v3` / `@v4` tags. The CI must be rechecked after this change.
+- No Secret Version 2 payload was read, and no GCP IAM/DB role/PROD changes were made by this repository PR.
+
 ## Required actions by authorized repository/GCP administrators before merge or any real run
 
 1. Review the source commit / GitHub protected `main` branch and create the GitHub Environment **`cst-dev-invoice-custody`**, with a required Owner/authorized reviewer, deployment branch restricted to protected **main** only, and environment variable `CST_DEV_INVOICE_CUSTODY_ENABLED=approved-reviewed`. Until this configuration is verified, the workflow must not be promoted to main.
