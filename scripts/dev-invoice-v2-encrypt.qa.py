@@ -62,9 +62,11 @@ m.validate_payload(raw)
 bad_project=sample_data();bad_project["SUPABASE_PROJECT_REF"]="other"
 bad_role=sample_data();bad_role["CUSTOMER_PORTAL_CST_INVOICE_WRITER_DSN_DEV"]=sample_data()["CUSTOMER_PORTAL_DIVA_INVOICE_WRITER_DSN_DEV"]
 bad_tls=sample_data();bad_tls["CUSTOMER_PORTAL_CST_INVOICE_WRITER_DSN_DEV"]=bad_tls["CUSTOMER_PORTAL_CST_INVOICE_WRITER_DSN_DEV"].replace("verify-full","disable")
-for d in (bad_project,bad_role,bad_tls):
+bad_direct=sample_data();bad_direct["CUSTOMER_PORTAL_CST_INVOICE_WRITER_DSN_DEV"]=bad_direct["CUSTOMER_PORTAL_CST_INVOICE_WRITER_DSN_DEV"].replace("bizportal_customer_invoice_cst_writer_dev."+m.REF+":synthetic", "bizportal_customer_invoice_cst_writer_dev:synthetic").replace("aws-1-ap-southeast-2.pooler.supabase.com", "db."+m.REF+".supabase.co")
+bad_truncated=sample_data();bad_truncated["CUSTOMER_PORTAL_CST_INVOICE_WRITER_DSN_DEV"]=bad_truncated["CUSTOMER_PORTAL_CST_INVOICE_WRITER_DSN_DEV"].replace("bizportal_customer_invoice_cst_writer_dev."+m.REF+":synthetic", "bizportal_customer_invoice_cst_writer_dev:synthetic").replace("aws-1-ap-southeast-2.pooler.supabase.com", "db."+m.REF)
+for d in (bad_project,bad_role,bad_tls,bad_direct,bad_truncated):
     expect_denied(lambda: m.validate_payload(json.dumps(d).encode()))
-print("PROJECT_ROLE_TLS_SCOPE_FENCES_PASS")
+print("PROJECT_ROLE_TLS_AND_POOLER_ONLY_FENCES_PASS")
 
 response={
     "name":m.VERSION,
