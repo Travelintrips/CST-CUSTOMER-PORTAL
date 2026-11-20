@@ -32,6 +32,8 @@ jobs:
         run: pnpm install --frozen-lockfile
       - name: Typecheck
         run: pnpm typecheck
+      - name: Verify DEV-only original Accounting owner is SHA-pinned and mounted read-only
+        run: python3 scripts/dev-accounting-owner-bundle-guard.py --static
       - name: Regression unit tests (no live database)
         run: pnpm test -- --maxWorkers=1
         env:
