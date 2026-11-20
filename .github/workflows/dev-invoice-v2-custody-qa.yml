@@ -1,0 +1,44 @@
+name: CST Invoice DEV — V2 custody source-only QA
+
+on:
+  pull_request:
+    paths:
+      - .github/workflows/dev-invoice-v2-custody-package.yml
+      - .github/workflows/dev-invoice-v2-custody-qa.yml
+      - scripts/dev-invoice-v2-encrypt.py
+      - scripts/dev-invoice-v2-encrypt.qa.py
+      - scripts/dev-invoice-envelope-recipient.pem
+
+permissions:
+  contents: read
+
+jobs:
+  synthetic-only:
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    steps:
+      - name: Checkout PR source without write credentials
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Verify approved public certificate (no private key)
+        shell: bash
+        run: |
+          set -euo pipefail
+          cert=scripts/dev-invoice-envelope-recipient.pem
+          test -f "$cert"
+          test "$(grep -c 'BEGIN CERTIFICATE' "$cert")" = 1
+          ! grep -Eq 'PRIVATE KEY|BEGIN RSA' "$cert"
+          actual="$(openssl x509 -in "$cert" -outform DER | sha256sum | cut -d' ' -f1)"
+          test "$actual" = 38a9abcbbcca3535601265ae2c9a8a4b574f90767b5fe83291d38bf4513cb334
+          echo "PUBLIC_RECIPIENT_CERT_PIN_PASS"
+
+      - name: Run offline synthetic, negative, integrity and context tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m py_compile scripts/dev-invoice-v2-encrypt.py
+          python3 -m py_compile scripts/dev-invoice-v2-encrypt.qa.py
+          python3 scripts/dev-invoice-v2-encrypt.qa.py
+          echo "NO_GCP_SECRET_FETCH_NO_DB_LOGIN_NO_PROD_CHANGES"
