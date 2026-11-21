@@ -60,7 +60,7 @@ LANGUAGE plpgsql SECURITY DEFINER
 SET search_path = pg_catalog
 AS $relock$
 DECLARE
-  v_now timestamptz := clock_timestamp();
+  v_now timestamptz;
   v_lease record;
   v_cst record;
   v_diva record;
@@ -82,6 +82,8 @@ BEGIN
   -- Use exactly the same advisory lock in the separately authorized finite
   -- lease + role-activation transaction to prevent an activation/relock race.
   PERFORM pg_catalog.pg_advisory_xact_lock(20261120,238);
+  -- The lease deadline must be evaluated AFTER any lock contention.
+  v_now := pg_catalog.clock_timestamp();
 
   SELECT armed, expires_at, project_ref, role_name INTO v_lease
   FROM cst_invoice_relock_dev.lease WHERE singleton=true FOR UPDATE;
