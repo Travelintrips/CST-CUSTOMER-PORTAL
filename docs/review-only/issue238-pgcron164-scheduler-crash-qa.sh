@@ -3,11 +3,22 @@
 # No ports, host database, real credentials, or real Invoice data.
 set -euo pipefail
 name="cst-invoice-pgcron-runner-qa-$$"
-root="/opt/cst-invoice-dev-stage-20261120/issue238-watchdog-qa"
+# Must run from the exact reviewed source checkout; do NOT silently use
+# the stale original staged SQL from /opt/cst-invoice-dev-stage-20261120.
+root="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+sql="$root/issue238-postgres17-relock.sql"
 image="cst-invoice-pgcron-qa:local"
 cleanup(){ docker rm -f "$name" >/dev/null 2>&1 || true; }
 trap cleanup EXIT
-test -s "$root/ISSUE238-PGCRON-RELOCK-REVIEW-ONLY.sql"
+test -s "$sql"
+# A reviewer must supply the exact SHA256 of the SQL revision they approved.
+# Missing/mismatched approval hash always fails BEFORE Docker/DB execution.
+: "${ISSUE238_APPROVED_SQL_SHA256:?Provide reviewed SQL SHA256 for QA-only run}"
+actual_sha="$(sha256sum "$sql" | awk '{print $1}')"
+test "$actual_sha" = "$ISSUE238_APPROVED_SQL_SHA256" || {
+  echo "QA_SQL_SHA_MISMATCH_REFUSE_EXECUTION"; exit 74;
+}
+echo "QA_EXACT_REVIEWED_SQL_SHA_PASS=$actual_sha"
 docker image inspect "$image" >/dev/null
 docker run -d --rm --pull never --name "$name" \
   --network none --memory 512m --cpus 0.9 --pids-limit 85 \
@@ -34,7 +45,7 @@ CREATE ROLE bizportal_customer_invoice_cst_writer_dev NOLOGIN NOSUPERUSER NOBYPA
 CREATE ROLE bizportal_customer_invoice_diva_writer_dev NOLOGIN NOSUPERUSER NOBYPASSRLS;
 SQL
 docker exec -i "$name" psql -X -q -v ON_ERROR_STOP=1 -U postgres -d postgres \
-  < "$root/ISSUE238-PGCRON-RELOCK-REVIEW-ONLY.sql"
+  < "$sql"
 version="$(docker exec "$name" psql -X -qAt -U postgres -d postgres -c \
  "SELECT extversion FROM pg_extension WHERE extname='pg_cron'")"
 test "$version" = 1.6
