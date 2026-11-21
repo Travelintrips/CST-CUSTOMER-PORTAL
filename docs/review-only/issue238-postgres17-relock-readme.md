@@ -67,6 +67,16 @@ New reproducible sources in this PR:
 
 These tests prove **the actual extension** works on a disposable networkless PostgreSQL17 process including deliberate scheduler process termination. They do NOT prove actual Supabase Cron deployment, privilege parity for its cron job owner, a failed database primary, regional downtime, or any hosted financial action.
 
+## Exact non-superuser Postgres cron-owner parity — 22 Nov 2026 WIB
+
+The first real `pg_cron` QA used the default disposable PostgreSQL **superuser** named `postgres`, which is stronger than the actual CST-DEV role. A second isolated QA now reproduces a more realistic identity setup: temporary bootstrap superuser `supabase_admin` and a separate LOGIN + CREATEROLE + NOSUPERUSER + NOBYPASSRLS `postgres` role, with exact CST writer ADMIN OPTION, usable inherited `pg_signal_backend`, public catalog metadata permission and restricted cron schema grants. **No permissions were granted on the hosted Supabase project.**
+
+The actual `pg_cron` job was scheduled **as non-superuser postgres**, ran with a 5-second interval, kept a safely locked writer's synthetic SCRAM verifier, and after an independent administrator killed the disposable scheduler launcher (not the hosted PostgreSQL process), the launcher revived with a new PID. A finite synthetic writer lease then expired; the cron job revoked LOGIN, cleared the temporary password, terminated a live writer backend, rejected future login, maintained Diva NOLOGIN, and continued idempotent polls. **Full test exit code 0**, network-none, no hosted Supabase connection. The bootstrap QA administrator was used only to create this disposable role/grants and terminate the disposable scheduler worker; the scheduled relock was executed by non-superuser `postgres` itself.
+
+New exact QA fixture: `docs/review-only/issue238-pgcron164-nonsuperuser-crash-qa.sh`.
+
+This closes a **local simulation privilege-parity gap**, but **still does NOT prove hosted Supabase's actual scheduler, provider-specific role mappings, job failure recovery or operational custody release**. Both projects' financial writers remain locked until separately authorized approval and hosted DEV proof.
+
 ## Not yet tested / release blockers
 
 The actual hosted Supabase project currently has `pg_cron` **available but NOT installed**. The disposable PostgreSQL image did not contain the cron extension, so the **scheduler's actual interval, ownership, continuous execution, restart recovery and disconnection behavior have NOT been proven**. PostgreSQL timeout defaults are not an absolute watchdog.
