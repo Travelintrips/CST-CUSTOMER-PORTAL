@@ -1,5 +1,6 @@
 // @ts-nocheck — isolated parser/connection-factory tests, no real DB or credentials.
 import {describe,it,expect,vi} from "vitest";
+import pg from "pg";
 import {
  DEV_CUSTOMER_INVOICE_COMPANIES,
  DEV_CUSTOMER_INVOICE_CA_FILE,
@@ -306,6 +307,29 @@ describe("CST-DEV direct IPv6 Invoice writer transport, default OFF",()=>{
  ])("fails closed for %s",(_name,company,dsn,e)=>{
    const parsed=parseDevInvoiceScopedWriterDsn(dsn,company);
    expect(()=>resolveDevCstInvoiceDirectIpv6(parsed,e)).toThrow();
+ });
+ it("uses the pinned CA and explicit verify-full policy in the actual pg Client constructor",async()=>{
+   class NoNetworkPgClient extends pg.Client {
+     async connect(){}
+     async end(){}
+   }
+   const input=url(1,{hostname:"aws-1-ap-southeast-2.pooler.supabase.com"});
+   const selected=await openDevCompanyInvoiceWriter({
+     invoiceId:108,portalUser:admin,
+     env:{...optIn,CUSTOMER_PORTAL_CST_INVOICE_WRITER_DSN_DEV:input},
+     lookupCompany:async()=>({rows:[{company_id:1}]}),
+     ClientCtor:NoNetworkPgClient,readCa:async()=>fakeCa,
+   });
+   const runtime=selected.client.connectionParameters;
+   expect(runtime.host).toBe("db."+REF+".supabase.co");
+   expect(runtime.user).toBe(DEV_CUSTOMER_INVOICE_COMPANIES[1].role);
+   expect(runtime.ssl).toMatchObject({
+     rejectUnauthorized:true,ca:fakeCa,servername:"db."+REF+".supabase.co",
+   });
+   expect(runtime.ssl.ca).toBe(fakeCa);
+   expect(runtime.database).toBe("postgres");
+   expect(runtime.port).toBe(5432);
+   await selected.client.end();
  });
  it("selects actual DB company and direct role with a mock client only",async()=>{
    const created=[];
