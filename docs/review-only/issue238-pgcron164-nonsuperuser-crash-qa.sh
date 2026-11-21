@@ -3,11 +3,19 @@
 # No ports, host database, real credentials, or real Invoice data.
 set -euo pipefail
 name="cst-invoice-pgcron-nonsuper-qa-$$"
-root="/opt/cst-invoice-dev-stage-20261120/issue238-watchdog-qa"
+# Always load the exact reviewed SQL beside this QA script.
+root="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+sql="$root/issue238-postgres17-relock.sql"
 image="cst-invoice-pgcron-qa:local"
 cleanup(){ status=$?; if test "$status" -ne 0; then echo QA_PGCRON_NONSUPER_FAILURE_LOGS; docker logs "$name" 2>&1 | tail -18 || true; fi; docker rm -f "$name" >/dev/null 2>&1 || true; }
 trap cleanup EXIT
-test -s "$root/ISSUE238-PGCRON-RELOCK-REVIEW-ONLY.sql"
+test -s "$sql"
+: "${ISSUE238_APPROVED_SQL_SHA256:?Provide independently reviewed SQL SHA256 for QA-only run}"
+actual_sha="$(sha256sum "$sql" | awk '{print $1}')"
+test "$actual_sha" = "$ISSUE238_APPROVED_SQL_SHA256" || {
+  echo "QA_SQL_SHA_MISMATCH_REFUSE_EXECUTION"; exit 74;
+}
+echo "QA_EXACT_REVIEWED_SQL_SHA_PASS=$actual_sha"
 docker image inspect "$image" >/dev/null
 docker run -d --rm --pull never --name "$name" \
   --network none --memory 512m --cpus 0.9 --pids-limit 85 \
@@ -49,7 +57,7 @@ non_super="$(docker exec "$name" psql -X -qAt -U postgres -d postgres -c \
 test "$non_super" = true
 echo QA_REAL_CRON_AUTHENTICATED_POSTGRES_NON_SUPERUSER_ROLE_PASS
 docker exec -i "$name" psql -X -q -v ON_ERROR_STOP=1 -U postgres -d postgres \
-  < "$root/ISSUE238-PGCRON-RELOCK-REVIEW-ONLY.sql"
+  < "$sql"
 version="$(docker exec "$name" psql -X -qAt -U postgres -d postgres -c \
  "SELECT extversion FROM pg_extension WHERE extname='pg_cron'")"
 test "$version" = 1.6
