@@ -94,7 +94,7 @@ assert_exact_certified_checkout
 echo "[dev-deploy] Verifying certified commit $certified_sha"
 CI=true pnpm install --frozen-lockfile --network-concurrency=2 >/dev/null
 pnpm typecheck >/dev/null
-CI=true APP_ENV=development NODE_ENV=test SESSION_SECRET=customer-portal-vps-ci-check-secret-32 SUPABASE_DATABASE_URL_DEV=postgresql://ci:ci@127.0.0.1:5432/ci pnpm test -- --maxWorkers=1 >/dev/null
+CI=true APP_ENV=development NODE_ENV=test SESSION_SECRET=customer-portal-vps-ci-check-secret-32 SUPABASE_DATABASE_URL_DEV=postgresql://ci:ci@127.0.0.1:5432/ci pnpm exec vitest run --maxWorkers=1 --no-file-parallelism >/dev/null
 assert_exact_certified_checkout
 nice -n 15 ionice -c3 timeout 240 docker build --pull=false -f Dockerfile.dev-vps --build-arg DEV_RELEASE_SHA="$certified_sha" -t cst-customer-portal-dev:candidate . >/dev/null
 assert_exact_certified_checkout

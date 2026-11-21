@@ -54,6 +54,9 @@ tag=text.index('docker tag cst-customer-portal-dev:candidate cst-customer-portal
 assert postbuild<text.index('assert_certified_invoice_handler candidate',postbuild)<tag
 assert '"$certified_sha:server/billing-operations.mjs"' in text
 assert 'docker exec cst-customer-portal-dev sha256sum' in text
+assert 'pnpm exec vitest run --maxWorkers=1 --no-file-parallelism' in text
+assert 'pnpm test -- --maxWorkers=1' not in text
+print("CST_DEV_VITEST_SINGLE_WORKER_CLI_QA_PASS")
 assert '--network none --read-only' in text
 
 assert 'git rev-parse HEAD' in text and 'git status --porcelain' in text

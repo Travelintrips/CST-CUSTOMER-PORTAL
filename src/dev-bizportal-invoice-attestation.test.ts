@@ -29,10 +29,11 @@ const context=(companyId=1,invoiceId=77)=>({
   portalUser:user,companyId,invoiceId,canonicalActorId:actorId,
 });
 function createSignedProof(challenge,changes={}){
+ const now=Date.now();
  const base={v:1,purpose:"cst-customer-invoice-owner",aud:"CST_CUSTOMER_PORTAL_DEV",
     actorId,email:user.email,invoiceId:77,companyId:1,
     challengeDigest:createHash("sha256").update(challenge).digest("hex"),
-    nonce:"a".repeat(32),iat:Date.now(),exp:Date.now()+60_000,
+    nonce:"a".repeat(32),iat:now,exp:now+60_000,
     ...changes};
  const body=Buffer.from(JSON.stringify(base)).toString("base64url");
  const sig=sign(null,Buffer.from("CST_BIZPORTAL_CUSTOMER_INVOICE_DEV_V1\n"+body),
@@ -52,6 +53,12 @@ afterEach(()=>{for(const key of KEYS){
   else process.env[key]=original[key];
 }});
 describe("signed Portal challenge + independent BizPortal Ed25519 proof",()=>{
+  it("maintains an exact 60-second synthetic Owner proof TTL",()=>{
+    const challenge=mintPortalInvoiceChallenge(context());
+    const [body]=createSignedProof(challenge).split(".");
+    const claims=JSON.parse(Buffer.from(body,"base64url").toString("utf8"));
+    expect(claims.exp-claims.iat).toBe(60_000);
+  });
   it("puts only SHA-256 source digest, never customer name or monetary values, inside the signed challenge",()=>{
     process.env.CUSTOMER_PORTAL_INVOICE_SIGNED_REVIEW_SNAPSHOT_DEV="true";
     const ctx={...context(),reviewDigest:"a".repeat(64)};
