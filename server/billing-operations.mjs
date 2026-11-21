@@ -836,6 +836,14 @@ export async function handleAdminInvoices({ request, response, user, sendJson, s
   } : null;
   const result = await withTransaction(async (db, transactionClient) => {
     const row = await loadInvoice(invoiceId, user, { db, admin: true, forUpdate: true });
+    // CTS-DEV: The legacy Portal route must never issue synthetic QA #108.
+    // Canonical issuance is a separate signed-Owner/accounting flow. This
+    // guard executes before any invoice, journal, audit or notification write.
+    if (process.env.APP_ENV === "development"
+        && Number(row.id) === 108 && Number(row.company_id) === 1
+        && row.doc_number === "QA-CST-DEV-OWNER-20261120-001") {
+      fail(503, "Invoice QA #108 belum diizinkan melalui Customer Portal DEV.");
+    }
     let canonicalActorId = null;
     if (process.env.CUSTOMER_PORTAL_ATOMIC_ACCOUNTING_POST_DEV === "true") {
       if (selectedCompanyId !== Number(row.company_id)) {
