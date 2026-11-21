@@ -25,6 +25,33 @@ grep -Fq 'docker exec -i --user 21110:21110' "$injector"
 grep -Fq 'openssl cms -decrypt -binary -inform DER' "$injector"
 grep -Fq 'CST_INVOICE_DEV_PRIVATE_TMPFS:-false' "$guard"
 grep -Fq 'CUSTOMER_PORTAL_ATOMIC_ACCOUNTING_POST_DEV' "$guard"
+deploy="$ROOT/scripts/deploy-certified-vps.sh"
+bash -n "$deploy"
+python3 - "$deploy" <<'PY'
+from pathlib import Path
+import sys
+text=Path(sys.argv[1]).read_text()
+verify='assert_exact_certified_checkout'
+checks=[
+ 'git merge --ff-only "$certified_sha"',
+ 'CI=true pnpm install --frozen-lockfile',
+ 'pnpm typecheck >/dev/null',
+ 'nice -n 15 ionice -c3 timeout 240 docker build',
+ 'backup=0',
+ 'docker tag cst-customer-portal-dev:candidate cst-customer-portal-dev:local',
+ 'if ! DEV_RELEASE_SHA="$certified_sha" docker compose',
+]
+positions=[text.index(c) for c in checks]
+assert positions==sorted(positions),"deploy source order drift"
+assert text.count(verify)==5,"must define and call guard at four release boundaries"
+assert 'git rev-parse HEAD' in text and 'git status --porcelain' in text
+# At each boundary, reject if local HEAD differs from the exact certified SHA.
+assert positions[0]<text.index(verify,positions[0])<positions[1]
+assert positions[2]<text.index(verify,positions[2])<positions[3]
+assert positions[3]<text.index(verify,positions[3])<positions[4]
+assert positions[5]<text.index(verify,positions[5])<positions[6]
+print("CST_DEV_CERTIFIED_CHECKOUT_RECHECK_QA_PASS")
+PY
 grep -Fq 'invoice-writer-version2.cms' "$qa"
 grep -Fq 'invoice-writer-version2.cms' "$composeqa"
 if grep -Fq 'invoice-writer-version1' "$qa" || grep -Fq 'invoice-writer-version1' "$composeqa"; then
