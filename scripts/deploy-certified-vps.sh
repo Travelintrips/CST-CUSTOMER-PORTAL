@@ -24,6 +24,17 @@ if ! git merge-base --is-ancestor HEAD "$certified_sha"; then
   exit 1
 fi
 
+# Prevent a concurrent local commit or transient source change from being
+# shipped under an older CI-certified release ID. Other workers are not
+# required to share this deployer's flock; a start-only git check is insufficient.
+assert_exact_certified_checkout() {
+  if [[ "$(git rev-parse HEAD)" != "$certified_sha" ]] ||
+     [[ -n "$(git status --porcelain)" ]]; then
+    echo "[dev-deploy] Certified source drift detected; refusing release" >&2
+    return 1
+  fi
+}
+
 # Use the same reviewed Compose files on certified forward deployment AND
 # rollback. Missing credential path when Invoice atomic mode is ON must
 # stop this attempt *before* updating the running DEV worktree/image.
@@ -54,11 +65,14 @@ if [[ "$running_sha" == "$certified_sha" ]]; then
 fi
 
 git merge --ff-only "$certified_sha"
+assert_exact_certified_checkout
 echo "[dev-deploy] Verifying certified commit $certified_sha"
 CI=true pnpm install --frozen-lockfile --network-concurrency=2 >/dev/null
 pnpm typecheck >/dev/null
 CI=true APP_ENV=development NODE_ENV=test SESSION_SECRET=customer-portal-vps-ci-check-secret-32 SUPABASE_DATABASE_URL_DEV=postgresql://ci:ci@127.0.0.1:5432/ci pnpm test -- --maxWorkers=1 >/dev/null
+assert_exact_certified_checkout
 nice -n 15 ionice -c3 timeout 240 docker build --pull=false -f Dockerfile.dev-vps --build-arg DEV_RELEASE_SHA="$certified_sha" -t cst-customer-portal-dev:candidate . >/dev/null
+assert_exact_certified_checkout
 
 backup=0
 if docker image inspect cst-customer-portal-dev:local >/dev/null 2>&1; then
@@ -66,6 +80,7 @@ if docker image inspect cst-customer-portal-dev:local >/dev/null 2>&1; then
   backup=1
 fi
 docker tag cst-customer-portal-dev:candidate cst-customer-portal-dev:local
+assert_exact_certified_checkout
 if ! DEV_RELEASE_SHA="$certified_sha" docker compose "${compose_files[@]}" up -d --no-build --force-recreate --no-deps customer-portal-dev; then
   echo "[dev-deploy] Compose failed" >&2
   failed=1
