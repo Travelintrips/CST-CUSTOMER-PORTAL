@@ -180,9 +180,12 @@ BEGIN
 
   UPDATE cst_invoice_relock_dev.lease
     SET armed=false,expires_at=null WHERE singleton=true;
+  -- A missing/foreign lease row is NOT healthy merely because the role is
+  -- NOLOGIN and all observed sessions ended. Keep INCOMPLETE until an approved
+  -- custodian restores/validates the private control row (outside this tick).
   INSERT INTO cst_invoice_relock_dev.audit(reason,terminated)
     VALUES (
-      CASE WHEN v_remaining>0 OR v_termination_timeouts>0 OR v_termination_errors>0
+      CASE WHEN v_invalid_control OR v_remaining>0 OR v_termination_timeouts>0 OR v_termination_errors>0
            THEN 'RELOCK_INCOMPLETE_' || v_reason
            ELSE v_reason END,
       v_killed
@@ -190,7 +193,7 @@ BEGIN
 
   -- Retain the NOLOGIN revocation rather than raising a deliberate exception
   -- that would roll back the ALTER ROLE transaction on partial termination.
-  IF v_remaining>0 OR v_termination_timeouts>0 OR v_termination_errors>0 THEN
+  IF v_invalid_control OR v_remaining>0 OR v_termination_timeouts>0 OR v_termination_errors>0 THEN
     RETURN 'CST_RELOCK_INCOMPLETE';
   END IF;
   RETURN 'CST_RELOCK_EXECUTED';
