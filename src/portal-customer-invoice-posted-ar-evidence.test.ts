@@ -284,12 +284,13 @@ describe("DEV Customer Invoice posted AR evidence gate",()=>{
     expect(m.sql).not.toContain("commit");
     noOutbound();
   });
-  it("does not change old invoice behavior while flag is OFF",async()=>{
+  it("rejects new DEV invoice issuance when posted AR verification is OFF",async()=>{
     delete process.env[flag];
-    await perform();
-    expect(sqlIndex("from public.bizportal_customer_ar_source_evidence_dev")).toBe(-1);
-    expect(m.sql).toContain("commit");
-    expect(m.notifyAdmins).toHaveBeenCalledTimes(1);
+    await expect(perform()).rejects.toMatchObject({statusCode:503});
+    expect(sqlIndex("update public.sales_documents")).toBe(-1);
+    expect(m.sql).toContain("rollback");
+    expect(m.sql).not.toContain("commit");
+    noOutbound();
   });
   it("rejects a mistaken production activation instead of bypassing the proof gate",async()=>{
     process.env.APP_ENV="production";

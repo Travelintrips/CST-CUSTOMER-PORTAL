@@ -120,8 +120,14 @@ describe("Actual DEV Portal handler rejects only the synthetic QA108 legacy Invo
     expect(m.verification).not.toHaveBeenCalled();
     expect(m.end).toHaveBeenCalledTimes(1);
   });
-  it("does not apply the exact QA108 guard to a different Sales document", async () => {
+  it("rejects any other new DEV invoice when posted-AR proof is OFF", async () => {
     m.row = {...qa108(), id: 109, doc_number: "OTHER-TEST-ORDER"};
+    await expect(call(109)).rejects.toMatchObject({statusCode:503});
+    assertNoWrites();
+  });
+  it("lets a different document reach the EXISTING AR proof path only when enabled", async () => {
+    m.row = {...qa108(), id: 109, doc_number: "OTHER-TEST-ORDER"};
+    process.env.CUSTOMER_PORTAL_REQUIRE_POSTED_AR_EVIDENCE_DEV = "true";
     await expect(call(109)).rejects.toThrow("MOCK_FINANCIAL_MUTATION_ATTEMPT");
     expect(m.sql.some(q => q.startsWith("update public.sales_documents"))).toBe(true);
     expect(m.sql).toContain("rollback");

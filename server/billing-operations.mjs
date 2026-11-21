@@ -844,6 +844,14 @@ export async function handleAdminInvoices({ request, response, user, sendJson, s
         && row.doc_number === "QA-CST-DEV-OWNER-20261120-001") {
       fail(503, "Invoice QA #108 belum diizinkan melalui Customer Portal DEV.");
     }
+    // DEV-only: the legacy feature-OFF route used to mark Invoice issued
+    // without any posted sales journal or independent AR evidence. Refuse
+    // before updates, activity logs, notifications or COMMIT. Existing
+    // atomic PostingEngine is unchanged and still verifies real AR when ON.
+    if (process.env.APP_ENV === "development"
+        && process.env.CUSTOMER_PORTAL_REQUIRE_POSTED_AR_EVIDENCE_DEV !== "true") {
+      fail(503, "Penerbitan Invoice DEV memerlukan bukti AR dan jurnal posted.");
+    }
     let canonicalActorId = null;
     if (process.env.CUSTOMER_PORTAL_ATOMIC_ACCOUNTING_POST_DEV === "true") {
       if (selectedCompanyId !== Number(row.company_id)) {
