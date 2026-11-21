@@ -81,6 +81,10 @@ This closes a **local simulation privilege-parity gap**, but **still does NOT pr
 
 The **non-superuser** scheduler/crash QA also previously referenced the old SQL staged at `/opt/cst-invoice-dev-stage-20261120/issue238-watchdog-qa/ISSUE238-PGCRON-RELOCK-REVIEW-ONLY.sql`; its earlier exit-0 proof is therefore **only for that original staged SQL**, not for this revised source. Both `issue238-pgcron164-scheduler-crash-qa.sh` and `issue238-pgcron164-nonsuperuser-crash-qa.sh` now read the SQL file alongside the respective script and require a separately supplied `ISSUE238_APPROVED_SQL_SHA256` that matches before starting Docker. A missing/mismatched SHA stops the test. The revised SQL's real PG17 + pg_cron testing, especially delayed termination and foreign/missing lease, is still pending. Recreating a local PG17 QA image is not equivalent to hosted install approval, and an earlier safety-denied execution must not be circumvented.
 
+### Lease expiry evaluated after advisory-lock acquisition
+
+The revised review-only SQL now takes `clock_timestamp()` **after** acquiring the shared relock/activation advisory lock. Previously it initialized the clock before potentially waiting for that lock, so a blocked relock tick could make an expired lease appear valid based on a stale timestamp. Acceptance testing must include a concurrent actor holding the same advisory lock until beyond the lease deadline, then verify that tick revokes the writer after the lock is released. **No real PostgreSQL 17 concurrency test has yet been completed for this revision.**
+
 ## Not yet tested / release blockers
 
 The actual hosted Supabase project currently has `pg_cron` **available but NOT installed**. The disposable PostgreSQL image did not contain the cron extension, so the **scheduler's actual interval, ownership, continuous execution, restart recovery and disconnection behavior have NOT been proven**. PostgreSQL timeout defaults are not an absolute watchdog.
