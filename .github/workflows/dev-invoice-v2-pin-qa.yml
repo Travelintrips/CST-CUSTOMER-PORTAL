@@ -7,6 +7,7 @@ on:
       - scripts/tests/customer-invoice-real-encrypted-tmpfs-dev.qa.sh
       - scripts/tests/customer-invoice-compose-credential-override.qa.sh
       - scripts/tests/customer-invoice-v2-source-pin.qa.sh
+      - scripts/deploy-certified-vps.sh
       - .github/workflows/dev-invoice-v2-pin-qa.yml
 permissions:
   contents: read
