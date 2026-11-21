@@ -77,6 +77,10 @@ New exact QA fixture: `docs/review-only/issue238-pgcron164-nonsuperuser-crash-qa
 
 This closes a **local simulation privilege-parity gap**, but **still does NOT prove hosted Supabase's actual scheduler, provider-specific role mappings, job failure recovery or operational custody release**. Both projects' financial writers remain locked until separately authorized approval and hosted DEV proof.
 
+### Both scheduler QA runners now require exact SQL provenance
+
+The **non-superuser** scheduler/crash QA also previously referenced the old SQL staged at `/opt/cst-invoice-dev-stage-20261120/issue238-watchdog-qa/ISSUE238-PGCRON-RELOCK-REVIEW-ONLY.sql`; its earlier exit-0 proof is therefore **only for that original staged SQL**, not for this revised source. Both `issue238-pgcron164-scheduler-crash-qa.sh` and `issue238-pgcron164-nonsuperuser-crash-qa.sh` now read the SQL file alongside the respective script and require a separately supplied `ISSUE238_APPROVED_SQL_SHA256` that matches before starting Docker. A missing/mismatched SHA stops the test. The revised SQL's real PG17 + pg_cron testing, especially delayed termination and foreign/missing lease, is still pending. Recreating a local PG17 QA image is not equivalent to hosted install approval, and an earlier safety-denied execution must not be circumvented.
+
 ## Not yet tested / release blockers
 
 The actual hosted Supabase project currently has `pg_cron` **available but NOT installed**. The disposable PostgreSQL image did not contain the cron extension, so the **scheduler's actual interval, ownership, continuous execution, restart recovery and disconnection behavior have NOT been proven**. PostgreSQL timeout defaults are not an absolute watchdog.
