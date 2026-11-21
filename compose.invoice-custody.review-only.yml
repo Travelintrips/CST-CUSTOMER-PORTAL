@@ -1,0 +1,10 @@
+# REVIEW ONLY: manual CST-DEV Invoice credential-custody pilot overlay.
+# NOT loaded by default Compose; no flags or DB roles enabled here.
+# Use only with an independently approved, short-lived CST writer release.
+services:
+  customer-portal-dev:
+    user: "21110:21110"
+    environment:
+      CREDENTIALS_DIRECTORY: "/run/credentials/cst-customer-portal-dev.service"
+    tmpfs:
+      - "/run/credentials/cst-customer-portal-dev.service:rw,nosuid,nodev,noexec,size=65536,mode=0700,uid=21110,gid=21110"
