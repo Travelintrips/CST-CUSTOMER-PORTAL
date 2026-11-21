@@ -49,6 +49,12 @@ Review found that the first SQL candidate replaced a missing/foreign lease with 
 
 Acceptance tests for this changed revision must distinguish: (a) genuine explicit disarmed lease + `NOLOGIN` + zero sessions preserves the verifier, (b) missing lease with retained verifier clears it, (c) foreign lease clears it, and (d) expired/overlong lease with active session still relocks and terminates. **These tests have not been executed against PostgreSQL 17 for the revised commit.**
 
+## Evidence provenance correction — latest SQL revision is NOT the tested SQL
+
+A follow-up inspection on the authorized DEV VPS found the original staged SQL file `/opt/cst-invoice-dev-stage-20261120/issue238-watchdog-qa/ISSUE238-PGCRON-RELOCK-REVIEW-ONLY.sql` still at SHA256 `abc4939ea90b7aff81f5d01dbbf5fc96a7ebd58f2c54ac20f0ef9e88cf4607a0`. Its source still calls `pg_terminate_backend(v_pid)` **without** the new 2000ms timeout, and does not contain the missing/foreign lease preservation correction from the current GitHub draft. The new scheduler QA runner under this PR loads that **staged original SQL file**, not the current checked-in `docs/review-only/issue238-postgres17-relock.sql`.
+
+Therefore the recorded scheduler-crash/restart PASS is genuine **for the earlier staged SQL**, but **NOT evidence that the revised GitHub SQL (positive termination timeout, residual-session check, fail-closed invalid lease) has passed PostgreSQL17 or pg_cron QA**. The previously built QA image was no longer present on the VPS at follow-up and no QA containers remained. A future independently authorized test must pin/compare the exact SQL SHA before execution and record its outcome; do not equate CI SUCCESS (source checks) with SQL runtime proof.
+
 ## Real pg_cron scheduler and crash/restart proof — 22 Nov 2026 WIB
 
 A separate networkless Docker QA image was built from the **official pg_cron source tag v1.6.4** on PostgreSQL 17 (the extension's SQL schema reports `extversion=1.6`, which is expected for this upstream source tag). The original build initially failed because the official Postgres image lacks `clang-21`; rebuilding with `make with_llvm=no` succeeded without changing any hosted database.
