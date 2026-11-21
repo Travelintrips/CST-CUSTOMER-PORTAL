@@ -49,6 +49,18 @@ Review found that the first SQL candidate replaced a missing/foreign lease with 
 
 Acceptance tests for this changed revision must distinguish: (a) genuine explicit disarmed lease + `NOLOGIN` + zero sessions preserves the verifier, (b) missing lease with retained verifier clears it, (c) foreign lease clears it, and (d) expired/overlong lease with active session still relocks and terminates. **These tests have not been executed against PostgreSQL 17 for the revised commit.**
 
+## Real pg_cron scheduler and crash/restart proof — 22 Nov 2026 WIB
+
+A separate networkless Docker QA image was built from the **official pg_cron source tag v1.6.4** on PostgreSQL 17 (the extension's SQL schema reports `extversion=1.6`, which is expected for this upstream source tag). The original build initially failed because the official Postgres image lacks `clang-21`; rebuilding with `make with_llvm=no` succeeded without changing any hosted database.
+
+New reproducible sources in this PR:
+- `docs/review-only/Dockerfile.issue238-pgcron164-qa` — QA-only image; compiles the extension in a builder stage and copies only the extension to the disposable PostgreSQL runtime.
+- `docs/review-only/issue238-pgcron164-scheduler-crash-qa.sh` — uses a Docker `--network none` temporary PostgreSQL17 with real loaded `pg_cron`, schedules a **5-second job** against the exact review-only SQL function, and destroys the container on exit.
+
+**Real scheduler results:** First job runs were logged in `cron.job_run_details`. With CST already NOLOGIN the cron tick retained its old synthetic SCRAM verifier. Then a short, separately simulated admin lease and an active long-lived synthetic writer session were created. The `pg_cron launcher` process was deliberately terminated and PostgreSQL automatically restarted it with a different PID. Without the QA runner invoking the relock function itself, the database-side cron job expired the lease, made the writer NOLOGIN, cleared its synthetic password, terminated the active connection, denied subsequent logins, left Diva NOLOGIN, and continued subsequent idempotent polls with a single relock audit event. **Full process exit code 0.**
+
+These tests prove **the actual extension** works on a disposable networkless PostgreSQL17 process including deliberate scheduler process termination. They do NOT prove actual Supabase Cron deployment, privilege parity for its cron job owner, a failed database primary, regional downtime, or any hosted financial action.
+
 ## Not yet tested / release blockers
 
 The actual hosted Supabase project currently has `pg_cron` **available but NOT installed**. The disposable PostgreSQL image did not contain the cron extension, so the **scheduler's actual interval, ownership, continuous execution, restart recovery and disconnection behavior have NOT been proven**. PostgreSQL timeout defaults are not an absolute watchdog.
