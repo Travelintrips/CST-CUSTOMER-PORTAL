@@ -37,6 +37,12 @@ A first QA run found that a non-inheriting mock operator could not terminate ses
 Exact QA script remains on the restricted DEV VPS:
 `/opt/cst-invoice-dev-stage-20261120/issue238-watchdog-qa/ISSUE238-PGCRON-RELOCK-ISOLATED-PG17-QA.sh`.
 
+## Follow-up review correction (source-only; untested against PG17)
+
+The review identified that PostgreSQL 17 `pg_terminate_backend(pid)` with its default zero timeout only confirms delivery of SIGTERM, not process exit. The draft SQL was revised to use a bounded 2000 ms per-backend acknowledgement, recheck remaining CST writer sessions, and return `CST_RELOCK_INCOMPLETE` when termination is not confirmed. This path records an `RELOCK_INCOMPLETE_...` audit reason instead of declaring `CST_RELOCK_EXECUTED`. It deliberately avoids a new exception on that incomplete-termination branch, which could roll back the role revocation within the same transaction.
+
+**This correction has not passed the original isolated PostgreSQL 17 integration QA or a real scheduler test.** Previous isolated QA results refer to the prior SQL revision and must not be presented as proof for the changed revision. The 2000 ms per-session delay can accumulate across many sessions; review bounded work/cron overlap, transaction rollback on unhandled SQL errors, and controlled partial-termination/crash tests before approval. Confirm a scheduler run that reports `CST_RELOCK_INCOMPLETE` triggers monitoring and follow-up; a successful SQL job exit is not itself proof that the security objective was met.
+
 ## Not yet tested / release blockers
 
 The actual hosted Supabase project currently has `pg_cron` **available but NOT installed**. The disposable PostgreSQL image did not contain the cron extension, so the **scheduler's actual interval, ownership, continuous execution, restart recovery and disconnection behavior have NOT been proven**. PostgreSQL timeout defaults are not an absolute watchdog.
