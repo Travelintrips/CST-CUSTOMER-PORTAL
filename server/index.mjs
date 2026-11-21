@@ -53,6 +53,7 @@ import {
   handleCustomerPayments,
 } from "./billing-operations.mjs";
 import { loadDevOriginalAccountingOwner } from "./dev-original-accounting-owner-loader.mjs";
+import { isDevInvoiceScopedWriterRequested } from "./dev-customer-invoice-scoped-client.mjs";
 import {
   mintPortalInvoiceChallenge, isDualSuperAdminProofRequired,
   verifyIndependentBizPortalSuperAdminProof,
@@ -4935,6 +4936,15 @@ async function route(request, response) {
       // server-side SHA-256-pinned owner is accepted after requireAdmin().
       let postSalesInvoiceWithClient = null;
       if (request.body?.action === "mark_invoiced") {
+        // DEV-only HTTP release gate: do not let incomplete feature-flag
+        // combinations reach the legacy Invoice status/notification handler.
+        // Reuse the reviewed three-flag company-writer readiness contract;
+        // the actual scoped writer/RLS/Owner/GL/AR still checks independently.
+        if (APP_ENV === "development"
+            && !isDevInvoiceScopedWriterRequested(process.env)) {
+          sendError(response, 503, "Invoice DEV menunggu posting atomik, bukti AR dan persetujuan Super Admin.");
+          return;
+        }
         try {
           postSalesInvoiceWithClient = await loadDevOriginalAccountingOwner();
           if (process.env.CUSTOMER_PORTAL_ATOMIC_ACCOUNTING_POST_DEV === "true"
