@@ -5332,7 +5332,7 @@ async function startServer() {
     };
     server.once("error", onError);
     server.once("listening", onListening);
-    server.listen(PORT, "0.0.0.0");
+    server.listen(PORT, process.env.PORTAL_DEV_BIND_HOST === "127.0.0.1" ? "127.0.0.1" : "0.0.0.0");
   });
 
   server.keepAliveTimeout = Math.max(5_000, Number(process.env.PORTAL_KEEPALIVE_TIMEOUT_MS ?? 65_000));

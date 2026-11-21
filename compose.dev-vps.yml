@@ -14,9 +14,10 @@ services:
       APP_ENV: development
       NODE_ENV: development
       PORT: "18444"
+      PORTAL_DEV_BIND_HOST: "127.0.0.1"
+      CUSTOMER_PORTAL_DEV_DIRECT_IPV6: "true"
       PORTAL_RELEASE_ID: ${DEV_RELEASE_SHA:-dev-vps}
-    ports:
-      - "127.0.0.1:18444:18444"
+    network_mode: host
     mem_limit: 1536m
     cpus: 0.75
     pids_limit: 128
@@ -28,6 +29,18 @@ services:
     # Reviewed public Accounting code only. Never mount credentials or DB sockets.
     # The runtime's SHA-pinned loader refuses any file substitution.
     volumes:
+      - type: bind
+        source: ./scripts/start-dev-vps.mjs
+        target: /app/scripts/start-dev-vps.mjs
+        read_only: true
+      - type: bind
+        source: ./server/index.mjs
+        target: /app/server/index.mjs
+        read_only: true
+      - type: bind
+        source: ./server/db.mjs
+        target: /app/server/db.mjs
+        read_only: true
       - type: bind
         source: /opt/cst-customer-invoice-owner-bundle-dev
         target: /opt/cst-customer-invoice-owner-bundle-dev

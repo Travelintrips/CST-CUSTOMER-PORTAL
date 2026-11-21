@@ -1,4 +1,5 @@
 import pg from "pg";
+import { readFileSync } from "node:fs";
 
 const { Client, Pool } = pg;
 
@@ -41,7 +42,17 @@ const commonConnectionOptions = {
   connectionTimeoutMillis: 10_000,
   keepAlive: true,
   keepAliveInitialDelayMillis: 10_000,
-  ssl: { rejectUnauthorized: false },
+  ssl: (() => {
+    const parsed = new URL(connectionString);
+    if (parsed.hostname !== "db.xssrfshdrtdfupgqwfdw.supabase.co")
+      return { rejectUnauthorized: false }; // Preserve current pooler behavior.
+    if (parsed.username !== "postgres") throw Error("DEV_DIRECT_POSTGRES_USER_MISMATCH");
+    return {
+      rejectUnauthorized: true,
+      ca: readFileSync("/opt/cst-dev-finance-tls/supabase-root-2021.crt", "utf8"),
+      servername: "db.xssrfshdrtdfupgqwfdw.supabase.co",
+    };
+  })(),
 };
 
 export const pool = new Pool({

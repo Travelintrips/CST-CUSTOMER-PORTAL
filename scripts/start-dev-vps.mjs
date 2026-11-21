@@ -21,6 +21,21 @@ if (process.env.DEV_VPS_LOCAL_ENV === "1") {
   try { await loadSecrets(process.env); }
   catch (error) { abort("DEV Secret Manager unavailable: " + error.message); }
 }
+// DEV-only official direct IPv6 fallback. Reuses the existing password in memory.
+if (process.env.CUSTOMER_PORTAL_DEV_DIRECT_IPV6 === "true") {
+  let candidate;
+  try { candidate = new URL(process.env.SUPABASE_DATABASE_URL_DEV || ""); }
+  catch { abort("DEV direct connection URL unavailable."); }
+  if (candidate.hostname !== "aws-1-ap-southeast-2.pooler.supabase.com" ||
+      candidate.username !== "postgres." + devProjectRef ||
+      !["5432", "6543"].includes(candidate.port)) {
+    abort("DEV direct connection source identity mismatch.");
+  }
+  candidate.hostname = "db." + devProjectRef + ".supabase.co";
+  candidate.username = "postgres";
+  candidate.port = "5432";
+  process.env.SUPABASE_DATABASE_URL_DEV = candidate.toString();
+}
 const db = process.env.SUPABASE_DATABASE_URL_DEV || "";
 const url = process.env.SUPABASE_URL_DEV || "";
 let parsedDb, parsedUrl;
@@ -31,7 +46,10 @@ try {
   abort("Invalid DEV database or Supabase URL.");
 }
 if (!["postgres:", "postgresql:"].includes(parsedDb.protocol) ||
-    parsedDb.username.split(".").at(-1) !== devProjectRef ||
+    !(
+      (parsedDb.hostname === "db." + devProjectRef + ".supabase.co" && parsedDb.username === "postgres" && (parsedDb.port === "5432" || !parsedDb.port)) ||
+      (parsedDb.hostname.endsWith(".pooler.supabase.com") && parsedDb.username.split(".").at(-1) === devProjectRef)
+    ) ||
     parsedUrl.hostname !== devProjectRef + ".supabase.co" ||
     parsedUrl.protocol !== "https:") {
   abort("DEV database identity mismatch: refusing to connect.");
