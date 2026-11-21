@@ -52,6 +52,39 @@ assert positions[3]<text.index(verify,positions[3])<positions[4]
 assert positions[5]<text.index(verify,positions[5])<positions[6]
 print("CST_DEV_CERTIFIED_CHECKOUT_RECHECK_QA_PASS")
 PY
+python3 - "$deploy" <<'PY'
+# Exercise the real helper from the release script against a throwaway local
+# Git repo. Never source the deployment script or touch the active release.
+import re,subprocess,tempfile,shlex,sys
+from pathlib import Path
+source=Path(sys.argv[1]).read_text()
+match=re.search(r"(?ms)^assert_exact_certified_checkout\(\) \{\n.*?^\}",source)
+assert match,"certified SHA guard missing"
+fn=match.group(0)
+def git(root,*args):
+    return subprocess.run(["git",*args],cwd=root,text=True,capture_output=True,check=True).stdout.strip()
+def probe(root,expected):
+    script="set -euo pipefail\n"+fn+"\ncertified_sha="+shlex.quote(expected)+"\nassert_exact_certified_checkout"
+    return subprocess.run(["bash","-c",script],cwd=root,text=True,capture_output=True).returncode
+with tempfile.TemporaryDirectory(prefix="cst-certified-sha-fixture-") as temp:
+    root=Path(temp)
+    git(root,"init","-q","-b","main")
+    git(root,"config","user.name","CST-CI-QA")
+    git(root,"config","user.email","qa@example.invalid")
+    (root/"fixture.txt").write_text("certified")
+    git(root,"add","fixture.txt")
+    git(root,"commit","-qm","initial synthetic certified release")
+    certified=git(root,"rev-parse","HEAD")
+    assert probe(root,certified)==0,"exact clean certified commit refused"
+    (root/"fixture.txt").write_text("dirty")
+    assert probe(root,certified)!=0,"dirty worktree was not refused"
+    git(root,"add","fixture.txt")
+    git(root,"commit","-qm","new local commit after certification")
+    assert probe(root,certified)!=0,"uncertified local commit was not refused"
+    newest=git(root,"rev-parse","HEAD")
+    assert probe(root,newest)==0,"new explicitly certified HEAD was not accepted"
+print("CST_DEV_CERTIFIED_SHA_TOCTOU_NEGATIVE_TESTS_PASS")
+PY
 grep -Fq 'invoice-writer-version2.cms' "$qa"
 grep -Fq 'invoice-writer-version2.cms' "$composeqa"
 if grep -Fq 'invoice-writer-version1' "$qa" || grep -Fq 'invoice-writer-version1' "$composeqa"; then
