@@ -1,6 +1,6 @@
 # Issue #238 — PostgreSQL-side CST-DEV Invoice relock (review only)
 
-**STATUS: SOURCE / ISOLATED PG17 QA PASS. HOSTED INSTALLATION NO-GO.**
+**STATUS: PREVIOUS SQL REVISION PASSED ISOLATED PG17 QA; CURRENT REVISED SQL IS NOT YET PG17-INTEGRATION PASS. HOSTED INSTALLATION NO-GO.**
 This folder is documentation, **not** an automatic migration. Never execute these statements against PROD or through an unauthorized role/credential channel.
 
 ## Why this exists
@@ -39,7 +39,7 @@ Exact QA script remains on the restricted DEV VPS:
 
 ## Follow-up review correction (source-only; untested against PG17)
 
-The review identified that PostgreSQL 17 `pg_terminate_backend(pid)` with its default zero timeout only confirms delivery of SIGTERM, not process exit. The draft SQL was revised to use a bounded 2000 ms per-backend acknowledgement, recheck remaining CST writer sessions, and return `CST_RELOCK_INCOMPLETE` when termination is not confirmed. This path records an `RELOCK_INCOMPLETE_...` audit reason instead of declaring `CST_RELOCK_EXECUTED`. It deliberately avoids a new exception on that incomplete-termination branch, which could roll back the role revocation within the same transaction.
+The review identified that PostgreSQL 17 `pg_terminate_backend(pid)` with its default zero timeout only confirms delivery of SIGTERM, not process exit. The draft SQL was revised to use a bounded 2000 ms per-backend acknowledgement, recheck remaining CST writer sessions, and return `CST_RELOCK_INCOMPLETE` when termination is not confirmed. This path records an `RELOCK_INCOMPLETE_...` audit reason instead of declaring `CST_RELOCK_EXECUTED`. It deliberately avoids a new exception on that incomplete-termination branch, which could roll back the role revocation within the same transaction. A further review identified that an **exception thrown by `pg_terminate_backend()` itself** would also abort the outer relock transaction. The revised function now catches ordinary per-backend termination exceptions in nested subtransactions, counts them, and returns `CST_RELOCK_INCOMPLETE`; `ALTER ROLE ... NOLOGIN` remains outside the nested block. `query_canceled`, `assert_failure`, backend crash, failed `ALTER ROLE`, and other unhandled transaction failures can still roll back the relock, so this is **not a guarantee of absolute session cutoff**.
 
 **This correction has not passed the original isolated PostgreSQL 17 integration QA or a real scheduler test.** Previous isolated QA results refer to the prior SQL revision and must not be presented as proof for the changed revision. The 2000 ms per-session delay can accumulate across many sessions; review bounded work/cron overlap, transaction rollback on unhandled SQL errors, and controlled partial-termination/crash tests before approval. Confirm a scheduler run that reports `CST_RELOCK_INCOMPLETE` triggers monitoring and follow-up; a successful SQL job exit is not itself proof that the security objective was met.
 
@@ -81,13 +81,25 @@ This closes a **local simulation privilege-parity gap**, but **still does NOT pr
 
 The **non-superuser** scheduler/crash QA also previously referenced the old SQL staged at `/opt/cst-invoice-dev-stage-20261120/issue238-watchdog-qa/ISSUE238-PGCRON-RELOCK-REVIEW-ONLY.sql`; its earlier exit-0 proof is therefore **only for that original staged SQL**, not for this revised source. Both `issue238-pgcron164-scheduler-crash-qa.sh` and `issue238-pgcron164-nonsuperuser-crash-qa.sh` now read the SQL file alongside the respective script and require a separately supplied `ISSUE238_APPROVED_SQL_SHA256` that matches before starting Docker. A missing/mismatched SHA stops the test. The revised SQL's real PG17 + pg_cron testing, especially delayed termination and foreign/missing lease, is still pending. Recreating a local PG17 QA image is not equivalent to hosted install approval, and an earlier safety-denied execution must not be circumvented.
 
+### Required exact-revision exception regression
+
+Before an authorized DBA approves the SQL revision containing the nested termination exception block, perform **independent networkless PostgreSQL 17 testing** against its exact reviewed SHA:
+
+1. Create only disposable synthetic CST/Diva roles and a real long-running CST writer session; inject a recoverable backend termination error (not merely a `false` return).
+2. Verify that `tick()` returns `CST_RELOCK_INCOMPLETE`, **CST is still NOLOGIN after commit**, an audit reason begins `RELOCK_INCOMPLETE_`, and the remaining session is reported instead of falsely counting success. Verify Diva remains unchanged.
+3. Restore termination privileges, allow a subsequent tick to retry, and confirm that it clears residual sessions and rejects new logins without double-posting anything. Also test multiple sessions and the cumulative 2000ms-per-session bound.
+4. Separately inject cancellation/fatal transaction rollback and document that the current SQL alone cannot prove an absolute hard cutoff under those conditions; keep release **NO-GO** until an independent externally managed safety boundary is accepted.
+5. Ensure every runnable QA fixture aborts before execution when the reviewed SQL SHA is missing/mismatched, and that it never connects to CST-DEV or PROD.
+
+**None of these exact-revision cases is claimed PASS yet.** Static/CI SUCCESS cannot substitute for PostgreSQL runtime evidence.
+
 ### Lease expiry evaluated after advisory-lock acquisition
 
 The revised review-only SQL now takes `clock_timestamp()` **after** acquiring the shared relock/activation advisory lock. Previously it initialized the clock before potentially waiting for that lock, so a blocked relock tick could make an expired lease appear valid based on a stale timestamp. Acceptance testing must include a concurrent actor holding the same advisory lock until beyond the lease deadline, then verify that tick revokes the writer after the lock is released. **No real PostgreSQL 17 concurrency test has yet been completed for this revision.**
 
 ## Not yet tested / release blockers
 
-The actual hosted Supabase project currently has `pg_cron` **available but NOT installed**. The disposable PostgreSQL image did not contain the cron extension, so the **scheduler's actual interval, ownership, continuous execution, restart recovery and disconnection behavior have NOT been proven**. PostgreSQL timeout defaults are not an absolute watchdog.
+The actual hosted Supabase project currently has `pg_cron` **available but NOT installed**. Older disposable PostgreSQL integration QA did not include the extension; subsequent isolated networkless runs **did** use real `pg_cron` source tag v1.6.4 and demonstrated periodic execution plus launcher recovery, but with an **older SQL revision**, not the current draft. Hosted Supabase's scheduler ownership, timing, continuous execution, restart recovery and outage behavior have **NOT** been proven. PostgreSQL timeout defaults are not an absolute watchdog.
 
 Before any role activation, an **authorized DBA** must review the SQL and approve installation using the officially selected project; verify that the function is owned/called by `postgres`, install/enable `pg_cron` if approved, schedule a distinct job (e.g. 10 seconds), inspect `cron.job_run_details` and test a real controlled active-session expiry **independent of VPS availability**. Be aware that a scheduled job of the same name overwrites an existing job. No `cron.schedule` call has been made.
 
