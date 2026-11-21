@@ -74,7 +74,8 @@ docker exec -d "$name" sh -c \
 held=0
 for n in $(seq 1 25); do
   held="$(docker exec "$name" psql -X -qAt -U postgres -d postgres \
-   -c "SELECT count(*) FROM pg_locks WHERE locktype='advisory' AND granted")"
+   -c "SELECT count(*) FROM pg_locks WHERE locktype='advisory' AND granted
+     AND classid::text='20261120' AND objid::text='238' AND objsubid=2")"
   if test "$held" -gt 0; then break; fi
   sleep .2
 done
@@ -108,6 +109,14 @@ safe="$(docker exec "$name" psql -X -qAt -U postgres -d postgres \
   (SELECT count(*) FROM pg_stat_activity WHERE usename='bizportal_customer_invoice_cst_writer_dev')=0)::text
   FROM pg_authid WHERE rolname='bizportal_customer_invoice_cst_writer_dev'")"
 test "$safe" = true
+# Confirm that the role remains unusable AFTER the tick transaction finishes,
+# rather than relying only on a transaction-local session count.
+if docker exec "$name" psql -X -qAt -h 127.0.0.1 \
+    -U bizportal_customer_invoice_cst_writer_dev -d postgres \
+    -c 'SELECT 1' >/dev/null 2>&1; then
+  echo QA_UNSAFE_POST_COMMIT_LOGIN; exit 81
+fi
+echo QA_POST_COMMIT_NEW_WRITER_LOGIN_DENIED_PASS
 diva="$(docker exec "$name" psql -X -qAt -U postgres -d postgres \
  -c "SELECT (NOT rolcanlogin AND rolpassword IS NULL)::text FROM pg_authid
   WHERE rolname='bizportal_customer_invoice_diva_writer_dev'")"
