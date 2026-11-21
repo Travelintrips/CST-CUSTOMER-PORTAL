@@ -106,15 +106,34 @@ describe("Actual DEV Portal handler rejects only the synthetic QA108 legacy Invo
     await expect(call()).rejects.toMatchObject({ statusCode: 503 });
     assertNoWrites();
   });
-  it("does not permit switching all feature flags ON to bypass the QA108 legacy guard", async () => {
+  it.each([
+    ["atomic OFF", "false", "true", "true"],
+    ["posted AR OFF", "true", "false", "true"],
+    ["Super Admin attestation OFF", "true", "true", "false"],
+  ])("QA108 remains blocked when %s", async (_name, atomic, ar, attest) => {
+    process.env.CUSTOMER_PORTAL_ATOMIC_ACCOUNTING_POST_DEV = atomic;
+    process.env.CUSTOMER_PORTAL_REQUIRE_POSTED_AR_EVIDENCE_DEV = ar;
+    process.env.CUSTOMER_PORTAL_REQUIRE_BIZPORTAL_ATTEST_DEV = attest;
+    await expect(call()).rejects.toMatchObject({statusCode:503});
+    expect(m.sql).toContain("rollback");
+    expect(m.sql).not.toContain("commit");
+    expect(m.sql.some(q=>q.startsWith("update")||q.startsWith("insert"))).toBe(false);
+    expect(m.notifyAdmins).not.toHaveBeenCalled();
+    expect(m.notifyPortalCustomers).not.toHaveBeenCalled();
+    expect(m.verification).not.toHaveBeenCalled();
+  });
+  it("all three flags ON routes QA108 into real scoped-writer RLS proof, not a permanent QA deny", async () => {
     process.env.CUSTOMER_PORTAL_ATOMIC_ACCOUNTING_POST_DEV = "true";
     process.env.CUSTOMER_PORTAL_REQUIRE_POSTED_AR_EVIDENCE_DEV = "true";
     process.env.CUSTOMER_PORTAL_REQUIRE_BIZPORTAL_ATTEST_DEV = "true";
-    await expect(call()).rejects.toMatchObject({ statusCode: 503 });
+    // A deliberately missing RLS attestation fails the actual handler.
+    // This test does NOT fake a signed approval or issue any invoice.
+    await expect(call()).rejects.toMatchObject({statusCode:503});
     expect(m.scopedOpen).toHaveBeenCalledTimes(1);
+    expect(m.sql.some(q=>q.includes("row_security_active("))).toBe(true);
     expect(m.sql).toContain("rollback");
     expect(m.sql).not.toContain("commit");
-    expect(m.sql.some(q => q.startsWith("update") || q.startsWith("insert"))).toBe(false);
+    expect(m.sql.some(q=>q.startsWith("update")||q.startsWith("insert"))).toBe(false);
     expect(m.notifyAdmins).not.toHaveBeenCalled();
     expect(m.notifyPortalCustomers).not.toHaveBeenCalled();
     expect(m.verification).not.toHaveBeenCalled();
