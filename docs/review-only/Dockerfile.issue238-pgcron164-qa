@@ -1,0 +1,11 @@
+# QA ONLY: actual pg_cron 1.6.4 on networkless throwaway PostgreSQL 17.
+# No live Supabase host, password or other CST system is involved.
+FROM mirror.gcr.io/library/postgres:17-alpine AS builder
+RUN apk add --no-cache build-base curl
+RUN mkdir -p /tmp/pgcron && curl --fail --silent --show-error --location --max-time 60 \
+    https://github.com/citusdata/pg_cron/archive/refs/tags/v1.6.4.tar.gz \
+    -o /tmp/pgcron.tgz && tar -xzf /tmp/pgcron.tgz -C /tmp/pgcron --strip-components=1
+RUN make -C /tmp/pgcron with_llvm=no && make -C /tmp/pgcron install with_llvm=no
+FROM mirror.gcr.io/library/postgres:17-alpine
+COPY --from=builder /usr/local/lib/postgresql/pg_cron.so /usr/local/lib/postgresql/pg_cron.so
+COPY --from=builder /usr/local/share/postgresql/extension/ /usr/local/share/postgresql/extension/
