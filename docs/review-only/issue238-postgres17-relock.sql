@@ -126,7 +126,8 @@ BEGIN
 
   -- IMPORTANT: preserve the existing SCRAM verifier when the writer is
   -- ALREADY NOLOGIN and no sessions/lease exist. This is NOT activation.
-  IF NOT v_lease.armed AND NOT v_cst.rolcanlogin AND v_sessions=0
+  IF NOT v_invalid_control
+    AND NOT v_lease.armed AND NOT v_cst.rolcanlogin AND v_sessions=0
     AND NOT v_diva.rolcanlogin AND NOT v_diva.rolsuper
     AND NOT v_diva.rolbypassrls THEN
     RETURN 'NOLOGIN_PREEXISTING_PASSWORD_PRESERVED';
