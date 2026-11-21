@@ -43,6 +43,12 @@ The review identified that PostgreSQL 17 `pg_terminate_backend(pid)` with its de
 
 **This correction has not passed the original isolated PostgreSQL 17 integration QA or a real scheduler test.** Previous isolated QA results refer to the prior SQL revision and must not be presented as proof for the changed revision. The 2000 ms per-session delay can accumulate across many sessions; review bounded work/cron overlap, transaction rollback on unhandled SQL errors, and controlled partial-termination/crash tests before approval. Confirm a scheduler run that reports `CST_RELOCK_INCOMPLETE` triggers monitoring and follow-up; a successful SQL job exit is not itself proof that the security objective was met.
 
+### Missing / foreign lease fail-closed correction
+
+Review found that the first SQL candidate replaced a missing/foreign lease with a synthetic `armed=false` record and set `v_invalid_control=true`, but the credential-preservation branch did **not** inspect `v_invalid_control`. An already-`NOLOGIN` writer with zero sessions could therefore retain its SCRAM verifier despite a missing or foreign lease, contrary to the documented fail-closed policy. The review-only SQL now requires `NOT v_invalid_control` before preserving credentials.
+
+Acceptance tests for this changed revision must distinguish: (a) genuine explicit disarmed lease + `NOLOGIN` + zero sessions preserves the verifier, (b) missing lease with retained verifier clears it, (c) foreign lease clears it, and (d) expired/overlong lease with active session still relocks and terminates. **These tests have not been executed against PostgreSQL 17 for the revised commit.**
+
 ## Not yet tested / release blockers
 
 The actual hosted Supabase project currently has `pg_cron` **available but NOT installed**. The disposable PostgreSQL image did not contain the cron extension, so the **scheduler's actual interval, ownership, continuous execution, restart recovery and disconnection behavior have NOT been proven**. PostgreSQL timeout defaults are not an absolute watchdog.
