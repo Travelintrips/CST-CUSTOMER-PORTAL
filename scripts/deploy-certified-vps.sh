@@ -24,6 +24,41 @@ if ! git merge-base --is-ancestor HEAD "$certified_sha"; then
   exit 1
 fi
 
+# Prevent a concurrent local commit or transient source change from being
+# shipped under an older CI-certified release ID. Other workers are not
+# required to share this deployer's flock; a start-only git check is insufficient.
+assert_exact_certified_checkout() {
+  if [[ "$(git rev-parse HEAD)" != "$certified_sha" ]] ||
+     [[ -n "$(git status --porcelain)" ]]; then
+    echo "[dev-deploy] Certified source drift detected; refusing release" >&2
+    return 1
+  fi
+}
+
+# Release labels are not source attestation. Hash the actual Invoice
+# handler inside the live/candidate image against the Git-certified blob,
+# so an unreviewed concurrent local commit cannot masquerade as certified.
+assert_certified_invoice_handler() {
+  local target="$1" expected actual
+  expected="$(git show "$certified_sha:server/billing-operations.mjs" | sha256sum | cut -d' ' -f1)"
+  if [[ "$target" == live ]]; then
+    actual="$(docker exec cst-customer-portal-dev sha256sum /app/server/billing-operations.mjs 2>/dev/null | cut -d' ' -f1)"
+  elif [[ "$target" == candidate ]]; then
+    actual="$(docker run --rm --pull never --network none --read-only \
+      --cap-drop ALL --security-opt no-new-privileges \
+      --entrypoint sha256sum cst-customer-portal-dev:candidate \
+      /app/server/billing-operations.mjs 2>/dev/null | cut -d' ' -f1)"
+  else
+    echo "[dev-deploy] Unknown Invoice handler image target" >&2
+    return 1
+  fi
+  if [[ ! "$expected" =~ ^[0-9a-f]{64}$ ]] ||
+     [[ "$actual" != "$expected" ]]; then
+    echo "[dev-deploy] Invoice handler bytes do not match certified Git source; refusing" >&2
+    return 1
+  fi
+}
+
 # Use the same reviewed Compose files on certified forward deployment AND
 # rollback. Missing credential path when Invoice atomic mode is ON must
 # stop this attempt *before* updating the running DEV worktree/image.
@@ -49,16 +84,21 @@ fi
 
 running_sha="$(curl -fsS --max-time 5 http://127.0.0.1:18444/api/portal/release-info 2>/dev/null | node -e 'let s="";process.stdin.on("data",x=>s+=x);process.stdin.on("end",()=>{try{process.stdout.write(JSON.parse(s).releaseId||"")}catch{}})' || true)"
 if [[ "$running_sha" == "$certified_sha" ]]; then
+  assert_certified_invoice_handler live
   echo "[dev-deploy] Already healthy at certified release $certified_sha"
   exit 0
 fi
 
 git merge --ff-only "$certified_sha"
+assert_exact_certified_checkout
 echo "[dev-deploy] Verifying certified commit $certified_sha"
 CI=true pnpm install --frozen-lockfile --network-concurrency=2 >/dev/null
 pnpm typecheck >/dev/null
 CI=true APP_ENV=development NODE_ENV=test SESSION_SECRET=customer-portal-vps-ci-check-secret-32 SUPABASE_DATABASE_URL_DEV=postgresql://ci:ci@127.0.0.1:5432/ci pnpm test -- --maxWorkers=1 >/dev/null
+assert_exact_certified_checkout
 nice -n 15 ionice -c3 timeout 240 docker build --pull=false -f Dockerfile.dev-vps --build-arg DEV_RELEASE_SHA="$certified_sha" -t cst-customer-portal-dev:candidate . >/dev/null
+assert_exact_certified_checkout
+assert_certified_invoice_handler candidate
 
 backup=0
 if docker image inspect cst-customer-portal-dev:local >/dev/null 2>&1; then
@@ -66,6 +106,7 @@ if docker image inspect cst-customer-portal-dev:local >/dev/null 2>&1; then
   backup=1
 fi
 docker tag cst-customer-portal-dev:candidate cst-customer-portal-dev:local
+assert_exact_certified_checkout
 if ! DEV_RELEASE_SHA="$certified_sha" docker compose "${compose_files[@]}" up -d --no-build --force-recreate --no-deps customer-portal-dev; then
   echo "[dev-deploy] Compose failed" >&2
   failed=1

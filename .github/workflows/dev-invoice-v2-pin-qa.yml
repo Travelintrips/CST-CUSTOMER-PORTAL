@@ -1,0 +1,21 @@
+name: CST Invoice DEV — V2 ciphertext pin source QA
+on:
+  pull_request:
+    branches: [dev-vps-certified]
+    paths:
+      - scripts/dev-invoice-inject-verified-cms.sh
+      - scripts/tests/customer-invoice-real-encrypted-tmpfs-dev.qa.sh
+      - scripts/tests/customer-invoice-compose-credential-override.qa.sh
+      - scripts/tests/customer-invoice-v2-source-pin.qa.sh
+      - scripts/deploy-certified-vps.sh
+      - .github/workflows/dev-invoice-v2-pin-qa.yml
+permissions:
+  contents: read
+jobs:
+  v2-source-pin-no-secrets:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Fail closed unless exact reviewed ciphertext V2 is pinned
+        run: bash scripts/tests/customer-invoice-v2-source-pin.qa.sh
