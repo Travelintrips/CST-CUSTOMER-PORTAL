@@ -135,11 +135,30 @@ export async function openDevCompanyInvoiceWriter({
   } catch { throw blocked(); }
   const parsed=parseDevInvoiceScopedWriterDsn(secretSource?.[config.env],companyId);
   const selectedConnection=resolveDevCstInvoiceDirectIpv6(parsed,env);
+  const pinDirectTls=env.CUSTOMER_PORTAL_INVOICE_CST_DIRECT_IPV6_DEV==="true";
+  // node-postgres' connectionString SSL query parameters override the explicit
+  // `ssl` object. Only after validating the V2 source URI and exact CST-only
+  // direct rewrite, remove those duplicate query parameters so the constructor
+  // actually receives the already-verified CA and rejectUnauthorized=true.
+  // Feature OFF leaves the original connectionString untouched.
+  let effectiveConnection=selectedConnection;
+  if(pinDirectTls){
+    const uri=new URL(selectedConnection);
+    if(uri.hostname!==DIRECT_HOST
+        || uri.username!==DEV_CUSTOMER_INVOICE_COMPANIES[1].role
+        || uri.searchParams.get("sslmode")!=="verify-full"
+        || uri.searchParams.get("sslrootcert")!==DEV_CUSTOMER_INVOICE_CA_FILE)
+      throw blocked();
+    uri.searchParams.delete("sslmode");
+    uri.searchParams.delete("sslrootcert");
+    if([...uri.searchParams.keys()].length!==0)throw blocked();
+    effectiveConnection=uri.toString();
+  }
   const ca=await readCa();
   if(typeof ca!=="string" || !ca.includes("BEGIN CERTIFICATE")) throw blocked();
   const client=new ClientCtor({
-    connectionString:selectedConnection,
-    ssl:{rejectUnauthorized:true,ca},
+    connectionString:effectiveConnection,
+    ssl:{rejectUnauthorized:true,ca,...(pinDirectTls?{servername:DIRECT_HOST}:{})},
     connectionTimeoutMillis:6000,
     application_name:"cst_customer_invoice_scoped_dev",
   });
