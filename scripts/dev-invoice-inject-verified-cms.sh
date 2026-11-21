@@ -8,13 +8,13 @@ container="${1:-cst-customer-portal-dev}"
 preflight_only=0
 if [[ "$container" == "--preflight" ]]; then preflight_only=1; fi
 transport="/etc/cst-invoice-dev/transport"
-cms="$transport/invoice-writer-version1.cms"
-manifest="$transport/invoice-writer-version1.manifest.json"
+cms="$transport/invoice-writer-version2.cms"
+manifest="$transport/invoice-writer-version2.manifest.json"
 cert="$transport/invoice-envelope-cert.pem"
 private="$transport/invoice-envelope-private.pem"
 digest="38a9abcbbcca3535601265ae2c9a8a4b574f90767b5fe83291d38bf4513cb334"
-issuer_sha="e46593e15dde5317e9eb53d13d2fef14dd3f70d1"
-version="projects/653506647312/secrets/bizportal-customer-invoice-writers-dev-companies/versions/1"
+issuer_sha="d9cc4417d618891302efec3463eacd84f0b7f0e7"
+version="projects/653506647312/secrets/bizportal-customer-invoice-writers-dev-companies/versions/2"
 
 if [[ "$(id -u)" != 0 || ( "$preflight_only" != 1 &&
       "$container" != "cst-customer-portal-dev" &&
