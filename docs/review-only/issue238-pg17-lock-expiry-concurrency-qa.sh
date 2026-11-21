@@ -175,4 +175,24 @@ audit="$(docker exec "$name" psql -X -qAt -U postgres -d postgres \
 test "$audit" = 1
 echo QA_LEASE_CLOCK_AFTER_LOCK_AND_SESSION_RELOCK_PASS
 echo QA_DIVA_UNCHANGED_PASS
+
+# Even after successful session cleanup, deleting the *control* lease row
+# must never produce a false CST_RELOCK_EXECUTED. This negative test remains
+# inside the networkless disposable synthetic database.
+docker exec "$name" psql -X -q -v ON_ERROR_STOP=1 -U postgres -d postgres \
+ -c "DELETE FROM cst_invoice_relock_dev.lease WHERE singleton=true" >/dev/null
+missing_outcome="$(docker exec "$name" psql -X -qAt -v ON_ERROR_STOP=1 -U postgres -d postgres \
+ -c 'SELECT cst_invoice_relock_dev.tick()')"
+test "$missing_outcome" = CST_RELOCK_INCOMPLETE || {
+  echo "QA_MISSING_LEASE_FALSE_SUCCESS=$missing_outcome"; exit 84
+}
+missing_audit="$(docker exec "$name" psql -X -qAt -U postgres -d postgres \
+ -c "SELECT count(*) FROM cst_invoice_relock_dev.audit
+      WHERE reason='RELOCK_INCOMPLETE_MISSING_OR_FOREIGN_LEASE'")"
+test "$missing_audit" -eq 1
+still_locked="$(docker exec "$name" psql -X -qAt -U postgres -d postgres \
+ -c "SELECT (NOT rolcanlogin AND rolpassword IS NULL)::text FROM pg_authid
+      WHERE rolname='bizportal_customer_invoice_cst_writer_dev'")"
+test "$still_locked" = true
+echo QA_MISSING_CONTROL_LEASE_REPORTS_INCOMPLETE_PASS
 echo HOSTED_CST_DEV_AND_PROD_NOT_MODIFIED
