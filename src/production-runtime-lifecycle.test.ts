@@ -8,7 +8,10 @@ describe("production runtime availability lifecycle", () => {
 
     expect(server).toContain('let runtimeState = "starting"');
     expect(server).toContain("async function establishRuntimeReadiness()");
-    expect(server).toContain("server.listen(PORT, \"0.0.0.0\")");
+    // Production defaults to its original listener. Only an explicit DEV-only
+    // host-network override binds localhost to avoid exposing the shadow API.
+    expect(server).toContain('process.env.PORTAL_DEV_BIND_HOST === "127.0.0.1"');
+    expect(server).toContain('"127.0.0.1" : "0.0.0.0"');
     expect(server).toContain("void establishRuntimeReadiness()");
     expect(server).toContain('pathname.startsWith("/api/")');
     expect(server).toContain('runtimeState !== "ready"');
