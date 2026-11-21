@@ -5,6 +5,7 @@ import {
  DEV_CUSTOMER_INVOICE_CA_FILE,
  isDevInvoiceScopedWriterRequested,
  parseDevInvoiceScopedWriterDsn,
+ resolveDevCstInvoiceDirectIpv6,
  openDevCompanyInvoiceWriter,
 } from "../server/dev-customer-invoice-scoped-client.mjs";
 
@@ -269,5 +270,61 @@ describe("DEV Invoice systemd credential routes through original company client"
    env:env({CREDENTIALS_DIRECTORY:dir}),
    loadSystemdCredentials:fetchSystemd,readCa:async()=>fakeCa,
   })).rejects.toMatchObject({statusCode:503});
+ });
+});
+
+
+describe("CST-DEV direct IPv6 Invoice writer transport, default OFF",()=>{
+ const optIn=env({
+   CUSTOMER_PORTAL_DEV_DIRECT_IPV6:"true",
+   CUSTOMER_PORTAL_INVOICE_CST_DIRECT_IPV6_DEV:"true",
+ });
+ it("keeps original V2 URL unchanged when the new opt-in is absent",()=>{
+   const parsed=parseDevInvoiceScopedWriterDsn(url(1),1);
+   expect(resolveDevCstInvoiceDirectIpv6(parsed,env())).toBe(parsed.connectionString);
+ });
+ it("rewrites only the pinned CST Session Pooler role to direct IPv6",()=>{
+   const input=url(1,{hostname:"aws-1-ap-southeast-2.pooler.supabase.com"});
+   const parsed=parseDevInvoiceScopedWriterDsn(input,1);
+   const direct=resolveDevCstInvoiceDirectIpv6(parsed,optIn);
+   const u=new URL(direct);
+   expect(u.hostname).toBe("db."+REF+".supabase.co");
+   expect(u.username).toBe(DEV_CUSTOMER_INVOICE_COMPANIES[1].role);
+   expect(u.port).toBe("5432");
+   expect(u.password).toBe(new URL(input).password);
+   expect(u.searchParams.get("sslmode")).toBe("verify-full");
+   expect(u.searchParams.get("sslrootcert")).toBe(DEV_CUSTOMER_INVOICE_CA_FILE);
+   expect(parseDevInvoiceScopedWriterDsn(direct,1).role).toBe(DEV_CUSTOMER_INVOICE_COMPANIES[1].role);
+ });
+ it.each([
+   ["Diva writer",3,url(3,{hostname:"aws-1-ap-southeast-2.pooler.supabase.com"}),optIn],
+   ["unexpected pooler region",1,url(1),optIn],
+   ["missing existing direct flag",1,url(1,{hostname:"aws-1-ap-southeast-2.pooler.supabase.com"}),{...optIn,CUSTOMER_PORTAL_DEV_DIRECT_IPV6:"false"}],
+   ["production environment",1,url(1,{hostname:"aws-1-ap-southeast-2.pooler.supabase.com"}),{...optIn,APP_ENV:"production"}],
+   ["invalid opt-in flag",1,url(1,{hostname:"aws-1-ap-southeast-2.pooler.supabase.com"}),{...optIn,CUSTOMER_PORTAL_INVOICE_CST_DIRECT_IPV6_DEV:"on"}],
+   ["already direct without approved pooler source",1,url(1,{hostname:"db."+REF+".supabase.co",username:DEV_CUSTOMER_INVOICE_COMPANIES[1].role}),optIn],
+ ])("fails closed for %s",(_name,company,dsn,e)=>{
+   const parsed=parseDevInvoiceScopedWriterDsn(dsn,company);
+   expect(()=>resolveDevCstInvoiceDirectIpv6(parsed,e)).toThrow();
+ });
+ it("selects actual DB company and direct role with a mock client only",async()=>{
+   const created=[];
+   class FakeClient{
+     constructor(options){created.push(options)}
+     async connect(){}
+     async end(){}
+   }
+   const input=url(1,{hostname:"aws-1-ap-southeast-2.pooler.supabase.com"});
+   const selected=await openDevCompanyInvoiceWriter({
+     invoiceId:108,
+     portalUser:admin,
+     env:{...optIn,CUSTOMER_PORTAL_CST_INVOICE_WRITER_DSN_DEV:input},
+     lookupCompany:async()=>({rows:[{company_id:1}]}),
+     ClientCtor:FakeClient,readCa:async()=>fakeCa,
+   });
+   expect(selected.companyId).toBe(1);
+   expect(new URL(created[0].connectionString).hostname).toBe("db."+REF+".supabase.co");
+   expect(created[0].ssl.rejectUnauthorized).toBe(true);
+   await selected.client.end();
  });
 });
