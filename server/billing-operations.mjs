@@ -1,4 +1,5 @@
 import { pool, query } from "./db.mjs";
+import { mustDenyQa108LegacyInvoice } from "./dev-qa108-legacy-invoice-guard.mjs";
 import { signedPaymentProofUrl } from "./storage.mjs";
 import {
   bestEffortNotificationWrite,
@@ -461,12 +462,7 @@ export async function handleAdminInvoices({ request, response, user, sendJson, s
     // updates invoice_status and notifies recipients without a posted GL/AR
     // journal. Refuse only the exact QA #108 until the original atomic
     // PostingEngine, company writer and signed Owner proof are actually ON.
-    if (process.env.APP_ENV?.trim().toLowerCase() === "development"
-        && Number(row.id) === 108 && Number(row.company_id) === 1
-        && row.doc_number === "QA-CST-DEV-OWNER-20261120-001"
-        && (process.env.CUSTOMER_PORTAL_ATOMIC_ACCOUNTING_POST_DEV !== "true"
-          || process.env.CUSTOMER_PORTAL_REQUIRE_POSTED_AR_EVIDENCE_DEV !== "true"
-          || process.env.CUSTOMER_PORTAL_REQUIRE_BIZPORTAL_ATTEST_DEV !== "true")) {
+    if (mustDenyQa108LegacyInvoice(row, process.env)) {
       fail(503, "Invoice QA #108 menunggu PostingEngine atomik, bukti AR, dan persetujuan Owner yang sah.");
     }
     if (row.invoice_status === "invoiced") return mapInvoice(row);
