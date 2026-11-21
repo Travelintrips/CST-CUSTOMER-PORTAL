@@ -5,6 +5,10 @@
 -- This source installs a DB function & metadata ONLY; it DOES NOT schedule
 -- a cron job, arm a lease, enable LOGIN, grant financial permissions, or issue Invoice.
 -- Must be executed ONLY on an explicitly approved CST-DEV database connection.
+-- Atomic install: the privileged function MUST NOT become visible before
+-- EXECUTE is revoked from PUBLIC and object ownership is verified. If any
+-- statement fails, the whole installation is rolled back, not half-installed.
+BEGIN;
 
 DO $scope$
 BEGIN
@@ -203,3 +207,4 @@ GRANT USAGE ON SCHEMA cst_invoice_relock_dev TO postgres;
 GRANT EXECUTE ON FUNCTION cst_invoice_relock_dev.tick() TO postgres;
 -- DBA must verify an approved cron job identity and schedule separately.
 -- DO NOT call cron.schedule or enable PostgreSQL LOGIN from this script.
+COMMIT;
