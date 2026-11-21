@@ -65,6 +65,30 @@ export function parseDevInvoiceScopedWriterDsn(raw,companyId) {
   return {companyId:Number(companyId),role:rule.role,connectionString:raw};
 }
 
+/**
+ * CST-DEV only: reuse the already-proven Portal direct IPv6 transport for
+ * the reviewed, project-scoped V2 Invoice writer. Secret remains in memory.
+ * This is opt-in and strictly more restrictive than the normal DSN parser.
+ * Diva and all unexpected source endpoints fail closed.
+ */
+export function resolveDevCstInvoiceDirectIpv6(parsed, env=process.env) {
+  const optIn=env.CUSTOMER_PORTAL_INVOICE_CST_DIRECT_IPV6_DEV;
+  if(optIn===undefined || optIn==="false")return parsed.connectionString;
+  if(optIn!=="true" || env.APP_ENV!=="development"
+      || env.NODE_ENV!=="development"
+      || env.CUSTOMER_PORTAL_DEV_DIRECT_IPV6!=="true"
+      || parsed.companyId!==1
+      || parsed.role!==DEV_CUSTOMER_INVOICE_COMPANIES[1].role)throw blocked();
+  let u;
+  try {u=new URL(parsed.connectionString);}catch{throw blocked();}
+  if(u.hostname!=="aws-1-ap-southeast-2.pooler.supabase.com"
+      || u.port!=="5432" || u.pathname!=="/postgres"
+      || u.username!==parsed.role+"."+REF)throw blocked();
+  u.hostname=DIRECT_HOST;
+  u.username=parsed.role;
+  return u.toString();
+}
+
 export async function readPinnedDevInvoiceCa() {
   try {
     if (await realpath(DEV_CUSTOMER_INVOICE_CA_FILE)!==DEV_CUSTOMER_INVOICE_CA_FILE)
@@ -110,10 +134,11 @@ export async function openDevCompanyInvoiceWriter({
       : fromGcp ? await loadWriterSecrets({env}) : env;
   } catch { throw blocked(); }
   const parsed=parseDevInvoiceScopedWriterDsn(secretSource?.[config.env],companyId);
+  const selectedConnection=resolveDevCstInvoiceDirectIpv6(parsed,env);
   const ca=await readCa();
   if(typeof ca!=="string" || !ca.includes("BEGIN CERTIFICATE")) throw blocked();
   const client=new ClientCtor({
-    connectionString:parsed.connectionString,
+    connectionString:selectedConnection,
     ssl:{rejectUnauthorized:true,ca},
     connectionTimeoutMillis:6000,
     application_name:"cst_customer_invoice_scoped_dev",
