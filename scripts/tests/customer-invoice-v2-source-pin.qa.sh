@@ -44,6 +44,18 @@ checks=[
 positions=[text.index(c) for c in checks]
 assert positions==sorted(positions),"deploy source order drift"
 assert text.count(verify)==5,"must define and call guard at four release boundaries"
+source='assert_certified_invoice_handler'
+assert text.count(source)==3,"must define hash verifier and call for live/candidate"
+fast=text.index('if [[ "$running_sha" == "$certified_sha" ]]; then')
+ready=text.index('echo "[dev-deploy] Already healthy at certified release')
+assert fast<text.index('assert_certified_invoice_handler live',fast)<ready
+postbuild=text.index('nice -n 15 ionice -c3 timeout 240 docker build')
+tag=text.index('docker tag cst-customer-portal-dev:candidate cst-customer-portal-dev:local')
+assert postbuild<text.index('assert_certified_invoice_handler candidate',postbuild)<tag
+assert '"$certified_sha:server/billing-operations.mjs"' in text
+assert 'docker exec cst-customer-portal-dev sha256sum' in text
+assert '--network none --read-only' in text
+
 assert 'git rev-parse HEAD' in text and 'git status --porcelain' in text
 # At each boundary, reject if local HEAD differs from the exact certified SHA.
 assert positions[0]<text.index(verify,positions[0])<positions[1]
