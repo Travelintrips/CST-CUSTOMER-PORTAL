@@ -71,6 +71,7 @@ DECLARE
   v_pid integer;
   v_killed integer := 0;
   v_termination_timeouts integer := 0;
+  v_termination_errors integer := 0;
   v_remaining integer := 0;
 BEGIN
   -- Original cron job should run as the canonical postgres user, not via
@@ -152,11 +153,21 @@ BEGIN
   LOOP
     -- PG17 timeout=0 only means SIGTERM delivered, NOT backend exited.
     -- Bound the wait; do not throw on timeout and roll back NOLOGIN.
-    IF pg_catalog.pg_terminate_backend(v_pid, 2000) THEN
-      v_killed := v_killed + 1;
-    ELSE
-      v_termination_timeouts := v_termination_timeouts + 1;
-    END IF;
+    -- The exception block creates a subtransaction around EACH termination,
+    -- so a recoverable signal/permission error cannot roll back the already
+    -- executed ALTER ROLE ... NOLOGIN outside this block.
+    BEGIN
+      IF pg_catalog.pg_terminate_backend(v_pid, 2000) THEN
+        v_killed := v_killed + 1;
+      ELSE
+        v_termination_timeouts := v_termination_timeouts + 1;
+      END IF;
+    EXCEPTION WHEN OTHERS THEN
+      -- Treat unexpected termination errors as INCOMPLETE; never claim success.
+      -- PostgreSQL does not catch query_canceled/assert_failure with OTHERS;
+      -- enclosing transaction failure is still a separate release risk.
+      v_termination_errors := v_termination_errors + 1;
+    END;
   END LOOP;
 
   SELECT count(*)::integer INTO v_remaining
@@ -167,7 +178,7 @@ BEGIN
     SET armed=false,expires_at=null WHERE singleton=true;
   INSERT INTO cst_invoice_relock_dev.audit(reason,terminated)
     VALUES (
-      CASE WHEN v_remaining>0 OR v_termination_timeouts>0
+      CASE WHEN v_remaining>0 OR v_termination_timeouts>0 OR v_termination_errors>0
            THEN 'RELOCK_INCOMPLETE_' || v_reason
            ELSE v_reason END,
       v_killed
@@ -175,7 +186,7 @@ BEGIN
 
   -- Retain the NOLOGIN revocation rather than raising a deliberate exception
   -- that would roll back the ALTER ROLE transaction on partial termination.
-  IF v_remaining>0 OR v_termination_timeouts>0 THEN
+  IF v_remaining>0 OR v_termination_timeouts>0 OR v_termination_errors>0 THEN
     RETURN 'CST_RELOCK_INCOMPLETE';
   END IF;
   RETURN 'CST_RELOCK_EXECUTED';
