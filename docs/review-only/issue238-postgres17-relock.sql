@@ -132,6 +132,9 @@ BEGIN
     AND v_cst.rolconnlimit = 1
     AND v_sessions <= 1
     AND v_cst.rolvaliduntil IS NOT NULL
+    -- Password expiry must still be in the future: existing sessions survive
+    -- VALID UNTIL and require an explicit relock if the credential expired.
+    AND v_cst.rolvaliduntil > v_now
     AND v_cst.rolvaliduntil <= v_lease.expires_at
     AND NOT v_diva_missing
     AND NOT v_diva.rolcanlogin
@@ -163,6 +166,10 @@ BEGIN
                    WHEN v_lease.armed AND v_cst.rolcanlogin
                         AND v_cst.password_null
                      THEN 'CST_WRITER_CREDENTIAL_MISSING'
+                   WHEN v_lease.armed AND v_cst.rolcanlogin
+                        AND v_cst.rolvaliduntil IS NOT NULL
+                        AND v_cst.rolvaliduntil <= v_now
+                     THEN 'CST_WRITER_CREDENTIAL_EXPIRED'
                    WHEN v_lease.armed AND v_cst.rolcanlogin
                         AND v_cst.rolconnlimit <> 1
                      THEN 'CST_WRITER_CONNECTION_LIMIT_INVALID'
