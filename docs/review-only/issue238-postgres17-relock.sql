@@ -101,7 +101,7 @@ BEGIN
       INTO v_lease;
   END IF;
 
-  SELECT rolcanlogin,rolsuper,rolbypassrls,rolvaliduntil,
+  SELECT rolcanlogin,rolsuper,rolbypassrls,rolvaliduntil,rolconnlimit,
          (rolpassword IS NULL) AS password_null INTO v_cst
   FROM pg_catalog.pg_authid
   WHERE rolname='bizportal_customer_invoice_cst_writer_dev';
@@ -124,6 +124,10 @@ BEGIN
     AND v_lease.expires_at > v_now
     AND v_lease.expires_at <= v_now + interval '5 minutes'
     AND v_cst.rolcanlogin
+    -- A valid lease is only healthy with the reviewed single-writer bound.
+    -- A connection limit of -1 (unlimited) is acceptable ONLY while NOLOGIN.
+    AND v_cst.rolconnlimit = 1
+    AND v_sessions <= 1
     AND v_cst.rolvaliduntil IS NOT NULL
     AND v_cst.rolvaliduntil <= v_lease.expires_at
     AND NOT v_diva_missing
@@ -149,6 +153,11 @@ BEGIN
   -- forces revocation and password clear. Literal role name is non-dynamic.
   v_reason := CASE WHEN v_invalid_control THEN 'MISSING_OR_FOREIGN_LEASE'
                    WHEN v_diva_missing THEN 'MISSING_DIVA_ROLE'
+                   WHEN v_lease.armed AND v_cst.rolcanlogin
+                        AND v_cst.rolconnlimit <> 1
+                     THEN 'CST_WRITER_CONNECTION_LIMIT_INVALID'
+                   WHEN v_lease.armed AND v_cst.rolcanlogin AND v_sessions>1
+                     THEN 'CST_WRITER_EXCESS_SESSIONS'
                    WHEN v_lease.armed THEN 'LEASE_EXPIRED_OR_INVALID'
                    WHEN v_diva.rolcanlogin OR v_diva.rolsuper OR v_diva.rolbypassrls
                      THEN 'UNSAFE_DIVA_STATE'
