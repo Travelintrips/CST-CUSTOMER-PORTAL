@@ -74,6 +74,34 @@ historical PG17 receipts do not validate the new SQL SHA. Its use remains
 subject to the originally authorized DBA channel; do not reroute prior denied
 PG17 runtime execution through other connectors or shells.
 
+### Finite lease requires single-writer connection bound (source-only; PG17 not run)
+
+Historical Issue #238 DBA acceptance used synthetic `LOGIN CONNECTION LIMIT 1`,
+and explicitly required that the hosted CST writer's current `rolconnlimit=-1`
+must change to 1 **before** any authorized short-term LOGIN. A source review
+of PR #251 found that a valid armed lease could nevertheless return
+`LEASE_MONITORED_NO_CHANGE` for unlimited `rolconnlimit=-1` or for more
+than one existing CST writer session. PostgreSQL's role connection limit does
+not retroactively disconnect already established sessions.
+
+The narrow fix only **reads** `rolconnlimit` from `pg_authid` and uses the
+existing `pg_stat_activity` count. An actively LOGIN-enabled CST writer with
+a valid finite lease is healthy only when `rolconnlimit=1` **and** there
+are no more than one CST writer session. Otherwise the original bounded CST
+relock path runs, returning `CST_RELOCK_EXECUTED` only if cleanup succeeds,
+with specific audit reason `CST_WRITER_CONNECTION_LIMIT_INVALID` or
+`CST_WRITER_EXCESS_SESSIONS`. Existing NOLOGIN/zero-session state is not
+changed, and Diva remains untouched.
+
+The existing disposable, networkless PG17 fixture now includes two negative
+scenarios: a valid finite lease with synthetic CST LOGIN but limit -1, and
+two synthetic writer sessions established before setting limit 1. Both must
+close the CST role and check audit; the second also requires zero CST sessions
+after the tick commit. The simulated approval is **not** proof that hosted
+pooler/session topology enforces the same invariant. **These additions have
+not been executed**, and a new exact-SHA authorized PG17 QA is mandatory.
+Earlier security-denied execution must not be rerouted via other tools.
+
 ### Missing / foreign lease fail-closed correction
 
 Review found that the first SQL candidate replaced a missing/foreign lease with a synthetic `armed=false` record and set `v_invalid_control=true`, but the credential-preservation branch did **not** inspect `v_invalid_control`. An already-`NOLOGIN` writer with zero sessions could therefore retain its SCRAM verifier despite a missing or foreign lease, contrary to the documented fail-closed policy. The review-only SQL now requires `NOT v_invalid_control` before preserving credentials.
