@@ -85,6 +85,23 @@ writer and an unsafe synthetic Diva; it requires the precise
 `RELOCK_INCOMPLETE_UNSAFE_DIVA_STATE` audit, `CST_RELOCK_INCOMPLETE`
 and CST NOLOGIN. No hosted execution and no PG17 runtime PASS are claimed.
 
+### Finite lease must not monitor a LOGIN writer without a verifier (source-only; PG17 not run)
+
+Static review of the current candidate found `v_cst.password_null` was read
+from `pg_authid` but omitted from `v_valid`: an armed lease with CST
+`LOGIN CONNECTION LIMIT 1`, a valid deadline and no password could return
+`LEASE_MONITORED_NO_CHANGE`. That misrepresents the reviewed SCRAM login
+contract even when password authentication itself is denied.
+
+The narrow correction requires `NOT v_cst.password_null` for a healthy
+armed lease; if missing, the existing CST-only relock path runs and audits
+`CST_WRITER_CREDENTIAL_MISSING`. It does not display or rotate verifiers,
+does not touch Diva, and keeps NOLOGIN idle-verifier preservation unchanged.
+A networkless synthetic PG17 fixture scenario arms a finite lease and
+sets the synthetic CST writer LOGIN with `PASSWORD NULL`; it must result in
+CST NOLOGIN, explicit audit, not `MONITORED`. **This revision has not been
+executed on PG17**, and CI/source checks are not runtime proof.
+
 ### Finite lease requires single-writer connection bound (source-only; PG17 not run)
 
 Historical Issue #238 DBA acceptance used synthetic `LOGIN CONNECTION LIMIT 1`,
