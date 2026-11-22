@@ -124,6 +124,9 @@ BEGIN
     AND v_lease.expires_at > v_now
     AND v_lease.expires_at <= v_now + interval '5 minutes'
     AND v_cst.rolcanlogin
+    -- A finite lease cannot be healthy with LOGIN but no credential; avoid
+    -- a misleading MONITORED receipt if the SCRAM verifier disappeared.
+    AND NOT v_cst.password_null
     -- A valid lease is only healthy with the reviewed single-writer bound.
     -- A connection limit of -1 (unlimited) is acceptable ONLY while NOLOGIN.
     AND v_cst.rolconnlimit = 1
@@ -157,6 +160,9 @@ BEGIN
                    WHEN v_diva_missing THEN 'MISSING_DIVA_ROLE'
                    WHEN v_diva.rolcanlogin OR v_diva.rolsuper OR v_diva.rolbypassrls
                      THEN 'UNSAFE_DIVA_STATE'
+                   WHEN v_lease.armed AND v_cst.rolcanlogin
+                        AND v_cst.password_null
+                     THEN 'CST_WRITER_CREDENTIAL_MISSING'
                    WHEN v_lease.armed AND v_cst.rolcanlogin
                         AND v_cst.rolconnlimit <> 1
                      THEN 'CST_WRITER_CONNECTION_LIMIT_INVALID'
