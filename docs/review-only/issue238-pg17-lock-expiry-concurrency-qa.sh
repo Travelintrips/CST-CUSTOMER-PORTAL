@@ -66,7 +66,7 @@ DO $$
 DECLARE expiry timestamptz;
 BEGIN
  SELECT expires_at INTO expiry FROM cst_invoice_relock_dev.lease WHERE singleton=true;
- EXECUTE format('ALTER ROLE bizportal_customer_invoice_cst_writer_dev LOGIN VALID UNTIL %L', expiry);
+ EXECUTE format('ALTER ROLE bizportal_customer_invoice_cst_writer_dev LOGIN CONNECTION LIMIT 1 VALID UNTIL %L', expiry);
 END $$;
 COMMIT;
 SQL
@@ -269,14 +269,14 @@ SELECT pg_advisory_xact_lock(20261120,238);
 UPDATE cst_invoice_relock_dev.lease
  SET armed=true, expires_at=clock_timestamp()+interval '90 seconds'
  WHERE singleton=true;
-DO $
+DO $qa_missing_verifier$
 DECLARE v_exp timestamptz;
 BEGIN
  SELECT expires_at INTO v_exp FROM cst_invoice_relock_dev.lease WHERE singleton=true;
  EXECUTE format(
    'ALTER ROLE bizportal_customer_invoice_cst_writer_dev LOGIN CONNECTION LIMIT 1 PASSWORD NULL VALID UNTIL %L',
    v_exp);
-END $;
+END $qa_missing_verifier$;
 COMMIT;
 SQL
 missing_credential_before="$(docker exec "$name" psql -X -qAt -U postgres -d postgres \
