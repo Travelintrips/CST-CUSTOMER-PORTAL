@@ -403,14 +403,14 @@ SELECT pg_advisory_xact_lock(20261120,238);
 UPDATE cst_invoice_relock_dev.lease
  SET armed=true, expires_at=clock_timestamp()+interval '90 seconds'
  WHERE singleton=true;
-DO $
+DO $qa_expired_credential_setup$
 DECLARE v_exp timestamptz;
 BEGIN
  SELECT expires_at INTO v_exp FROM cst_invoice_relock_dev.lease WHERE singleton=true;
  EXECUTE format(
    'ALTER ROLE bizportal_customer_invoice_cst_writer_dev LOGIN CONNECTION LIMIT 1 PASSWORD %L VALID UNTIL %L',
    'synthetic-networkless-qa-only', v_exp);
-END $;
+END $qa_expired_credential_setup$;
 COMMIT;
 SQL
 docker exec -d -e PGPASSWORD=synthetic-networkless-qa-only "$name" sh -c \
@@ -428,12 +428,12 @@ test "$expired_credential_session" -eq 1 || {
 }
 # Deliberately expire password without terminating its already-open session.
 docker exec -i "$name" psql -X -q -v ON_ERROR_STOP=1 -U postgres -d postgres <<'SQL'
-DO $
+DO $qa_force_expired_auth$
 BEGIN
  EXECUTE format(
    'ALTER ROLE bizportal_customer_invoice_cst_writer_dev VALID UNTIL %L',
    clock_timestamp()-interval '1 second');
-END $;
+END $qa_force_expired_auth$;
 SQL
 expired_credential_preflight="$(docker exec "$name" psql -X -qAt -U postgres -d postgres \
   -c "SELECT count(*) FROM pg_authid r
