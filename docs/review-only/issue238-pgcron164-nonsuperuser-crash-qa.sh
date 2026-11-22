@@ -109,7 +109,7 @@ DO $$
 DECLARE exp timestamptz;
 BEGIN
  SELECT expires_at INTO exp FROM cst_invoice_relock_dev.lease WHERE singleton=true;
- EXECUTE format('ALTER ROLE bizportal_customer_invoice_cst_writer_dev LOGIN VALID UNTIL %L',exp);
+ EXECUTE format('ALTER ROLE bizportal_customer_invoice_cst_writer_dev LOGIN CONNECTION LIMIT 1 VALID UNTIL %L',exp);
 END $$;
 COMMIT;
 SQL
