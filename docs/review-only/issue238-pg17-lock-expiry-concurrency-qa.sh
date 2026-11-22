@@ -224,6 +224,42 @@ cst_stays_locked="$(docker exec "$name" psql -X -qAt -U postgres -d postgres \
       WHERE rolname='bizportal_customer_invoice_cst_writer_dev'")"
 test "$cst_stays_locked" = true
 echo QA_UNSAFE_DIVA_REPORTS_INCOMPLETE_AND_CST_LOCKED_PASS
+# A healthy finite CST lease must not hide an unsafe independent Diva
+# role behind the generic LEASE_EXPIRED_OR_INVALID audit reason.
+# All state changes here are in the synthetic networkless database only.
+docker exec -i "$name" psql -X -q -v ON_ERROR_STOP=1 -U postgres -d postgres <<'SQL'
+BEGIN;
+SELECT pg_advisory_xact_lock(20261120,238);
+UPDATE cst_invoice_relock_dev.lease
+ SET armed=true, expires_at=clock_timestamp()+interval '4 minutes'
+ WHERE singleton=true;
+DO $$
+DECLARE v_exp timestamptz;
+BEGIN
+ SELECT expires_at INTO v_exp FROM cst_invoice_relock_dev.lease WHERE singleton=true;
+ EXECUTE format(
+  'ALTER ROLE bizportal_customer_invoice_cst_writer_dev LOGIN CONNECTION LIMIT 1 PASSWORD %L VALID UNTIL %L',
+  'synthetic-networkless-qa-only', v_exp);
+END $$;
+COMMIT;
+SQL
+armed_unsafe_diva="$(docker exec "$name" psql -X -qAt -v ON_ERROR_STOP=1 \
+ -U postgres -d postgres -c 'SELECT cst_invoice_relock_dev.tick()')"
+test "$armed_unsafe_diva" = CST_RELOCK_INCOMPLETE || {
+ echo "QA_ARMED_UNSAFE_DIVA_FALSE_RELOCK_HEALTH=$armed_unsafe_diva"; exit 93
+}
+armed_unsafe_audit="$(docker exec "$name" psql -X -qAt -U postgres -d postgres \
+ -c "SELECT count(*) FROM cst_invoice_relock_dev.audit
+     WHERE reason='RELOCK_INCOMPLETE_UNSAFE_DIVA_STATE'")"
+test "$armed_unsafe_audit" -eq 2 || {
+ echo "QA_ARMED_UNSAFE_DIVA_AUDIT_NOT_SPECIFIC=$armed_unsafe_audit"; exit 94
+}
+armed_unsafe_locked="$(docker exec "$name" psql -X -qAt -U postgres -d postgres \
+ -c "SELECT (NOT rolcanlogin AND rolpassword IS NULL)::text FROM pg_authid
+     WHERE rolname='bizportal_customer_invoice_cst_writer_dev'")"
+test "$armed_unsafe_locked" = true
+echo QA_ARMED_LEASE_UNSAFE_DIVA_AUDIT_SPECIFIC_PASS
+
 # Active finite lease is NOT healthy when the CST writer still has an
 # unlimited (-1) connection limit. Use only disposable synthetic roles.
 docker exec -i "$name" psql -X -q -v ON_ERROR_STOP=1 -U postgres -d postgres <<'SQL'
