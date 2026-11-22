@@ -195,4 +195,33 @@ still_locked="$(docker exec "$name" psql -X -qAt -U postgres -d postgres \
       WHERE rolname='bizportal_customer_invoice_cst_writer_dev'")"
 test "$still_locked" = true
 echo QA_MISSING_CONTROL_LEASE_REPORTS_INCOMPLETE_PASS
+
+# Negative-only synthetic test: even if CST has already been relocked,
+# an unexpectedly LOGIN-enabled Diva role must make the result INCOMPLETE.
+# This deliberately does NOT touch Diva in the function: only the disposable
+# QA administrator toggles a synthetic Diva role; no hosted role is modified.
+docker exec -i "$name" psql -X -q -v ON_ERROR_STOP=1 -U postgres -d postgres <<'SQL'
+INSERT INTO cst_invoice_relock_dev.lease
+  (singleton,project_ref,role_name,armed,expires_at)
+VALUES (true,'xssrfshdrtdfupgqwfdw','bizportal_customer_invoice_cst_writer_dev',false,null);
+ALTER ROLE bizportal_customer_invoice_diva_writer_dev LOGIN;
+SQL
+unsafe_diva_result="$(docker exec "$name" psql -X -qAt -v ON_ERROR_STOP=1 \
+  -U postgres -d postgres -c 'SELECT cst_invoice_relock_dev.tick()')"
+test "$unsafe_diva_result" = CST_RELOCK_INCOMPLETE || {
+  echo "QA_UNSAFE_DIVA_FALSE_RELOCK_SUCCESS=$unsafe_diva_result"; exit 88
+}
+unsafe_diva_audit="$(docker exec "$name" psql -X -qAt -U postgres -d postgres \
+ -c "SELECT count(*) FROM cst_invoice_relock_dev.audit
+     WHERE reason='RELOCK_INCOMPLETE_UNSAFE_DIVA_STATE'")"
+test "$unsafe_diva_audit" -eq 1
+diva_was_not_modified="$(docker exec "$name" psql -X -qAt -U postgres -d postgres \
+ -c "SELECT rolcanlogin::text FROM pg_roles
+      WHERE rolname='bizportal_customer_invoice_diva_writer_dev'")"
+test "$diva_was_not_modified" = true
+cst_stays_locked="$(docker exec "$name" psql -X -qAt -U postgres -d postgres \
+ -c "SELECT (NOT rolcanlogin AND rolpassword IS NULL)::text FROM pg_authid
+      WHERE rolname='bizportal_customer_invoice_cst_writer_dev'")"
+test "$cst_stays_locked" = true
+echo QA_UNSAFE_DIVA_REPORTS_INCOMPLETE_AND_CST_LOCKED_PASS
 echo HOSTED_CST_DEV_AND_PROD_NOT_MODIFIED
