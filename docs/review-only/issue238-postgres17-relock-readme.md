@@ -74,6 +74,17 @@ historical PG17 receipts do not validate the new SQL SHA. Its use remains
 subject to the originally authorized DBA channel; do not reroute prior denied
 PG17 runtime execution through other connectors or shells.
 
+**Armed lease + unsafe Diva audit attribution (source-only, new QA unexecuted):**
+A previous `CASE` selected `LEASE_EXPIRED_OR_INVALID` before checking
+`UNSAFE_DIVA_STATE` whenever the CST lease was armed. The result was correctly
+`CST_RELOCK_INCOMPLETE`, but the audit reason failed to identify the unsafe
+Diva role. The revised reason priority checks unsafe Diva immediately after
+missing/foreign control and missing role, before generic armed-lease causes.
+The existing networkless PG17 fixture now has an armed, bounded synthetic CST
+writer and an unsafe synthetic Diva; it requires the precise
+`RELOCK_INCOMPLETE_UNSAFE_DIVA_STATE` audit, `CST_RELOCK_INCOMPLETE`
+and CST NOLOGIN. No hosted execution and no PG17 runtime PASS are claimed.
+
 ### Finite lease requires single-writer connection bound (source-only; PG17 not run)
 
 Historical Issue #238 DBA acceptance used synthetic `LOGIN CONNECTION LIMIT 1`,
