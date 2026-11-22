@@ -42,7 +42,10 @@ CREATE EXTENSION pg_cron WITH SCHEMA pg_catalog;
 CREATE ROLE bizportal_customer_invoice_cst_writer_dev NOLOGIN NOSUPERUSER NOBYPASSRLS
  PASSWORD 'synthetic-qa-cst-only-without-reused-hosted-secrets';
 CREATE ROLE bizportal_customer_invoice_diva_writer_dev NOLOGIN NOSUPERUSER NOBYPASSRLS;
-CREATE ROLE postgres LOGIN CREATEROLE NOSUPERUSER NOBYPASSRLS INHERIT;
+-- Hosted CST-DEV postgres is NONSUPERUSER but has BYPASSRLS.
+-- Mirror that exact high-impact attribute in the disposable QA role.
+CREATE ROLE postgres LOGIN CREATEROLE NOSUPERUSER BYPASSRLS INHERIT;
+CREATE ROLE qa_denied LOGIN NOSUPERUSER NOCREATEROLE NOBYPASSRLS;
 GRANT bizportal_customer_invoice_cst_writer_dev TO postgres WITH ADMIN OPTION, SET FALSE;
 GRANT pg_signal_backend TO postgres;
 GRANT SELECT ON pg_catalog.pg_authid TO postgres;
@@ -52,12 +55,26 @@ GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA cron TO postgres;
 GRANT USAGE ON ALL SEQUENCES IN SCHEMA cron TO postgres;
 SQL
 non_super="$(docker exec "$name" psql -X -qAt -U postgres -d postgres -c \
- "SELECT (NOT rolsuper AND rolcreaterole AND NOT rolbypassrls AND \
+ "SELECT (NOT rolsuper AND rolcreaterole AND rolbypassrls AND \
     pg_has_role('postgres','pg_signal_backend','USAGE'))::text FROM pg_roles WHERE rolname='postgres'")"
 test "$non_super" = true
-echo QA_REAL_CRON_AUTHENTICATED_POSTGRES_NON_SUPERUSER_ROLE_PASS
+echo QA_REAL_CRON_AUTHENTICATED_POSTGRES_NON_SUPERUSER_BYPASSRLS_PARITY_PASS
 docker exec -i "$name" psql -X -q -v ON_ERROR_STOP=1 -U postgres -d postgres \
   < "$sql"
+# SECURITY DEFINER is owned by a BYPASSRLS identity. The public/client
+# role must have neither private-schema USAGE nor function EXECUTE.
+acl_safe="$(docker exec "$name" psql -X -qAt -U postgres -d postgres -c \
+ "SELECT (pg_get_userbyid(p.proowner)='postgres' AND p.prosecdef
+  AND NOT has_schema_privilege('qa_denied','cst_invoice_relock_dev','USAGE')
+  AND NOT has_function_privilege('qa_denied','cst_invoice_relock_dev.tick()','EXECUTE'))::text
+  FROM pg_proc p WHERE p.oid='cst_invoice_relock_dev.tick()'::regprocedure")"
+test "$acl_safe" = true || { echo QA_PRIVILEGED_FUNCTION_ACL_UNSAFE; exit 86; }
+# Direct unprivileged call must fail; a source-only ACL check is insufficient.
+if docker exec "$name" psql -X -qAt -U qa_denied -d postgres \
+  -c 'SELECT cst_invoice_relock_dev.tick()' >/dev/null 2>&1; then
+  echo QA_UNPRIVILEGED_TICK_UNEXPECTEDLY_ALLOWED; exit 87
+fi
+echo QA_BYPASSRLS_DEFINER_PRIVATE_ACL_AND_DENIED_CALL_PASS
 version="$(docker exec "$name" psql -X -qAt -U postgres -d postgres -c \
  "SELECT extversion FROM pg_extension WHERE extname='pg_cron'")"
 test "$version" = 1.6
