@@ -70,7 +70,7 @@ New reproducible sources in this PR:
 
 These tests prove **the actual extension** works on a disposable networkless PostgreSQL17 process including deliberate scheduler process termination. They do NOT prove actual Supabase Cron deployment, privilege parity for its cron job owner, a failed database primary, regional downtime, or any hosted financial action.
 
-## Exact non-superuser Postgres cron-owner parity — 22 Nov 2026 WIB
+## Historical non-superuser Postgres cron-owner QA — 22 Nov 2026 WIB
 
 The first real `pg_cron` QA used the default disposable PostgreSQL **superuser** named `postgres`, which is stronger than the actual CST-DEV role. A second isolated QA now reproduces a more realistic identity setup: temporary bootstrap superuser `supabase_admin` and a separate LOGIN + CREATEROLE + NOSUPERUSER + NOBYPASSRLS `postgres` role, with exact CST writer ADMIN OPTION, usable inherited `pg_signal_backend`, public catalog metadata permission and restricted cron schema grants. **No permissions were granted on the hosted Supabase project.**
 
@@ -78,7 +78,11 @@ The actual `pg_cron` job was scheduled **as non-superuser postgres**, ran with a
 
 New exact QA fixture: `docs/review-only/issue238-pgcron164-nonsuperuser-crash-qa.sh`.
 
-This closes a **local simulation privilege-parity gap**, but **still does NOT prove hosted Supabase's actual scheduler, provider-specific role mappings, job failure recovery or operational custody release**. Both projects' financial writers remain locked until separately authorized approval and hosted DEV proof.
+**Correction to the historical QA claim:** the executed fixture used `postgres NOBYPASSRLS`, but the actual hosted CST-DEV `postgres` role was independently confirmed to have `BYPASSRLS=true`. Therefore the earlier EXIT0 established scoped behavior for a weaker synthetic identity, **not exact hosted privilege parity**. It does not establish hosted scheduler ownership, provider-specific role mappings, job failure recovery or operational custody release.
+
+**New unexecuted review-only fixture:** `issue238-pgcron164-nonsuperuser-crash-qa.sh` now creates a synthetic `postgres` with `NOSUPERUSER BYPASSRLS CREATEROLE`, confirms that attribute, checks that a separate unprivileged `qa_denied` identity can connect, then verifies the private schema/function ACL and rejects a direct `tick()` invocation by that identity. This is **only a source-code correction**, not a PG17 runtime PASS, not full hosted privilege equivalence, and not permission to install or enable writer roles. Its original SHA-pinned, `--network none` scope is retained. A DBA must still confirm effective function owner, grants and denied application/anon/authenticated execution on the approved hosted CST-DEV pilot.
+
+Both writer roles must remain locked until separately authorized testing and hosted DEV proof.
 
 ### Both scheduler QA runners now require exact SQL provenance
 
