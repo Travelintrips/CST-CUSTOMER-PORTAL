@@ -185,15 +185,19 @@ BEGIN
   -- custodian restores/validates the private control row (outside this tick).
   INSERT INTO cst_invoice_relock_dev.audit(reason,terminated)
     VALUES (
-      CASE WHEN v_invalid_control OR v_remaining>0 OR v_termination_timeouts>0 OR v_termination_errors>0
+      CASE WHEN v_invalid_control OR v_diva.rolcanlogin OR v_diva.rolsuper OR v_diva.rolbypassrls
+                OR v_remaining>0 OR v_termination_timeouts>0 OR v_termination_errors>0
            THEN 'RELOCK_INCOMPLETE_' || v_reason
            ELSE v_reason END,
       v_killed
     );
 
+  -- When the independent Diva role is unexpectedly unsafe, CST is still
+  -- relocked but success MUST NOT be reported: this function never changes Diva.
   -- Retain the NOLOGIN revocation rather than raising a deliberate exception
   -- that would roll back the ALTER ROLE transaction on partial termination.
-  IF v_invalid_control OR v_remaining>0 OR v_termination_timeouts>0 OR v_termination_errors>0 THEN
+  IF v_invalid_control OR v_diva.rolcanlogin OR v_diva.rolsuper OR v_diva.rolbypassrls
+    OR v_remaining>0 OR v_termination_timeouts>0 OR v_termination_errors>0 THEN
     RETURN 'CST_RELOCK_INCOMPLETE';
   END IF;
   RETURN 'CST_RELOCK_EXECUTED';
