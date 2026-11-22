@@ -260,6 +260,44 @@ armed_unsafe_locked="$(docker exec "$name" psql -X -qAt -U postgres -d postgres 
 test "$armed_unsafe_locked" = true
 echo QA_ARMED_LEASE_UNSAFE_DIVA_AUDIT_SPECIFIC_PASS
 
+# A finite, LOGIN-enabled CST writer without its SCRAM verifier cannot
+# return LEASE_MONITORED_NO_CHANGE. Synthetic networkless regression only.
+docker exec -i "$name" psql -X -q -v ON_ERROR_STOP=1 -U postgres -d postgres <<'SQL'
+ALTER ROLE bizportal_customer_invoice_diva_writer_dev NOLOGIN;
+BEGIN;
+SELECT pg_advisory_xact_lock(20261120,238);
+UPDATE cst_invoice_relock_dev.lease
+ SET armed=true, expires_at=clock_timestamp()+interval '90 seconds'
+ WHERE singleton=true;
+DO $
+DECLARE v_exp timestamptz;
+BEGIN
+ SELECT expires_at INTO v_exp FROM cst_invoice_relock_dev.lease WHERE singleton=true;
+ EXECUTE format(
+   'ALTER ROLE bizportal_customer_invoice_cst_writer_dev LOGIN CONNECTION LIMIT 1 PASSWORD NULL VALID UNTIL %L',
+   v_exp);
+END $;
+COMMIT;
+SQL
+missing_credential_before="$(docker exec "$name" psql -X -qAt -U postgres -d postgres \
+ -c "SELECT (rolcanlogin AND rolconnlimit=1 AND rolpassword IS NULL)::text
+     FROM pg_authid WHERE rolname='bizportal_customer_invoice_cst_writer_dev'")"
+test "$missing_credential_before" = true
+missing_credential_result="$(docker exec "$name" psql -X -qAt -v ON_ERROR_STOP=1 \
+ -U postgres -d postgres -c 'SELECT cst_invoice_relock_dev.tick()')"
+test "$missing_credential_result" = CST_RELOCK_EXECUTED || {
+ echo "QA_MISSING_CREDENTIAL_FALSE_HEALTH=$missing_credential_result"; exit 95
+}
+missing_credential_audit="$(docker exec "$name" psql -X -qAt -U postgres -d postgres \
+ -c "SELECT count(*) FROM cst_invoice_relock_dev.audit
+     WHERE reason='CST_WRITER_CREDENTIAL_MISSING'")"
+test "$missing_credential_audit" -eq 1
+missing_credential_locked="$(docker exec "$name" psql -X -qAt -U postgres -d postgres \
+ -c "SELECT (NOT rolcanlogin AND rolpassword IS NULL)::text FROM pg_authid
+     WHERE rolname='bizportal_customer_invoice_cst_writer_dev'")"
+test "$missing_credential_locked" = true
+echo QA_ACTIVE_LEASE_MISSING_CREDENTIAL_FORCE_RELOCK_PASS
+
 # Active finite lease is NOT healthy when the CST writer still has an
 # unlimited (-1) connection limit. Use only disposable synthetic roles.
 docker exec -i "$name" psql -X -q -v ON_ERROR_STOP=1 -U postgres -d postgres <<'SQL'
