@@ -284,8 +284,7 @@ COMMIT;
 SQL
 for n in 1 2; do
  docker exec -d -e PGPASSWORD=synthetic-networkless-qa-only "$name" sh -c \
-  "psql -X -qAt -h 127.0.0.1 -U bizportal_customer_invoice_cst_writer_dev
-     -d postgres -c 'SELECT pg_sleep(60)' >/tmp/qa-bound-session-$n.log 2>&1"
+  "psql -X -qAt -h 127.0.0.1 -U bizportal_customer_invoice_cst_writer_dev -d postgres -c 'SELECT pg_sleep(60)' >/tmp/qa-bound-session-$n.log 2>&1"
 done
 two_active=0
 for n in $(seq 1 30); do
