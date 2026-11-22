@@ -151,16 +151,18 @@ BEGIN
 
   -- Any expired/invalid/previously armed lease OR unexpected live role/session
   -- forces revocation and password clear. Literal role name is non-dynamic.
+  -- Audit the independent cross-company safety violation even when the
+  -- CST lease is armed: it must not be disguised as merely lease expiry.
   v_reason := CASE WHEN v_invalid_control THEN 'MISSING_OR_FOREIGN_LEASE'
                    WHEN v_diva_missing THEN 'MISSING_DIVA_ROLE'
+                   WHEN v_diva.rolcanlogin OR v_diva.rolsuper OR v_diva.rolbypassrls
+                     THEN 'UNSAFE_DIVA_STATE'
                    WHEN v_lease.armed AND v_cst.rolcanlogin
                         AND v_cst.rolconnlimit <> 1
                      THEN 'CST_WRITER_CONNECTION_LIMIT_INVALID'
                    WHEN v_lease.armed AND v_cst.rolcanlogin AND v_sessions>1
                      THEN 'CST_WRITER_EXCESS_SESSIONS'
                    WHEN v_lease.armed THEN 'LEASE_EXPIRED_OR_INVALID'
-                   WHEN v_diva.rolcanlogin OR v_diva.rolsuper OR v_diva.rolbypassrls
-                     THEN 'UNSAFE_DIVA_STATE'
                    ELSE 'CST_WRITER_OPEN_WITHOUT_LEASE' END;
 
   EXECUTE 'ALTER ROLE bizportal_customer_invoice_cst_writer_dev NOLOGIN PASSWORD NULL';
