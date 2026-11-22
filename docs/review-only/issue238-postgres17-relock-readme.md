@@ -46,6 +46,12 @@ The review identified that PostgreSQL 17 `pg_terminate_backend(pid)` with its de
 
 **This correction has not passed the original isolated PostgreSQL 17 integration QA or a real scheduler test.** Previous isolated QA results refer to the prior SQL revision and must not be presented as proof for the changed revision. The 2000 ms per-session delay can accumulate across many sessions; review bounded work/cron overlap, transaction rollback on unhandled SQL errors, and controlled partial-termination/crash tests before approval. Confirm a scheduler run that reports `CST_RELOCK_INCOMPLETE` triggers monitoring and follow-up; a successful SQL job exit is not itself proof that the security objective was met.
 
+### Unsafe Diva must never produce a success receipt (source-only; PG17 not run)
+
+A follow-up audit of the merged candidate found that an unexpectedly `LOGIN`-enabled, `SUPERUSER`, or `BYPASSRLS` Diva role correctly made the CST lease invalid but **could still return `CST_RELOCK_EXECUTED`** after CST sessions were gone. The function does not and must not modify Diva, so that success receipt would conceal an unresolved cross-company role risk.
+
+The narrow review-only change retains CST `NOLOGIN`/session cleanup and keeps Diva **untouched**, but requires `CST_RELOCK_INCOMPLETE` and a `RELOCK_INCOMPLETE_UNSAFE_DIVA_STATE` audit event whenever Diva is unsafe. The exact-source disposable PostgreSQL17 QA fixture contains a negative synthetic Diva-`LOGIN` case to prove the failure result and absence of Diva changes. **No new runtime PASS is claimed; the previously blocked PG17 integration must not be routed through another channel.** As with any source modification, the custodian must independently approve/recompute the new SQL SHA-256 before the legitimate QA run.
+
 ### Missing / foreign lease fail-closed correction
 
 Review found that the first SQL candidate replaced a missing/foreign lease with a synthetic `armed=false` record and set `v_invalid_control=true`, but the credential-preservation branch did **not** inspect `v_invalid_control`. An already-`NOLOGIN` writer with zero sessions could therefore retain its SCRAM verifier despite a missing or foreign lease, contrary to the documented fail-closed policy. The review-only SQL now requires `NOT v_invalid_control` before preserving credentials.
