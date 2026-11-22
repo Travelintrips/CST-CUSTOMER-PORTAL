@@ -606,6 +606,12 @@ claimed for these revisions, including the two existing pg_cron
 scheduler/restart fixtures. The original source SQL candidate remains
 unchanged by these fixture-only corrections.
 
+### Password expiry earlier than lease deadline (source-only, PG17 not rerun)
+
+A static review of the merged PR #251 SQL found that a healthy armed lease required `rolvaliduntil <= expires_at` but did not require `rolvaliduntil > clock_timestamp()`. If the password expires or is shortened **before** the still-future lease deadline, an existing authenticated CST writer session can survive password expiration and the old `tick()` could return `LEASE_MONITORED_NO_CHANGE` instead of revoking the writer. This is a source-level risk, not a reproduced hosted incident.
+
+The narrow candidate adds a future-validity requirement to the healthy lease, audits `CST_WRITER_CREDENTIAL_EXPIRED`, and adds one disposable networkless PG17 regression using an already-connected synthetic writer, a separately expired password, an unexpired lease, and a post-commit `NOLOGIN`/zero-session check. **New test not executed; no exact-revision PostgreSQL 17 PASS is claimed.** DBA approval and independently authorized exact-SHA runtime QA are still required. The candidate is review-only; it does not install/schedule `pg_cron`, change hosted roles, or issue Invoice #108.
+
 ## Not yet tested / release blockers
 
 The actual hosted Supabase project currently has `pg_cron` **available but NOT installed**. Older disposable PostgreSQL integration QA did not include the extension; subsequent isolated networkless runs **did** use real `pg_cron` source tag v1.6.4 and demonstrated periodic execution plus launcher recovery, but with an **older SQL revision**, not the current draft. Hosted Supabase's scheduler ownership, timing, continuous execution, restart recovery and outage behavior have **NOT** been proven. PostgreSQL timeout defaults are not an absolute watchdog.
