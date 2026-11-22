@@ -52,6 +52,28 @@ A follow-up audit of the merged candidate found that an unexpectedly `LOGIN`-ena
 
 The narrow review-only change retains CST `NOLOGIN`/session cleanup and keeps Diva **untouched**, but requires `CST_RELOCK_INCOMPLETE` and a `RELOCK_INCOMPLETE_UNSAFE_DIVA_STATE` audit event whenever Diva is unsafe. The exact-source disposable PostgreSQL17 QA fixture contains a negative synthetic Diva-`LOGIN` case to prove the failure result and absence of Diva changes. **No new runtime PASS is claimed; the previously blocked PG17 integration must not be routed through another channel.** As with any source modification, the custodian must independently approve/recompute the new SQL SHA-256 before the legitimate QA run.
 
+### Missing Diva must not stop CST relock (source-only; PG17 not run)
+
+A further static review of the prior merged SQL found a distinct fail-open path:
+if the Diva role disappears **after installation** while the CST writer is
+`LOGIN`, `tick()` raised `DIVA_ROLE_MISSING` *before* issuing
+`ALTER ROLE ... NOLOGIN`. A scheduled invocation would error and leave an
+already-open CST writer unchanged. This is a source-level finding, not a
+reproduced hosted outage.
+
+The surgical candidate changes the missing-Diva branch into a private
+`v_diva_missing` control failure, continues CST revocation and session
+termination, then returns `CST_RELOCK_INCOMPLETE` with audit
+`RELOCK_INCOMPLETE_MISSING_DIVA_ROLE`. It never recreates, grants, or changes
+Diva. Neither a missing Diva nor an unsafe Diva can return a healthy monitoring
+receipt. The disposable networkless PG17 fixture now includes a synthetic
+`DROP ROLE Diva` + synthetic CST `LOGIN` negative scenario; acceptance requires
+NOLOGIN, NULL verifier, zero CST sessions, incomplete audit and no new Diva role.
+**Fixture is source-only and NOT executed for this revision.** Previous CI /
+historical PG17 receipts do not validate the new SQL SHA. Its use remains
+subject to the originally authorized DBA channel; do not reroute prior denied
+PG17 runtime execution through other connectors or shells.
+
 ### Missing / foreign lease fail-closed correction
 
 Review found that the first SQL candidate replaced a missing/foreign lease with a synthetic `armed=false` record and set `v_invalid_control=true`, but the credential-preservation branch did **not** inspect `v_invalid_control`. An already-`NOLOGIN` writer with zero sessions could therefore retain its SCRAM verifier despite a missing or foreign lease, contrary to the documented fail-closed policy. The review-only SQL now requires `NOT v_invalid_control` before preserving credentials.
