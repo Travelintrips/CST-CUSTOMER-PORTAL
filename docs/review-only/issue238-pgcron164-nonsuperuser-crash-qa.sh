@@ -58,7 +58,7 @@ non_super="$(docker exec "$name" psql -X -qAt -U postgres -d postgres -c \
  "SELECT (NOT rolsuper AND rolcreaterole AND rolbypassrls AND \
     pg_has_role('postgres','pg_signal_backend','USAGE'))::text FROM pg_roles WHERE rolname='postgres'")"
 test "$non_super" = true
-echo QA_REAL_CRON_AUTHENTICATED_POSTGRES_NON_SUPERUSER_BYPASSRLS_PARITY_PASS
+echo QA_SYNTHETIC_POSTGRES_BYPASSRLS_ATTRIBUTE_MATCH_PASS
 docker exec -i "$name" psql -X -q -v ON_ERROR_STOP=1 -U postgres -d postgres \
   < "$sql"
 # SECURITY DEFINER is owned by a BYPASSRLS identity. The public/client
@@ -69,6 +69,9 @@ acl_safe="$(docker exec "$name" psql -X -qAt -U postgres -d postgres -c \
   AND NOT has_function_privilege('qa_denied','cst_invoice_relock_dev.tick()','EXECUTE'))::text
   FROM pg_proc p WHERE p.oid='cst_invoice_relock_dev.tick()'::regprocedure")"
 test "$acl_safe" = true || { echo QA_PRIVILEGED_FUNCTION_ACL_UNSAFE; exit 86; }
+# A denied call is meaningful only if the unprivileged role can first connect.
+qa_identity="$(docker exec "$name" psql -X -qAt -U qa_denied -d postgres -c 'SELECT current_user')"
+test "$qa_identity" = qa_denied || { echo QA_UNPRIVILEGED_ROLE_CANNOT_CONNECT; exit 85; }
 # Direct unprivileged call must fail; a source-only ACL check is insufficient.
 if docker exec "$name" psql -X -qAt -U qa_denied -d postgres \
   -c 'SELECT cst_invoice_relock_dev.tick()' >/dev/null 2>&1; then
