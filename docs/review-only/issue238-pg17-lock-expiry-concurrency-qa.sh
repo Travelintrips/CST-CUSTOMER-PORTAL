@@ -392,6 +392,78 @@ excess_postcommit_safe="$(docker exec "$name" psql -X -qAt -U postgres -d postgr
 test "$excess_postcommit_safe" = true
 echo QA_EXCESS_SESSIONS_FORCE_CST_RELOCK_PASS
 
+
+# Negative regression: a synthetic session authenticated while the password
+# was valid may survive an administrator shortening VALID UNTIL to the past.
+# With lease still future, tick MUST relock rather than return MONITORED.
+# This uses disposable roles only; no hosted CST-DEV or PROD connections.
+docker exec -i "$name" psql -X -q -v ON_ERROR_STOP=1 -U postgres -d postgres <<'SQL'
+BEGIN;
+SELECT pg_advisory_xact_lock(20261120,238);
+UPDATE cst_invoice_relock_dev.lease
+ SET armed=true, expires_at=clock_timestamp()+interval '90 seconds'
+ WHERE singleton=true;
+DO $
+DECLARE v_exp timestamptz;
+BEGIN
+ SELECT expires_at INTO v_exp FROM cst_invoice_relock_dev.lease WHERE singleton=true;
+ EXECUTE format(
+   'ALTER ROLE bizportal_customer_invoice_cst_writer_dev LOGIN CONNECTION LIMIT 1 PASSWORD %L VALID UNTIL %L',
+   'synthetic-networkless-qa-only', v_exp);
+END $;
+COMMIT;
+SQL
+docker exec -d -e PGPASSWORD=synthetic-networkless-qa-only "$name" sh -c \
+ "psql -X -qAt -h 127.0.0.1 -U bizportal_customer_invoice_cst_writer_dev -d postgres -c 'SELECT pg_sleep(60)' >/tmp/qa-expired-credential-session.log 2>&1"
+expired_credential_session=0
+for n in $(seq 1 40); do
+  expired_credential_session="$(docker exec "$name" psql -X -qAt -U postgres -d postgres \
+    -c "SELECT count(*) FROM pg_stat_activity
+        WHERE usename='bizportal_customer_invoice_cst_writer_dev'")"
+  if test "$expired_credential_session" -ge 1; then break; fi
+  sleep .2
+done
+test "$expired_credential_session" -eq 1 || {
+  echo QA_EXPIRED_CREDENTIAL_PREEXISTING_SESSION_NOT_ESTABLISHED; exit 93
+}
+# Deliberately expire password without terminating its already-open session.
+docker exec -i "$name" psql -X -q -v ON_ERROR_STOP=1 -U postgres -d postgres <<'SQL'
+DO $
+BEGIN
+ EXECUTE format(
+   'ALTER ROLE bizportal_customer_invoice_cst_writer_dev VALID UNTIL %L',
+   clock_timestamp()-interval '1 second');
+END $;
+SQL
+expired_credential_preflight="$(docker exec "$name" psql -X -qAt -U postgres -d postgres \
+  -c "SELECT count(*) FROM pg_authid r
+      CROSS JOIN cst_invoice_relock_dev.lease l
+      WHERE r.rolname='bizportal_customer_invoice_cst_writer_dev'
+        AND r.rolcanlogin AND r.rolpassword IS NOT NULL
+        AND r.rolconnlimit=1 AND r.rolvaliduntil<clock_timestamp()
+        AND l.armed AND l.expires_at>clock_timestamp()
+        AND (SELECT count(*) FROM pg_stat_activity
+             WHERE usename='bizportal_customer_invoice_cst_writer_dev')=1")"
+test "$expired_credential_preflight" -eq 1 || {
+  echo QA_EXPIRED_CREDENTIAL_PRECONDITIONS_FAILED; exit 94
+}
+expired_credential_result="$(docker exec "$name" psql -X -qAt -v ON_ERROR_STOP=1 \
+  -U postgres -d postgres -c 'SELECT cst_invoice_relock_dev.tick()')"
+test "$expired_credential_result" = CST_RELOCK_EXECUTED || {
+  echo "QA_EXPIRED_CREDENTIAL_FALSE_HEALTHY=$expired_credential_result"; exit 95
+}
+expired_credential_audit="$(docker exec "$name" psql -X -qAt -U postgres -d postgres \
+  -c "SELECT count(*) FROM cst_invoice_relock_dev.audit
+      WHERE reason='CST_WRITER_CREDENTIAL_EXPIRED'")"
+test "$expired_credential_audit" -eq 1
+expired_credential_postcommit="$(docker exec "$name" psql -X -qAt -U postgres -d postgres \
+  -c "SELECT (NOT rolcanlogin AND rolpassword IS NULL AND
+      (SELECT count(*) FROM pg_stat_activity WHERE
+        usename='bizportal_customer_invoice_cst_writer_dev')=0)::text
+      FROM pg_authid WHERE rolname='bizportal_customer_invoice_cst_writer_dev'")"
+test "$expired_credential_postcommit" = true
+echo QA_EXPIRED_CREDENTIAL_WITH_ACTIVE_SESSION_FORCE_RELOCK_PASS
+
 # Missing-Diva negative regression: the function MUST still relock CST even
 # if the independent Diva role was removed after a reviewed install.
 # This scenario ONLY affects synthetic roles in the networkless container.
