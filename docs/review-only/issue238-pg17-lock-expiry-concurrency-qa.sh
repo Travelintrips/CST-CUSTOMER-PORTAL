@@ -224,6 +224,101 @@ cst_stays_locked="$(docker exec "$name" psql -X -qAt -U postgres -d postgres \
       WHERE rolname='bizportal_customer_invoice_cst_writer_dev'")"
 test "$cst_stays_locked" = true
 echo QA_UNSAFE_DIVA_REPORTS_INCOMPLETE_AND_CST_LOCKED_PASS
+# Active finite lease is NOT healthy when the CST writer still has an
+# unlimited (-1) connection limit. Use only disposable synthetic roles.
+docker exec -i "$name" psql -X -q -v ON_ERROR_STOP=1 -U postgres -d postgres <<'SQL'
+ALTER ROLE bizportal_customer_invoice_diva_writer_dev NOLOGIN;
+BEGIN;
+SELECT pg_advisory_xact_lock(20261120,238);
+UPDATE cst_invoice_relock_dev.lease
+ SET armed=true, expires_at=clock_timestamp()+interval '90 seconds'
+ WHERE singleton=true;
+DO $$
+DECLARE v_exp timestamptz;
+BEGIN
+ SELECT expires_at INTO v_exp FROM cst_invoice_relock_dev.lease WHERE singleton=true;
+ EXECUTE format(
+   'ALTER ROLE bizportal_customer_invoice_cst_writer_dev LOGIN CONNECTION LIMIT -1 PASSWORD %L VALID UNTIL %L',
+   'synthetic-networkless-qa-only', v_exp);
+END $$;
+COMMIT;
+SQL
+unbounded_before="$(docker exec "$name" psql -X -qAt -U postgres -d postgres \
+ -c "SELECT (rolcanlogin AND rolconnlimit=-1)::text FROM pg_roles
+     WHERE rolname='bizportal_customer_invoice_cst_writer_dev'")"
+test "$unbounded_before" = true
+unbounded_result="$(docker exec "$name" psql -X -qAt -v ON_ERROR_STOP=1 \
+ -U postgres -d postgres -c 'SELECT cst_invoice_relock_dev.tick()')"
+test "$unbounded_result" = CST_RELOCK_EXECUTED || {
+ echo "QA_UNBOUNDED_LOGIN_FALSE_HEALTHY=$unbounded_result"; exit 90
+}
+unbounded_audit="$(docker exec "$name" psql -X -qAt -U postgres -d postgres \
+ -c "SELECT count(*) FROM cst_invoice_relock_dev.audit
+     WHERE reason='CST_WRITER_CONNECTION_LIMIT_INVALID'")"
+test "$unbounded_audit" -eq 1
+unbounded_locked="$(docker exec "$name" psql -X -qAt -U postgres -d postgres \
+ -c "SELECT (NOT rolcanlogin AND rolpassword IS NULL)::text FROM pg_authid
+     WHERE rolname='bizportal_customer_invoice_cst_writer_dev'")"
+test "$unbounded_locked" = true
+echo QA_UNBOUNDED_CONNECTION_LIMIT_FORCES_CST_RELOCK_PASS
+
+# Two writer sessions can predate a change from unlimited to limit 1:
+# ALTER ROLE CONNECTION LIMIT does not terminate existing connections.
+# Even with an otherwise valid lease and rolconnlimit=1, a session count
+# greater than 1 must cause CST relock rather than MONITORED_NO_CHANGE.
+docker exec -i "$name" psql -X -q -v ON_ERROR_STOP=1 -U postgres -d postgres <<'SQL'
+BEGIN;
+SELECT pg_advisory_xact_lock(20261120,238);
+UPDATE cst_invoice_relock_dev.lease
+ SET armed=true, expires_at=clock_timestamp()+interval '90 seconds'
+ WHERE singleton=true;
+DO $$
+DECLARE v_exp timestamptz;
+BEGIN
+ SELECT expires_at INTO v_exp FROM cst_invoice_relock_dev.lease WHERE singleton=true;
+ EXECUTE format(
+   'ALTER ROLE bizportal_customer_invoice_cst_writer_dev LOGIN CONNECTION LIMIT -1 PASSWORD %L VALID UNTIL %L',
+   'synthetic-networkless-qa-only', v_exp);
+END $$;
+COMMIT;
+SQL
+for n in 1 2; do
+ docker exec -d -e PGPASSWORD=synthetic-networkless-qa-only "$name" sh -c \
+  "psql -X -qAt -h 127.0.0.1 -U bizportal_customer_invoice_cst_writer_dev
+     -d postgres -c 'SELECT pg_sleep(60)' >/tmp/qa-bound-session-$n.log 2>&1"
+done
+two_active=0
+for n in $(seq 1 30); do
+ two_active="$(docker exec "$name" psql -X -qAt -U postgres -d postgres \
+  -c "SELECT count(*) FROM pg_stat_activity
+      WHERE usename='bizportal_customer_invoice_cst_writer_dev'")"
+ if test "$two_active" -ge 2; then break; fi
+ sleep .2
+done
+test "$two_active" -ge 2 || { echo QA_TWO_SYNTHETIC_SESSIONS_NOT_ESTABLISHED; exit 91; }
+docker exec "$name" psql -X -q -v ON_ERROR_STOP=1 -U postgres -d postgres \
+ -c 'ALTER ROLE bizportal_customer_invoice_cst_writer_dev CONNECTION LIMIT 1'
+limit_one_before="$(docker exec "$name" psql -X -qAt -U postgres -d postgres \
+ -c "SELECT (rolconnlimit=1)::text FROM pg_roles
+     WHERE rolname='bizportal_customer_invoice_cst_writer_dev'")"
+test "$limit_one_before" = true
+excess_result="$(docker exec "$name" psql -X -qAt -v ON_ERROR_STOP=1 \
+ -U postgres -d postgres -c 'SELECT cst_invoice_relock_dev.tick()')"
+test "$excess_result" = CST_RELOCK_EXECUTED || {
+ echo "QA_EXCESS_SESSIONS_FALSE_HEALTHY=$excess_result"; exit 92
+}
+excess_audit="$(docker exec "$name" psql -X -qAt -U postgres -d postgres \
+ -c "SELECT count(*) FROM cst_invoice_relock_dev.audit
+     WHERE reason='CST_WRITER_EXCESS_SESSIONS'")"
+test "$excess_audit" -eq 1
+excess_postcommit_safe="$(docker exec "$name" psql -X -qAt -U postgres -d postgres \
+ -c "SELECT (NOT rolcanlogin AND rolpassword IS NULL AND
+      (SELECT count(*) FROM pg_stat_activity WHERE
+        usename='bizportal_customer_invoice_cst_writer_dev')=0)::text
+      FROM pg_authid WHERE rolname='bizportal_customer_invoice_cst_writer_dev'")"
+test "$excess_postcommit_safe" = true
+echo QA_EXCESS_SESSIONS_FORCE_CST_RELOCK_PASS
+
 # Missing-Diva negative regression: the function MUST still relock CST even
 # if the independent Diva role was removed after a reviewed install.
 # This scenario ONLY affects synthetic roles in the networkless container.
