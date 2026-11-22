@@ -68,6 +68,7 @@ DECLARE
   v_lease record;
   v_cst record;
   v_diva record;
+  v_diva_missing boolean := false;
   v_sessions integer := 0;
   v_reason text := 'NONE';
   v_valid boolean := false;
@@ -100,7 +101,7 @@ BEGIN
       INTO v_lease;
   END IF;
 
-  SELECT rolcanlogin,rolsuper,rolbypassrls,rolvaliduntil,
+  SELECT rolcanlogin,rolsuper,rolbypassrls,rolvaliduntil,rolconnlimit,
          (rolpassword IS NULL) AS password_null INTO v_cst
   FROM pg_catalog.pg_authid
   WHERE rolname='bizportal_customer_invoice_cst_writer_dev';
@@ -111,7 +112,9 @@ BEGIN
   FROM pg_catalog.pg_roles
   WHERE rolname='bizportal_customer_invoice_diva_writer_dev';
   IF NOT FOUND THEN
-    RAISE EXCEPTION 'DIVA_ROLE_MISSING';
+    -- Diva identity loss must not prevent CST writer relock. Return
+    -- INCOMPLETE after CST revocation; never recreate or alter Diva here.
+    v_diva_missing := true;
   END IF;
 
   SELECT count(*)::integer INTO v_sessions FROM pg_catalog.pg_stat_activity
@@ -121,8 +124,16 @@ BEGIN
     AND v_lease.expires_at > v_now
     AND v_lease.expires_at <= v_now + interval '5 minutes'
     AND v_cst.rolcanlogin
+    -- A finite lease cannot be healthy with LOGIN but no credential; avoid
+    -- a misleading MONITORED receipt if the SCRAM verifier disappeared.
+    AND NOT v_cst.password_null
+    -- A valid lease is only healthy with the reviewed single-writer bound.
+    -- A connection limit of -1 (unlimited) is acceptable ONLY while NOLOGIN.
+    AND v_cst.rolconnlimit = 1
+    AND v_sessions <= 1
     AND v_cst.rolvaliduntil IS NOT NULL
     AND v_cst.rolvaliduntil <= v_lease.expires_at
+    AND NOT v_diva_missing
     AND NOT v_diva.rolcanlogin
     AND NOT v_diva.rolsuper
     AND NOT v_diva.rolbypassrls;
@@ -135,6 +146,7 @@ BEGIN
   -- ALREADY NOLOGIN and no sessions/lease exist. This is NOT activation.
   IF NOT v_invalid_control
     AND NOT v_lease.armed AND NOT v_cst.rolcanlogin AND v_sessions=0
+    AND NOT v_diva_missing
     AND NOT v_diva.rolcanlogin AND NOT v_diva.rolsuper
     AND NOT v_diva.rolbypassrls THEN
     RETURN 'NOLOGIN_PREEXISTING_PASSWORD_PRESERVED';
@@ -142,10 +154,21 @@ BEGIN
 
   -- Any expired/invalid/previously armed lease OR unexpected live role/session
   -- forces revocation and password clear. Literal role name is non-dynamic.
+  -- Audit the independent cross-company safety violation even when the
+  -- CST lease is armed: it must not be disguised as merely lease expiry.
   v_reason := CASE WHEN v_invalid_control THEN 'MISSING_OR_FOREIGN_LEASE'
-                   WHEN v_lease.armed THEN 'LEASE_EXPIRED_OR_INVALID'
+                   WHEN v_diva_missing THEN 'MISSING_DIVA_ROLE'
                    WHEN v_diva.rolcanlogin OR v_diva.rolsuper OR v_diva.rolbypassrls
                      THEN 'UNSAFE_DIVA_STATE'
+                   WHEN v_lease.armed AND v_cst.rolcanlogin
+                        AND v_cst.password_null
+                     THEN 'CST_WRITER_CREDENTIAL_MISSING'
+                   WHEN v_lease.armed AND v_cst.rolcanlogin
+                        AND v_cst.rolconnlimit <> 1
+                     THEN 'CST_WRITER_CONNECTION_LIMIT_INVALID'
+                   WHEN v_lease.armed AND v_cst.rolcanlogin AND v_sessions>1
+                     THEN 'CST_WRITER_EXCESS_SESSIONS'
+                   WHEN v_lease.armed THEN 'LEASE_EXPIRED_OR_INVALID'
                    ELSE 'CST_WRITER_OPEN_WITHOUT_LEASE' END;
 
   EXECUTE 'ALTER ROLE bizportal_customer_invoice_cst_writer_dev NOLOGIN PASSWORD NULL';
@@ -185,7 +208,7 @@ BEGIN
   -- custodian restores/validates the private control row (outside this tick).
   INSERT INTO cst_invoice_relock_dev.audit(reason,terminated)
     VALUES (
-      CASE WHEN v_invalid_control OR v_diva.rolcanlogin OR v_diva.rolsuper OR v_diva.rolbypassrls
+      CASE WHEN v_invalid_control OR v_diva_missing OR v_diva.rolcanlogin OR v_diva.rolsuper OR v_diva.rolbypassrls
                 OR v_remaining>0 OR v_termination_timeouts>0 OR v_termination_errors>0
            THEN 'RELOCK_INCOMPLETE_' || v_reason
            ELSE v_reason END,
@@ -196,7 +219,7 @@ BEGIN
   -- relocked but success MUST NOT be reported: this function never changes Diva.
   -- Retain the NOLOGIN revocation rather than raising a deliberate exception
   -- that would roll back the ALTER ROLE transaction on partial termination.
-  IF v_invalid_control OR v_diva.rolcanlogin OR v_diva.rolsuper OR v_diva.rolbypassrls
+  IF v_invalid_control OR v_diva_missing OR v_diva.rolcanlogin OR v_diva.rolsuper OR v_diva.rolbypassrls
     OR v_remaining>0 OR v_termination_timeouts>0 OR v_termination_errors>0 THEN
     RETURN 'CST_RELOCK_INCOMPLETE';
   END IF;
