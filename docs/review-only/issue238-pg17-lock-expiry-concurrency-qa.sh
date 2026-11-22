@@ -224,4 +224,36 @@ cst_stays_locked="$(docker exec "$name" psql -X -qAt -U postgres -d postgres \
       WHERE rolname='bizportal_customer_invoice_cst_writer_dev'")"
 test "$cst_stays_locked" = true
 echo QA_UNSAFE_DIVA_REPORTS_INCOMPLETE_AND_CST_LOCKED_PASS
+# Missing-Diva negative regression: the function MUST still relock CST even
+# if the independent Diva role was removed after a reviewed install.
+# This scenario ONLY affects synthetic roles in the networkless container.
+docker exec -i "$name" psql -X -q -v ON_ERROR_STOP=1 -U postgres -d postgres <<'SQL'
+DROP ROLE bizportal_customer_invoice_diva_writer_dev;
+ALTER ROLE bizportal_customer_invoice_cst_writer_dev LOGIN
+  PASSWORD 'synthetic-networkless-qa-only' VALID UNTIL 'infinity';
+SQL
+missing_diva_before="$(docker exec "$name" psql -X -qAt -U postgres -d postgres \
+  -c "SELECT (rolcanlogin AND rolpassword IS NOT NULL)::text FROM pg_authid
+      WHERE rolname='bizportal_customer_invoice_cst_writer_dev'")"
+test "$missing_diva_before" = true
+missing_diva_outcome="$(docker exec "$name" psql -X -qAt -v ON_ERROR_STOP=1 \
+  -U postgres -d postgres -c 'SELECT cst_invoice_relock_dev.tick()')"
+test "$missing_diva_outcome" = CST_RELOCK_INCOMPLETE || {
+  echo "QA_MISSING_DIVA_PREVENTED_RELOCK=$missing_diva_outcome"; exit 89
+}
+missing_diva_audit="$(docker exec "$name" psql -X -qAt -U postgres -d postgres \
+  -c "SELECT count(*) FROM cst_invoice_relock_dev.audit
+      WHERE reason='RELOCK_INCOMPLETE_MISSING_DIVA_ROLE'")"
+test "$missing_diva_audit" -eq 1
+cst_locked_after_diva_loss="$(docker exec "$name" psql -X -qAt -U postgres -d postgres \
+  -c "SELECT (NOT rolcanlogin AND rolpassword IS NULL AND
+    (SELECT count(*) FROM pg_stat_activity WHERE
+      usename='bizportal_customer_invoice_cst_writer_dev')=0)::text
+    FROM pg_authid WHERE rolname='bizportal_customer_invoice_cst_writer_dev'")"
+test "$cst_locked_after_diva_loss" = true
+diva_not_recreated="$(docker exec "$name" psql -X -qAt -U postgres -d postgres \
+  -c "SELECT count(*) FROM pg_roles
+      WHERE rolname='bizportal_customer_invoice_diva_writer_dev'")"
+test "$diva_not_recreated" -eq 0
+echo QA_MISSING_DIVA_CST_RELOCKS_AND_REPORTS_INCOMPLETE_PASS
 echo HOSTED_CST_DEV_AND_PROD_NOT_MODIFIED
