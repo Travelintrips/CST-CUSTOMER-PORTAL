@@ -148,7 +148,7 @@ export function CustomerBillingTab({ initialView = "all" }: { initialView?: "all
                         ? "Diproses otomatis setelah login Admin; validasi pajak, jurnal dan AR berjalan di server."
                         : "Otomatisasi invoice DEV belum aktif; invoice tidak diterbitkan melalui tombol manual."}
                     </p>
-                  )}}
+                  )}
                 </div>
               ))}
             </div>
