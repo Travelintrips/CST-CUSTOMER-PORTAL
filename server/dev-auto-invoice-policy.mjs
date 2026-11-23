@@ -23,3 +23,11 @@ export function isEmailOtpAuthenticatedAdmin(user) {
     typeof user?.email === "string" &&
     /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(user.email.trim());
 }
+
+/**
+ * The first automatic pilot is deliberately a single QA document.
+ * Manual issuance and Owner review remain available for every other invoice.
+ */
+export function isAutomaticInvoicePilotInvoice(invoiceId, companyId) {
+  return Number(invoiceId) === 108 && Number(companyId) === 1;
+}
