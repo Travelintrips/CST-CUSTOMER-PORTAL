@@ -21,5 +21,5 @@ export function isEmailOtpAuthenticatedAdmin(user) {
   return user?.role === "admin" &&
     user?.authMethod === "email_otp" &&
     typeof user?.email === "string" &&
-    /^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/.test(user.email.trim());
+    /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(user.email.trim());
 }
