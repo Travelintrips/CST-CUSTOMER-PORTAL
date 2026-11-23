@@ -181,6 +181,29 @@ describe("Actual DEV Portal handler rejects only the synthetic QA108 legacy Invo
     expect(m.end).toHaveBeenCalledTimes(1);
   });
 
+  it.each([
+    ["CST order outside pilot", 109, 1],
+    ["Diva invoice", 109, 3],
+  ])("keeps manual issuance path available for %s when auto mode is ON", async (_name, invoiceId, companyId) => {
+    process.env.CUSTOMER_PORTAL_ATOMIC_ACCOUNTING_POST_DEV = "true";
+    process.env.CUSTOMER_PORTAL_REQUIRE_POSTED_AR_EVIDENCE_DEV = "true";
+    process.env.CUSTOMER_PORTAL_REQUIRE_BIZPORTAL_ATTEST_DEV = "true";
+    process.env.CUSTOMER_PORTAL_AUTO_INVOICE_DEV = "true";
+    process.env.CUSTOMER_PORTAL_INVOICE_SIGNED_REVIEW_SNAPSHOT_DEV = "true";
+    m.row.id = invoiceId;
+    m.row.company_id = companyId;
+    await expect(call(invoiceId, "mark_invoiced")).rejects.toThrow(
+      "Identitas database Invoice DEV belum memiliki isolasi perusahaan.",
+    );
+    expect(m.scopedOpen).toHaveBeenCalledTimes(1);
+    expect(m.verification).not.toHaveBeenCalled();
+    expect(m.sql).toContain("begin");
+    expect(m.sql).toContain("rollback");
+    expect(m.sql).not.toContain("commit");
+    expect(m.notifyAdmins).not.toHaveBeenCalled();
+    expect(m.notifyPortalCustomers).not.toHaveBeenCalled();
+  });
+
   it("automatic mode is blocked when the signed source snapshot guard is OFF", async () => {
     process.env.CUSTOMER_PORTAL_ATOMIC_ACCOUNTING_POST_DEV = "true";
     process.env.CUSTOMER_PORTAL_REQUIRE_POSTED_AR_EVIDENCE_DEV = "true";
