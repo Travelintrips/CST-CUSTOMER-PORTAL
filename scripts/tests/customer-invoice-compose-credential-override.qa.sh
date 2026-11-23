@@ -62,7 +62,7 @@ unset CST_INVOICE_DEV_CREDENTIAL_DIRECTORY
 echo LEGACY_HOST_PLAINTEXT_BIND_REJECTED_PASS
 # GCP Actions has no real encrypted bundle: static diff and no-secret
 # rejection are enough. On owned VPS verify actual root-only CMS preflight.
-if [[ -s /etc/cst-invoice-dev/transport/invoice-writer-version2.cms ]];then
+if [[ -s /etc/cst-invoice-dev/transport/invoice-writer-version3.cms ]];then
  approved=("${base[@]}")
  cst_invoice_compose_guard approved "$work/on.env"
  test "${#approved[@]}" -eq 4
