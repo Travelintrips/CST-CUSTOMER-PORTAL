@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   isAutomaticInvoiceDevEnabled,
   isAutomaticInvoiceCompanyAllowed,
+  isEmailOtpAuthenticatedAdmin,
 } from "../server/dev-auto-invoice-policy.mjs";
 
 const ready = {
@@ -34,5 +35,19 @@ describe("DEV automatic invoice policy", () => {
     expect(isAutomaticInvoiceCompanyAllowed(1)).toBe(true);
     expect(isAutomaticInvoiceCompanyAllowed(3)).toBe(false);
     expect(isAutomaticInvoiceCompanyAllowed(null)).toBe(false);
+  });
+
+  it("accepts only a signed Email OTP Admin session as the automatic actor", () => {
+    expect(isEmailOtpAuthenticatedAdmin({
+      id: 1, role: "admin", email: "owner@example.invalid", authMethod: "email_otp",
+    })).toBe(true);
+    for (const authMethod of [null, "password", "google", "wa_otp", "wa_trusted"]) {
+      expect(isEmailOtpAuthenticatedAdmin({
+        id: 1, role: "admin", email: "owner@example.invalid", authMethod,
+      })).toBe(false);
+    }
+    expect(isEmailOtpAuthenticatedAdmin({
+      id: 1, role: "customer", email: "owner@example.invalid", authMethod: "email_otp",
+    })).toBe(false);
   });
 });
