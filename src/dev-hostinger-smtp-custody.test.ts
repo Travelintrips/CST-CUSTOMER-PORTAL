@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 
 const root=process.cwd();
 const deploy=fs.readFileSync(path.join(root,"scripts/deploy-certified-vps.sh"),"utf8");
+const dockerfile=fs.readFileSync(path.join(root,"Dockerfile.dev-vps"),"utf8");
 const store=fs.readFileSync(path.join(root,"scripts/store-hostinger-smtp-app-password.sh"),"utf8");
 const inject=fs.readFileSync(path.join(root,"scripts/dev-smtp-inject-encrypted-app-password.sh"),"utf8");
 const runtime=fs.readFileSync(path.join(root,"server/auth-providers.mjs"),"utf8");
@@ -26,6 +27,11 @@ describe("Hostinger SMTP secret custody",()=>{
   it("restores the SMTP tmpfs file after a deploy or container restart",()=>{
     expect(deploy).toContain("dev-smtp-inject-encrypted-app-password.sh");
     expect(deploy).toContain("hostinger-smtp-pass");
+    expect(deploy).toContain("Reboot destroys both private tmpfs credentials");
+    expect(deploy).toContain("Reboot SMTP credential recovery refused");
+  });
+  it("copies the SMTP tmpfs injector into the final image",()=>{
+    expect(dockerfile).toContain("COPY --from=build /app/scripts/dev-smtp-tmpfs-inject.mjs ./scripts/dev-smtp-tmpfs-inject.mjs");
   });
   it("keeps the storage and injection scripts syntactically valid",()=>{
     for (const script of [
