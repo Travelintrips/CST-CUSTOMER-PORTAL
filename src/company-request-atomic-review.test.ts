@@ -1,4 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { createHash, generateKeyPairSync, sign } from "node:crypto";
+import { mintDevCompanySelfApprovalChallenge } from "../server/dev-company-self-affiliation.mjs";
 
 const mocks = vi.hoisted(() => ({
   connect: vi.fn(),
@@ -27,6 +29,7 @@ type DbState = {
   profileCount?: number;
   changedCount?: number;
   applicantId?: number;
+  canonicalSuperAdmin?: boolean;
 };
 type DbCall = { sql: string; args: unknown[] };
 
@@ -42,6 +45,14 @@ function setup(state: DbState = {}) {
       if (sql.includes("from public.portal_company_requests") && sql.includes("for update")) {
         if (state.requestStatus === null) return { rows: [], rowCount: 0 };
         return { rows: [{ id: 17, portal_customer_id: state.applicantId ?? 30, status: state.requestStatus ?? "pending" }], rowCount: 1 };
+      }
+      if (sql.includes("from public.users") && sql.includes("for share")) {
+        return {rows:state.canonicalSuperAdmin===false?[]:
+          [{id:"cst-canonical-superadmin",email:"reviewer@example.invalid"}],rowCount:1};
+      }
+      if (sql.includes("from public.portal_company_requests r") &&
+          sql.includes("join public.companies co")) {
+        return {rows:[{id:17}],rowCount:1};
       }
       if (sql.includes("from public.companies")) {
         return state.companyActive === false
@@ -119,6 +130,60 @@ describe("existing Admin review endpoint atomically updates company request and 
     ]);
     expect(client.release).toHaveBeenCalledOnce();
     expect(history.some(entry=>entry.sql.startsWith("insert into"))).toBe(false);
+  });
+  it("allows exact CST canonical Super Admin self-approval only with fresh signed BizPortal proof",async()=>{
+    vi.stubEnv("CST_CORPORATE_PO_APPROVAL_GATE_DEV","false");
+    vi.stubEnv("CUSTOMER_PORTAL_ATOMIC_ACCOUNTING_POST_DEV","true");
+    vi.stubEnv("CUSTOMER_PORTAL_REQUIRE_POSTED_AR_EVIDENCE_DEV","true");
+    vi.stubEnv("CUSTOMER_PORTAL_REQUIRE_BIZPORTAL_ATTEST_DEV","true");
+    vi.stubEnv("CUSTOMER_PORTAL_COMPANY_SELF_APPROVAL_DEV","true");
+    vi.stubEnv("SESSION_SECRET","qa-portal-self-approval-test-secret-at-least-32-characters");
+    const pair=generateKeyPairSync("ed25519");
+    vi.stubEnv("CUSTOMER_PORTAL_BIZPORTAL_ATTEST_SPKI_DEV",
+      pair.publicKey.export({type:"spki",format:"der"}).toString("base64"));
+    const ctx=input(null);
+    const challenge=mintDevCompanySelfApprovalChallenge({
+      requestId:17,companyId:1,applicantId:9,portalUser:ctx.user,
+    });
+    const now=Date.now();
+    const claims={
+      v:1,purpose:"cst-company-affiliation-self-approval",aud:"CST_CUSTOMER_PORTAL_DEV",
+      actorId:"cst-canonical-superadmin",email:"reviewer@example.invalid",
+      companyId:1,requestId:17,applicantId:9,portalUserId:9,
+      challengeDigest:createHash("sha256").update(challenge).digest("hex"),
+      nonce:"f".repeat(32),iat:now,exp:now+60000,
+    };
+    const part=Buffer.from(JSON.stringify(claims)).toString("base64url");
+    const proof=part+"."+sign(null,Buffer.from("CST_BIZPORTAL_COMPANY_SELF_APPROVAL_DEV_V1\n"+part),pair.privateKey)
+      .toString("base64url");
+    const {history}=setup({applicantId:9});
+    ctx.body={...approvedBody,selfApprovalChallenge:challenge,selfApprovalProof:proof};
+    await handleAdminCompanyRequests(ctx);
+    expect(ctx.sendError).not.toHaveBeenCalled();
+    expect(history.at(-1)?.sql).toBe("commit");
+    const update=history.find(x=>x.sql.startsWith("update public.portal_company_requests"));
+    expect(String(update?.args[2])).toContain("DEV_SUPERADMIN_SELF_APPROVAL_SIGNED:");
+    expect(update?.args[3]).toBe(9);
+    expect(history.some(x=>x.sql.startsWith("insert into public.portal_company_members"))).toBe(true);
+
+    const badCtx=input({...approvedBody,selfApprovalChallenge:challenge,selfApprovalProof:proof+"tamper"});
+    const bad=setup({applicantId:9,canonicalSuperAdmin:false});
+    await handleAdminCompanyRequests(badCtx);
+    expect(badCtx.sendError).toHaveBeenCalledWith(badCtx.response,403,expect.any(String));
+    expect(bad.history.at(-1)?.sql).toBe("rollback");
+    expect(bad.history.some(x=>x.sql.startsWith("insert into"))).toBe(false);
+  });
+  it("never allows ordinary Admin to self-approve by claiming Super Admin in HTTP payload",async()=>{
+    vi.stubEnv("CST_CORPORATE_PO_APPROVAL_GATE_DEV","false");
+    vi.stubEnv("CUSTOMER_PORTAL_ATOMIC_ACCOUNTING_POST_DEV","true");
+    vi.stubEnv("CUSTOMER_PORTAL_REQUIRE_POSTED_AR_EVIDENCE_DEV","true");
+    vi.stubEnv("CUSTOMER_PORTAL_REQUIRE_BIZPORTAL_ATTEST_DEV","true");
+    vi.stubEnv("CUSTOMER_PORTAL_COMPANY_SELF_APPROVAL_DEV","true");
+    const {history}=setup({applicantId:9,canonicalSuperAdmin:false});
+    const ctx=input({...approvedBody,selfApprovalChallenge:"fake",selfApprovalProof:"fake",role:"super_admin"});
+    await handleAdminCompanyRequests(ctx);
+    expect(ctx.sendError).toHaveBeenCalledWith(ctx.response,403,expect.any(String));
+    expect(history.at(-1)?.sql).toBe("rollback");
   });
   it("allows independent Admin approval using existing flow when invoice flag is ON", async () => {
     vi.stubEnv("CST_CORPORATE_PO_APPROVAL_GATE_DEV","false");
