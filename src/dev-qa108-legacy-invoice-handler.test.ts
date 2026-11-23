@@ -151,9 +151,10 @@ describe("Actual DEV Portal handler rejects only the synthetic QA108 legacy Invo
     process.env.CUSTOMER_PORTAL_INVOICE_SIGNED_REVIEW_SNAPSHOT_DEV = "false";
     await expect(call(108, "auto_issue")).rejects.toMatchObject({ statusCode: 503 });
     expect(m.scopedOpen).not.toHaveBeenCalled();
-    expect(m.sql).toContain("rollback");
-    expect(m.sql).not.toContain("commit");
+    expect(m.sql).toEqual([]);
     expect(m.verification).not.toHaveBeenCalled();
+    expect(m.notifyAdmins).not.toHaveBeenCalled();
+    expect(m.notifyPortalCustomers).not.toHaveBeenCalled();
   });
 
   it("all three flags ON routes QA108 into real scoped-writer RLS proof, not a permanent QA deny", async () => {
