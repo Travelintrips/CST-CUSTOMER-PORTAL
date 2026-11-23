@@ -3,6 +3,12 @@ import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/re
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { CompanyRequestsTab } from "./pages/admin/CompanyRequestsTab";
+import { requestBizPortalCompanySelfApprovalProof } from "./lib/bizportal-company-self-approval-proof";
+vi.mock("./lib/bizportal-company-self-approval-proof",()=>({
+  requestBizPortalCompanySelfApprovalProof:vi.fn(async()=>({
+    selfApprovalChallenge:"test-portal-challenge",selfApprovalProof:"signed-bizportal-self-proof",
+  })),
+}));
 
 vi.mock("@/lib/auth", () => ({
   getAuthHeaders: () => ({ "X-DEV-Test": "admin-test" }),
@@ -89,6 +95,31 @@ describe("Existing Admin company-affiliation review UI", () => {
     ));
   });
 
+  it("requests a distinct signed Super Admin proof only for the eligible applicant",async()=>{
+    fetchMock.mockImplementationOnce(async()=>response({
+      items:[{...request,customerId:9,canSelfApproveAsSuperAdmin:true}],total:1,
+    }));
+    render(<CompanyRequestsTab />);
+    fireEvent.click(await screen.findByRole("button",{name:"Tinjau afiliasi"}));
+    await screen.findByRole("option",{name:"PT Cahaya Sejati Teknologi (CST)"});
+    const button=screen.getByRole("button",{name:"Verifikasi Super Admin & setujui"});
+    fireEvent.change(screen.getByLabelText("Pilih perusahaan terverifikasi"),{target:{value:"1"}});
+    fireEvent.click(screen.getByLabelText(/Saya sudah memeriksa kewenangan customer/));
+    fireEvent.click(button);
+    await waitFor(()=>expect(requestBizPortalCompanySelfApprovalProof).toHaveBeenCalledWith(
+      17,1,{"X-DEV-Test":"admin-test"},
+    ));
+    await waitFor(()=>expect(fetchMock).toHaveBeenCalledWith(
+      "/api/portal/admin/company-requests/17",expect.objectContaining({
+        method:"PATCH",
+        body:JSON.stringify({
+          status:"approved",matchedCompanyId:1,reviewNote:null,
+          selfApprovalChallenge:"test-portal-challenge",
+          selfApprovalProof:"signed-bizportal-self-proof",
+        }),
+      }),
+    ));
+  });
   it("clears earlier approval when the canonical-company search is changed", async () => {
     render(<CompanyRequestsTab />);
     fireEvent.click(await screen.findByRole("button", { name: "Tinjau afiliasi" }));
