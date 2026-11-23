@@ -5,6 +5,7 @@ import { pool, query } from "./db.mjs";
 import { createSession, sessionCookies } from "./session.mjs";
 import { resolveCustomerPortalFonnteToken } from "./fonnte-config.mjs";
 import { isPortalLoginMethodAllowed } from "./dev-admin-email-otp-policy.mjs";
+import { readDevHostingerSmtpPassword } from "./dev-hostinger-smtp-credential.mjs";
 
 const APP_ENV = process.env.APP_ENV ?? process.env.NODE_ENV ?? "development";
 const IS_PRODUCTION =
@@ -524,7 +525,7 @@ export async function handleSignup(request, response) {
 }
 
 function smtpEnvConfig() {
-  const pass = (process.env.SMTP_PASS ?? process.env.SMTP_PASSWORD ?? "").trim();
+  const pass = (process.env.SMTP_PASS ?? process.env.SMTP_PASSWORD ?? readDevHostingerSmtpPassword()).trim();
   const from = (process.env.SMTP_FROM ?? "").trim();
   const user = (process.env.SMTP_USER ?? from).trim();
   const host = (process.env.SMTP_HOST ?? process.env["SMTP-HOST"] ?? "smtp.hostinger.com").trim();
