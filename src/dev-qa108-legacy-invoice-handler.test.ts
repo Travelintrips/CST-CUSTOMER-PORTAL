@@ -29,7 +29,7 @@ vi.mock("../server/notification-service.mjs", () => ({
   notifyAdmins: m.notifyAdmins,
   notifyPortalCustomers: m.notifyPortalCustomers,
 }));
-import { handleAdminInvoices } from "../server/billing-operations.mjs";
+import { handleAdminInvoices, handleAutomaticInvoiceRun } from "../server/billing-operations.mjs";
 
 const original = Object.fromEntries(
   ["APP_ENV", "NODE_ENV", "CUSTOMER_PORTAL_ATOMIC_ACCOUNTING_POST_DEV",
@@ -126,6 +126,43 @@ describe("Actual DEV Portal handler rejects only the synthetic QA108 legacy Invo
     expect(m.notifyPortalCustomers).not.toHaveBeenCalled();
     expect(m.verification).not.toHaveBeenCalled();
   });
+  it("automatic run stops read-only when the CST AR source actor is OFF", async () => {
+    process.env.CUSTOMER_PORTAL_ATOMIC_ACCOUNTING_POST_DEV = "true";
+    process.env.CUSTOMER_PORTAL_REQUIRE_POSTED_AR_EVIDENCE_DEV = "true";
+    process.env.CUSTOMER_PORTAL_REQUIRE_BIZPORTAL_ATTEST_DEV = "false";
+    process.env.CUSTOMER_PORTAL_AUTO_INVOICE_DEV = "true";
+    process.env.CUSTOMER_PORTAL_INVOICE_SIGNED_REVIEW_SNAPSHOT_DEV = "true";
+    m.globalQuery.mockImplementation(async (statement) => {
+      const q=String(statement).toLowerCase();
+      if (q.includes("from public.users")) return { rows: [{
+        id:"canonical-super-admin",role:"super_admin",system_role:"super_admin",
+        status:"active",is_active:true,company_id:null,
+      }] };
+      if (q.includes("from public.bizportal_customer_ar_source_actors_dev")) {
+        return { rows: [{ enabled:false }] };
+      }
+      throw Error("UNEXPECTED_READ_QUERY");
+    });
+    const sendJson=vi.fn();
+    await handleAutomaticInvoiceRun({
+      request:{method:"POST",body:{}},
+      response:{},
+      user:{id:501,role:"admin",email:"qa-owner@example.invalid",authMethod:"email_otp"},
+      sendJson,
+      sendError:m.sendError,
+      postSalesInvoiceWithClient:vi.fn(),
+    });
+    expect(sendJson).toHaveBeenCalledWith({},200,expect.objectContaining({
+      enabled:true,companyId:1,scanned:0,invoiced:0,blocked:true,
+      results:[expect.objectContaining({invoiceId:108,status:"blocked"})],
+    }));
+    expect(m.globalQuery).toHaveBeenCalledTimes(2);
+    expect(m.scopedOpen).not.toHaveBeenCalled();
+    expect(m.sql).toEqual([]);
+    expect(m.notifyAdmins).not.toHaveBeenCalled();
+    expect(m.notifyPortalCustomers).not.toHaveBeenCalled();
+  });
+
   it("automatic mode skips per-invoice BizPortal proof but still fails closed on the scoped RLS writer guard", async () => {
     process.env.CUSTOMER_PORTAL_ATOMIC_ACCOUNTING_POST_DEV = "true";
     process.env.CUSTOMER_PORTAL_REQUIRE_POSTED_AR_EVIDENCE_DEV = "true";
