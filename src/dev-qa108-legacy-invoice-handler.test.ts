@@ -132,7 +132,7 @@ describe("Actual DEV Portal handler rejects only the synthetic QA108 legacy Invo
     process.env.CUSTOMER_PORTAL_REQUIRE_BIZPORTAL_ATTEST_DEV = "false";
     process.env.CUSTOMER_PORTAL_AUTO_INVOICE_DEV = "true";
     process.env.CUSTOMER_PORTAL_INVOICE_SIGNED_REVIEW_SNAPSHOT_DEV = "true";
-    await expect(call(108, "auto_issue")).rejects.toThrow("MOCK_UNEXPECTED_SQL");
+    await expect(call(108, "auto_issue")).rejects.toThrow("Identitas database Invoice DEV belum memiliki isolasi perusahaan.");
     expect(m.scopedOpen).toHaveBeenCalledTimes(1);
     expect(m.verification).not.toHaveBeenCalled();
     expect(m.sql).toContain("begin");
