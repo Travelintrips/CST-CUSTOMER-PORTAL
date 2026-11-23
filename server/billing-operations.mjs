@@ -1019,6 +1019,12 @@ export async function handleAutomaticInvoiceRun({
     sendError(response, 403, "Sesi Admin yang sah diperlukan.");
     return;
   }
+  try {
+    await requireCanonicalSalesInvoiceIssuer(query, user, 1);
+  } catch {
+    sendError(response, 403, "Akun Admin tidak memiliki penugasan aktif untuk CST.");
+    return;
+  }
   const candidates = await query(
     `select id
        from public.sales_documents
