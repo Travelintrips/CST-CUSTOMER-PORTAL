@@ -54,6 +54,7 @@ import {
   handleCustomerPayments,
 } from "./billing-operations.mjs";
 import { loadDevOriginalAccountingOwner } from "./dev-original-accounting-owner-loader.mjs";
+import { isAutomaticInvoiceDevEnabled } from "./dev-auto-invoice-policy.mjs";
 import { isDevInvoiceScopedWriterRequested } from "./dev-customer-invoice-scoped-client.mjs";
 import {
   mintPortalInvoiceChallenge, isDualSuperAdminProofRequired,
@@ -4931,6 +4932,10 @@ async function route(request, response) {
   if (request.method === "POST" && pathname === "/api/portal/admin/invoices/auto-issue-ready") {
     const user = await requireAdmin(request, response);
     if (!user) return;
+    if (!isAutomaticInvoiceDevEnabled() || !isDevInvoiceScopedWriterRequested(process.env)) {
+      sendError(response, 404, "Otomatisasi invoice DEV belum tersedia.");
+      return;
+    }
     let postSalesInvoiceWithClient = null;
     try {
       postSalesInvoiceWithClient = await loadDevOriginalAccountingOwner();
