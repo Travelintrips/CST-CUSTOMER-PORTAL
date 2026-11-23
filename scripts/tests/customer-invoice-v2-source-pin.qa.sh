@@ -10,10 +10,10 @@ bash -n "$injector"
 bash -n "$guard"
 bash -n "$qa"
 bash -n "$composeqa"
-grep -Fqx 'cms="$transport/invoice-writer-version2.cms"' "$injector"
-grep -Fqx 'manifest="$transport/invoice-writer-version2.manifest.json"' "$injector"
-grep -Fqx 'issuer_sha="d9cc4417d618891302efec3463eacd84f0b7f0e7"' "$injector"
-grep -Fqx 'version="projects/653506647312/secrets/bizportal-customer-invoice-writers-dev-companies/versions/2"' "$injector"
+grep -Fqx 'cms="$transport/invoice-writer-version3.cms"' "$injector"
+grep -Fqx 'manifest="$transport/invoice-writer-version3.manifest.json"' "$injector"
+grep -Fqx 'issuer_sha="d1bf3cdaa7c8a5b2cd52fc2b5de7dc2b53664585"' "$injector"
+grep -Fqx 'version="projects/653506647312/secrets/bizportal-customer-invoice-writers-dev-companies/versions/3"' "$injector"
 if grep -Fq 'invoice-writer-version1' "$injector"; then
  echo 'LEGACY_V1_INJECTOR_FORBIDDEN';exit 2
 fi
@@ -100,10 +100,10 @@ with tempfile.TemporaryDirectory(prefix="cst-certified-sha-fixture-") as temp:
     assert probe(root,newest)==0,"new explicitly certified HEAD was not accepted"
 print("CST_DEV_CERTIFIED_SHA_TOCTOU_NEGATIVE_TESTS_PASS")
 PY
-grep -Fq 'invoice-writer-version2.cms' "$qa"
-grep -Fq 'invoice-writer-version2.cms' "$composeqa"
+grep -Fq 'invoice-writer-version3.cms' "$qa"
+grep -Fq 'invoice-writer-version3.cms' "$composeqa"
 if grep -Fq 'invoice-writer-version1' "$qa" || grep -Fq 'invoice-writer-version1' "$composeqa"; then
  echo 'LEGACY_V1_QA_FORBIDDEN';exit 3
 fi
-echo 'CST_DEV_INVOICE_V2_SOURCE_PIN_CONTRACT_PASS'
+echo 'CST_DEV_INVOICE_V3_SOURCE_PIN_CONTRACT_PASS'
 echo 'NO_SECRET_DECRYPTION_NO_DB_NO_DEPLOY'

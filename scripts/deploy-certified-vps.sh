@@ -85,8 +85,22 @@ fi
 running_sha="$(curl -fsS --max-time 5 http://127.0.0.1:18444/api/portal/release-info 2>/dev/null | node -e 'let s="";process.stdin.on("data",x=>s+=x);process.stdin.on("end",()=>{try{process.stdout.write(JSON.parse(s).releaseId||"")}catch{}})' || true)"
 if [[ "$running_sha" == "$certified_sha" ]]; then
   assert_certified_invoice_handler live
-  echo "[dev-deploy] Already healthy at certified release $certified_sha"
-  exit 0
+  # Keep regular releases idempotent; never refresh Invoice credentials without
+  # the original root preflight, verified CMS, and private Docker tmpfs opt-in.
+  if [[ "${CST_INVOICE_DEV_PRIVATE_TMPFS:-false}" != true ]]; then
+    echo "[dev-deploy] Already healthy at certified release $certified_sha"
+    exit 0
+  fi
+  # Do not restart if the certified private mount already contains credentials.
+  # Force refresh is permitted only via explicit DEV deployment opt-in.
+  if [[ "${CST_INVOICE_DEV_FORCE_CREDENTIAL_REFRESH:-false}" != true ]] &&
+     [[ "$(docker inspect -f '{{.Config.User}}' cst-customer-portal-dev 2>/dev/null || true)" == "21110:21110" ]] &&
+     docker exec --user 21110:21110 cst-customer-portal-dev sh -c \
+       'test -r /run/credentials/cst-customer-portal-dev.service/customer-invoice-writers-dev.json' 2>/dev/null; then
+    echo "[dev-deploy] Certified Invoice credentials already installed"
+    exit 0
+  fi
+  echo "[dev-deploy] Credential-only certified DEV rollout required"
 fi
 
 git merge --ff-only "$certified_sha"
