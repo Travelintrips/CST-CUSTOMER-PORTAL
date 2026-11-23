@@ -15,6 +15,7 @@ COPY --from=build /app/dist ./dist
 COPY --from=build /app/server ./server
 COPY --from=build /app/scripts/start-dev-vps.mjs ./scripts/start-dev-vps.mjs
 COPY --from=build /app/scripts/dev-invoice-tmpfs-inject.mjs ./scripts/dev-invoice-tmpfs-inject.mjs
+COPY --from=build /app/scripts/dev-smtp-tmpfs-inject.mjs ./scripts/dev-smtp-tmpfs-inject.mjs
 COPY --from=build /app/package.json ./package.json
 # PUBLIC Supabase Root CA, SHA-256 verified by the Invoice DEV scoped client.
 # Kept inside read-only container image; no secret keys or runtime credentials.
