@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import { execFileSync } from "node:child_process";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 
@@ -25,6 +26,17 @@ describe("Hostinger SMTP secret custody",()=>{
   it("restores the SMTP tmpfs file after a deploy or container restart",()=>{
     expect(deploy).toContain("dev-smtp-inject-encrypted-app-password.sh");
     expect(deploy).toContain("hostinger-smtp-pass");
+  });
+  it("keeps the storage and injection scripts syntactically valid",()=>{
+    for (const script of [
+      "scripts/store-hostinger-smtp-app-password.sh",
+      "scripts/dev-smtp-inject-encrypted-app-password.sh",
+    ]) {
+      expect(() => execFileSync("bash", ["-n", path.join(root,script)]))
+        .not.toThrow();
+    }
+    expect(() => execFileSync("node", ["--check", path.join(root,"scripts/dev-smtp-tmpfs-inject.mjs")]))
+      .not.toThrow();
   });
   it("uses only the private tmpfs reader for the SMTP credential fallback",()=>{
     expect(runtime).toContain("readDevHostingerSmtpPassword()");
