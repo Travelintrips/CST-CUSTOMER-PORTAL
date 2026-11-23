@@ -16,3 +16,10 @@ export function isAutomaticInvoiceDevEnabled(env = process.env) {
 export function isAutomaticInvoiceCompanyAllowed(companyId) {
   return Number(companyId) === 1;
 }
+
+export function isEmailOtpAuthenticatedAdmin(user) {
+  return user?.role === "admin" &&
+    user?.authMethod === "email_otp" &&
+    typeof user?.email === "string" &&
+    /^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/.test(user.email.trim());
+}
