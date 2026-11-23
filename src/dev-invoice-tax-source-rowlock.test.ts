@@ -9,7 +9,6 @@ const env={
   APP_ENV:"development",
   CUSTOMER_PORTAL_ATOMIC_ACCOUNTING_POST_DEV:"true",
   CUSTOMER_PORTAL_REQUIRE_POSTED_AR_EVIDENCE_DEV:"true",
-  CUSTOMER_PORTAL_REQUIRE_BIZPORTAL_ATTEST_DEV:"true",
   CUSTOMER_PORTAL_INVOICE_SIGNED_REVIEW_SNAPSHOT_DEV:"true",
   CUSTOMER_PORTAL_INVOICE_TAX_SOURCE_ROWLOCK_DEV:"true",
 };
@@ -42,6 +41,9 @@ describe("DEV original-client financial tax-source lock",()=>{
   });
   it("requires every DEV feature flag, including new lock policy opt-in",async()=>{
     expect(invoiceTaxSourceRowlockRequested(env)).toBe(true);
+    expect(invoiceTaxSourceRowlockRequested({
+      ...env, CUSTOMER_PORTAL_REQUIRE_BIZPORTAL_ATTEST_DEV:"false",
+    })).toBe(true);
     for(const key of Object.keys(env)) {
       const e={...env,[key]:key==="APP_ENV"?"production":"false"};
       expect(invoiceTaxSourceRowlockRequested(e)).toBe(false);

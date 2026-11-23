@@ -78,6 +78,9 @@ function createPortalJwt(user) {
     customerId: Number(user.id),
     role: user.role,
     av: Number(user.auth_version ?? 0),
+    // Signed provenance: automatic invoice actions are permitted only after
+    // the canonical Customer Portal Email OTP login, never an old/password/Google/WA session.
+    am: user.authMethod === "email_otp" ? "email_otp" : null,
     iss: "cst-portal",
     iat: Math.floor(Date.now() / 1000),
     exp: Math.floor(Date.now() / 1000) + SESSION_TTL_SECONDS,
@@ -120,6 +123,7 @@ export function verifySession(token) {
       email: data.email,
       role: data.role,
       authVersion: Number(data.av ?? 0),
+      authMethod: data.am === "email_otp" ? "email_otp" : null,
       tokenFamily: "portal-jwt",
     };
   } catch {

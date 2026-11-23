@@ -36,15 +36,17 @@ const env=(overrides={})=>({
 const admin={id:15,role:"admin",email:"qa@example.invalid"};
 const fakeCa="-----BEGIN CERTIFICATE-----\nQA ONLY\n-----END CERTIFICATE-----";
 describe("DEV scoped Customer Invoice client, no privileged writer fallback",()=>{
- it("requires DEV, all 3 flags and authenticated Portal Admin",()=>{
+ it("requires DEV, atomic posting, posted AR evidence and authenticated Portal Admin",()=>{
   expect(isDevInvoiceScopedWriterRequested(env())).toBe(true);
   for(const key of ["APP_ENV","NODE_ENV",
    "CUSTOMER_PORTAL_ATOMIC_ACCOUNTING_POST_DEV",
-   "CUSTOMER_PORTAL_REQUIRE_POSTED_AR_EVIDENCE_DEV",
-   "CUSTOMER_PORTAL_REQUIRE_BIZPORTAL_ATTEST_DEV"]){
+   "CUSTOMER_PORTAL_REQUIRE_POSTED_AR_EVIDENCE_DEV"]){
    const e=env({[key]:key.endsWith("ENV")?"production":"false"});
    expect(isDevInvoiceScopedWriterRequested(e)).toBe(false);
   }
+  expect(isDevInvoiceScopedWriterRequested(env({
+   CUSTOMER_PORTAL_REQUIRE_BIZPORTAL_ATTEST_DEV:"false",
+  }))).toBe(true);
  });
  it.each([1,3])("accepts only exact company %s login with pinned CA path",company=>{
   expect(parseDevInvoiceScopedWriterDsn(url(company),company).role)

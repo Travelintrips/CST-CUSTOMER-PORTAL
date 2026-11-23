@@ -65,6 +65,7 @@ export function CustomerBillingTab({ initialView = "all" }: { initialView?: "all
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState<number | null>(null);
   const [error, setError] = useState("");
+  const [automaticInvoiceIds, setAutomaticInvoiceIds] = useState<number[]>([]);
   const [handoffs,setHandoffs] = useState<Record<number,OwnerHandoff>>({});
   // Only authenticated server flags can enable this DEV-only handoff.
   const [approvalMode,setApprovalMode] = useState<CustomerInvoiceApprovalMode>("unavailable");
@@ -72,8 +73,9 @@ export function CustomerBillingTab({ initialView = "all" }: { initialView?: "all
 
   const load = useCallback(async () => {
     setLoading(true);
-    // A failed refresh must never leave an old Owner authorization mode visible.
+    // A failed refresh must never leave an old Owner/automatic mode visible.
     setApprovalMode("unavailable");
+    setAutomaticInvoiceIds([]);
     setError("");
     try {
       const headers = getAuthHeaders();
@@ -91,6 +93,9 @@ export function CustomerBillingTab({ initialView = "all" }: { initialView?: "all
       const approvalConfig = approvalResponse?.ok
         ? await approvalResponse.json().catch(() => null) : null;
       setApprovalMode(selectCustomerInvoiceApprovalMode(approvalConfig));
+      setAutomaticInvoiceIds(Array.isArray(invoiceBody.automaticInvoiceIds)
+        ? invoiceBody.automaticInvoiceIds.filter((id: unknown): id is number => Number.isSafeInteger(id) && Number(id) > 0)
+        : []);
       setInvoices(invoiceBody.items ?? []);
       setPayments(paymentBody.items ?? []);
     } catch (cause) {
@@ -229,47 +234,51 @@ export function CustomerBillingTab({ initialView = "all" }: { initialView?: "all
                     </p>
                   </div>
                   {invoice.invoiceStatus !== "invoiced" && (
-                    <div className="flex flex-col gap-2">
-                      {approvalMode === "legacy" && (
-                        <button type="button" disabled={busy === invoice.id} onClick={() => void issueInvoice(invoice.id)}
-                          className="inline-flex items-center gap-2 rounded-lg bg-sky-600 px-3 py-2 text-sm font-medium text-white hover:bg-sky-700 disabled:opacity-50">
-                          {busy === invoice.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileCheck2 className="h-4 w-4" />} Terbitkan invoice
-                        </button>
-                      )}
-                      {approvalMode === "unavailable" && (
-                        <p className="max-w-xs text-xs text-amber-700">
-                          Persetujuan Owner belum siap. Penerbitan ditahan sampai verifikasi DEV tersedia.
+                    automaticInvoiceIds.includes(Number(invoice.id))
+                      ? <p className="max-w-xs text-xs text-slate-500">
+                          Diproses otomatis setelah login Email OTP; validasi pajak, jurnal dan AR berjalan di server.
                         </p>
-                      )}
-                      {handoffEnabled && (
-                        <button type="button" disabled={busy === invoice.id}
-                          onClick={() => void startOwnerHandoff(invoice.id)}
-                          className="rounded-lg border px-3 py-2 text-sm text-slate-700 hover:bg-slate-50 disabled:opacity-50">
-                          Persetujuan Owner dari HP lain
-                        </button>
-                      )}
-                      {handoffEnabled && handoffs[invoice.id] && (
-                        <div className="max-w-sm space-y-2 text-xs">
-                          <p>Owner login ke BizPortal di perangkatnya, buka link berikut, lalu tekan Setujui satu kali. Link berlaku 80 detik.</p>
-                          <input aria-label="Link persetujuan Owner" type="text" readOnly
-                            value={handoffs[invoice.id].approvalUrl}
-                            onFocus={event=>event.currentTarget.select()}
-                            className="w-full rounded border p-2 text-slate-700"/>
-                          <div className="flex gap-2">
-                            <button type="button" className="rounded border px-3 py-2"
-                              onClick={() => void navigator.clipboard.writeText(handoffs[invoice.id].approvalUrl).catch(
-                                ()=>setError("Salin link secara manual dari kolom di atas."))}>
-                              Salin link
-                            </button>
-                            <button type="button" disabled={busy===invoice.id}
-                              className="rounded bg-sky-600 px-3 py-2 text-white disabled:opacity-50"
-                              onClick={() => void finishOwnerHandoff(invoice.id)}>
-                              Periksa & terbitkan
-                            </button>
-                          </div>
-                        </div>
-                      )}
-                    </div>
+                      : <div className="flex flex-col gap-2">
+                                            {approvalMode === "legacy" && (
+                                              <button type="button" disabled={busy === invoice.id} onClick={() => void issueInvoice(invoice.id)}
+                                                className="inline-flex items-center gap-2 rounded-lg bg-sky-600 px-3 py-2 text-sm font-medium text-white hover:bg-sky-700 disabled:opacity-50">
+                                                {busy === invoice.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileCheck2 className="h-4 w-4" />} Terbitkan invoice
+                                              </button>
+                                            )}
+                                            {approvalMode === "unavailable" && (
+                                              <p className="max-w-xs text-xs text-amber-700">
+                                                Persetujuan Owner belum siap. Penerbitan ditahan sampai verifikasi DEV tersedia.
+                                              </p>
+                                            )}
+                                            {handoffEnabled && (
+                                              <button type="button" disabled={busy === invoice.id}
+                                                onClick={() => void startOwnerHandoff(invoice.id)}
+                                                className="rounded-lg border px-3 py-2 text-sm text-slate-700 hover:bg-slate-50 disabled:opacity-50">
+                                                Persetujuan Owner dari HP lain
+                                              </button>
+                                            )}
+                                            {handoffEnabled && handoffs[invoice.id] && (
+                                              <div className="max-w-sm space-y-2 text-xs">
+                                                <p>Owner login ke BizPortal di perangkatnya, buka link berikut, lalu tekan Setujui satu kali. Link berlaku 80 detik.</p>
+                                                <input aria-label="Link persetujuan Owner" type="text" readOnly
+                                                  value={handoffs[invoice.id].approvalUrl}
+                                                  onFocus={event=>event.currentTarget.select()}
+                                                  className="w-full rounded border p-2 text-slate-700"/>
+                                                <div className="flex gap-2">
+                                                  <button type="button" className="rounded border px-3 py-2"
+                                                    onClick={() => void navigator.clipboard.writeText(handoffs[invoice.id].approvalUrl).catch(
+                                                      ()=>setError("Salin link secara manual dari kolom di atas."))}>
+                                                    Salin link
+                                                  </button>
+                                                  <button type="button" disabled={busy===invoice.id}
+                                                    className="rounded bg-sky-600 px-3 py-2 text-white disabled:opacity-50"
+                                                    onClick={() => void finishOwnerHandoff(invoice.id)}>
+                                                    Periksa & terbitkan
+                                                  </button>
+                                                </div>
+                                              </div>
+                                            )}
+                                          </div>
                   )}
                 </div>
               ))}

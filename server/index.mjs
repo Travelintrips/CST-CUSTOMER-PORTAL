@@ -48,11 +48,13 @@ import {
 } from "./operational-health.mjs";
 import {
   handleAdminInvoices,
+  handleAutomaticInvoiceRun,
   handleAdminPayments,
   handleCustomerInvoices,
   handleCustomerPayments,
 } from "./billing-operations.mjs";
 import { loadDevOriginalAccountingOwner } from "./dev-original-accounting-owner-loader.mjs";
+import { isAutomaticInvoiceDevEnabled, isAutomaticInvoicePilotInvoice } from "./dev-auto-invoice-policy.mjs";
 import { isDevInvoiceScopedWriterRequested } from "./dev-customer-invoice-scoped-client.mjs";
 import {
   mintPortalInvoiceChallenge, isDualSuperAdminProofRequired,
@@ -421,6 +423,8 @@ async function requireUser(request, response) {
     sendError(response, 401, "Session is no longer valid.");
     return null;
   }
+  // authMethod is a signed JWT claim, not a browser field or database input.
+  user.authMethod = session.authMethod ?? null;
   return user;
 }
 
@@ -4795,6 +4799,11 @@ async function route(request, response) {
     // Only the random 80s capability ticket can read this transient source.
     // No PII is embedded in the URL, HMAC challenge or GitHub artifacts.
     const review=readInvoiceOwnerHandoffReview({ticket:handoffReviewMatch[1]});
+    if (isAutomaticInvoiceDevEnabled() &&
+        isAutomaticInvoicePilotInvoice(review?.snapshot?.invoiceId, review?.snapshot?.companyId)) {
+      sendError(response,404,"Persetujuan Owner per invoice dinonaktifkan khusus untuk Order QA #108.");
+      return;
+    }
     sendJson(response,200,review,{
       "Referrer-Policy":"no-referrer",
       "X-Frame-Options":"DENY",
@@ -4812,6 +4821,12 @@ async function route(request, response) {
     const fields = new URLSearchParams(bytes?.toString("utf8") ?? "");
     if ([...fields.keys()].length !== 1 || !fields.has("proof")) {
       sendError(response, 400, "Bukti persetujuan tidak valid.");
+      return;
+    }
+    const handoffReview = readInvoiceOwnerHandoffReview({ticket:handoffReceiveMatch[1]});
+    if (isAutomaticInvoiceDevEnabled() &&
+        isAutomaticInvoicePilotInvoice(handoffReview?.snapshot?.invoiceId, handoffReview?.snapshot?.companyId)) {
+      sendError(response,404,"Persetujuan Owner per invoice dinonaktifkan khusus untuk Order QA #108.");
       return;
     }
     submitInvoiceOwnerHandoff({
@@ -4844,6 +4859,10 @@ async function route(request, response) {
     );
     if(result.rows.length!==1){sendError(response,404,"Invoice tidak ditemukan.");return;}
     const companyId=Number(result.rows[0].company_id);
+    if (isAutomaticInvoiceDevEnabled() && isAutomaticInvoicePilotInvoice(invoiceId, companyId)) {
+      sendError(response,404,"Persetujuan Owner per invoice dinonaktifkan khusus untuk Order QA #108.");
+      return;
+    }
     // Read-only preflight prevents an ordinary/unassigned Portal Admin from
     // prompting an Owner to authorize an Invoice they cannot lawfully issue.
     // Final issuance STILL rechecks both identities under company RLS + locks.
@@ -4883,9 +4902,14 @@ async function route(request, response) {
     const user = await requireAdmin(request,response);
     if(!user)return;
     if(!isInvoiceOwnerHandoffEnabled()){sendError(response,404,"Endpoint tidak tersedia.");return;}
+    const invoiceId=Number(adminInvoiceHandoffTake[1]);
+    if (isAutomaticInvoiceDevEnabled() && isAutomaticInvoicePilotInvoice(invoiceId, 1)) {
+      sendError(response,404,"Persetujuan Owner per invoice dinonaktifkan khusus untuk Order QA #108.");
+      return;
+    }
     const result=takeInvoiceOwnerHandoff({
       ticket:adminInvoiceHandoffTake[2],issuer:user,
-      invoiceId:Number(adminInvoiceHandoffTake[1]),
+      invoiceId,
     });
     sendJson(response,200,result);
     return;
@@ -4915,6 +4939,11 @@ async function route(request, response) {
       sendError(response, 404, "Invoice tidak ditemukan.");
       return;
     }
+    if (isAutomaticInvoiceDevEnabled() &&
+        isAutomaticInvoicePilotInvoice(invoiceId, Number(result.rows[0].company_id))) {
+      sendError(response,404,"Persetujuan Owner per invoice dinonaktifkan khusus untuk Order QA #108.");
+      return;
+    }
     const snapshot=invoiceReviewSnapshotRequired()
       ? await readInvoiceOwnerReviewSnapshot(query,invoiceId) : null;
     if(snapshot && snapshot.companyId!==Number(result.rows[0].company_id)) {
@@ -4925,6 +4954,29 @@ async function route(request, response) {
       ...(snapshot?{reviewDigest:invoiceOwnerReviewDigest(snapshot)}:{}),
     });
     sendJson(response, 200, {challenge,expiresInSeconds:90});
+    return;
+  }
+  if (request.method === "POST" && pathname === "/api/portal/admin/invoices/auto-issue-ready") {
+    const user = await requireAdmin(request, response);
+    if (!user) return;
+    if (!isAutomaticInvoiceDevEnabled() || !isDevInvoiceScopedWriterRequested(process.env)) {
+      sendError(response, 404, "Otomatisasi invoice DEV belum tersedia.");
+      return;
+    }
+    let postSalesInvoiceWithClient = null;
+    try {
+      postSalesInvoiceWithClient = await loadDevOriginalAccountingOwner();
+      if (typeof postSalesInvoiceWithClient !== "function") {
+        sendError(response, 503, "Paket Accounting DEV belum siap atau tidak terverifikasi.");
+        return;
+      }
+    } catch {
+      sendError(response, 503, "Paket Accounting DEV belum siap atau tidak terverifikasi.");
+      return;
+    }
+    await handleAutomaticInvoiceRun({
+      request, response, user, sendJson, sendError, postSalesInvoiceWithClient,
+    });
     return;
   }
   const adminInvoiceActionMatch = pathname.match(/^\/api\/portal\/admin\/invoices\/(\d+)\/action$/);

@@ -6,6 +6,7 @@ import {
 } from "./dev-invoice-owner-review-snapshot.mjs";
 import {assertInvoiceReviewChallengeMatchesSource} from "./dev-bizportal-invoice-attestation.mjs";
 import {lockInvoiceTaxSourceRows} from "./dev-invoice-tax-source-rowlock.mjs";
+import { isAutomaticInvoiceDevEnabled, isAutomaticInvoiceCompanyAllowed, isEmailOtpAuthenticatedAdmin, isAutomaticInvoicePilotInvoice } from "./dev-auto-invoice-policy.mjs";
 
 import { requireDirectCompanyInvoiceWriterSession } from "./dev-customer-invoice-writer-session-guard.mjs";
 import {
@@ -801,7 +802,10 @@ async function requireTransactionalSalesInvoiceEvidence(db, invoice, actorId, en
 
 export async function handleAdminInvoices({ request, response, user, sendJson, sendError, invoiceId = null, postSalesInvoiceWithClient = null, verifySignedBizPortalProof = null }) {
   if (request.method === "GET" && invoiceId == null) {
-    sendJson(response, 200, { items: await listInvoices(user, { admin: true }) });
+    sendJson(response, 200, {
+      items: await listInvoices(user, { admin: true }),
+      automaticInvoiceIds: isAutomaticInvoiceDevEnabled() ? [108] : [],
+    });
     return;
   }
   if (request.method === "GET" && invoiceId != null) {
@@ -819,9 +823,13 @@ export async function handleAdminInvoices({ request, response, user, sendJson, s
     return;
   }
   const action = text(request.body?.action);
-  if (action !== "mark_invoiced") {
+  const automaticIssue = action === "auto_issue";
+  if (action !== "mark_invoiced" && !automaticIssue) {
     sendError(response, 400, "Action invoice tidak didukung.");
     return;
+  }
+  if (automaticIssue && !isAutomaticInvoiceDevEnabled()) {
+    fail(503, "Penerbitan invoice otomatis belum diaktifkan atau belum memenuhi pengaman DEV.");
   }
   const atomicRequested = process.env.CUSTOMER_PORTAL_ATOMIC_ACCOUNTING_POST_DEV === "true";
   let selectedCompanyId = null;
@@ -836,17 +844,30 @@ export async function handleAdminInvoices({ request, response, user, sendJson, s
   } : null;
   const result = await withTransaction(async (db, transactionClient) => {
     const row = await loadInvoice(invoiceId, user, { db, admin: true, forUpdate: true });
-    // DEV-only QA #108 is blocked from legacy issuance. Once ALL three
-    // separate financial gates are ON, delegate to the original same-client
-    // company writer, RLS, signed Super Admin and canonical PostingEngine
-    // guards below. Never short-circuit those guards or mark issued here.
+    if (!automaticIssue && action === "mark_invoiced" &&
+        isAutomaticInvoiceDevEnabled() &&
+        isAutomaticInvoicePilotInvoice(row.id, row.company_id)) {
+      fail(409, "Invoice QA CST-DEV #108 diproses otomatis; jalur manual dinonaktifkan untuk dokumen pilot ini.");
+    }
+    if (automaticIssue && !isAutomaticInvoiceCompanyAllowed(row.company_id)) {
+      fail(403, "Otomatisasi invoice saat ini dibatasi untuk CST-DEV.");
+    }
+    // Invoice #108 and all automatic pilot invoices stay on the original
+    // same-client company writer, row locks, RLS, canonical identity,
+    // PostingEngine and persisted AR/GL evidence. No per-invoice Owner OTP.
+    if (automaticIssue && (!isAutomaticInvoiceCompanyAllowed(row.company_id) ||
+        !INVOICEABLE_STATUSES.has(row.status) || row.cancelled_at != null)) {
+      fail(403, "Order tidak memenuhi kebijakan penerbitan invoice otomatis CST-DEV.");
+    }
     if (process.env.APP_ENV === "development"
         && Number(row.id) === 108 && Number(row.company_id) === 1
         && row.doc_number === "QA-CST-DEV-OWNER-20261120-001"
         && (!atomicRequested
             || process.env.CUSTOMER_PORTAL_REQUIRE_POSTED_AR_EVIDENCE_DEV !== "true"
-            || process.env.CUSTOMER_PORTAL_REQUIRE_BIZPORTAL_ATTEST_DEV !== "true")) {
-      fail(503, "Invoice QA #108 belum diizinkan melalui Customer Portal DEV.");
+            || (automaticIssue
+                ? !isAutomaticInvoiceDevEnabled()
+                : process.env.CUSTOMER_PORTAL_REQUIRE_BIZPORTAL_ATTEST_DEV !== "true"))) {
+      fail(503, "Invoice QA #108 belum memenuhi jalur invoice DEV yang diizinkan.");
     }
     // DEV-only: the legacy feature-OFF route used to mark Invoice issued
     // without any posted sales journal or independent AR evidence. Refuse
@@ -870,50 +891,56 @@ export async function handleAdminInvoices({ request, response, user, sendJson, s
           process.env.CUSTOMER_PORTAL_REQUIRE_POSTED_AR_EVIDENCE_DEV !== "true") {
         fail(503, "Jalur posting Invoice atomik belum diaktifkan secara aman.");
       }
-      // The Portal Admin must be active and explicitly scoped to this
-      // Invoice's canonical company (Owner may also issue for a global scope).
-      // The company's admin assignment is checked even when an Owner signed.
-      await requireCanonicalSalesInvoiceIssuer(db, user, Number(row.company_id));
+      // A valid authenticated Portal Admin session is the human boundary.
+      // Canonical user status, role and company assignment are revalidated
+      // under the same transaction. Auto mode does not ask for a second OTP.
+      const issuerActorId = await requireCanonicalSalesInvoiceIssuer(
+        db, user, Number(row.company_id),
+      );
       if(invoiceReviewSnapshotRequired()){
-        // Lock company tax settings and the exact accounting tax row in the
-        // SAME Invoice transaction. Concurrent editors wait until COMMIT.
+        // Lock company tax settings and the exact tax row in this transaction.
+        // The source snapshot is validated automatically; it is no longer a
+        // per-invoice human approval challenge.
         await lockInvoiceTaxSourceRows(db,Number(row.company_id),Number(row.id));
-        // Re-read persisted customer/tax/total under the SAME company RLS
-        // transaction AFTER row FOR UPDATE; reject any post-consent changes
-        // before mutating Sales Invoice, GL, AR, PPN or audit.
         const sourceSnapshot=await readInvoiceOwnerReviewSnapshot(db,Number(row.id));
-        assertInvoiceReviewChallengeMatchesSource(
-          request.body?.bizportalInvoiceChallenge,
-          {portalUser:user,invoiceId:Number(row.id),companyId:Number(row.company_id)},
-          invoiceOwnerReviewDigest(sourceSnapshot),
+        invoiceOwnerReviewDigest(sourceSnapshot);
+        if (!automaticIssue) {
+          assertInvoiceReviewChallengeMatchesSource(
+            request.body?.bizportalInvoiceChallenge,
+            {portalUser:user,invoiceId:Number(row.id),companyId:Number(row.company_id)},
+            invoiceOwnerReviewDigest(sourceSnapshot),
+          );
+        }
+      }
+      if (automaticIssue) {
+        canonicalActorId = issuerActorId;
+      } else {
+        // Legacy dual-auth endpoint retained only for clients that have not
+        // yet moved to automatic DEV issuance. New UI no longer exposes it.
+        if (process.env.CUSTOMER_PORTAL_REQUIRE_BIZPORTAL_ATTEST_DEV !== "true" ||
+            typeof verifySignedBizPortalProof !== "function") {
+          fail(503, "Verifikasi sesi Super Admin BizPortal belum terpasang.");
+        }
+        let verifiedApproval = false;
+        try {
+          verifiedApproval = await verifySignedBizPortalProof({
+            challenge: request.body?.bizportalInvoiceChallenge,
+            proof: request.body?.bizportalInvoiceProof,
+            portalUser: user,
+            invoiceId: Number(row.id),
+            companyId: Number(row.company_id),
+          });
+        } catch {
+          fail(403, "Bukti sesi Super Admin BizPortal tidak valid.");
+        }
+        if (!verifiedApproval || typeof verifiedApproval.actorId !== "string" ||
+            typeof verifiedApproval.email !== "string") {
+          fail(403, "Sesi Super Admin BizPortal belum diverifikasi secara independen.");
+        }
+        canonicalActorId = await requireCanonicalSalesInvoiceOwner(
+          db, verifiedApproval, Number(row.company_id),
         );
       }
-      // Exactly ONE signed approval: independently authenticated BizPortal
-      // Owner/Super Admin (not a second reviewer/Admin). The trusted verifier
-      // extracts actor identity from the actual Ed25519 signature, not HTTP.
-      if (process.env.CUSTOMER_PORTAL_REQUIRE_BIZPORTAL_ATTEST_DEV !== "true" ||
-          typeof verifySignedBizPortalProof !== "function") {
-        fail(503, "Verifikasi sesi Super Admin BizPortal belum terpasang.");
-      }
-      let verifiedApproval = false;
-      try {
-        verifiedApproval = await verifySignedBizPortalProof({
-          challenge: request.body?.bizportalInvoiceChallenge,
-          proof: request.body?.bizportalInvoiceProof,
-          portalUser: user,
-          invoiceId: Number(row.id),
-          companyId: Number(row.company_id),
-        });
-      } catch {
-        fail(403, "Bukti sesi Super Admin BizPortal tidak valid.");
-      }
-      if (!verifiedApproval || typeof verifiedApproval.actorId !== "string" ||
-          typeof verifiedApproval.email !== "string") {
-        fail(403, "Sesi Super Admin BizPortal belum diverifikasi secara independen.");
-      }
-      canonicalActorId = await requireCanonicalSalesInvoiceOwner(
-        db, verifiedApproval, Number(row.company_id),
-      );
     }
     if (row.invoice_status === "invoiced") {
       await requirePostedCustomerArEvidence(db, row);
@@ -979,6 +1006,114 @@ export async function handleAdminInvoices({ request, response, user, sendJson, s
     return mapped;
   }, {verifyCustomerInvoiceAr: atomicRequested, connect});
   sendJson(response, 200, result);
+}
+
+/**
+ * Automatic pilot after authenticated Admin OTP login.
+ * Initial release is restricted to the single existing QA Order #108; expansion
+ * requires a separately reviewed policy change. Only CST company_id=1 is eligible.
+ * Each invoice still enters handleAdminInvoices' original locked transaction,
+ * company writer, tax checks, CanonicalPostingEngine, AR/GL/audit evidence.
+ */
+export async function handleAutomaticInvoiceRun({
+  request, response, user, sendJson, sendError, postSalesInvoiceWithClient,
+}) {
+  if (!isAutomaticInvoiceDevEnabled()) {
+    sendError(response, 404, "Otomatisasi invoice tidak tersedia.");
+    return;
+  }
+  if (!isEmailOtpAuthenticatedAdmin(user)) {
+    sendError(response, 403, "Otomatisasi invoice hanya menerima sesi Admin hasil Email OTP.");
+    return;
+  }
+  try {
+    await requireCanonicalSalesInvoiceIssuer(query, user, 1);
+  } catch {
+    sendError(response, 403, "Akun Admin tidak memiliki penugasan aktif untuk CST.");
+    return;
+  }
+  // Do not repeatedly open the company writer while the existing CST AR
+  // source actor is administratively OFF. This is a read-only preflight;
+  // it does not enable the actor or alter any accounting data.
+  const arActor = await query(
+    `select enabled
+       from public.bizportal_customer_ar_source_actors_dev
+      where company_id=1
+        and role_name='bizportal_customer_invoice_cst_writer_dev'
+      limit 2`,
+  );
+  if (arActor.rows.length !== 1 || arActor.rows[0].enabled !== true) {
+    sendJson(response, 200, {
+      enabled: true,
+      companyId: 1,
+      scanned: 0,
+      invoiced: 0,
+      blocked: true,
+      results: [{
+        invoiceId: 108,
+        status: "blocked",
+        message: "Sumber AR CST belum diaktifkan melalui jalur DBA yang berwenang.",
+      }],
+    });
+    return;
+  }
+  const candidates = await query(
+    `select id
+       from public.sales_documents
+      where id=108
+        and doc_number='QA-CST-DEV-OWNER-20261120-001'
+        and company_id=1
+        and invoice_status='to_invoice'
+        and status::text = any($1::text[])
+        and cancelled_at is null
+      order by created_at asc,id asc
+      limit 1`,
+    [[...INVOICEABLE_STATUSES]],
+  );
+  const results = [];
+  let blocked = false;
+  for (const candidate of candidates.rows) {
+    const invoiceId = Number(candidate.id);
+    let issued = null;
+    try {
+      await handleAdminInvoices({
+        request: { method: "POST", body: { action: "auto_issue" } },
+        response: {},
+        user,
+        sendJson: (_response, statusCode, body) => {
+          if (statusCode !== 200) throw Object.assign(new Error("Invoice automatic response rejected."), { statusCode });
+          issued = body;
+        },
+        sendError: (_response, statusCode, message) => {
+          throw Object.assign(new Error(message), { statusCode });
+        },
+        invoiceId,
+        postSalesInvoiceWithClient,
+      });
+      if (!issued || issued.invoiceStatus !== "invoiced" || !issued.invoiceNumber) {
+        throw Object.assign(new Error("Penerbitan otomatis belum menghasilkan Invoice terverifikasi."), { statusCode: 422 });
+      }
+      results.push({ invoiceId, status: "invoiced", invoiceNumber: issued.invoiceNumber });
+    } catch (error) {
+      blocked = true;
+      results.push({
+        invoiceId,
+        status: "blocked",
+        message: Number.isInteger(error?.statusCode)
+          ? String(error.message || "Order belum memenuhi seluruh pemeriksaan otomatis.")
+          : "PostingEngine atau pemeriksaan akuntansi menolak transaksi; tidak ada invoice yang dinyatakan terbit.",
+      });
+      break;
+    }
+  }
+  sendJson(response, 200, {
+    enabled: true,
+    companyId: 1,
+    scanned: candidates.rows.length,
+    invoiced: results.filter(item => item.status === "invoiced").length,
+    blocked,
+    results,
+  });
 }
 
 // Payment approval is an authorized company Admin action, NOT another

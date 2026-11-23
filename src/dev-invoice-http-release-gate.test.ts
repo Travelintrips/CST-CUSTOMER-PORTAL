@@ -13,7 +13,7 @@ const devReady = {
 };
 
 describe("CST-DEV HTTP Invoice action release gate", () => {
-  it("wires the existing three-flag readiness check before the trusted owner and handler", () => {
+  it("wires the company-scoped writer readiness check before the trusted Accounting owner and handler", () => {
     const start = route.indexOf('const adminInvoiceActionMatch = pathname.match');
     const gate = route.indexOf('!isDevInvoiceScopedWriterRequested(process.env)', start);
     const owner = route.indexOf('postSalesInvoiceWithClient = await loadDevOriginalAccountingOwner()', start);
@@ -32,11 +32,11 @@ describe("CST-DEV HTTP Invoice action release gate", () => {
     expect(isDevInvoiceScopedWriterRequested({...devReady,
       CUSTOMER_PORTAL_REQUIRE_POSTED_AR_EVIDENCE_DEV:"false"})).toBe(false);
     expect(isDevInvoiceScopedWriterRequested({...devReady,
-      CUSTOMER_PORTAL_REQUIRE_BIZPORTAL_ATTEST_DEV:"false"})).toBe(false);
+      CUSTOMER_PORTAL_REQUIRE_BIZPORTAL_ATTEST_DEV:"false"})).toBe(true);
     expect(isDevInvoiceScopedWriterRequested({
       APP_ENV:"development",NODE_ENV:"development"})).toBe(false);
   });
-  it("permits the handler route only when the DEV three-flag contract is met", () => {
+  it("permits the handler route when atomic posting and posted-AR evidence are enabled", () => {
     expect(isDevInvoiceScopedWriterRequested(devReady)).toBe(true);
   });
   it("does not treat PROD runtime as an authorized DEV writer", () => {

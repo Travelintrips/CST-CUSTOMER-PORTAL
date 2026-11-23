@@ -52,15 +52,19 @@ export default function AdminPage() {
     const query = new URLSearchParams(typeof window !== "undefined" ? window.location.search : "");
     return isPortalAdmin() ? (query.get("tab") ?? "service-operations") : "claim";
   });
-
   useEffect(() => {
     if (!isPortalAdmin()) return;
     let cancelled = false;
     const loadPendingCount = async () => {
       try {
+        const headers = { ...getAuthHeaders(), "Content-Type": "application/json" };
         const [res, workloadRes] = await Promise.all([
-          fetch("/api/portal/admin/approvals/stats", { headers: getAuthHeaders(), credentials: "include", cache: "no-store" }),
-          fetch("/api/portal/admin/service-operations?limit=1&offset=0", { headers: getAuthHeaders(), credentials: "include", cache: "no-store" }),
+          fetch("/api/portal/admin/approvals/stats", { headers, credentials: "include", cache: "no-store" }),
+          fetch("/api/portal/admin/service-operations?limit=1&offset=0", { headers, credentials: "include", cache: "no-store" }),
+          fetch("/api/portal/admin/invoices/auto-issue-ready", {
+            method: "POST", headers, credentials: "include", cache: "no-store",
+            body: JSON.stringify({}),
+          }).catch(() => null),
         ]);
         if (res.ok) {
           const data = await res.json();

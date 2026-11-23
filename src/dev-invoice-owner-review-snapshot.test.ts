@@ -81,6 +81,9 @@ describe("snapshot of persisted Invoice + canonical tax authority",()=>{
      CUSTOMER_PORTAL_REQUIRE_BIZPORTAL_ATTEST_DEV:"true",
      CUSTOMER_PORTAL_INVOICE_SIGNED_REVIEW_SNAPSHOT_DEV:"true"};
    expect(invoiceReviewSnapshotRequired(env)).toBe(true);
+   // Source/tax snapshot remains mandatory even when the old per-invoice
+   // second-application approval gate is disabled.
+   expect(invoiceReviewSnapshotRequired({...env,CUSTOMER_PORTAL_REQUIRE_BIZPORTAL_ATTEST_DEV:"false"})).toBe(true);
    expect(invoiceReviewSnapshotRequired({...env,APP_ENV:"production"})).toBe(false);
    expect(invoiceReviewSnapshotRequired({...env,CUSTOMER_PORTAL_INVOICE_SIGNED_REVIEW_SNAPSHOT_DEV:"false"})).toBe(false);
  });
