@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { CheckCircle2, FileCheck2, Loader2, RefreshCw } from "lucide-react";
 import { getAuthHeaders } from "@/lib/auth";
 import { requestBizPortalInvoiceProof } from "@/lib/bizportal-invoice-proof";
+import { selectCustomerInvoiceApprovalMode, type CustomerInvoiceApprovalMode } from "@/lib/customer-invoice-approval-mode";
 
 type Invoice = {
   id: number;
@@ -65,24 +66,29 @@ export function CustomerBillingTab({ initialView = "all" }: { initialView?: "all
   const [busy, setBusy] = useState<number | null>(null);
   const [error, setError] = useState("");
   const [handoffs,setHandoffs] = useState<Record<number,OwnerHandoff>>({});
-  const handoffEnabled =
-    import.meta.env.VITE_CUSTOMER_PORTAL_BIZPORTAL_ATTEST_DEV === "true" &&
-    import.meta.env.VITE_CUSTOMER_PORTAL_INVOICE_HANDOFF_DEV === "true" &&
-    import.meta.env.VITE_CUSTOMER_PORTAL_INVOICE_SIGNED_REVIEW_SNAPSHOT_DEV === "true";
+  // Only authenticated server flags can enable this DEV-only handoff.
+  const [approvalMode,setApprovalMode] = useState<CustomerInvoiceApprovalMode>("unavailable");
+  const handoffEnabled = approvalMode === "handoff";
 
   const load = useCallback(async () => {
     setLoading(true);
     setError("");
     try {
       const headers = getAuthHeaders();
-      const [invoiceResponse, paymentResponse] = await Promise.all([
+      const [invoiceResponse, paymentResponse, approvalResponse] = await Promise.all([
         fetch("/api/portal/admin/invoices", { headers, credentials: "include", cache: "no-store" }),
         fetch("/api/portal/admin/payments", { headers, credentials: "include", cache: "no-store" }),
+        fetch("/api/portal/admin/accounting/attestation-config", {
+          headers, credentials: "include", cache: "no-store",
+        }).catch(() => null),
       ]);
       const invoiceBody = await invoiceResponse.json();
       const paymentBody = await paymentResponse.json();
       if (!invoiceResponse.ok) throw new Error(invoiceBody.message ?? "Gagal memuat invoice");
       if (!paymentResponse.ok) throw new Error(paymentBody.message ?? "Gagal memuat payment");
+      const approvalConfig = approvalResponse?.ok
+        ? await approvalResponse.json().catch(() => null) : null;
+      setApprovalMode(selectCustomerInvoiceApprovalMode(approvalConfig));
       setInvoices(invoiceBody.items ?? []);
       setPayments(paymentBody.items ?? []);
     } catch (cause) {
@@ -222,11 +228,16 @@ export function CustomerBillingTab({ initialView = "all" }: { initialView?: "all
                   </div>
                   {invoice.invoiceStatus !== "invoiced" && (
                     <div className="flex flex-col gap-2">
-                      {!handoffEnabled && (
+                      {approvalMode === "legacy" && (
                         <button type="button" disabled={busy === invoice.id} onClick={() => void issueInvoice(invoice.id)}
                           className="inline-flex items-center gap-2 rounded-lg bg-sky-600 px-3 py-2 text-sm font-medium text-white hover:bg-sky-700 disabled:opacity-50">
                           {busy === invoice.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileCheck2 className="h-4 w-4" />} Terbitkan invoice
                         </button>
+                      )}
+                      {approvalMode === "unavailable" && (
+                        <p className="max-w-xs text-xs text-amber-700">
+                          Persetujuan Owner belum siap. Penerbitan ditahan sampai verifikasi DEV tersedia.
+                        </p>
                       )}
                       {handoffEnabled && (
                         <button type="button" disabled={busy === invoice.id}
