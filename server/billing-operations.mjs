@@ -1030,6 +1030,31 @@ export async function handleAutomaticInvoiceRun({
     sendError(response, 403, "Akun Admin tidak memiliki penugasan aktif untuk CST.");
     return;
   }
+  // Do not repeatedly open the company writer while the existing CST AR
+  // source actor is administratively OFF. This is a read-only preflight;
+  // it does not enable the actor or alter any accounting data.
+  const arActor = await query(
+    `select enabled
+       from public.bizportal_customer_ar_source_actors_dev
+      where company_id=1
+        and role_name='bizportal_customer_invoice_cst_writer_dev'
+      limit 2`,
+  );
+  if (arActor.rows.length !== 1 || arActor.rows[0].enabled !== true) {
+    sendJson(response, 200, {
+      enabled: true,
+      companyId: 1,
+      scanned: 0,
+      invoiced: 0,
+      blocked: true,
+      results: [{
+        invoiceId: 108,
+        status: "blocked",
+        message: "Sumber AR CST belum diaktifkan melalui jalur DBA yang berwenang.",
+      }],
+    });
+    return;
+  }
   const candidates = await query(
     `select id
        from public.sales_documents
