@@ -48,6 +48,7 @@ import {
 } from "./operational-health.mjs";
 import {
   handleAdminInvoices,
+  handleAutomaticInvoiceRun,
   handleAdminPayments,
   handleCustomerInvoices,
   handleCustomerPayments,
@@ -4925,6 +4926,25 @@ async function route(request, response) {
       ...(snapshot?{reviewDigest:invoiceOwnerReviewDigest(snapshot)}:{}),
     });
     sendJson(response, 200, {challenge,expiresInSeconds:90});
+    return;
+  }
+  if (request.method === "POST" && pathname === "/api/portal/admin/invoices/auto-issue-ready") {
+    const user = await requireAdmin(request, response);
+    if (!user) return;
+    let postSalesInvoiceWithClient = null;
+    try {
+      postSalesInvoiceWithClient = await loadDevOriginalAccountingOwner();
+      if (typeof postSalesInvoiceWithClient !== "function") {
+        sendError(response, 503, "Paket Accounting DEV belum siap atau tidak terverifikasi.");
+        return;
+      }
+    } catch {
+      sendError(response, 503, "Paket Accounting DEV belum siap atau tidak terverifikasi.");
+      return;
+    }
+    await handleAutomaticInvoiceRun({
+      request, response, user, sendJson, sendError, postSalesInvoiceWithClient,
+    });
     return;
   }
   const adminInvoiceActionMatch = pathname.match(/^\/api\/portal\/admin\/invoices\/(\d+)\/action$/);
