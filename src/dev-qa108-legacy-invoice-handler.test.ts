@@ -34,7 +34,9 @@ import { handleAdminInvoices } from "../server/billing-operations.mjs";
 const original = Object.fromEntries(
   ["APP_ENV", "NODE_ENV", "CUSTOMER_PORTAL_ATOMIC_ACCOUNTING_POST_DEV",
    "CUSTOMER_PORTAL_REQUIRE_POSTED_AR_EVIDENCE_DEV",
-   "CUSTOMER_PORTAL_REQUIRE_BIZPORTAL_ATTEST_DEV"].map(k => [k, process.env[k]])
+   "CUSTOMER_PORTAL_REQUIRE_BIZPORTAL_ATTEST_DEV",
+   "CUSTOMER_PORTAL_AUTO_INVOICE_DEV",
+   "CUSTOMER_PORTAL_INVOICE_SIGNED_REVIEW_SNAPSHOT_DEV"].map(k => [k, process.env[k]])
 );
 const qa108 = () => ({
   id: 108, company_id: 1, customer_id: 33,
@@ -55,8 +57,8 @@ const sqlMock = async (statement) => {
     throw Error("MOCK_FINANCIAL_MUTATION_ATTEMPT");
   throw Error("MOCK_UNEXPECTED_SQL");
 };
-const call = (invoiceId = 108) => handleAdminInvoices({
-  request: { method: "POST", body: { action: "mark_invoiced" } },
+const call = (invoiceId = 108, action = "mark_invoiced") => handleAdminInvoices({
+  request: { method: "POST", body: { action } },
   response: {},
   user: { id: 501, role: "admin", email: "qa-owner@example.invalid", name: "QA Owner" },
   sendJson: m.sendJson, sendError: m.sendError, invoiceId,
@@ -86,6 +88,8 @@ beforeEach(() => {
   process.env.CUSTOMER_PORTAL_ATOMIC_ACCOUNTING_POST_DEV = "false";
   process.env.CUSTOMER_PORTAL_REQUIRE_POSTED_AR_EVIDENCE_DEV = "false";
   process.env.CUSTOMER_PORTAL_REQUIRE_BIZPORTAL_ATTEST_DEV = "false";
+  process.env.CUSTOMER_PORTAL_AUTO_INVOICE_DEV = "false";
+  process.env.CUSTOMER_PORTAL_INVOICE_SIGNED_REVIEW_SNAPSHOT_DEV = "false";
 });
 afterEach(() => {
   for (const [k, v] of Object.entries(original)) {
@@ -122,6 +126,36 @@ describe("Actual DEV Portal handler rejects only the synthetic QA108 legacy Invo
     expect(m.notifyPortalCustomers).not.toHaveBeenCalled();
     expect(m.verification).not.toHaveBeenCalled();
   });
+  it("automatic mode skips per-invoice BizPortal proof but still fails closed on the scoped RLS writer guard", async () => {
+    process.env.CUSTOMER_PORTAL_ATOMIC_ACCOUNTING_POST_DEV = "true";
+    process.env.CUSTOMER_PORTAL_REQUIRE_POSTED_AR_EVIDENCE_DEV = "true";
+    process.env.CUSTOMER_PORTAL_REQUIRE_BIZPORTAL_ATTEST_DEV = "false";
+    process.env.CUSTOMER_PORTAL_AUTO_INVOICE_DEV = "true";
+    process.env.CUSTOMER_PORTAL_INVOICE_SIGNED_REVIEW_SNAPSHOT_DEV = "true";
+    await expect(call(108, "auto_issue")).rejects.toThrow("MOCK_UNEXPECTED_SQL");
+    expect(m.scopedOpen).toHaveBeenCalledTimes(1);
+    expect(m.verification).not.toHaveBeenCalled();
+    expect(m.sql).toContain("begin");
+    expect(m.sql).toContain("rollback");
+    expect(m.sql).not.toContain("commit");
+    expect(m.sql.some(q => q.startsWith("update") || q.startsWith("insert") || q.startsWith("delete"))).toBe(false);
+    expect(m.notifyAdmins).not.toHaveBeenCalled();
+    expect(m.notifyPortalCustomers).not.toHaveBeenCalled();
+    expect(m.end).toHaveBeenCalledTimes(1);
+  });
+
+  it("automatic mode is blocked when the signed source snapshot guard is OFF", async () => {
+    process.env.CUSTOMER_PORTAL_ATOMIC_ACCOUNTING_POST_DEV = "true";
+    process.env.CUSTOMER_PORTAL_REQUIRE_POSTED_AR_EVIDENCE_DEV = "true";
+    process.env.CUSTOMER_PORTAL_AUTO_INVOICE_DEV = "true";
+    process.env.CUSTOMER_PORTAL_INVOICE_SIGNED_REVIEW_SNAPSHOT_DEV = "false";
+    await expect(call(108, "auto_issue")).rejects.toMatchObject({ statusCode: 503 });
+    expect(m.scopedOpen).not.toHaveBeenCalled();
+    expect(m.sql).toContain("rollback");
+    expect(m.sql).not.toContain("commit");
+    expect(m.verification).not.toHaveBeenCalled();
+  });
+
   it("all three flags ON routes QA108 into real scoped-writer RLS proof, not a permanent QA deny", async () => {
     process.env.CUSTOMER_PORTAL_ATOMIC_ACCOUNTING_POST_DEV = "true";
     process.env.CUSTOMER_PORTAL_REQUIRE_POSTED_AR_EVIDENCE_DEV = "true";
