@@ -5027,7 +5027,7 @@ async function route(request, response) {
     }
     return;
   }
-  if (pathname === "/api/portal/admin/company-requests" || /^\/api\/portal\/admin\/company-requests\/\d+$/.test(pathname)) {
+  if (pathname === "/api/portal/admin/company-requests" || /^\/api\/portal\/admin\/company-requests\/\d+(?:\/self-approval-challenge)?$/.test(pathname)) {
     const user = await requireAdmin(request, response);
     if (user) {
       const body = ["POST", "PUT", "PATCH"].includes(request.method ?? "") ? await readJson(request) : {};
