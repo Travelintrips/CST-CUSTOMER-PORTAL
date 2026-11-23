@@ -92,9 +92,13 @@ if [[ "${CST_INVOICE_DEV_PRIVATE_TMPFS:-false}" == true ]] &&
   boot_running_id="$(docker inspect -f '{{.Image}}' "$boot_container" 2>/dev/null || true)"
   boot_local_id="$(docker image inspect -f '{{.Id}}' cst-customer-portal-dev:local 2>/dev/null || true)"
   boot_user="$(docker inspect -f '{{.Config.User}}' "$boot_container" 2>/dev/null || true)"
+  boot_state="$(docker inspect -f '{{.State.Status}}' "$boot_container" 2>/dev/null || true)"
+  boot_restart="$(docker inspect -f '{{.HostConfig.RestartPolicy.Name}}' "$boot_container" 2>/dev/null || true)"
   boot_project="$(docker inspect -f '{{index .Config.Labels "com.docker.compose.project"}}' "$boot_container" 2>/dev/null || true)"
   boot_service="$(docker inspect -f '{{index .Config.Labels "com.docker.compose.service"}}' "$boot_container" 2>/dev/null || true)"
   if [[ -n "$boot_running_id" && "$boot_running_id" == "$boot_local_id" &&
+        "$boot_state" =~ ^(running|restarting)$ &&
+        "$boot_restart" == "unless-stopped" &&
         "$boot_user" == "21110:21110" &&
         "$boot_project" == "cst-customer-portal-dev" &&
         "$boot_service" == "customer-portal-dev" ]] &&
