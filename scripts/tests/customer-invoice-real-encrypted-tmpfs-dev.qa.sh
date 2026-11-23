@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Authorized DEV-only security QA with REAL version-2 CMS, but NO DB LOGIN.
+# Authorized DEV-only security QA with REAL version-3 CMS, but NO DB LOGIN.
 # Root-only encrypted host file -> stdin -> isolated Docker tmpfs; destroy QA.
 set -euo pipefail
 umask 077
@@ -10,7 +10,7 @@ dir="/run/credentials/cst-customer-portal-dev.service"
 cleanup(){ docker rm -f "$name" >/dev/null 2>&1 || true; }
 trap cleanup EXIT
 test "$(id -u)" = 0
-test -s /etc/cst-invoice-dev/transport/invoice-writer-version2.cms
+test -s /etc/cst-invoice-dev/transport/invoice-writer-version3.cms
 docker run --rm -d --name "$name" --pull never \
  --user 21110:21110 --network none --read-only --cap-drop ALL \
  --pids-limit 32 --memory 260m --cpus .5 \
@@ -35,7 +35,7 @@ if(fs.statfsSync(d).type!==0x01021994)process.exit(5);
 const x=await loadDevCustomerInvoiceSystemdCredentials();
 if(!x.CUSTOMER_PORTAL_CST_INVOICE_WRITER_DSN_DEV.includes("cst_writer_dev")||
    !x.CUSTOMER_PORTAL_DIVA_INVOICE_WRITER_DSN_DEV.includes("diva_writer_dev"))process.exit(6);
-console.log("REAL_VERSION2_BUNDLE_CONTAINER_TMPFS_LOADER_PASS");
+console.log("REAL_VERSION3_BUNDLE_CONTAINER_TMPFS_LOADER_PASS");
 console.log("NO_SQL_CONNECTION_NO_SECRET_VALUE_LOGGED");
 '
 pid="$(docker inspect "$name" --format '{{.State.Pid}}')"
@@ -51,5 +51,5 @@ let blocked=false;
 try{await loadDevCustomerInvoiceSystemdCredentials()}catch(e){blocked=e.statusCode===503}
 if(!blocked)process.exit(8);
 console.log("RESTART_WIPES_CREDENTIAL_AND_FAILS_CLOSED_PASS")'
-echo REAL_ENCRYPTED_VERSION2_CREDENTIAL_EPHEMERAL_QA_PASS
+echo REAL_ENCRYPTED_VERSION3_CREDENTIAL_EPHEMERAL_QA_PASS
 echo ACTIVE_PORTAL_SERVICE_AND_PROD_UNCHANGED
