@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Offline, synthetic-only QA of V2 custody package. Zero real secret access."""
+"""Offline, synthetic-only QA of V3 custody package. Zero real secret access."""
 import base64
 import importlib.util
 import json
@@ -44,7 +44,7 @@ good_env = {
     "GITHUB_ACTIONS":"true","GITHUB_EVENT_NAME":"workflow_dispatch",
     "GITHUB_REPOSITORY":m.SOURCE,"GITHUB_REPOSITORY_ID":m.REPOSITORY_ID,
     "GITHUB_REF":"refs/heads/main","GITHUB_WORKFLOW_REF":m.WORKFLOW_REF,
-    "CST_DEV_INVOICE_CUSTODY_APPROVAL":"APPROVE-ENCRYPTED-CST-DEV-V2",
+    "CST_DEV_INVOICE_CUSTODY_APPROVAL":"APPROVE-ENCRYPTED-CST-DEV-V3",
     "CST_DEV_INVOICE_CUSTODY_ENABLED":"approved-reviewed",
     "GITHUB_SHA":"abcdef0123456789abcdef0123456789abcdef01",
 }
@@ -74,7 +74,7 @@ response={
 }
 with patch.object(m.urllib.request,"urlopen",return_value=FakeResponse(json.dumps(response).encode())) as mocked:
     assert m.read_exact_gcp_version("synthetic-"+("a"*60)) == raw
-    assert mocked.call_args.args[0].full_url.endswith("/versions/2:access")
+    assert mocked.call_args.args[0].full_url.endswith("/versions/3:access")
 print("PINNED_SECRET_VERSION_CRC32C_PASS")
 
 response["payload"]["dataCrc32c"] = "1"
@@ -83,13 +83,13 @@ with patch.object(m.urllib.request,"urlopen",return_value=FakeResponse(json.dump
 print("CORRUPTED_SECRET_REFUSED_PASS")
 
 response["payload"]["dataCrc32c"]=str(m.crc32c(raw))
-response["name"]=m.VERSION.replace("/versions/2","/versions/1")
+response["name"]=m.VERSION.replace("/versions/3","/versions/1")
 with patch.object(m.urllib.request,"urlopen",return_value=FakeResponse(json.dumps(response).encode())):
     expect_denied(lambda: m.read_exact_gcp_version("synthetic-"+("a"*60)))
 print("WRONG_SECRET_VERSION_REFUSED_PASS")
 
 cert=Path(__file__).with_name("dev-invoice-envelope-recipient.pem")
-with tempfile.TemporaryDirectory(prefix="invoice-v2-custody-qa-") as temp:
+with tempfile.TemporaryDirectory(prefix="invoice-v3-custody-qa-") as temp:
     out=Path(temp)/"synthetic"
     p=subprocess.run(
         [sys.executable,str(script),"--mode","synthetic",
@@ -97,18 +97,18 @@ with tempfile.TemporaryDirectory(prefix="invoice-v2-custody-qa-") as temp:
         capture_output=True,text=True)
     assert p.returncode==0 and "SYNTHETIC_CIPHERTEXT_ONLY_PASS" in p.stdout
     assert sorted(x.name for x in out.iterdir()) == [
-        "invoice-writer-version2.cms","invoice-writer-version2.manifest.json"]
-    manifest=json.loads((out/"invoice-writer-version2.manifest.json").read_text())
+        "invoice-writer-version3.cms","invoice-writer-version3.manifest.json"]
+    manifest=json.loads((out/"invoice-writer-version3.manifest.json").read_text())
     assert manifest["qa_only"] is True
     assert not any(x.is_file() and "plaintext" in x.name for x in out.iterdir())
-    assert (out/"invoice-writer-version2.cms").stat().st_mode & 0o777 == 0o600
+    assert (out/"invoice-writer-version3.cms").stat().st_mode & 0o777 == 0o600
     print("EPHEMERAL_SYNTHETIC_CMS_AND_NONRELEASE_MANIFEST_PASS")
     denied=subprocess.run(
         [sys.executable,str(script),"--mode","real",
          "--recipient-cert",str(cert),"--out-dir",str(Path(temp)/"real")],
         capture_output=True,text=True)
-    assert denied.returncode!=0 and "CST_DEV_V2_ENVELOPE_REFUSED" in denied.stderr
+    assert denied.returncode!=0 and "CST_DEV_V3_ENVELOPE_REFUSED" in denied.stderr
     assert not (Path(temp)/"real").exists()
     print("REAL_CREDENTIAL_ACCESS_NOT_ATTEMPTED_DENIAL_PASS")
 
-print("OFFLINE_V2_CUSTODY_QA_PASS")
+print("OFFLINE_V3_CUSTODY_QA_PASS")
