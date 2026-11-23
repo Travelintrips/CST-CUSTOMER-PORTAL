@@ -525,7 +525,7 @@ export async function handleSignup(request, response) {
 }
 
 function smtpEnvConfig() {
-  const pass = (process.env.SMTP_PASS ?? process.env.SMTP_PASSWORD ?? readDevHostingerSmtpPassword()).trim();
+  const pass = (process.env.SMTP_PASS || process.env.SMTP_PASSWORD || readDevHostingerSmtpPassword()).trim();
   const from = (process.env.SMTP_FROM ?? "").trim();
   const user = (process.env.SMTP_USER ?? from).trim();
   const host = (process.env.SMTP_HOST ?? process.env["SMTP-HOST"] ?? "smtp.hostinger.com").trim();
