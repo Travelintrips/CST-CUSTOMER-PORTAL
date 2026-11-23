@@ -843,6 +843,9 @@ export async function handleAdminInvoices({ request, response, user, sendJson, s
   } : null;
   const result = await withTransaction(async (db, transactionClient) => {
     const row = await loadInvoice(invoiceId, user, { db, admin: true, forUpdate: true });
+    if (automaticIssue && !isAutomaticInvoiceCompanyAllowed(row.company_id)) {
+      fail(403, "Otomatisasi invoice saat ini dibatasi untuk CST-DEV.");
+    }
     // Invoice #108 and all automatic pilot invoices stay on the original
     // same-client company writer, row locks, RLS, canonical identity,
     // PostingEngine and persisted AR/GL evidence. No per-invoice Owner OTP.
