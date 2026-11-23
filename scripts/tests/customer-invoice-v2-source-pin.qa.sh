@@ -43,9 +43,9 @@ checks=[
 ]
 positions=[text.index(c) for c in checks]
 assert positions==sorted(positions),"deploy source order drift"
-assert text.count(verify)==5,"must define and call guard at four release boundaries"
+assert text.count(verify)==7,"must define and call guard at boot recovery and four release boundaries"
 source='assert_certified_invoice_handler'
-assert text.count(source)==3,"must define hash verifier and call for live/candidate"
+assert text.count(source)==4,"must define hash verifier and call for live/candidate/local"
 fast=text.index('if [[ "$running_sha" == "$certified_sha" ]]; then')
 ready=text.index('echo "[dev-deploy] Already healthy at certified release')
 assert fast<text.index('assert_certified_invoice_handler live',fast)<ready
@@ -66,6 +66,28 @@ assert positions[2]<text.index(verify,positions[2])<positions[3]
 assert positions[3]<text.index(verify,positions[3])<positions[4]
 assert positions[5]<text.index(verify,positions[5])<positions[6]
 print("CST_DEV_CERTIFIED_CHECKOUT_RECHECK_QA_PASS")
+boot=text.index('# Reboot-only recovery via the EXISTING certified systemd timer')
+end=text.index('running_sha="$(curl -fsS',boot)
+recovery=text[boot:end]
+assert end<positions[0],"reboot recovery must precede full build"
+for token in ('CST_INVOICE_DEV_PRIVATE_TMPFS:-false','CST_INVOICE_DEV_FORCE_CREDENTIAL_REFRESH:-false',
+              'git rev-parse HEAD','boot_running_id','boot_local_id','boot_user','boot_state','boot_restart','boot_project','boot_service',
+              'PORTAL_RELEASE_ID=$certified_sha','APP_ENV=development','NODE_ENV=development',
+              'CREDENTIALS_DIRECTORY=/run/credentials/','CUSTOMER_PORTAL_ATOMIC_ACCOUNTING_POST_DEV=true',
+              'CUSTOMER_PORTAL_REQUIRE_POSTED_AR_EVIDENCE_DEV=true',
+              'CUSTOMER_PORTAL_REQUIRE_BIZPORTAL_ATTEST_DEV=true'):
+    assert token in recovery,"missing reboot identity guard: "+token
+assert '"$boot_state" =~ ^(running|restarting)$' in recovery
+assert '"$boot_restart" == "unless-stopped"' in recovery
+assert recovery.index('"$boot_state" =~') < recovery.index('assert_certified_invoice_handler local')
+assert recovery.index('assert_exact_certified_checkout') < recovery.index('assert_certified_invoice_handler local') < recovery.index('bash ./scripts/dev-invoice-inject-verified-cms.sh')
+assert recovery.index('bash ./scripts/dev-invoice-inject-verified-cms.sh') < recovery.index('PASS: verified reboot-only V3 credential recovery')
+assert 'docker compose' not in recovery and 'docker build' not in recovery
+assert 'exit 1' in recovery and 'exit 0' in recovery
+assert 'if [[ "$target" == candidate || "$target" == local ]]' in text
+assert '--pull never --network none --read-only' in text
+print("CST_DEV_REBOOT_V3_IDENTITY_SOURCE_ONLY_QA_PASS")
+
 PY
 python3 - "$deploy" <<'PY'
 # Exercise the real helper from the release script against a throwaway local

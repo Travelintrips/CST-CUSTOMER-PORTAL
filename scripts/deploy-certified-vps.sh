@@ -43,10 +43,10 @@ assert_certified_invoice_handler() {
   expected="$(git show "$certified_sha:server/billing-operations.mjs" | sha256sum | cut -d' ' -f1)"
   if [[ "$target" == live ]]; then
     actual="$(docker exec cst-customer-portal-dev sha256sum /app/server/billing-operations.mjs 2>/dev/null | cut -d' ' -f1)"
-  elif [[ "$target" == candidate ]]; then
+  elif [[ "$target" == candidate || "$target" == local ]]; then
     actual="$(docker run --rm --pull never --network none --read-only \
       --cap-drop ALL --security-opt no-new-privileges \
-      --entrypoint sha256sum cst-customer-portal-dev:candidate \
+      --entrypoint sha256sum "cst-customer-portal-dev:$target" \
       /app/server/billing-operations.mjs 2>/dev/null | cut -d' ' -f1)"
   else
     echo "[dev-deploy] Unknown Invoice handler image target" >&2
@@ -79,6 +79,80 @@ if(!fs.existsSync("/app/scripts/dev-invoice-tmpfs-inject.mjs") ||
   process.exit(8);' >/dev/null 2>&1; then
     echo "[dev-deploy] previous image cannot restore private Invoice tmpfs" >&2
     exit 1
+  fi
+fi
+
+# Reboot-only recovery via the EXISTING certified systemd timer and injector.
+# Restart wipes the private Docker tmpfs; missing credentials must still fail
+# closed unless every official issuer, image, source and mount check succeeds.
+if [[ "${CST_INVOICE_DEV_PRIVATE_TMPFS:-false}" == true ]] &&
+   [[ "${CST_INVOICE_DEV_FORCE_CREDENTIAL_REFRESH:-false}" != true ]] &&
+   [[ "$(git rev-parse HEAD)" == "$certified_sha" ]]; then
+  boot_container=cst-customer-portal-dev
+  boot_running_id="$(docker inspect -f '{{.Image}}' "$boot_container" 2>/dev/null || true)"
+  boot_local_id="$(docker image inspect -f '{{.Id}}' cst-customer-portal-dev:local 2>/dev/null || true)"
+  boot_user="$(docker inspect -f '{{.Config.User}}' "$boot_container" 2>/dev/null || true)"
+  boot_state="$(docker inspect -f '{{.State.Status}}' "$boot_container" 2>/dev/null || true)"
+  boot_restart="$(docker inspect -f '{{.HostConfig.RestartPolicy.Name}}' "$boot_container" 2>/dev/null || true)"
+  boot_project="$(docker inspect -f '{{index .Config.Labels "com.docker.compose.project"}}' "$boot_container" 2>/dev/null || true)"
+  boot_service="$(docker inspect -f '{{index .Config.Labels "com.docker.compose.service"}}' "$boot_container" 2>/dev/null || true)"
+  if [[ -n "$boot_running_id" && "$boot_running_id" == "$boot_local_id" &&
+        "$boot_state" =~ ^(running|restarting)$ &&
+        "$boot_restart" == "unless-stopped" &&
+        "$boot_user" == "21110:21110" &&
+        "$boot_project" == "cst-customer-portal-dev" &&
+        "$boot_service" == "customer-portal-dev" ]] &&
+     docker inspect -f '{{json .HostConfig.Tmpfs}}' "$boot_container" 2>/dev/null |
+       grep -Fq '/run/credentials/cst-customer-portal-dev.service'; then
+    boot_env="$(docker inspect -f '{{range .Config.Env}}{{println .}}{{end}}' "$boot_container" 2>/dev/null || true)"
+    boot_flags_ok=true
+    for boot_item in "PORTAL_RELEASE_ID=$certified_sha" "APP_ENV=development" \
+      "NODE_ENV=development" \
+      "CREDENTIALS_DIRECTORY=/run/credentials/cst-customer-portal-dev.service" \
+      "CUSTOMER_PORTAL_ATOMIC_ACCOUNTING_POST_DEV=true" \
+      "CUSTOMER_PORTAL_REQUIRE_POSTED_AR_EVIDENCE_DEV=true" \
+      "CUSTOMER_PORTAL_REQUIRE_BIZPORTAL_ATTEST_DEV=true"; do
+      if ! grep -Fxq "$boot_item" <<< "$boot_env"; then
+        boot_flags_ok=false
+        break
+      fi
+    done
+    unset boot_env
+    if [[ "$boot_flags_ok" == true ]] &&
+       ! docker exec --user 21110:21110 "$boot_container" sh -c \
+         'test -r /run/credentials/cst-customer-portal-dev.service/customer-invoice-writers-dev.json' \
+         >/dev/null 2>&1; then
+      assert_exact_certified_checkout
+      assert_certified_invoice_handler local
+      echo "[dev-deploy] Restoring exact certified V3 private tmpfs after reboot"
+      boot_injected=false
+      for boot_attempt in $(seq 1 12); do
+        if [[ "$(docker inspect -f '{{.State.Running}}' "$boot_container" 2>/dev/null || true)" == true ]] &&
+           bash ./scripts/dev-invoice-inject-verified-cms.sh "$boot_container"; then
+          boot_injected=true
+          break
+        fi
+        sleep 2
+      done
+      if [[ "$boot_injected" != true ]]; then
+        echo "[dev-deploy] Reboot credential recovery refused; retaining fail-closed app" >&2
+        exit 1
+      fi
+      for boot_attempt in $(seq 1 20); do
+        boot_ready="$(curl -fsS --max-time 3 http://127.0.0.1:18444/api/readyz 2>/dev/null || true)"
+        boot_release="$(curl -fsS --max-time 3 http://127.0.0.1:18444/api/portal/release-info 2>/dev/null | node -e 'let s="";process.stdin.on("data",x=>s+=x);process.stdin.on("end",()=>{try{process.stdout.write(JSON.parse(s).releaseId||"")}catch{}})' || true)"
+        boot_home="$(curl -sS --max-time 3 -o /dev/null -w '%{http_code}' http://127.0.0.1:18444/ || true)"
+        if [[ "$boot_ready" == *'"status":"ready"'* &&
+              "$boot_release" == "$certified_sha" && "$boot_home" == 200 ]]; then
+          assert_exact_certified_checkout
+          echo "[dev-deploy] PASS: verified reboot-only V3 credential recovery $certified_sha"
+          exit 0
+        fi
+        sleep 2
+      done
+      echo "[dev-deploy] Reboot credential injected but API not ready; refusing release" >&2
+      exit 1
+    fi
   fi
 fi
 
