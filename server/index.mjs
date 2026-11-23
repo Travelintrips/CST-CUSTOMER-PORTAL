@@ -423,6 +423,8 @@ async function requireUser(request, response) {
     sendError(response, 401, "Session is no longer valid.");
     return null;
   }
+  // authMethod is a signed JWT claim, not a browser field or database input.
+  user.authMethod = session.authMethod ?? null;
   return user;
 }
 
