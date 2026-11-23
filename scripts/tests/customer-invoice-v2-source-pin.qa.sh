@@ -77,7 +77,10 @@ for token in ('CST_INVOICE_DEV_PRIVATE_TMPFS:-false','CST_INVOICE_DEV_FORCE_CRED
               'CUSTOMER_PORTAL_REQUIRE_POSTED_AR_EVIDENCE_DEV=true',
               'CUSTOMER_PORTAL_REQUIRE_BIZPORTAL_ATTEST_DEV=true'):
     assert token in recovery,"missing reboot identity guard: "+token
-assert '"$boot_state" =~ ^(running|restarting) < recovery.index('bash ./scripts/dev-invoice-inject-verified-cms.sh')
+assert '"$boot_state" =~ ^(running|restarting)$' in recovery
+assert '"$boot_restart" == "unless-stopped"' in recovery
+assert recovery.index('"$boot_state" =~') < recovery.index('assert_certified_invoice_handler local')
+assert recovery.index('assert_exact_certified_checkout') < recovery.index('assert_certified_invoice_handler local') < recovery.index('bash ./scripts/dev-invoice-inject-verified-cms.sh')
 assert recovery.index('bash ./scripts/dev-invoice-inject-verified-cms.sh') < recovery.index('PASS: verified reboot-only V3 credential recovery')
 assert 'docker compose' not in recovery and 'docker build' not in recovery
 assert 'exit 1' in recovery and 'exit 0' in recovery
