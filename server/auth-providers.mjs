@@ -448,11 +448,11 @@ export async function linkIdentity(customerId, provider, subject, dbQuery = quer
   }
 }
 
-async function loginUser(row) {
+async function loginUser(row, authMethod = null) {
   if (!row || !accountIsUsable(row)) {
     throw errorWithStatus(403, "Akun tidak aktif dan tidak dapat digunakan.");
   }
-  return loginResponse(row, createSession(row));
+  return loginResponse(row, createSession({ ...row, authMethod }));
 }
 
 export async function handleSignup(request, response) {
@@ -1445,7 +1445,7 @@ export async function handleEmailOtpVerify(request, response) {
     return account;
   });
 
-  const result = await loginUser(created.user);
+  const result = await loginUser(created.user, "email_otp");
   json(response, 200, { ...result, isNew: created.isNew }, { "Set-Cookie": sessionCookies(result.token) });
 }
 
