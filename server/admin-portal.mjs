@@ -2173,7 +2173,7 @@ async function loadServiceRows() {
       `select id, order_number, status, tracking_status, customer_name, customer_email,
               customer_phone, company_id, portal_customer_id,
               origin_port, destination_port, estimated_price_idr, final_price_idr,
-              grand_total, pricing_breakdown, notes, created_at, updated_at
+              grand_total, pricing_breakdown, customer_notes as notes, created_at, updated_at
          from public.ocean_freight_orders
         order by created_at desc limit 500`,
     ),
