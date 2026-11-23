@@ -192,9 +192,10 @@ describe("Actual DEV Portal handler rejects only the synthetic QA108 legacy Invo
     process.env.CUSTOMER_PORTAL_INVOICE_SIGNED_REVIEW_SNAPSHOT_DEV = "true";
     m.row.id = invoiceId;
     m.row.company_id = companyId;
-    await expect(call(invoiceId, "mark_invoiced")).rejects.toThrow(
-      "Identitas database Invoice DEV belum memiliki isolasi perusahaan.",
-    );
+    const expectedIsolationFailure = companyId === 3
+      ? "Identitas perusahaan Invoice berubah selama pemilihan koneksi."
+      : "Identitas database Invoice DEV belum memiliki isolasi perusahaan.";
+    await expect(call(invoiceId, "mark_invoiced")).rejects.toThrow(expectedIsolationFailure);
     expect(m.scopedOpen).toHaveBeenCalledTimes(1);
     expect(m.verification).not.toHaveBeenCalled();
     expect(m.sql).toContain("begin");
