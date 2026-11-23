@@ -1,4 +1,5 @@
 import { pool, query, databaseEnvironment, databaseConnectionSource } from "./db.mjs";
+import { getSession } from "./session.mjs";
 import { buildDevVendorQuoteShare } from "./vendor-quote-share.mjs";
 import { getDevVendorWhatsAppReadiness, sendOneDevVendorWhatsAppInvite } from "./dev-vendor-wa-invite.mjs";
 import { getDevVendorWhatsAppSyncState, syncDevVendorWhatsAppStatus } from "./dev-vendor-wa-status.mjs";
@@ -736,6 +737,31 @@ async function handleAdminCompanyRequests(ctx) {
       if (!isDevCompanySelfApprovalEnabled() || matchedCompanyId!==1) {
         await client.query("rollback");
         return adminError(ctx,403,"Persetujuan mandiri memerlukan verifikasi Super Admin.");
+      }
+      // Revalidate and lock the signed Portal Admin identity in the same
+      // write transaction; revoked roles and auth_version cannot race consent.
+      const session=getSession(request);
+      const portalIdentity=await client.query(
+        `select id,email,role,account_status,auth_version
+           from public.portal_customers where id=$1 for share`,
+        [current.portal_customer_id],
+      );
+      const portal=portalIdentity.rows[0];
+      if(portalIdentity.rows.length!==1 ||
+         !session || session.tokenFamily!=="portal-jwt" ||
+         Number(session.id)!==Number(current.portal_customer_id) ||
+         Number(session.id)!==Number(ctx.user.id) ||
+         session.role!=="admin" || portal.role!=="admin" ||
+         portal.account_status!=="active" ||
+         String(portal.email??"").trim().toLowerCase()!==
+           String(session.email??"").trim().toLowerCase() ||
+         String(portal.email??"").trim().toLowerCase()!==
+           String(ctx.user.email??"").trim().toLowerCase() ||
+         Number(session.authVersion??-1)!==Number(portal.auth_version??0) ||
+         Number(ctx.user.auth_version??0)!==Number(portal.auth_version??0)){
+        await client.query("rollback");
+        return adminError(ctx,403,
+          "Sesi Admin sudah berubah. Login ulang sebelum persetujuan mandiri.");
       }
       const canonical=await client.query(
         `select id,email from public.users
