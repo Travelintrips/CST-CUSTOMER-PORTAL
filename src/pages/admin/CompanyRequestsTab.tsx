@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { getAuthHeaders } from "@/lib/auth";
+import { requestBizPortalCompanySelfApprovalProof } from "@/lib/bizportal-company-self-approval-proof";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -13,6 +14,7 @@ type CompanyRequest = {
   customerName: string | null;
   customerEmail: string | null;
   requestedCompanyName: string;
+  canSelfApproveAsSuperAdmin?: boolean;
   requestedRegistrationNumber: string | null;
   status: string;
   matchedCompanyId: number | null;
@@ -119,10 +121,18 @@ export function CompanyRequestsTab() {
     setActionError("");
     setSaving(true);
     try {
+      // Explicit click opens BizPortal's fresh signed Super Admin consent popup.
+      // A regular Admin never receives or uses this exceptional proof path.
+      const signedSelf = decision === "approved" && selected.canSelfApproveAsSuperAdmin
+        ? await requestBizPortalCompanySelfApprovalProof(
+            selected.id, canonicalCompany!.id, getAuthHeaders(),
+          )
+        : {};
       const payload = {
         status: decision,
         matchedCompanyId: decision === "approved" ? canonicalCompany!.id : null,
         reviewNote: reviewNote.trim() || null,
+        ...signedSelf,
       };
       const response = await fetch("/api/portal/admin/company-requests/" + selected.id, {
         method: "PATCH",
@@ -259,8 +269,17 @@ export function CompanyRequestsTab() {
               <DialogFooter className="flex flex-wrap gap-2 sm:justify-start">
                 <Button onClick={() => void submitDecision("approved")}
                   disabled={saving || companiesLoading || !companyId || !verifiedAuthority}>
-                  <ShieldCheck className="mr-1 h-4 w-4" /> Setujui afiliasi
+                  <ShieldCheck className="mr-1 h-4 w-4" />
+                  {selected.canSelfApproveAsSuperAdmin
+                    ? "Verifikasi Super Admin & setujui"
+                    : "Setujui afiliasi"}
                 </Button>
+                {selected.canSelfApproveAsSuperAdmin && (
+                  <p className="text-xs text-amber-700">
+                    Untuk pengajuan sendiri, gunakan sesi BizPortal Super Admin
+                    yang baru (maksimal 5 menit) dan setujui satu kali di popup.
+                  </p>
+                )}
                 <Button variant="outline" onClick={() => void submitDecision("in_review")} disabled={saving}>
                   Dalam pemeriksaan
                 </Button>
