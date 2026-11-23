@@ -11,6 +11,10 @@ import {
 } from "./storage.mjs";
 import { createFreightActionToken } from "./freight-operations.mjs";
 import { corporatePoApprovalGateDevEnabled, companyAffiliationReviewRequiredDev, financialInvoiceCompanyReviewRequiredDev, stageDevExistingCompanyApproval } from "./corporate-po-affiliation-gate.mjs";
+import {
+  isDevCompanySelfApprovalEnabled,mintDevCompanySelfApprovalChallenge,
+  verifyDevCompanySelfApproval,trustedDevBizPortalOrigin,
+} from "./dev-company-self-affiliation.mjs";
 
 const TERMINAL_STATUSES = new Set(["completed", "cancelled", "rejected", "expired", "done"]);
 const SERVICE_LABELS = {
@@ -607,6 +611,44 @@ async function handleAdminApprovals(ctx) {
 async function handleAdminCompanyRequests(ctx) {
   const { request, response, url } = ctx;
   const idMatch = url.pathname.match(/^\/api\/portal\/admin\/company-requests\/(\d+)$/);
+  const selfChallengeMatch = url.pathname.match(
+    /^\/api\/portal\/admin\/company-requests\/(\d+)\/self-approval-challenge$/
+  );
+  if (request.method === "GET" && selfChallengeMatch) {
+    if (!isDevCompanySelfApprovalEnabled() || Number(url.searchParams.get("companyId"))!==1)
+      return adminError(ctx,403,"Persetujuan mandiri Super Admin tidak tersedia.");
+    const requestId=Number(selfChallengeMatch[1]);
+    if (!Number.isSafeInteger(requestId) || requestId<=0)return adminError(ctx,400,"Request tidak valid.");
+    const applicant=await query(
+      `select r.id,r.portal_customer_id
+         from public.portal_company_requests r
+         join public.companies co ON co.id=1 AND co.is_active=true
+        where r.id=$1 and r.portal_customer_id=$2
+          and r.status in ('pending','in_review')
+          and lower(btrim(r.requested_company_name))=
+              lower(btrim(coalesce(co.company_name,co.legal_name,co.name)))
+        limit 2`,[requestId,ctx.user.id],
+    );
+    const canonical=await query(
+      `select id from public.users
+        where lower(btrim(email))=lower(btrim($1))
+          and role='super_admin' and system_role='super_admin'
+          and status='active' and is_active=true
+          and (company_id is null or company_id=1)
+        limit 2`,[ctx.user.email],
+    );
+    if(applicant.rows.length!==1 || canonical.rows.length!==1)
+      return adminError(ctx,403,"Akun tidak memenuhi syarat persetujuan mandiri CST.");
+    try {
+      const challenge=mintDevCompanySelfApprovalChallenge({
+        requestId,companyId:1,applicantId:ctx.user.id,portalUser:ctx.user,
+      });
+      const bizportalOrigin=trustedDevBizPortalOrigin();
+      response.setHeader("Cache-Control","no-store");
+      ctx.sendJson(response,200,{challenge,bizportalOrigin,expiresInSeconds:90});
+    }catch{return adminError(ctx,503,"Verifikasi Super Admin BizPortal tidak tersedia.");}
+    return;
+  }
   if (request.method === "GET") {
     const where = idMatch ? "and r.id = $1" : "";
     const params = idMatch ? [Number(idMatch[1])] : [];
@@ -624,8 +666,23 @@ async function handleAdminCompanyRequests(ctx) {
         limit 250`,
       params,
     );
+    let canonicalSelfReviewer=false;
+    if (isDevCompanySelfApprovalEnabled() && ctx.user?.role==="admin") {
+      const verified=await query(
+        `select id from public.users
+          where lower(btrim(email))=lower(btrim($1))
+            and role='super_admin' and system_role='super_admin'
+            and status='active' and is_active=true
+            and (company_id is null or company_id=1)
+          limit 2`,[ctx.user.email],
+      );
+      canonicalSelfReviewer=verified.rows.length===1;
+    }
     const data = result.rows.map((row) => ({
       id: Number(row.id), customerId: Number(row.portal_customer_id),
+      canSelfApproveAsSuperAdmin:canonicalSelfReviewer &&
+        Number(row.portal_customer_id)===Number(ctx.user.id) &&
+        ["pending","in_review"].includes(row.status),
       customerName: row.customer_name, customerEmail: row.customer_email,
       requestedCompanyName: row.requested_company_name,
       requestedRegistrationNumber: row.requested_registration_number,
@@ -673,10 +730,40 @@ async function handleAdminCompanyRequests(ctx) {
       await client.query("rollback");
       return adminError(ctx, 409, "Permohonan perusahaan ini sudah diputuskan. Muat ulang daftar.");
     }
+    let signedSelfReview=null;
     if (status === "approved" && financialInvoiceCompanyReviewRequiredDev()
         && Number(current.portal_customer_id) === Number(ctx.user.id)) {
-      await client.query("rollback");
-      return adminError(ctx, 403, "Persetujuan afiliasi keuangan harus diberikan Admin lain.");
+      if (!isDevCompanySelfApprovalEnabled() || matchedCompanyId!==1) {
+        await client.query("rollback");
+        return adminError(ctx,403,"Persetujuan mandiri memerlukan verifikasi Super Admin.");
+      }
+      const canonical=await client.query(
+        `select id,email from public.users
+         where lower(btrim(email))=lower(btrim($1))
+           and role='super_admin' and system_role='super_admin'
+           and status='active' and is_active=true
+           and (company_id is null or company_id=1)
+         limit 2 for share`,[ctx.user.email],
+      );
+      const requested=await client.query(
+        `select r.id from public.portal_company_requests r
+           join public.companies co on co.id=1 AND co.is_active=true
+         where r.id=$1 and r.portal_customer_id=$2
+           and lower(btrim(r.requested_company_name))=
+               lower(btrim(coalesce(co.company_name,co.legal_name,co.name)))
+         limit 2`,[id,current.portal_customer_id],
+      );
+      const verified=verifyDevCompanySelfApproval({
+        challenge:body.selfApprovalChallenge,proof:body.selfApprovalProof,
+        portalUser:ctx.user,companyId:1,requestId:id,applicantId:current.portal_customer_id,
+      });
+      if (canonical.rows.length!==1 || requested.rows.length!==1 ||
+          !verified || verified.actorId!==canonical.rows[0].id ||
+          verified.email!==String(canonical.rows[0].email).trim().toLowerCase()) {
+        await client.query("rollback");
+        return adminError(ctx,403,"Persetujuan mandiri memerlukan sesi Super Admin BizPortal baru dan bukti sah.");
+      }
+      signedSelfReview=verified.proofFingerprint;
     }
 
     let canonicalCompanyName = null;
@@ -701,7 +788,12 @@ async function handleAdminCompanyRequests(ctx) {
               reviewed_by = $4, reviewed_at = now(), updated_at = now()
         where id = $5 and status in ('pending', 'in_review')
         returning id`,
-      [status, matchedCompanyId, text(body.reviewNote) || null, ctx.user.id, id],
+      [status, matchedCompanyId,
+       signedSelfReview
+         ? "DEV_SUPERADMIN_SELF_APPROVAL_SIGNED:"+signedSelfReview+
+           (text(body.reviewNote) ? " | "+text(body.reviewNote) : "")
+         : text(body.reviewNote)||null,
+       ctx.user.id, id],
     );
     if (updated.rowCount !== 1) {
       const error = new Error("Permohonan perusahaan berubah. Muat ulang daftar.");
