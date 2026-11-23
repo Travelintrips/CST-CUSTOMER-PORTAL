@@ -4,6 +4,7 @@ import nodemailer from "nodemailer";
 import { pool, query } from "./db.mjs";
 import { createSession, sessionCookies } from "./session.mjs";
 import { resolveCustomerPortalFonnteToken } from "./fonnte-config.mjs";
+import { isPortalLoginMethodAllowed } from "./dev-admin-email-otp-policy.mjs";
 
 const APP_ENV = process.env.APP_ENV ?? process.env.NODE_ENV ?? "development";
 const IS_PRODUCTION =
@@ -451,6 +452,9 @@ export async function linkIdentity(customerId, provider, subject, dbQuery = quer
 async function loginUser(row, authMethod = null) {
   if (!row || !accountIsUsable(row)) {
     throw errorWithStatus(403, "Akun tidak aktif dan tidak dapat digunakan.");
+  }
+  if (!isPortalLoginMethodAllowed(row, authMethod)) {
+    throw errorWithStatus(403, "Akun Admin DEV wajib login menggunakan Email OTP. Jalur password, Google, WhatsApp, dan login langsung tidak diizinkan.");
   }
   return loginResponse(row, createSession({ ...row, authMethod }));
 }
