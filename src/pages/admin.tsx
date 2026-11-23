@@ -4,7 +4,7 @@
  * (sidebar navigation + Tabs content area).
  */
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useLocation } from "wouter";
 import { isAuthenticated, isPortalAdmin, getAuthHeaders } from "@/lib/auth";
 import { useToast } from "@/hooks/use-toast";
@@ -52,6 +52,26 @@ export default function AdminPage() {
     const query = new URLSearchParams(typeof window !== "undefined" ? window.location.search : "");
     return isPortalAdmin() ? (query.get("tab") ?? "service-operations") : "claim";
   });
+  const automaticInvoiceRunStarted = useRef(false);
+
+  // One server-side automatic invoice pass starts as soon as an authenticated
+  // Portal Admin opens the Admin application. No per-invoice click or Owner
+  // popup is required; the server still revalidates company, tax, writer, AR
+  // and CanonicalPostingEngine invariants before committing any invoice.
+  useEffect(() => {
+    if (!isPortalAdmin() || automaticInvoiceRunStarted.current) return;
+    automaticInvoiceRunStarted.current = true;
+    void fetch("/api/portal/admin/invoices/auto-issue-ready", {
+      method: "POST",
+      headers: { ...getAuthHeaders(), "Content-Type": "application/json" },
+      credentials: "include",
+      cache: "no-store",
+      body: JSON.stringify({}),
+    }).catch(() => {
+      // Failures are reported by the server-side finance/audit path; never
+      // fall back to manual invoice issuance or a legacy writer.
+    });
+  }, []);
 
   useEffect(() => {
     if (!isPortalAdmin()) return;
