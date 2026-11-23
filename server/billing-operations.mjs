@@ -1002,6 +1002,80 @@ export async function handleAdminInvoices({ request, response, user, sendJson, s
   sendJson(response, 200, result);
 }
 
+/**
+ * One automatic pass after the authenticated Admin application opens.
+ * Only confirmed, non-cancelled CST (company_id=1) orders are eligible.
+ * Each invoice still enters handleAdminInvoices' original locked transaction,
+ * company writer, tax checks, CanonicalPostingEngine, AR/GL/audit evidence.
+ */
+export async function handleAutomaticInvoiceRun({
+  request, response, user, sendJson, sendError, postSalesInvoiceWithClient,
+}) {
+  if (!isAutomaticInvoiceDevEnabled()) {
+    sendError(response, 404, "Otomatisasi invoice tidak tersedia.");
+    return;
+  }
+  if (user?.role !== "admin" || !user?.email) {
+    sendError(response, 403, "Sesi Admin yang sah diperlukan.");
+    return;
+  }
+  const candidates = await query(
+    `select id
+       from public.sales_documents
+      where company_id=1
+        and invoice_status='to_invoice'
+        and status = any($1::text[])
+        and cancelled_at is null
+      order by created_at asc,id asc
+      limit 100`,
+    [[...INVOICEABLE_STATUSES]],
+  );
+  const results = [];
+  let blocked = false;
+  for (const candidate of candidates.rows) {
+    const invoiceId = Number(candidate.id);
+    let issued = null;
+    try {
+      await handleAdminInvoices({
+        request: { method: "POST", body: { action: "auto_issue" } },
+        response: {},
+        user,
+        sendJson: (_response, statusCode, body) => {
+          if (statusCode !== 200) throw Object.assign(new Error("Invoice automatic response rejected."), { statusCode });
+          issued = body;
+        },
+        sendError: (_response, statusCode, message) => {
+          throw Object.assign(new Error(message), { statusCode });
+        },
+        invoiceId,
+        postSalesInvoiceWithClient,
+      });
+      if (!issued || issued.invoiceStatus !== "invoiced" || !issued.invoiceNumber) {
+        throw Object.assign(new Error("Penerbitan otomatis belum menghasilkan Invoice terverifikasi."), { statusCode: 422 });
+      }
+      results.push({ invoiceId, status: "invoiced", invoiceNumber: issued.invoiceNumber });
+    } catch (error) {
+      blocked = true;
+      results.push({
+        invoiceId,
+        status: "blocked",
+        message: Number.isInteger(error?.statusCode)
+          ? String(error.message || "Order belum memenuhi seluruh pemeriksaan otomatis.")
+          : "PostingEngine atau pemeriksaan akuntansi menolak transaksi; tidak ada invoice yang dinyatakan terbit.",
+      });
+      break;
+    }
+  }
+  sendJson(response, 200, {
+    enabled: true,
+    companyId: 1,
+    scanned: candidates.rows.length,
+    invoiced: results.filter(item => item.status === "invoiced").length,
+    blocked,
+    results,
+  });
+}
+
 // Payment approval is an authorized company Admin action, NOT another
 // Owner OTP. A generic Portal Admin role cannot authorize another company.
 // Row locks protect against revocation during a status transaction.
