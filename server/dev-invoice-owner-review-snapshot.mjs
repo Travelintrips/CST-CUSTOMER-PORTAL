@@ -28,7 +28,6 @@ export function invoiceReviewSnapshotRequired(env=process.env) {
   return env.APP_ENV?.trim().toLowerCase()==="development" &&
     env.CUSTOMER_PORTAL_ATOMIC_ACCOUNTING_POST_DEV==="true" &&
     env.CUSTOMER_PORTAL_REQUIRE_POSTED_AR_EVIDENCE_DEV==="true" &&
-    env.CUSTOMER_PORTAL_REQUIRE_BIZPORTAL_ATTEST_DEV==="true" &&
     env.CUSTOMER_PORTAL_INVOICE_SIGNED_REVIEW_SNAPSHOT_DEV==="true";
 }
 export function buildInvoiceOwnerReviewSnapshot(row) {
