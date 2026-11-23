@@ -138,6 +138,24 @@ if [[ "${CST_INVOICE_DEV_PRIVATE_TMPFS:-false}" == true ]] &&
         echo "[dev-deploy] Reboot credential recovery refused; retaining fail-closed app" >&2
         exit 1
       fi
+      # Reboot destroys both private tmpfs credentials. Restore SMTP before
+      # readiness is reported successful so OTP capability is not silently lost.
+      smtp_credential="/etc/cst-customer-portal-dev/credentials/hostinger-smtp-pass"
+      if [[ -f "$smtp_credential" ]]; then
+        boot_smtp_injected=false
+        for boot_attempt in $(seq 1 12); do
+          if [[ "$(docker inspect -f '{{.State.Running}}' "$boot_container" 2>/dev/null || true)" == true ]] &&
+             bash ./scripts/dev-smtp-inject-encrypted-app-password.sh "$boot_container"; then
+            boot_smtp_injected=true
+            break
+          fi
+          sleep 2
+        done
+        if [[ "$boot_smtp_injected" != true ]]; then
+          echo "[dev-deploy] Reboot SMTP credential recovery refused; OTP stays unavailable" >&2
+          exit 1
+        fi
+      fi
       for boot_attempt in $(seq 1 20); do
         boot_ready="$(curl -fsS --max-time 3 http://127.0.0.1:18444/api/readyz 2>/dev/null || true)"
         boot_release="$(curl -fsS --max-time 3 http://127.0.0.1:18444/api/portal/release-info 2>/dev/null | node -e 'let s="";process.stdin.on("data",x=>s+=x);process.stdin.on("end",()=>{try{process.stdout.write(JSON.parse(s).releaseId||"")}catch{}})' || true)"
