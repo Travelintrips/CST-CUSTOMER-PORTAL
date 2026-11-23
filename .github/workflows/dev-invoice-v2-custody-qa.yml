@@ -1,4 +1,4 @@
-name: CST Invoice DEV — V2 custody source-only QA
+name: CST Invoice DEV — V3 custody source-only QA
 
 on:
   pull_request:

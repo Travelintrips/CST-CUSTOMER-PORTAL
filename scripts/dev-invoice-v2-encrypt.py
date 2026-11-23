@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""CST Invoice DEV V2 ciphertext packaging on an approved ephemeral GitHub runner.
+"""CST Invoice DEV V3 ciphertext packaging on an approved ephemeral GitHub runner.
 
 No plaintext on disk, no secret in argv, workflow logs, or Actions artifacts.
 Production and PostgreSQL role administration are out of scope.
@@ -18,7 +18,7 @@ import sys
 import urllib.parse
 import urllib.request
 
-VERSION = "projects/653506647312/secrets/bizportal-customer-invoice-writers-dev-companies/versions/2"
+VERSION = "projects/653506647312/secrets/bizportal-customer-invoice-writers-dev-companies/versions/3"
 SOURCE = "Travelintrips/CST-CUSTOMER-PORTAL"
 REPOSITORY_ID = "1369747600"
 WORKFLOW_REF = SOURCE + "/.github/workflows/dev-invoice-v2-custody-package.yml@refs/heads/main"
@@ -54,7 +54,7 @@ def validate_context(env: dict) -> str:
         "GITHUB_REPOSITORY_ID": REPOSITORY_ID,
         "GITHUB_REF": "refs/heads/main",
         "GITHUB_WORKFLOW_REF": WORKFLOW_REF,
-        "CST_DEV_INVOICE_CUSTODY_APPROVAL": "APPROVE-ENCRYPTED-CST-DEV-V2",
+        "CST_DEV_INVOICE_CUSTODY_APPROVAL": "APPROVE-ENCRYPTED-CST-DEV-V3",
         "CST_DEV_INVOICE_CUSTODY_ENABLED": "approved-reviewed",
     }
     if any(env.get(k) != v for k, v in required.items()):
@@ -144,7 +144,7 @@ def validate_recipient_certificate(cert_file: Path) -> None:
         raise Refused("RECIPIENT_CERTIFICATE_INVALID") from None
 
 def encrypt_only(plaintext: bytes, certificate: Path, destination: Path) -> None:
-    output = destination / "invoice-writer-version2.cms"
+    output = destination / "invoice-writer-version3.cms"
     try:
         with output.open("xb") as f:
             os.chmod(output, 0o600)
@@ -175,16 +175,16 @@ def run(*, mode: str, out_dir: Path, cert_file: Path, env: dict) -> None:
     try:
         out_dir.mkdir(mode=0o700, parents=False, exist_ok=False)
         encrypt_only(payload, cert_file, out_dir)
-        sha256 = hashlib.sha256((out_dir / "invoice-writer-version2.cms").read_bytes()).hexdigest()
+        sha256 = hashlib.sha256((out_dir / "invoice-writer-version3.cms").read_bytes()).hexdigest()
         manifest = {
             "source_sha": sha, "certificate_sha256": CERT_SHA,
             "envelope_sha256": sha256, "secret_version": VERSION,
             "credential_count": 2, "format": "CMS-AES-256-GCM"
         }
         if mode == "synthetic":
-            # Deliberately incompatible with the real V2 manifest validator.
+            # Deliberately incompatible with the real V3 manifest validator.
             manifest["qa_only"] = True
-        outfile = out_dir / "invoice-writer-version2.manifest.json"
+        outfile = out_dir / "invoice-writer-version3.manifest.json"
         with outfile.open("x", encoding="utf-8") as f:
             os.chmod(outfile, 0o600)
             json.dump(manifest, f, separators=(",", ":"))
@@ -193,7 +193,7 @@ def run(*, mode: str, out_dir: Path, cert_file: Path, env: dict) -> None:
         # transiently, so ephemeral runner cleanup is still required.
         payload[:] = bytes(len(payload))
     print("SYNTHETIC_CIPHERTEXT_ONLY_PASS" if mode == "synthetic"
-          else "CST_DEV_V2_CIPHERTEXT_PACKAGE_READY")
+          else "CST_DEV_V3_CIPHERTEXT_PACKAGE_READY")
 
 def main():
     parser = argparse.ArgumentParser()
@@ -206,7 +206,7 @@ def main():
             env=os.environ)
     except Exception as exc:
         # Never print raw exceptions: HTTP/JSON/openssl errors may contain sensitive data.
-        print("CST_DEV_V2_ENVELOPE_REFUSED", file=sys.stderr)
+        print("CST_DEV_V3_ENVELOPE_REFUSED", file=sys.stderr)
         sys.exit(2)
 
 if __name__ == "__main__":
