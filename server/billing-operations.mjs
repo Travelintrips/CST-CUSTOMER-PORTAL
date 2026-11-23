@@ -1015,8 +1015,8 @@ export async function handleAutomaticInvoiceRun({
     sendError(response, 404, "Otomatisasi invoice tidak tersedia.");
     return;
   }
-  if (user?.role !== "admin" || !user?.email) {
-    sendError(response, 403, "Sesi Admin yang sah diperlukan.");
+  if (!isEmailOtpAuthenticatedAdmin(user)) {
+    sendError(response, 403, "Otomatisasi invoice hanya menerima sesi Admin hasil Email OTP.");
     return;
   }
   try {
