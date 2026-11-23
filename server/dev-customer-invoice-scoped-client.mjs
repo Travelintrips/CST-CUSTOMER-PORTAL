@@ -38,10 +38,11 @@ function blocked() {
   return Object.assign(new Error("Koneksi penulis Invoice DEV per perusahaan belum terverifikasi."),{statusCode:503});
 }
 export function isDevInvoiceScopedWriterRequested(env=process.env) {
+  // The constrained company writer is required by the automatic invoice
+  // path independently of any per-invoice human/Owner attestation.
   return env.APP_ENV==="development" && env.NODE_ENV==="development"
     && env.CUSTOMER_PORTAL_ATOMIC_ACCOUNTING_POST_DEV==="true"
-    && env.CUSTOMER_PORTAL_REQUIRE_POSTED_AR_EVIDENCE_DEV==="true"
-    && env.CUSTOMER_PORTAL_REQUIRE_BIZPORTAL_ATTEST_DEV==="true";
+    && env.CUSTOMER_PORTAL_REQUIRE_POSTED_AR_EVIDENCE_DEV==="true";
 }
 export function parseDevInvoiceScopedWriterDsn(raw,companyId) {
   const rule=DEV_CUSTOMER_INVOICE_COMPANIES[Number(companyId)];
