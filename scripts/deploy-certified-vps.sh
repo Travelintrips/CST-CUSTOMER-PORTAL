@@ -171,6 +171,16 @@ if [[ "$running_sha" == "$certified_sha" ]]; then
      [[ "$(docker inspect -f '{{.Config.User}}' cst-customer-portal-dev 2>/dev/null || true)" == "21110:21110" ]] &&
      docker exec --user 21110:21110 cst-customer-portal-dev sh -c \
        'test -r /run/credentials/cst-customer-portal-dev.service/customer-invoice-writers-dev.json' 2>/dev/null; then
+    # If the Hostinger App Password has been provisioned, restore it into
+    # the container's private tmpfs after any container restart. The encrypted
+    # host artifact is never mounted or exposed in env/argv.
+    smtp_credential="/etc/cst-customer-portal-dev/credentials/hostinger-smtp-pass"
+    if [[ -f "$smtp_credential" ]]; then
+      if ! docker exec --user 21110:21110 cst-customer-portal-dev sh -c \
+        'test -r /run/credentials/cst-customer-portal-dev.service/hostinger-smtp-pass' 2>/dev/null; then
+        bash ./scripts/dev-smtp-inject-encrypted-app-password.sh cst-customer-portal-dev
+      fi
+    fi
     echo "[dev-deploy] Certified Invoice credentials already installed"
     exit 0
   fi
@@ -207,6 +217,13 @@ else
       injected=false
     fi
   fi
+  smtp_credential="/etc/cst-customer-portal-dev/credentials/hostinger-smtp-pass"
+  if [[ "$injected" == true && -f "$smtp_credential" ]]; then
+    if ! bash ./scripts/dev-smtp-inject-encrypted-app-password.sh cst-customer-portal-dev; then
+      echo "[dev-deploy] SMTP private tmpfs injection failed closed" >&2
+      injected=false
+    fi
+  fi
   if [[ "$injected" == true ]]; then
     for _ in $(seq 1 24); do
       ready="$(curl -fsS --max-time 5 http://127.0.0.1:18444/api/readyz 2>/dev/null || true)"
@@ -231,6 +248,12 @@ if [[ "$backup" == 1 ]]; then
     if [[ "${CST_INVOICE_DEV_PRIVATE_TMPFS:-false}" == true ]]; then
       if ! bash ./scripts/dev-invoice-inject-verified-cms.sh cst-customer-portal-dev; then
         echo "[dev-deploy] ROLLBACK private Invoice credential injection failed closed" >&2
+      fi
+    fi
+    smtp_credential="/etc/cst-customer-portal-dev/credentials/hostinger-smtp-pass"
+    if [[ -f "$smtp_credential" ]]; then
+      if ! bash ./scripts/dev-smtp-inject-encrypted-app-password.sh cst-customer-portal-dev; then
+        echo "[dev-deploy] ROLLBACK SMTP private tmpfs injection failed closed" >&2
       fi
     fi
   else
