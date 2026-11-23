@@ -72,6 +72,8 @@ export function CustomerBillingTab({ initialView = "all" }: { initialView?: "all
 
   const load = useCallback(async () => {
     setLoading(true);
+    // A failed refresh must never leave an old Owner authorization mode visible.
+    setApprovalMode("unavailable");
     setError("");
     try {
       const headers = getAuthHeaders();
