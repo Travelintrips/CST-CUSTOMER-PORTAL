@@ -1003,8 +1003,9 @@ export async function handleAdminInvoices({ request, response, user, sendJson, s
 }
 
 /**
- * One automatic pass after the authenticated Admin application opens.
- * Only confirmed, non-cancelled CST (company_id=1) orders are eligible.
+ * Automatic pilot after authenticated Admin OTP login.
+ * Initial release is restricted to the single existing QA Order #108; expansion
+ * requires a separately reviewed policy change. Only CST company_id=1 is eligible.
  * Each invoice still enters handleAdminInvoices' original locked transaction,
  * company writer, tax checks, CanonicalPostingEngine, AR/GL/audit evidence.
  */
@@ -1028,12 +1029,14 @@ export async function handleAutomaticInvoiceRun({
   const candidates = await query(
     `select id
        from public.sales_documents
-      where company_id=1
+      where id=108
+        and doc_number='QA-CST-DEV-OWNER-20261120-001'
+        and company_id=1
         and invoice_status='to_invoice'
         and status::text = any($1::text[])
         and cancelled_at is null
       order by created_at asc,id asc
-      limit 100`,
+      limit 1`,
     [[...INVOICEABLE_STATUSES]],
   );
   const results = [];
