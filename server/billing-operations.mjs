@@ -823,6 +823,9 @@ export async function handleAdminInvoices({ request, response, user, sendJson, s
   }
   const action = text(request.body?.action);
   const automaticIssue = action === "auto_issue";
+  if (!automaticIssue && action === "mark_invoiced" && isAutomaticInvoiceDevEnabled()) {
+    fail(409, "Invoice DEV diproses otomatis setelah login Email OTP; jalur manual dinonaktifkan.");
+  }
   if (action !== "mark_invoiced" && !automaticIssue) {
     sendError(response, 400, "Action invoice tidak didukung.");
     return;
