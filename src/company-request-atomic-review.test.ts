@@ -5,7 +5,9 @@ import { mintDevCompanySelfApprovalChallenge } from "../server/dev-company-self-
 const mocks = vi.hoisted(() => ({
   connect: vi.fn(),
   read: vi.fn(),
+  session: vi.fn(),
 }));
+vi.mock("../server/session.mjs",()=>({getSession:mocks.session}));
 vi.mock("../server/db.mjs", () => ({
   pool: { connect: mocks.connect },
   query: mocks.read,
@@ -30,6 +32,10 @@ type DbState = {
   changedCount?: number;
   applicantId?: number;
   canonicalSuperAdmin?: boolean;
+  portalRole?: string;
+  portalStatus?: string;
+  portalEmail?: string;
+  portalVersion?: number;
 };
 type DbCall = { sql: string; args: unknown[] };
 
@@ -45,6 +51,13 @@ function setup(state: DbState = {}) {
       if (sql.includes("from public.portal_company_requests") && sql.includes("for update")) {
         if (state.requestStatus === null) return { rows: [], rowCount: 0 };
         return { rows: [{ id: 17, portal_customer_id: state.applicantId ?? 30, status: state.requestStatus ?? "pending" }], rowCount: 1 };
+      }
+      if(sql.includes("from public.portal_customers")&&sql.includes("for share")){
+        return {rows:[{
+          id:state.applicantId??9,email:state.portalEmail??"reviewer@example.invalid",
+          role:state.portalRole??"admin",account_status:state.portalStatus??"active",
+          auth_version:state.portalVersion??0,
+        }],rowCount:1};
       }
       if (sql.includes("from public.users") && sql.includes("for share")) {
         return {rows:state.canonicalSuperAdmin===false?[]:
@@ -132,6 +145,10 @@ describe("existing Admin review endpoint atomically updates company request and 
     expect(history.some(entry=>entry.sql.startsWith("insert into"))).toBe(false);
   });
   it("allows exact CST canonical Super Admin self-approval only with fresh signed BizPortal proof",async()=>{
+    mocks.session.mockReturnValue({
+      id:9,email:"reviewer@example.invalid",role:"admin",
+      authVersion:0,tokenFamily:"portal-jwt",
+    });
     vi.stubEnv("CST_CORPORATE_PO_APPROVAL_GATE_DEV","false");
     vi.stubEnv("CUSTOMER_PORTAL_ATOMIC_ACCOUNTING_POST_DEV","true");
     vi.stubEnv("CUSTOMER_PORTAL_REQUIRE_POSTED_AR_EVIDENCE_DEV","true");
@@ -181,6 +198,42 @@ describe("existing Admin review endpoint atomically updates company request and 
     vi.stubEnv("CUSTOMER_PORTAL_COMPANY_SELF_APPROVAL_DEV","true");
     const {history}=setup({applicantId:9,canonicalSuperAdmin:false});
     const ctx=input({...approvedBody,selfApprovalChallenge:"fake",selfApprovalProof:"fake",role:"super_admin"});
+    await handleAdminCompanyRequests(ctx);
+    expect(ctx.sendError).toHaveBeenCalledWith(ctx.response,403,expect.any(String));
+    expect(history.at(-1)?.sql).toBe("rollback");
+  });
+  it.each([
+    ["disabled", {portalStatus:"inactive"}],
+    ["role revoked", {portalRole:"customer"}],
+    ["email changed", {portalEmail:"changed@example.invalid"}],
+    ["auth_version bumped", {portalVersion:1}],
+  ])("blocks self-approval after Portal identity %s during transaction",async(_label,change)=>{
+    vi.stubEnv("CST_CORPORATE_PO_APPROVAL_GATE_DEV","false");
+    vi.stubEnv("CUSTOMER_PORTAL_ATOMIC_ACCOUNTING_POST_DEV","true");
+    vi.stubEnv("CUSTOMER_PORTAL_REQUIRE_POSTED_AR_EVIDENCE_DEV","true");
+    vi.stubEnv("CUSTOMER_PORTAL_REQUIRE_BIZPORTAL_ATTEST_DEV","true");
+    vi.stubEnv("CUSTOMER_PORTAL_COMPANY_SELF_APPROVAL_DEV","true");
+    mocks.session.mockReturnValue({
+      id:9,email:"reviewer@example.invalid",role:"admin",
+      authVersion:0,tokenFamily:"portal-jwt",
+    });
+    const {history}=setup({applicantId:9,...change});
+    const ctx=input({...approvedBody,selfApprovalChallenge:"stub",selfApprovalProof:"stub"});
+    await handleAdminCompanyRequests(ctx);
+    expect(ctx.sendError).toHaveBeenCalledWith(ctx.response,403,expect.any(String));
+    expect(history.some(x=>x.sql.includes("from public.portal_customers")&&x.sql.includes("for share"))).toBe(true);
+    expect(history.at(-1)?.sql).toBe("rollback");
+    expect(history.some(x=>x.sql.startsWith("insert into public.portal_company_members"))).toBe(false);
+  });
+  it("rejects missing signed Portal JWT even if HTTP role is admin",async()=>{
+    vi.stubEnv("CST_CORPORATE_PO_APPROVAL_GATE_DEV","false");
+    vi.stubEnv("CUSTOMER_PORTAL_ATOMIC_ACCOUNTING_POST_DEV","true");
+    vi.stubEnv("CUSTOMER_PORTAL_REQUIRE_POSTED_AR_EVIDENCE_DEV","true");
+    vi.stubEnv("CUSTOMER_PORTAL_REQUIRE_BIZPORTAL_ATTEST_DEV","true");
+    vi.stubEnv("CUSTOMER_PORTAL_COMPANY_SELF_APPROVAL_DEV","true");
+    mocks.session.mockReturnValue(null);
+    const {history}=setup({applicantId:9});
+    const ctx=input({...approvedBody,selfApprovalChallenge:"stub",selfApprovalProof:"stub"});
     await handleAdminCompanyRequests(ctx);
     expect(ctx.sendError).toHaveBeenCalledWith(ctx.response,403,expect.any(String));
     expect(history.at(-1)?.sql).toBe("rollback");
