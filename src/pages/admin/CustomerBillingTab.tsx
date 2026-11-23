@@ -65,7 +65,7 @@ export function CustomerBillingTab({ initialView = "all" }: { initialView?: "all
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState<number | null>(null);
   const [error, setError] = useState("");
-  const [automaticInvoicing, setAutomaticInvoicing] = useState(false);
+  const [automaticInvoiceIds, setAutomaticInvoiceIds] = useState<number[]>([]);
   const [handoffs,setHandoffs] = useState<Record<number,OwnerHandoff>>({});
   // Only authenticated server flags can enable this DEV-only handoff.
   const [approvalMode,setApprovalMode] = useState<CustomerInvoiceApprovalMode>("unavailable");
@@ -75,7 +75,7 @@ export function CustomerBillingTab({ initialView = "all" }: { initialView?: "all
     setLoading(true);
     // A failed refresh must never leave an old Owner/automatic mode visible.
     setApprovalMode("unavailable");
-    setAutomaticInvoicing(false);
+    setAutomaticInvoiceIds([]);
     setError("");
     try {
       const headers = getAuthHeaders();
@@ -93,7 +93,9 @@ export function CustomerBillingTab({ initialView = "all" }: { initialView?: "all
       const approvalConfig = approvalResponse?.ok
         ? await approvalResponse.json().catch(() => null) : null;
       setApprovalMode(selectCustomerInvoiceApprovalMode(approvalConfig));
-      setAutomaticInvoicing(invoiceBody.automaticInvoicing === true);
+      setAutomaticInvoiceIds(Array.isArray(invoiceBody.automaticInvoiceIds)
+        ? invoiceBody.automaticInvoiceIds.filter((id: unknown): id is number => Number.isSafeInteger(id) && Number(id) > 0)
+        : []);
       setInvoices(invoiceBody.items ?? []);
       setPayments(paymentBody.items ?? []);
     } catch (cause) {
@@ -232,7 +234,7 @@ export function CustomerBillingTab({ initialView = "all" }: { initialView?: "all
                     </p>
                   </div>
                   {invoice.invoiceStatus !== "invoiced" && (
-                    automaticInvoicing
+                    automaticInvoiceIds.includes(Number(invoice.id))
                       ? <p className="max-w-xs text-xs text-slate-500">
                           Diproses otomatis setelah login Email OTP; validasi pajak, jurnal dan AR berjalan di server.
                         </p>
