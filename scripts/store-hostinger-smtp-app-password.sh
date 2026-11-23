@@ -11,7 +11,13 @@ target="$directory/hostinger-smtp-pass"
 if [[ -e "$target" || -L "$target" ]]; then
   echo "An encrypted Hostinger SMTP credential already exists; rotation is not automatic." >&2; exit 3
 fi
+if [[ -L "$directory" ]]; then
+  echo "Credential directory must not be a symlink." >&2; exit 5
+fi
 install -d -o root -g root -m 0700 "$directory"
+if [[ "$(stat -c '%u:%g:%a' "$directory")" != "0:0:700" ]]; then
+  echo "Credential directory owner or mode rejected." >&2; exit 6
+fi
 read -r -s -p "Hostinger App Password for hrd@cstlogistic.co.id (input hidden): " password
 printf '\n'
 if [[ ${#password} -lt 8 || ${#password} -gt 512 || ! "$password" =~ ^[[:graph:]]+$ ]]; then
