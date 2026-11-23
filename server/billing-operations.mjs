@@ -6,7 +6,7 @@ import {
 } from "./dev-invoice-owner-review-snapshot.mjs";
 import {assertInvoiceReviewChallengeMatchesSource} from "./dev-bizportal-invoice-attestation.mjs";
 import {lockInvoiceTaxSourceRows} from "./dev-invoice-tax-source-rowlock.mjs";
-import { isAutomaticInvoiceDevEnabled, isAutomaticInvoiceCompanyAllowed, isEmailOtpAuthenticatedAdmin } from "./dev-auto-invoice-policy.mjs";
+import { isAutomaticInvoiceDevEnabled, isAutomaticInvoiceCompanyAllowed, isEmailOtpAuthenticatedAdmin, isAutomaticInvoicePilotInvoice } from "./dev-auto-invoice-policy.mjs";
 
 import { requireDirectCompanyInvoiceWriterSession } from "./dev-customer-invoice-writer-session-guard.mjs";
 import {
@@ -804,7 +804,7 @@ export async function handleAdminInvoices({ request, response, user, sendJson, s
   if (request.method === "GET" && invoiceId == null) {
     sendJson(response, 200, {
       items: await listInvoices(user, { admin: true }),
-      automaticInvoicing: isAutomaticInvoiceDevEnabled(),
+      automaticInvoiceIds: isAutomaticInvoiceDevEnabled() ? [108] : [],
     });
     return;
   }
@@ -824,9 +824,6 @@ export async function handleAdminInvoices({ request, response, user, sendJson, s
   }
   const action = text(request.body?.action);
   const automaticIssue = action === "auto_issue";
-  if (!automaticIssue && action === "mark_invoiced" && isAutomaticInvoiceDevEnabled()) {
-    fail(409, "Invoice DEV diproses otomatis setelah login Email OTP; jalur manual dinonaktifkan.");
-  }
   if (action !== "mark_invoiced" && !automaticIssue) {
     sendError(response, 400, "Action invoice tidak didukung.");
     return;
@@ -847,6 +844,11 @@ export async function handleAdminInvoices({ request, response, user, sendJson, s
   } : null;
   const result = await withTransaction(async (db, transactionClient) => {
     const row = await loadInvoice(invoiceId, user, { db, admin: true, forUpdate: true });
+    if (!automaticIssue && action === "mark_invoiced" &&
+        isAutomaticInvoiceDevEnabled() &&
+        isAutomaticInvoicePilotInvoice(row.id, row.company_id)) {
+      fail(409, "Invoice QA CST-DEV #108 diproses otomatis; jalur manual dinonaktifkan untuk dokumen pilot ini.");
+    }
     if (automaticIssue && !isAutomaticInvoiceCompanyAllowed(row.company_id)) {
       fail(403, "Otomatisasi invoice saat ini dibatasi untuk CST-DEV.");
     }
