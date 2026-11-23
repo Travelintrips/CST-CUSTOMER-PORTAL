@@ -4764,7 +4764,7 @@ async function route(request, response) {
     const required = isDualSuperAdminProofRequired() &&
       process.env.CUSTOMER_PORTAL_REQUIRE_BIZPORTAL_ATTEST_DEV === "true";
     if (!required) {
-      sendJson(response, 200, {required:false});
+      sendJson(response, 200, {required:false,ownerHandoff:false});
       return;
     }
     const configured = (process.env.CUSTOMER_PORTAL_BIZPORTAL_AUTH_ORIGIN_DEV ?? "").trim();
@@ -4781,7 +4781,7 @@ async function route(request, response) {
       sendError(response, 503, "Alamat BizPortal DEV untuk otorisasi belum terverifikasi.");
       return;
     }
-    sendJson(response, 200, {required:true,bizportalOrigin});
+    sendJson(response, 200, {required:true,bizportalOrigin,ownerHandoff:isInvoiceOwnerHandoffEnabled()});
     return;
   }
   // Source-only, opt-in DEV Owner handoff. A separate authenticated BizPortal
