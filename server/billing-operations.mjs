@@ -830,9 +830,6 @@ export async function handleAdminInvoices({ request, response, user, sendJson, s
   if (automaticIssue && !isAutomaticInvoiceDevEnabled()) {
     fail(503, "Penerbitan invoice otomatis belum diaktifkan atau belum memenuhi pengaman DEV.");
   }
-  if (automaticIssue && !isAutomaticInvoiceCompanyAllowed(user?.companyId ?? 1)) {
-    fail(403, "Otomatisasi invoice saat ini dibatasi untuk CST-DEV.");
-  }
   const atomicRequested = process.env.CUSTOMER_PORTAL_ATOMIC_ACCOUNTING_POST_DEV === "true";
   let selectedCompanyId = null;
   const connect = atomicRequested ? async () => {
@@ -1024,7 +1021,7 @@ export async function handleAutomaticInvoiceRun({
        from public.sales_documents
       where company_id=1
         and invoice_status='to_invoice'
-        and status = any($1::text[])
+        and status::text = any($1::text[])
         and cancelled_at is null
       order by created_at asc,id asc
       limit 100`,
