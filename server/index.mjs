@@ -4793,8 +4793,8 @@ async function route(request, response) {
   // issuer may claim it and invoke the unchanged Invoice handler.
   const handoffReviewMatch = pathname.match(/^\/api\/portal\/dev\/invoice-owner-handoff\/([A-Za-z0-9_-]{43})\/review$/);
   if (handoffReviewMatch && request.method === "GET") {
-    if(!isInvoiceOwnerHandoffEnabled()) {
-      sendError(response,404,"Endpoint tidak tersedia.");return;
+    if(!isInvoiceOwnerHandoffEnabled() || isAutomaticInvoiceDevEnabled()) {
+      sendError(response,404,"Endpoint persetujuan per invoice tidak tersedia pada mode otomatis.");return;
     }
     // Only the random 80s capability ticket can read this transient source.
     // No PII is embedded in the URL, HMAC challenge or GitHub artifacts.
@@ -4808,6 +4808,10 @@ async function route(request, response) {
   }
   const handoffReceiveMatch = pathname.match(/^\/api\/portal\/dev\/invoice-owner-handoff\/([A-Za-z0-9_-]{43})$/);
   if (handoffReceiveMatch && request.method === "POST") {
+    if (isAutomaticInvoiceDevEnabled()) {
+      sendError(response,404,"Persetujuan Owner per invoice telah dinonaktifkan pada mode otomatis.");
+      return;
+    }
     if (!isTrustedInvoiceOwnerHandoffPost(request)) {
       sendError(response, 403, "Handoff OTP tidak diizinkan.");
       return;
@@ -4835,7 +4839,7 @@ async function route(request, response) {
   if (adminInvoiceHandoffStart && request.method === "POST") {
     const user = await requireAdmin(request,response);
     if (!user) return;
-    if (!isInvoiceOwnerHandoffEnabled()) {sendError(response,404,"Endpoint tidak tersedia.");return;}
+    if (!isInvoiceOwnerHandoffEnabled() || isAutomaticInvoiceDevEnabled()) {sendError(response,404,"Persetujuan Owner per invoice tidak tersedia pada mode otomatis.");return;}
     const invoiceId=Number(adminInvoiceHandoffStart[1]);
     if (!Number.isSafeInteger(invoiceId) || invoiceId<=0) {
       sendError(response,400,"Invoice tidak valid.");return;
@@ -4886,7 +4890,7 @@ async function route(request, response) {
   if (adminInvoiceHandoffTake && request.method === "GET") {
     const user = await requireAdmin(request,response);
     if(!user)return;
-    if(!isInvoiceOwnerHandoffEnabled()){sendError(response,404,"Endpoint tidak tersedia.");return;}
+    if(!isInvoiceOwnerHandoffEnabled() || isAutomaticInvoiceDevEnabled()){sendError(response,404,"Persetujuan Owner per invoice tidak tersedia pada mode otomatis.");return;}
     const result=takeInvoiceOwnerHandoff({
       ticket:adminInvoiceHandoffTake[2],issuer:user,
       invoiceId:Number(adminInvoiceHandoffTake[1]),
@@ -4898,7 +4902,7 @@ async function route(request, response) {
   if (adminInvoiceChallengeMatch && request.method === "GET") {
     const user = await requireAdmin(request, response);
     if (!user) return;
-    if (!isDualSuperAdminProofRequired() ||
+    if (isAutomaticInvoiceDevEnabled() || !isDualSuperAdminProofRequired() ||
         process.env.CUSTOMER_PORTAL_REQUIRE_BIZPORTAL_ATTEST_DEV !== "true") {
       sendError(response, 404, "Endpoint tidak tersedia.");
       return;
