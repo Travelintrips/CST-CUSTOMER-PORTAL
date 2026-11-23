@@ -16,6 +16,9 @@ const ready = {
 describe("DEV automatic invoice policy", () => {
   it("requires OTP-authenticated Admin workflow plus every financial safety gate", () => {
     expect(isAutomaticInvoiceDevEnabled(ready)).toBe(true);
+    expect(isAutomaticInvoiceDevEnabled({
+      ...ready, CUSTOMER_PORTAL_REQUIRE_BIZPORTAL_ATTEST_DEV: "false",
+    })).toBe(true);
     for (const key of Object.keys(ready)) {
       if (key === "APP_ENV" || key === "NODE_ENV") continue;
       expect(isAutomaticInvoiceDevEnabled({ ...ready, [key]: "false" })).toBe(false);
