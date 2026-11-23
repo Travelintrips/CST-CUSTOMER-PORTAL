@@ -277,7 +277,7 @@ export function CustomerBillingTab({ initialView = "all" }: { initialView?: "all
                                               </div>
                                             )}
                                           </div>
-                  )}}
+                  )}
                 </div>
               ))}
             </div>
