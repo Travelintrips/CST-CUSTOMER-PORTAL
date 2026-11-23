@@ -138,6 +138,24 @@ if [[ "${CST_INVOICE_DEV_PRIVATE_TMPFS:-false}" == true ]] &&
         echo "[dev-deploy] Reboot credential recovery refused; retaining fail-closed app" >&2
         exit 1
       fi
+      # Reboot destroys both private tmpfs credentials. Restore SMTP before
+      # readiness is reported successful so OTP capability is not silently lost.
+      smtp_credential="/etc/cst-customer-portal-dev/credentials/hostinger-smtp-pass"
+      if [[ -f "$smtp_credential" ]]; then
+        boot_smtp_injected=false
+        for boot_attempt in $(seq 1 12); do
+          if [[ "$(docker inspect -f '{{.State.Running}}' "$boot_container" 2>/dev/null || true)" == true ]] &&
+             bash ./scripts/dev-smtp-inject-encrypted-app-password.sh "$boot_container"; then
+            boot_smtp_injected=true
+            break
+          fi
+          sleep 2
+        done
+        if [[ "$boot_smtp_injected" != true ]]; then
+          echo "[dev-deploy] Reboot SMTP credential recovery refused; OTP stays unavailable" >&2
+          exit 1
+        fi
+      fi
       for boot_attempt in $(seq 1 20); do
         boot_ready="$(curl -fsS --max-time 3 http://127.0.0.1:18444/api/readyz 2>/dev/null || true)"
         boot_release="$(curl -fsS --max-time 3 http://127.0.0.1:18444/api/portal/release-info 2>/dev/null | node -e 'let s="";process.stdin.on("data",x=>s+=x);process.stdin.on("end",()=>{try{process.stdout.write(JSON.parse(s).releaseId||"")}catch{}})' || true)"
@@ -171,6 +189,16 @@ if [[ "$running_sha" == "$certified_sha" ]]; then
      [[ "$(docker inspect -f '{{.Config.User}}' cst-customer-portal-dev 2>/dev/null || true)" == "21110:21110" ]] &&
      docker exec --user 21110:21110 cst-customer-portal-dev sh -c \
        'test -r /run/credentials/cst-customer-portal-dev.service/customer-invoice-writers-dev.json' 2>/dev/null; then
+    # If the Hostinger App Password has been provisioned, restore it into
+    # the container's private tmpfs after any container restart. The encrypted
+    # host artifact is never mounted or exposed in env/argv.
+    smtp_credential="/etc/cst-customer-portal-dev/credentials/hostinger-smtp-pass"
+    if [[ -f "$smtp_credential" ]]; then
+      if ! docker exec --user 21110:21110 cst-customer-portal-dev sh -c \
+        'test -r /run/credentials/cst-customer-portal-dev.service/hostinger-smtp-pass' 2>/dev/null; then
+        bash ./scripts/dev-smtp-inject-encrypted-app-password.sh cst-customer-portal-dev
+      fi
+    fi
     echo "[dev-deploy] Certified Invoice credentials already installed"
     exit 0
   fi
@@ -207,6 +235,13 @@ else
       injected=false
     fi
   fi
+  smtp_credential="/etc/cst-customer-portal-dev/credentials/hostinger-smtp-pass"
+  if [[ "$injected" == true && -f "$smtp_credential" ]]; then
+    if ! bash ./scripts/dev-smtp-inject-encrypted-app-password.sh cst-customer-portal-dev; then
+      echo "[dev-deploy] SMTP private tmpfs injection failed closed" >&2
+      injected=false
+    fi
+  fi
   if [[ "$injected" == true ]]; then
     for _ in $(seq 1 24); do
       ready="$(curl -fsS --max-time 5 http://127.0.0.1:18444/api/readyz 2>/dev/null || true)"
@@ -231,6 +266,12 @@ if [[ "$backup" == 1 ]]; then
     if [[ "${CST_INVOICE_DEV_PRIVATE_TMPFS:-false}" == true ]]; then
       if ! bash ./scripts/dev-invoice-inject-verified-cms.sh cst-customer-portal-dev; then
         echo "[dev-deploy] ROLLBACK private Invoice credential injection failed closed" >&2
+      fi
+    fi
+    smtp_credential="/etc/cst-customer-portal-dev/credentials/hostinger-smtp-pass"
+    if [[ -f "$smtp_credential" ]]; then
+      if ! bash ./scripts/dev-smtp-inject-encrypted-app-password.sh cst-customer-portal-dev; then
+        echo "[dev-deploy] ROLLBACK SMTP private tmpfs injection failed closed" >&2
       fi
     fi
   else
