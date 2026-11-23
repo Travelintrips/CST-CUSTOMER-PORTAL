@@ -3,6 +3,7 @@ import {
   isAutomaticInvoiceDevEnabled,
   isAutomaticInvoiceCompanyAllowed,
   isEmailOtpAuthenticatedAdmin,
+  isAutomaticInvoicePilotInvoice,
 } from "../server/dev-auto-invoice-policy.mjs";
 
 const ready = {
@@ -35,6 +36,14 @@ describe("DEV automatic invoice policy", () => {
     expect(isAutomaticInvoiceCompanyAllowed(1)).toBe(true);
     expect(isAutomaticInvoiceCompanyAllowed(3)).toBe(false);
     expect(isAutomaticInvoiceCompanyAllowed(null)).toBe(false);
+  });
+
+  it("limits automatic mode suppression to the exact CST QA pilot invoice #108", () => {
+    expect(isAutomaticInvoicePilotInvoice(108, 1)).toBe(true);
+    expect(isAutomaticInvoicePilotInvoice(108, 3)).toBe(false);
+    expect(isAutomaticInvoicePilotInvoice(109, 1)).toBe(false);
+    expect(isAutomaticInvoicePilotInvoice(109, 3)).toBe(false);
+    expect(isAutomaticInvoicePilotInvoice(null, 1)).toBe(false);
   });
 
   it("accepts only a signed Email OTP Admin session as the automatic actor", () => {
