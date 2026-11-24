@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { readFileSync } from "node:fs";
 import {
   isAdminEmailOtpOnlyEnabled,
   isPortalLoginMethodAllowed,
@@ -17,6 +18,20 @@ describe("DEV Admin Email OTP-only login", () => {
     for (const method of [null, "password", "google", "wa_otp", "wa_trusted", "dev_login"]) {
       expect(isPortalLoginMethodAllowed({ role: "admin" }, method, dev)).toBe(false);
     }
+  });
+
+  it("applies the policy at the central authenticated API boundary", () => {
+    const source = readFileSync("server/index.mjs", "utf8");
+    expect(source).toContain('isPortalLoginMethodAllowed(user, session.authMethod ?? null)');
+    expect(source).toContain('sendError(response, 401, "Admin session requires a fresh Email OTP login.")');
+  });
+
+  it("denies pre-existing Admin sessions without signed Email OTP provenance", () => {
+    // Authorization also checks this contract on every authenticated API request.
+    const previousAdminSession = { role: "admin", authMethod: null };
+    const otpAdminSession = { role: "admin", authMethod: "email_otp" };
+    expect(isPortalLoginMethodAllowed(previousAdminSession, previousAdminSession.authMethod, dev)).toBe(false);
+    expect(isPortalLoginMethodAllowed(otpAdminSession, otpAdminSession.authMethod, dev)).toBe(true);
   });
 
   it("does not change customer or vendor login methods", () => {
