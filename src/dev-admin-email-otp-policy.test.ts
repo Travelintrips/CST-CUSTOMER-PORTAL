@@ -24,6 +24,9 @@ describe("DEV Admin Email OTP-only login", () => {
     const source = readFileSync("server/index.mjs", "utf8");
     expect(source).toContain('isPortalLoginMethodAllowed(user, session.authMethod ?? null)');
     expect(source).toContain('sendError(response, 401, "Admin session requires a fresh Email OTP login.")');
+    // Reissuing a cookie via /auth/set-cookie must not resurrect a legacy Admin session.
+    expect(source).toContain('isPortalLoginMethodAllowed(session, session.authMethod ?? null)');
+    expect(source).toContain('sendError(response, 401, "Admin session requires Email OTP login.")');
   });
 
   it("denies pre-existing Admin sessions without signed Email OTP provenance", () => {
