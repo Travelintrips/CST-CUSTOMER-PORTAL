@@ -47,6 +47,7 @@ export default function AdminPage() {
   const { t } = useLanguage();
   const [pendingVendorApprovals, setPendingVendorApprovals] = useState(0);
   const [pendingPortalWorkload, setPendingPortalWorkload] = useState(0);
+  const [invoice108Status, setInvoice108Status] = useState<string | null>(null);
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [activeTab, setActiveTab] = useState<string>(() => {
     const query = new URLSearchParams(typeof window !== "undefined" ? window.location.search : "");
@@ -58,7 +59,7 @@ export default function AdminPage() {
     const loadPendingCount = async () => {
       try {
         const headers = { ...getAuthHeaders(), "Content-Type": "application/json" };
-        const [res, workloadRes] = await Promise.all([
+        const [res, workloadRes, invoiceRes] = await Promise.all([
           fetch("/api/portal/admin/approvals/stats", { headers, credentials: "include", cache: "no-store" }),
           fetch("/api/portal/admin/service-operations?limit=1&offset=0", { headers, credentials: "include", cache: "no-store" }),
           fetch("/api/portal/admin/invoices/auto-issue-ready", {
@@ -74,6 +75,20 @@ export default function AdminPage() {
           const workload = await workloadRes.json();
           const count = (workload.summary ?? []).reduce((sum: number, item: { pending?: number }) => sum + Number(item.pending ?? 0), 0);
           if (!cancelled) setPendingPortalWorkload(count);
+        }
+        // The automatic issuer can return HTTP 200 with blocked=true.
+        // Never mistake a successful HTTP response for a posted invoice.
+        if (invoiceRes?.ok) {
+          const status = await invoiceRes.json() as {
+            enabled?: boolean; companyId?: number; blocked?: boolean; invoiced?: number;
+            results?: Array<{ invoiceId?: number; status?: string; message?: string }>;
+          };
+          if (!cancelled && status.enabled === true && status.companyId === 1) {
+            const blocked108 = status.results?.find((item) => item.invoiceId === 108 && item.status === "blocked");
+            setInvoice108Status(status.blocked === true && blocked108
+              ? "Invoice QA #108 tertahan: " + (blocked108.message || "Pemeriksaan akuntansi belum siap.")
+              : null);
+          }
         }
       } catch { /* silent */ }
     };
@@ -574,7 +589,14 @@ export default function AdminPage() {
                     </Card>
                   </TabsContent>
 
-                  <TabsContent value="customer-billing"><CustomerBillingTab /></TabsContent>
+                  <TabsContent value="customer-billing">
+                    {invoice108Status && (
+                      <div role="status" className="mb-4 rounded-md border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-950">
+                        {invoice108Status}
+                      </div>
+                    )}
+                    <CustomerBillingTab />
+                  </TabsContent>
                   <TabsContent value="payment-history"><CustomerBillingTab initialView="payments" /></TabsContent>
                   <TabsContent value="chatbot-admin"><ChatbotAdminTab /></TabsContent>
 
