@@ -2,6 +2,12 @@
 # Exact pg_cron v1.6.4 is running INSIDE a networkless disposable PG17 instance.
 # No ports, host database, real credentials, or real Invoice data.
 set -euo pipefail
+# Local preflight only: this flag does NOT substitute for recorded DBA approval.
+# Reject before touching Docker, SQL, or any database unless custodian authorizes QA.
+if [[ "${ISSUE238_DBA_DISPOSABLE_QA_APPROVED:-}" != "YES" ]]; then
+  echo QA_CUSTODIAN_APPROVAL_REQUIRED
+  exit 73
+fi
 name="cst-invoice-pgcron-runner-qa-$$"
 # Must run from the exact reviewed source checkout; do NOT silently use
 # the stale original staged SQL from /opt/cst-invoice-dev-stage-20261120.
