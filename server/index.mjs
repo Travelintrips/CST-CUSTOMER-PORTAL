@@ -57,6 +57,7 @@ import {
 import { loadDevOriginalAccountingOwner } from "./dev-original-accounting-owner-loader.mjs";
 import { isAutomaticInvoiceDevEnabled, isAutomaticInvoicePilotInvoice } from "./dev-auto-invoice-policy.mjs";
 import { isDevInvoiceScopedWriterRequested } from "./dev-customer-invoice-scoped-client.mjs";
+import { readCstDevDbaApprovalReadiness } from "./dev-dba-approval-readiness.mjs";
 import {
   mintPortalInvoiceChallenge, isDualSuperAdminProofRequired,
   verifyIndependentBizPortalSuperAdminProof,
@@ -4968,6 +4969,26 @@ async function route(request, response) {
       ...(snapshot?{reviewDigest:invoiceOwnerReviewDigest(snapshot)}:{}),
     });
     sendJson(response, 200, {challenge,expiresInSeconds:90});
+    return;
+  }
+  // Read-only assessment. This route never records approval, changes roles,
+  // installs relock, enables AR, or triggers an invoice.
+  if (request.method === "GET" && pathname === "/api/portal/admin/dba/approval-readiness") {
+    if (APP_ENV !== "development" || process.env.NODE_ENV !== "development") {
+      sendError(response, 404, "Route tidak tersedia.");
+      return;
+    }
+    const user = await requireAdmin(request, response);
+    if (!user) return;
+    const operation = url.searchParams.get("operation") ?? "";
+    try {
+      const assessment = await readCstDevDbaApprovalReadiness({
+        operation, portalUser: user, dbQuery: query,
+      });
+      sendJson(response, 200, assessment);
+    } catch {
+      sendError(response, 503, "Pemeriksaan identitas kanonis DBA belum tersedia.");
+    }
     return;
   }
   if (request.method === "POST" && pathname === "/api/portal/admin/invoices/auto-issue-ready") {
