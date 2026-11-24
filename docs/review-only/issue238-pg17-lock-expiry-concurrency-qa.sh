@@ -3,9 +3,12 @@
 # Never execute against hosted CST-DEV, PROD or a user-supplied database.
 # No runtime execution is authorized by simply committing this QA fixture.
 set -euo pipefail
-: "$ISSUE238_DBA_DISPOSABLE_QA_APPROVED"
-test "$ISSUE238_DBA_DISPOSABLE_QA_APPROVED" = YES || { echo QA_CUSTODIAN_APPROVAL_REQUIRED; exit 73; }
-: "$ISSUE238_APPROVED_SQL_SHA256"
+# Local preflight only: recorded custodian approval is still required independently.
+if [[ "${ISSUE238_DBA_DISPOSABLE_QA_APPROVED:-}" != "YES" ]]; then
+  echo QA_CUSTODIAN_APPROVAL_REQUIRED
+  exit 73
+fi
+: "${ISSUE238_APPROVED_SQL_SHA256:?Provide independently reviewed SQL SHA256 for QA-only run}"
 root="$(cd "$(dirname "$0")" && pwd)"
 sql="$root/issue238-postgres17-relock.sql"
 test -s "$sql"
