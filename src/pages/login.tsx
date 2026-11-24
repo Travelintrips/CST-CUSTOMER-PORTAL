@@ -325,7 +325,7 @@ export default function Login() {
     defaultValues: { email: "", password: "" },
   });
 
-  async function redirectAfterLogin(role?: string) {
+  async function redirectAfterLogin(role?: string, requireVerifiedAdmin = false): Promise<boolean> {
     const requestedReturnTo = new URLSearchParams(window.location.search).get("returnTo");
     for (let attempt = 1; attempt <= 3; attempt += 1) {
       try {
@@ -335,7 +335,7 @@ export default function Login() {
         );
         if (bootstrap) {
           window.location.assign(bootstrap.allowedDestination);
-          return;
+          return true;
         }
       } catch {
         // Retry briefly because Set-Cookie from the login response may not be
@@ -346,12 +346,16 @@ export default function Login() {
       }
     }
 
+    // Admin OTP must never navigate to the privileged page on an unverified
+    // bootstrap: a locally cached Admin profile is not a server session.
+    if (role === "admin" && requireVerifiedAdmin) return false;
     const fallback = role === "vendor"
       ? "/vendor-dashboard"
       : role === "admin"
         ? "/admin"
         : "/dashboard";
     window.location.assign(fallback);
+    return true;
   }
 
   // Cek trusted device saat tab WA dibuka
@@ -484,7 +488,10 @@ export default function Login() {
       if (!res.ok || !json.token) { setOtpMsg({ type: "err", text: json.message ?? t("login.otpInvalid") }); }
       else {
         setPortalProfile({ customerId: json.user!.id, role: json.user!.role, name: json.user!.name, email: json.user!.email });
-        redirectAfterLogin(json.user?.role);
+        const accepted = await redirectAfterLogin(json.user?.role, true);
+        if (!accepted) {
+          setOtpMsg({ type: "err", text: "OTP diterima, tetapi sesi Admin belum dikonfirmasi server. Coba masuk kembali." });
+        }
       }
     } catch { setOtpMsg({ type: "err", text: t("login.serverError") }); }
     setIsSubmitting(false);
