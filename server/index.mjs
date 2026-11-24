@@ -868,6 +868,12 @@ async function handleSetCookie(request, response) {
     sendError(response, 401, "Invalid session token.");
     return;
   }
+  // A signed historical Admin token must not be reissued as a cookie when
+  // DEV now requires Email OTP. Keep customer/vendor sessions unchanged.
+  if (!isPortalLoginMethodAllowed(session, session.authMethod ?? null)) {
+    sendError(response, 401, "Admin session requires Email OTP login.");
+    return;
+  }
   sendEmpty(response, 204, { "Set-Cookie": sessionCookies(token) });
 }
 
