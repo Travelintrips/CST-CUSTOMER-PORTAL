@@ -15,6 +15,7 @@ import {
   sessionCookies,
   verifySession,
 } from "./session.mjs";
+import { isPortalLoginMethodAllowed } from "./dev-admin-email-otp-policy.mjs";
 import {
   handleAdminApprovals,
   handleAdminCompanyRequests,
@@ -421,6 +422,13 @@ async function requireUser(request, response) {
     || Number(session.authVersion ?? 0) !== Number(user.auth_version ?? 0)
   ) {
     sendError(response, 401, "Session is no longer valid.");
+    return null;
+  }
+  // Enforce the same OTP-only Admin policy on every authenticated API request.
+  // A previously issued password/Google/WA/legacy Admin session cannot retain
+  // access when the DEV OTP-only flag is enabled; the method is signed JWT data.
+  if (!isPortalLoginMethodAllowed(user, session.authMethod ?? null)) {
+    sendError(response, 401, "Admin session requires a fresh Email OTP login.");
     return null;
   }
   // authMethod is a signed JWT claim, not a browser field or database input.
