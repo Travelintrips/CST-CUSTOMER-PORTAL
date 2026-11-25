@@ -56,6 +56,7 @@ import {
 } from "./billing-operations.mjs";
 import { loadDevOriginalAccountingOwner } from "./dev-original-accounting-owner-loader.mjs";
 import { isAutomaticInvoiceDevEnabled, isAutomaticInvoicePilotInvoice } from "./dev-auto-invoice-policy.mjs";
+import { readDevAutoInvoiceStatus } from "./dev-auto-invoice-status.mjs";
 import { isDevInvoiceScopedWriterRequested } from "./dev-customer-invoice-scoped-client.mjs";
 import { readCstDevDbaApprovalReadiness } from "./dev-dba-approval-readiness.mjs";
 import {
@@ -4988,6 +4989,19 @@ async function route(request, response) {
       sendJson(response, 200, assessment);
     } catch {
       sendError(response, 503, "Pemeriksaan identitas kanonis DBA belum tersedia.");
+    }
+    return;
+  }
+  // GET is a read-only status poll. Never use the POST issuer in dashboard polling.
+  if (request.method === "GET" && pathname === "/api/portal/admin/invoices/auto-issue-status") {
+    const user = await requireAdmin(request, response);
+    if (!user) return;
+    try {
+      const snapshot = await readDevAutoInvoiceStatus({user,dbQuery:query});
+      const {httpStatus, ...data} = snapshot;
+      sendJson(response,httpStatus,data);
+    } catch {
+      sendError(response,503,"Kesiapan Invoice DEV belum dapat diperiksa.");
     }
     return;
   }
