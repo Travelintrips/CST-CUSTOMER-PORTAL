@@ -62,9 +62,8 @@ export default function AdminPage() {
         const [res, workloadRes, invoiceRes] = await Promise.all([
           fetch("/api/portal/admin/approvals/stats", { headers, credentials: "include", cache: "no-store" }),
           fetch("/api/portal/admin/service-operations?limit=1&offset=0", { headers, credentials: "include", cache: "no-store" }),
-          fetch("/api/portal/admin/invoices/auto-issue-ready", {
-            method: "POST", headers, credentials: "include", cache: "no-store",
-            body: JSON.stringify({}),
+          fetch("/api/portal/admin/invoices/auto-issue-status", {
+            method: "GET", headers, credentials: "include", cache: "no-store",
           }).catch(() => null),
         ]);
         if (res.ok) {
