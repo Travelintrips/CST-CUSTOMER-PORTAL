@@ -135,6 +135,46 @@ export function CustomerBillingTab({ initialView = "all" }: { initialView?: "all
     }
   }
 
+  // The dashboard's periodic GET is read-only. Issuing QA #108 only occurs
+  // after an intentional click, current server readiness check, and confirmation.
+  async function issueAutomaticPilot(id: number) {
+    if (id !== 108 || !automaticInvoiceIds.includes(id) || busy !== null) return;
+    setBusy(id);
+    setError("");
+    try {
+      const headers = { ...getAuthHeaders(), "Content-Type": "application/json" };
+      const readiness = await fetch("/api/portal/admin/invoices/auto-issue-status", {
+        method: "GET", headers, credentials: "include", cache: "no-store",
+      });
+      const status = await readiness.json();
+      if (!readiness.ok) throw new Error(status.message ?? status.error ?? "Kesiapan invoice tidak tersedia.");
+      if (status.readOnly !== true || status.companyId !== 1 || status.ready !== true || status.actorReady !== true) {
+        const reason = status.results?.find((item: { invoiceId?: number; status?: string; message?: string }) =>
+          item.invoiceId === 108 && item.status === "blocked")?.message;
+        throw new Error(reason ?? "Pengaman AR/Invoice CST-DEV belum siap. Tidak ada penerbitan.");
+      }
+      if (!window.confirm("Terbitkan Invoice QA #108 CST-DEV sekarang? Tindakan ini dapat membuat jurnal GL, PPN, AR dan audit. Tidak ada pembayaran atau pengiriman eksternal.")) return;
+      const result = await fetch("/api/portal/admin/invoices/auto-issue-ready", {
+        method: "POST", headers, credentials: "include", cache: "no-store",
+        body: JSON.stringify({}),
+      });
+      const outcome = await result.json();
+      if (!result.ok) throw new Error(outcome.message ?? "Penerbitan Invoice QA gagal.");
+      const issued = outcome.results?.find((item: { invoiceId?: number; status?: string; invoiceNumber?: string }) =>
+        item.invoiceId === 108 && item.status === "invoiced" && typeof item.invoiceNumber === "string");
+      if (outcome.invoiced !== 1 || !issued) {
+        const reason = outcome.results?.find((item: { invoiceId?: number; message?: string }) =>
+          item.invoiceId === 108)?.message;
+        throw new Error(reason ?? "Tidak ada bukti Invoice #108 diterbitkan. Status harus diperiksa.");
+      }
+      await load();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Invoice QA #108 tertahan.");
+    } finally {
+      setBusy(null);
+    }
+  }
+
   async function startOwnerHandoff(id:number) {
     if(!handoffEnabled)return;
     setBusy(id);
@@ -235,9 +275,17 @@ export function CustomerBillingTab({ initialView = "all" }: { initialView?: "all
                   </div>
                   {invoice.invoiceStatus !== "invoiced" && (
                     automaticInvoiceIds.includes(Number(invoice.id))
-                      ? <p className="max-w-xs text-xs text-slate-500">
-                          Diproses otomatis setelah login Email OTP; validasi pajak, jurnal dan AR berjalan di server.
-                        </p>
+                      ? <div className="flex max-w-xs flex-col gap-2">
+                          <p className="text-xs text-slate-500">
+                            Invoice QA CST-DEV #108: hanya diproses setelah tindakan Admin Email OTP dan validasi server. Tidak ada penerbitan saat halaman dibuka.
+                          </p>
+                          <button type="button" disabled={busy !== null || invoice.id !== 108}
+                            onClick={() => void issueAutomaticPilot(invoice.id)}
+                            className="inline-flex items-center justify-center gap-2 rounded-lg bg-sky-600 px-3 py-2 text-sm font-medium text-white hover:bg-sky-700 disabled:opacity-50">
+                            {busy === invoice.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileCheck2 className="h-4 w-4" />}
+                            Periksa & terbitkan QA #108
+                          </button>
+                        </div>
                       : <div className="flex flex-col gap-2">
                                             {approvalMode === "legacy" && (
                                               <button type="button" disabled={busy === invoice.id} onClick={() => void issueInvoice(invoice.id)}
